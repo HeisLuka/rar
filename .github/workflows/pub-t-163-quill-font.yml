@@ -21,6 +21,8 @@ jobs:
     env:
       RIGHTS_LANDING: "https://www.mass.gov/lists/for-dds-service-recipients-and-families"
       RIGHTS_TITLE: "Rights Review (Volume 8 Issue 3) Jan 2019"
+      RIGHTS_DIRECT: "https://www.mass.gov/doc/rights-review-volume-8-issue-3-jan-2019/download"
+      RIGHTS_SHA256: "d31129823c0b27aeabe8132fabc4038ce7bf59be68785b7306d1bda53928c223"
       APACHE_BLOB: "94900925af5832c493784f3cb51563f838a64df8"
       APACHE_SHA256: "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
       APACHE_BYTE_LEN: "291840"
