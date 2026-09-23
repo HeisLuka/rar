@@ -1,0 +1,77 @@
+{
+  "receipt_version": "chaptera.auth-wrap-native-receipt.v1",
+  "task_id": "PUB-T-150",
+  "receipt_kind": "synthetic_contract",
+  "scope": {
+    "publisher_family": "Publisher2019_build12527",
+    "universal_claim": false,
+    "closure_candidate": false
+  },
+  "environment": {
+    "publisher_version": "16.0",
+    "publisher_build": 12527,
+    "reset_contract": "pub-research-reset-receipt.v1",
+    "reset_provider_receipt_verified": false,
+    "cold_restore_pair_verified": false,
+    "environment_fingerprint_sha256": null,
+    "host_identity_redacted": true
+  },
+  "fixture": {
+    "lineage": "apache_poi_sample_newsletter",
+    "public_fixture": true,
+    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+  },
+  "family_a": {
+    "contract": "change_0x47_only",
+    "capture": {
+      "executed": false,
+      "publisher_open_succeeded": false,
+      "pre_save_layout_captured": false,
+      "pre_save_com_wrap_captured": false,
+      "save_succeeded": false,
+      "reopen_succeeded": false,
+      "post_save_graph_captured": false,
+      "post_save_fopt_captured": false
+    },
+    "one_0x47_target_ref_changed": true,
+    "0x46_count_kept_consistent": true,
+    "geometry_unchanged_before_open": true,
+    "textwrap_fopt_unchanged_before_open": true,
+    "post_save_0x47_outcome": "not_observed",
+    "post_save_fopt_outcome": "not_observed",
+    "layout_outcome": "not_observed"
+  },
+  "family_b": {
+    "contract": "change_textwrap_fopt_only",
+    "capture": {
+      "executed": false,
+      "publisher_open_succeeded": false,
+      "pre_save_layout_captured": false,
+      "pre_save_com_wrap_captured": false,
+      "save_succeeded": false,
+      "reopen_succeeded": false,
+      "post_save_graph_captured": false,
+      "post_save_fopt_captured": false
+    },
+    "one_wrap_property_changed_via_com": true,
+    "geometry_unchanged_before_save": true,
+    "old_0x47_left_untouched_before_save": true,
+    "post_save_0x47_outcome": "not_observed",
+    "post_save_fopt_outcome": "not_observed",
+    "layout_outcome": "not_observed"
+  },
+  "conclusion": {
+    "authority_class": "inconclusive",
+    "both_conflict_families_executed": false,
+    "save_reopen_evidence_complete": false,
+    "needs_additional_native_discriminator": true
+  },
+  "privacy": {
+    "pub_bytes_in_receipt": false,
+    "document_text_in_receipt": false,
+    "local_path_in_receipt": false,
+    "host_name_in_receipt": false,
+    "user_identity_in_receipt": false,
+    "screenshots_in_receipt": false
+  }
+}
