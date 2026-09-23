@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/editor-image-replace/v1/export-producer-receipt.schema.json",
+  "title": "Chaptera ReplaceImage export producer receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "export_contract",
+    "producer",
+    "build",
+    "fixture_kind",
+    "effective_asset",
+    "replacement_binding",
+    "idml",
+    "odg",
+    "unsupported_target",
+    "source_boundary",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.replace-image-export-producer-receipt.v1"
+    },
+    "export_contract": {
+      "const": "chaptera.replace-image-export.v1"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "integration"
+      ],
+      "properties": {
+        "kind": {
+          "const": "chaptera_desktop_editor"
+        },
+        "integration": {
+          "const": "local_private"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chaptera_version",
+        "platform",
+        "binary_sha256"
+      ],
+      "properties": {
+        "chaptera_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Za-z._+-]+$"
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos",
+            "linux"
+          ]
+        },
+        "binary_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "fixture_kind": {
+      "enum": [
+        "synthetic_image",
+        "real_pub_sanitized"
+      ]
+    },
+    "effective_asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resolved_by_content_sha256",
+        "asset_sha_redacted",
+        "source_asset_silently_reused"
+      ],
+      "properties": {
+        "resolved_by_content_sha256": {
+          "const": true
+        },
+        "asset_sha_redacted": {
+          "const": true
+        },
+        "source_asset_silently_reused": {
+          "const": false
+        }
+      }
+    },
+    "idml": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "can_serialize",
+        "exact_replacement_bytes",
+        "frame_geometry",
+        "content_transform",
+        "z_order"
+      ],
+      "properties": {
+        "can_serialize": {
+          "const": true
+        },
+        "exact_replacement_bytes": {
+          "const": true
+        },
+        "frame_geometry": {
+          "const": "preserved"
+        },
+        "content_transform": {
+          "const": "approximated"
+        },
+        "z_order": {
+          "const": "approximated"
+        }
+      }
+    },
+    "odg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "can_serialize",
+        "exact_replacement_bytes",
+        "frame_geometry",
+        "content_transform",
+        "z_order"
+      ],
+      "properties": {
+        "can_serialize": {
+          "const": true
+        },
+        "exact_replacement_bytes": {
+          "const": true
+        },
+        "frame_geometry": {
+          "const": "preserved"
+        },
+        "content_transform": {
+          "const": "approximated"
+        },
+        "z_order": {
+          "const": "preserved"
+        }
+      }
+    },
+    "unsupported_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "silent_drop",
+        "silent_source_fallback"
+      ],
+      "properties": {
+        "policy": {
+          "const": "block_with_explicit_loss"
+        },
+        "silent_drop": {
+          "const": false
+        },
+        "silent_source_fallback": {
+          "const": false
+        }
+      }
+    },
+    "source_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_pub_unchanged",
+        "native_pub_writer_promoted"
+      ],
+      "properties": {
+        "source_pub_unchanged": {
+          "const": true
+        },
+        "native_pub_writer_promoted": {
+          "const": false
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pub_bytes_in_receipt",
+        "pub_filename_in_receipt",
+        "local_path_in_receipt",
+        "source_hash_in_receipt",
+        "node_id_in_receipt",
+        "asset_sha_in_receipt",
+        "replacement_bytes_in_receipt",
+        "export_bytes_in_receipt",
+        "customer_identity_in_receipt"
+      ],
+      "properties": {
+        "pub_bytes_in_receipt": {
+          "const": false
+        },
+        "pub_filename_in_receipt": {
+          "const": false
+        },
+        "local_path_in_receipt": {
+          "const": false
+        },
+        "source_hash_in_receipt": {
+          "const": false
+        },
+        "node_id_in_receipt": {
+          "const": false
+        },
+        "asset_sha_in_receipt": {
+          "const": false
+        },
+        "replacement_bytes_in_receipt": {
+          "const": false
+        },
+        "export_bytes_in_receipt": {
+          "const": false
+        },
+        "customer_identity_in_receipt": {
+          "const": false
+        }
+      }
+    },
+    "replacement_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "content_derived",
+        "effective_asset_matches_committed_replacement",
+        "idml_matches_effective_asset",
+        "odg_matches_effective_asset"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "pattern": "^rb_[0-9a-f]{32}$"
+        },
+        "content_derived": {
+          "const": false
+        },
+        "effective_asset_matches_committed_replacement": {
+          "const": true
+        },
+        "idml_matches_effective_asset": {
+          "const": true
+        },
+        "odg_matches_effective_asset": {
+          "const": true
+        }
+      }
+    }
+  }
+}
