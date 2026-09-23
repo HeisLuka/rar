@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/web-acceptance/v1/browser-receipt.schema.json",
+  "title": "Chaptera Web Editor real-browser acceptance receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "receipt_class",
+    "repository_commit_sha",
+    "browser",
+    "fixture",
+    "initial_revision_id",
+    "selected_node_id",
+    "before_rect",
+    "after_rect",
+    "client_operation_id",
+    "accepted_revision_id",
+    "undo_revision_id",
+    "redo_revision_id",
+    "scene_snapshot_ids",
+    "export",
+    "source_immutability",
+    "capability_state_visible",
+    "loss_state_visible",
+    "native_pub_save_enabled",
+    "semantic_assertions"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.web-acceptance-receipt.v1"},
+    "receipt_class": {"const": "real_pub_browser"},
+    "repository_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "browser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "headless"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "headless": {"type": "boolean"}
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256", "byte_len", "family"],
+      "properties": {
+        "name": {"const": "SampleNewsletter.pub"},
+        "sha256": {"const": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"},
+        "byte_len": {"const": 291840},
+        "family": {"const": "mature-0x2c"}
+      }
+    },
+    "initial_revision_id": {"$ref": "#/$defs/hashId"},
+    "selected_node_id": {"type": "string", "minLength": 1},
+    "before_rect": {"$ref": "#/$defs/rect"},
+    "after_rect": {"$ref": "#/$defs/rect"},
+    "client_operation_id": {"type": "string", "minLength": 1},
+    "accepted_revision_id": {"$ref": "#/$defs/hashId"},
+    "undo_revision_id": {"$ref": "#/$defs/hashId"},
+    "redo_revision_id": {"$ref": "#/$defs/hashId"},
+    "scene_snapshot_ids": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initial", "accepted", "undo", "redo", "reopen"],
+      "properties": {
+        "initial": {"$ref": "#/$defs/hashId"},
+        "accepted": {"$ref": "#/$defs/hashId"},
+        "undo": {"$ref": "#/$defs/hashId"},
+        "redo": {"$ref": "#/$defs/hashId"},
+        "reopen": {"$ref": "#/$defs/hashId"}
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "sha256", "geometry_reflects_edit"],
+      "properties": {
+        "target": {"type": "string", "enum": ["idml", "odg", "pdf"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "geometry_reflects_edit": {"const": true}
+      }
+    },
+    "source_immutability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_sha256", "after_sha256", "unchanged"],
+      "properties": {
+        "before_sha256": {"const": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"},
+        "after_sha256": {"const": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"},
+        "unchanged": {"const": true}
+      }
+    },
+    "capability_state_visible": {"const": true},
+    "loss_state_visible": {"const": true},
+    "native_pub_save_enabled": {"const": false},
+    "semantic_assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pointermove_created_no_revision",
+        "one_release_one_move",
+        "node_id_stable",
+        "server_before_state_won",
+        "reopen_independent_of_browser_memory",
+        "stale_base_not_silently_accepted"
+      ],
+      "properties": {
+        "pointermove_created_no_revision": {"const": true},
+        "one_release_one_move": {"const": true},
+        "node_id_stable": {"const": true},
+        "server_before_state_won": {"const": true},
+        "reopen_independent_of_browser_memory": {"const": true},
+        "stale_base_not_silently_accepted": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "hashId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

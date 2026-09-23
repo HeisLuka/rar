@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/revision/v1/producer-receipt.schema.json",
+  "title": "Chaptera canonical revision producer receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "document_id",
+    "source_hash",
+    "baseline",
+    "request",
+    "accepted",
+    "resulting_project",
+    "replayed_project",
+    "probes"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.revision-producer-receipt.v1"},
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {"type": "string", "minLength": 1},
+        "commit_or_build": {"type": "string", "minLength": 1},
+        "core_integration": {"const": true}
+      }
+    },
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "project_hash", "state_id", "revision_id"],
+      "properties": {
+        "project": {"$ref": "#/$defs/project"},
+        "project_hash": {"$ref": "#/$defs/hashId"},
+        "state_id": {"$ref": "#/$defs/hashId"},
+        "revision_id": {"$ref": "#/$defs/hashId"}
+      }
+    },
+    "request": {"type": "object"},
+    "accepted": {"type": "object"},
+    "resulting_project": {"$ref": "#/$defs/project"},
+    "replayed_project": {"$ref": "#/$defs/project"},
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stale_base", "exact_retry", "idempotency_conflict", "source_identity"],
+      "properties": {
+        "stale_base": {"$ref": "#/$defs/noMutationProbe"},
+        "idempotency_conflict": {"$ref": "#/$defs/noMutationProbe"},
+        "exact_retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["same_result", "executor_calls_total"],
+          "properties": {
+            "same_result": {"const": true},
+            "executor_calls_total": {"type": "integer", "const": 1}
+          }
+        },
+        "source_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["before", "after", "replay"],
+          "properties": {
+            "before": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "after": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "replay": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hashId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "project": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "source_hash", "operations"],
+      "properties": {
+        "schema_version": {"type": "string", "minLength": 1},
+        "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "operations": {"type": "array"}
+      }
+    },
+    "noMutationProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "before_revision_id", "after_revision_id", "executor_calls_delta"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "before_revision_id": {"$ref": "#/$defs/hashId"},
+        "after_revision_id": {"$ref": "#/$defs/hashId"},
+        "executor_calls_delta": {"type": "integer", "const": 0}
+      }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+name: WEB-ACCEPTANCE-01 preflight
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/acceptance/**"
+      - "tools/validate_web_acceptance_preflight.py"
+      - "tools/adapt_viewer_scene_v1.py"
+      - "tools/validate_revision_producer_receipt.py"
+      - "packages/protocol/scene/v1/**"
+      - "packages/protocol/revision/v1/**"
+      - "docs/web-editor-acceptance-preflight-v1.md"
+      - ".github/workflows/web-acceptance-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "jsonschema==4.23.0"
+      - name: Fetch pinned Apache POI SampleNewsletter.pub Git blob
+        run: |
+          mkdir -p .acceptance-input
+          curl -fsSL "https://api.github.com/repos/apache/poi/git/blobs/94900925af5832c493784f3cb51563f838a64df8" > .acceptance-input/blob.json
+          python - <<'PY'
+          import base64, json, pathlib
+          data = json.loads(pathlib.Path(".acceptance-input/blob.json").read_text())
+          if data.get("encoding") != "base64":
+              raise SystemExit("unexpected Git blob encoding")
+          raw = base64.b64decode(data["content"])
+          pathlib.Path(".acceptance-input/SampleNewsletter.pub").write_bytes(raw)
+          PY
+      - name: Validate real-PUB preflight without claiming closure
+        run: |
+          python tools/validate_web_acceptance_preflight.py             --fixture .acceptance-input/SampleNewsletter.pub             --mode preflight             --output .acceptance-input/preflight.json
+      - name: Assert current claim is fail-closed when real receipts are absent
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          result = json.loads(pathlib.Path(".acceptance-input/preflight.json").read_text())
+          if result["acceptance_ready"]:
+              print("all real receipts present; strict acceptance may now run")
+          else:
+              assert result["claim"] == "preflight_only_not_product_acceptance"
+              assert "missing_real_revision_producer_receipt" in result["blockers"]
+              assert "missing_real_viewer_geometry_receipt" in result["blockers"]
+              assert "missing_real_browser_acceptance_receipt" in result["blockers"]
+              print("preflight correctly remains non-acceptance")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-acceptance-01-preflight
+          path: .acceptance-input/preflight.json
+          if-no-files-found: error
