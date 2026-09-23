@@ -1,0 +1,54 @@
+name: Web Editor HTTP seam V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/editor-service-client-v1.mjs"
+      - "apps/web/observability-v1.mjs"
+      - "apps/web/observability-v1.test.mjs"
+      - "apps/web/editor-shell-http-harness.html"
+      - "apps/web/editor-shell-v1.mjs"
+      - "services/editor-api/web_shell_http_harness.py"
+      - "services/editor-api/observability.py"
+      - "services/editor-api/test_observability.py"
+      - "services/editor-api/revision_store.py"
+      - "tools/run_web_editor_http_harness.mjs"
+      - "docs/web-editor-http-seam-v1.md"
+      - "docs/cloud-editor-observability-v1.md"
+      - ".github/workflows/web-editor-http-seam.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  http-seam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Regression revision service kernel
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store.py test_observability.py
+      - name: Regression browser shell primitives
+        run: |
+          node --test apps/web/interaction-v1.test.mjs
+          node --test apps/web/render-v1.test.mjs
+          node --test apps/web/observability-v1.test.mjs
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run browser-to-HTTP process boundary
+        run: node tools/run_web_editor_http_harness.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-editor-http-seam-chromium
+          path: target/web-editor-http/chromium-http-*
+          if-no-files-found: error
