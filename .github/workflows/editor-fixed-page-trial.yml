@@ -1,0 +1,36 @@
+name: Chaptera Editor fixed-page trial acceptance
+
+on:
+  pull_request:
+    paths:
+      - "packages/product/editor-fixed-page-trial/**"
+      - "tools/validate_editor_fixed_page_trial_receipt.py"
+      - "tools/test_editor_fixed_page_trial_receipt.py"
+      - "docs/chaptera-editor-fixed-page-trial-v1.md"
+      - ".github/workflows/editor-fixed-page-trial.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install jsonschema
+      - name: Validate final fixed-page trial contract
+        run: python -m unittest tools/test_editor_fixed_page_trial_receipt.py
+      - name: Validate retained real trial receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          receipts=(packages/product/editor-fixed-page-trial/v1/receipts/*.json)
+          for receipt in "${receipts[@]}"; do
+            python tools/validate_editor_fixed_page_trial_receipt.py "$receipt"
+          done
+          echo "validated_real_trial_receipts=${#receipts[@]}"
