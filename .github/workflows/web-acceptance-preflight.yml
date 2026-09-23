@@ -76,6 +76,28 @@ jobs:
                   assert "missing_real_browser_acceptance_receipt" in result["blockers"]
                   print("preflight correctly remains non-acceptance")
           PY
+      - name: Prove strict mode fails closed while real receipts are missing
+        if: env.ACCEPTANCE_MODE == 'preflight'
+        run: |
+          python - <<'PY'
+          import json, pathlib, subprocess, sys
+          result = json.loads(pathlib.Path(".acceptance-input/acceptance-gate.json").read_text())
+          if result["acceptance_ready"]:
+              print("real receipts already present; negative strict proof not applicable")
+              raise SystemExit(0)
+          command = [
+              sys.executable,
+              "tools/validate_web_acceptance_preflight.py",
+              "--fixture",
+              ".acceptance-input/SampleNewsletter.pub",
+              "--mode",
+              "strict",
+          ]
+          completed = subprocess.run(command, check=False)
+          if completed.returncode == 0:
+              raise SystemExit("strict mode unexpectedly passed without complete real receipts")
+          print("strict mode correctly failed closed")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: web-acceptance-01-${{ env.ACCEPTANCE_MODE }}
