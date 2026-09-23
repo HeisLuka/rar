@@ -1,0 +1,73 @@
+{
+  "protocol_version": "chaptera.scene.v1",
+  "document_id": "14444444-4444-4444-8444-444444444444",
+  "source_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "revision_id": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "snapshot_id": "sha256:2c60d941cc5ee7ebebf4fa0c5b6a11ed7f4b5e0d3eb93c5029d0ffb405a75980",
+  "layout_environment": {
+    "environment_id": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "engine_revision": "layout-v1",
+    "font_set_fingerprint": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "resource_fingerprint": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "pages": [
+    {
+      "page_id": "14444444-4444-4444-8444-444444444445",
+      "order": 0,
+      "width_emu": 7772400,
+      "height_emu": 10058400
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "24444444-4444-4444-8444-444444444444",
+      "page_id": "14444444-4444-4444-8444-444444444445",
+      "parent_node_id": null,
+      "kind": "unknown",
+      "bounds": {
+        "x": -12700,
+        "y": 500000,
+        "width": 1000000,
+        "height": 1000000
+      },
+      "z_order": 9,
+      "paint_order": 9,
+      "paint_id": null,
+      "resource_id": null,
+      "transform": {
+        "a": "1",
+        "b": "0",
+        "c": "0",
+        "d": "1",
+        "tx": 0,
+        "ty": 0
+      }
+    }
+  ],
+  "stories": [],
+  "story_frames": [],
+  "paints": [],
+  "resources": [],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "SCENE.NODE.UNSUPPORTED",
+      "origin_node_id": "24444444-4444-4444-8444-444444444444",
+      "message_key": "scene.node.unsupported_preserved_as_bounds"
+    }
+  ],
+  "capabilities": [
+    {
+      "key": "render.unknown-node",
+      "state": "unsupported",
+      "note": "Geometry is preserved; semantic rendering is unavailable."
+    }
+  ],
+  "fidelity": {
+    "state": "partial",
+    "reasons": [
+      "unsupported_node_kind"
+    ]
+  },
+  "stacking_fidelity": "exact"
+}

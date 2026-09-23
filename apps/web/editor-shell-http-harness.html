@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Browser Editor HTTP Harness</title>
+<style>
+  html, body { margin: 0; font-family: system-ui, sans-serif; background: #e9e9e9; }
+  #status { box-sizing: border-box; min-height: 64px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ccc; font-size: 12px; }
+  #host { width: 1200px; height: 800px; position: relative; overflow: hidden; touch-action: none; }
+</style>
+<div id="status"></div>
+<div id="host" aria-label="editor canvas"></div>
+<script type="module">
+  import { BrowserEditorShellV1 } from "./editor-shell-v1.mjs";
+  import { HttpEditorServiceV1 } from "./editor-service-client-v1.mjs";
+  import { BrowserObservabilityV1 } from "./observability-v1.mjs";
+
+  const params = new URLSearchParams(location.search);
+  const api = params.get("api");
+  if (!api) throw new Error("api query parameter is required");
+
+  const status = document.getElementById("status");
+  const host = document.getElementById("host");
+  let idCounter = 0;
+  const observability = new BrowserObservabilityV1({
+    sessionIncarnation: "session:http-harness-v1",
+    browserFamily: navigator.userAgent.includes("Firefox") ? "firefox" : "chromium",
+    idFactory: (prefix) => prefix + ":http-harness-" + String(++idCounter).padStart(4, "0"),
+  });
+  const service = new HttpEditorServiceV1(api, { observability });
+  const snapshot = await service.currentScene();
+  const states = [];
+
+  let shell = null;
+  shell = new BrowserEditorShellV1({
+    host,
+    service,
+    rendererKind: "svg",
+    onState: (state) => {
+      states.push(state);
+      status.textContent = JSON.stringify({
+        claim: "synthetic_http_service_plumbing_not_product_acceptance",
+        revision_id: state.revision_id,
+        selected_node_id: state.selected_node_id,
+        reason: state.reason
+      });
+    }
+  });
+  shell.loadSnapshot(snapshot, { preserveSelection: false });
+  shell.bindPointerEvents();
+
+  window.__shell = shell;
+  window.__service = service;
+  window.__states = states;
+  window.__observability = observability;
+  window.__shellReady = true;
+</script>

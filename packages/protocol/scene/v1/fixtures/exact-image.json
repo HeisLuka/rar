@@ -1,0 +1,79 @@
+{
+  "protocol_version": "chaptera.scene.v1",
+  "document_id": "12222222-2222-4222-8222-222222222222",
+  "source_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "revision_id": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "snapshot_id": "sha256:df2a6dd81bbacbd948cf2e2278c8083e1d9c40172aacbf80275bec0991dde0cc",
+  "layout_environment": {
+    "environment_id": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "engine_revision": "layout-v1",
+    "font_set_fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "resource_fingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "pages": [
+    {
+      "page_id": "12222222-2222-4222-8222-222222222223",
+      "order": 0,
+      "width_emu": 7772400,
+      "height_emu": 10058400
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "22222222-2222-4222-8222-222222222222",
+      "page_id": "12222222-2222-4222-8222-222222222223",
+      "parent_node_id": null,
+      "kind": "picture_frame",
+      "bounds": {
+        "x": 457200,
+        "y": 685800,
+        "width": 3657600,
+        "height": 2743200
+      },
+      "z_order": 2,
+      "paint_order": 2,
+      "paint_id": null,
+      "resource_id": "42222222-2222-4222-8222-222222222222",
+      "transform": {
+        "a": "1",
+        "b": "0",
+        "c": "0",
+        "d": "1",
+        "tx": 0,
+        "ty": 0
+      }
+    }
+  ],
+  "stories": [],
+  "story_frames": [],
+  "paints": [],
+  "resources": [
+    {
+      "resource_id": "42222222-2222-4222-8222-222222222222",
+      "kind": "image",
+      "mime": "image/png",
+      "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "byte_len": 4096,
+      "availability": "available",
+      "fetch_handle": "res_img_exact_001"
+    }
+  ],
+  "diagnostics": [],
+  "capabilities": [
+    {
+      "key": "render.geometry",
+      "state": "supported",
+      "note": null
+    },
+    {
+      "key": "resource.image.fetch",
+      "state": "supported",
+      "note": null
+    }
+  ],
+  "fidelity": {
+    "state": "supported",
+    "reasons": []
+  },
+  "stacking_fidelity": "exact"
+}
