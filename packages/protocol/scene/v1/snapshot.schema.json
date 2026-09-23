@@ -1,0 +1,647 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/protocol/scene/v1/snapshot.schema.json",
+  "title": "Chaptera BrowserSceneSnapshotV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "source_hash",
+    "revision_id",
+    "snapshot_id",
+    "layout_environment",
+    "stacking_fidelity",
+    "pages",
+    "nodes",
+    "stories",
+    "story_frames",
+    "paints",
+    "resources",
+    "diagnostics",
+    "capabilities",
+    "fidelity"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": "chaptera.scene.v1"
+    },
+    "document_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "source_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "revision_id": {
+      "$ref": "#/$defs/hashId"
+    },
+    "snapshot_id": {
+      "$ref": "#/$defs/hashId"
+    },
+    "layout_environment": {
+      "$ref": "#/$defs/layoutEnvironment"
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/page"
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "stories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/story"
+      }
+    },
+    "story_frames": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/storyFrame"
+      }
+    },
+    "paints": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/paint"
+      }
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resource"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "fidelity": {
+      "$ref": "#/$defs/fidelity"
+    },
+    "stacking_fidelity": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "partial",
+        "unknown"
+      ]
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "opaqueHandle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "emu": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "positiveEmu": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "nonNegativeEmu": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/emu"
+        },
+        "y": {
+          "$ref": "#/$defs/emu"
+        },
+        "width": {
+          "$ref": "#/$defs/positiveEmu"
+        },
+        "height": {
+          "$ref": "#/$defs/positiveEmu"
+        }
+      }
+    },
+    "rgba8": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "r",
+        "g",
+        "b",
+        "a"
+      ],
+      "properties": {
+        "r": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "g": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "b": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "a": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "layoutEnvironment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment_id",
+        "engine_revision",
+        "font_set_fingerprint",
+        "resource_fingerprint"
+      ],
+      "properties": {
+        "environment_id": {
+          "$ref": "#/$defs/hashId"
+        },
+        "engine_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "font_set_fingerprint": {
+          "$ref": "#/$defs/hashId"
+        },
+        "resource_fingerprint": {
+          "$ref": "#/$defs/hashId"
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page_id",
+        "order",
+        "width_emu",
+        "height_emu"
+      ],
+      "properties": {
+        "page_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "order": {
+          "$ref": "#/$defs/nonNegativeJsSafeInteger"
+        },
+        "width_emu": {
+          "$ref": "#/$defs/positiveEmu"
+        },
+        "height_emu": {
+          "$ref": "#/$defs/positiveEmu"
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "page_id",
+        "kind",
+        "bounds",
+        "transform",
+        "z_order",
+        "paint_order",
+        "paint_id"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "page_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text_frame",
+            "picture_frame",
+            "shape",
+            "group",
+            "table",
+            "line",
+            "unknown"
+          ]
+        },
+        "bounds": {
+          "$ref": "#/$defs/rect"
+        },
+        "z_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/jsSafeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paint_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/nonNegativeJsSafeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paint_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transform": {
+          "$ref": "#/$defs/affine2d"
+        }
+      }
+    },
+    "story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "story_id",
+        "text",
+        "text_fidelity"
+      ],
+      "properties": {
+        "story_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "text": {
+          "type": "string"
+        },
+        "text_fidelity": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "partial",
+            "unsupported",
+            "opaque"
+          ]
+        }
+      }
+    },
+    "storyFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "story_id",
+        "frame_ordinal",
+        "node_id"
+      ],
+      "properties": {
+        "story_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "frame_ordinal": {
+          "$ref": "#/$defs/nonNegativeJsSafeInteger"
+        },
+        "node_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "paint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paint_id",
+        "fill",
+        "stroke"
+      ],
+      "properties": {
+        "paint_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "fill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/rgba8"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stroke": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "color",
+                "width_emu"
+              ],
+              "properties": {
+                "color": {
+                  "$ref": "#/$defs/rgba8"
+                },
+                "width_emu": {
+                  "$ref": "#/$defs/nonNegativeEmu"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource_id",
+        "kind",
+        "mime",
+        "content_hash",
+        "byte_len",
+        "availability",
+        "fetch_handle"
+      ],
+      "properties": {
+        "resource_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "image",
+            "font",
+            "other"
+          ]
+        },
+        "mime": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 127
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "byte_len": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/nonNegativeJsSafeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "availability": {
+          "type": "string",
+          "enum": [
+            "available",
+            "preview_only",
+            "blocked",
+            "missing",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "fetch_handle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaqueHandle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "code",
+        "message_key"
+      ],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "origin_node_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "state",
+        "note"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[a-z0-9._-]+$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "supported",
+            "partial",
+            "unsupported"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        }
+      }
+    },
+    "fidelity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "reasons"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "supported",
+            "partial",
+            "unsupported"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"
+    },
+    "affine2d": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "tx",
+        "ty"
+      ],
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/decimal"
+        },
+        "b": {
+          "$ref": "#/$defs/decimal"
+        },
+        "c": {
+          "$ref": "#/$defs/decimal"
+        },
+        "d": {
+          "$ref": "#/$defs/decimal"
+        },
+        "tx": {
+          "$ref": "#/$defs/emu"
+        },
+        "ty": {
+          "$ref": "#/$defs/emu"
+        }
+      }
+    },
+    "jsSafeInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "nonNegativeJsSafeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  }
+}
