@@ -1,0 +1,76 @@
+{
+  "receipt_version": "chaptera.editor-fixed-page-trial-acceptance.v1",
+  "receipt_kind": "synthetic_contract",
+  "product": "Chaptera Editor",
+  "trial_phase": "public_surrogate",
+  "source_fixture": {
+    "public_lineage": "apache_poi_sample_newsletter",
+    "public_sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+    "private_identity_redacted": true
+  },
+  "evidence_chain": {
+    "package": {
+      "receipt_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "validated": true
+    },
+    "resize_node": {
+      "receipt_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "validated": true
+    },
+    "replace_image_ui": {
+      "receipt_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "validated": true,
+      "replacement_binding_id": "rb_0123456789abcdef0123456789abcdef"
+    },
+    "replace_image_export": {
+      "receipt_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "validated": true,
+      "replacement_binding_id": "rb_0123456789abcdef0123456789abcdef"
+    },
+    "auth_wrap": {
+      "receipt_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "validated": true,
+      "native_observation": true,
+      "closure_candidate": true,
+      "authority_class": "inverse_cache"
+    }
+  },
+  "user_path": {
+    "launch_without_dev_toolchain": true,
+    "pub_opened": true,
+    "supported_story_edited": true,
+    "supported_object_moved": true,
+    "supported_object_resized_from_canvas": true,
+    "supported_image_replaced": true,
+    "bounded_wrap_preserved": true,
+    "undo_redo_verified": true,
+    "editor_project_saved": true,
+    "close_reopen_reproduced_state": true,
+    "capability_loss_state_visible": true
+  },
+  "export_result": {
+    "target": "odg",
+    "edited_story_present": true,
+    "moved_geometry_present": true,
+    "resized_geometry_present": true,
+    "replacement_image_exact": true,
+    "bounded_wrap_result_preserved": true,
+    "blocking_loss_count": 0,
+    "approximations_explicit": true
+  },
+  "safety": {
+    "source_pub_immutable": true,
+    "native_save_pub_claimed": false,
+    "unsupported_mutation_fails_closed": true,
+    "no_silent_source_image_fallback": true,
+    "no_hidden_network_upload": true
+  },
+  "privacy": {
+    "pub_bytes_in_receipt": false,
+    "private_filename_in_receipt": false,
+    "local_path_in_receipt": false,
+    "document_text_in_receipt": false,
+    "replacement_asset_bytes_in_receipt": false,
+    "customer_identity_in_receipt": false
+  }
+}
