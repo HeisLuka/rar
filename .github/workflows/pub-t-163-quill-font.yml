@@ -1,0 +1,185 @@
+name: PUB-T-163 Quill FONT discriminator
+
+on:
+  push:
+    paths:
+      - ".github/workflows/pub-t-163-quill-font.yml"
+      - "tools/quill-font-discriminator/**"
+  pull_request:
+    paths:
+      - ".github/workflows/pub-t-163-quill-font.yml"
+      - "tools/quill-font-discriminator/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RIGHTS_LANDING: "https://www.mass.gov/lists/for-dds-service-recipients-and-families"
+      RIGHTS_TITLE: "Rights Review (Volume 8 Issue 3) Jan 2019"
+      APACHE_BLOB: "94900925af5832c493784f3cb51563f838a64df8"
+      APACHE_SHA256: "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+      APACHE_BYTE_LEN: "291840"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded read-only dependencies
+        run: |
+          python -m pip install "olefile==0.47" "requests==2.32.3" "beautifulsoup4==4.12.3"
+
+      - name: Fetch public Mass.gov Rights Review fixture
+        run: |
+          mkdir -p .inputs out
+          python tools/quill-font-discriminator/fetch_public_pub.py             --landing "$RIGHTS_LANDING"             --title-needle "$RIGHTS_TITLE"             --output ".inputs/Rights-Review-2019.pub"             --receipt "out/rights-review-source.json"
+
+      - name: Fetch pinned Apache POI SampleNewsletter fixture
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL             -H "Authorization: Bearer $GH_TOKEN"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/apache/poi/git/blobs/$APACHE_BLOB"             > .inputs/apache-blob.json
+          python - <<'PY'
+          import base64, hashlib, json, os
+          from pathlib import Path
+
+          data = json.loads(Path(".inputs/apache-blob.json").read_text())
+          if data.get("encoding") != "base64":
+              raise SystemExit("unexpected Git blob encoding")
+          raw = base64.b64decode(data["content"])
+          sha = hashlib.sha256(raw).hexdigest()
+          if len(raw) != int(os.environ["APACHE_BYTE_LEN"]):
+              raise SystemExit(f"Apache fixture byte length mismatch: {len(raw)}")
+          if sha != os.environ["APACHE_SHA256"]:
+              raise SystemExit(f"Apache fixture SHA mismatch: {sha}")
+          Path(".inputs/SampleNewsletter.pub").write_bytes(raw)
+          Path("out/sample-newsletter-source.json").write_text(
+              json.dumps(
+                  {
+                      "schema": "chaptera.public-pub-acquisition.v1",
+                      "upstream_repository": "apache/poi",
+                      "git_blob": os.environ["APACHE_BLOB"],
+                      "file_name": "SampleNewsletter.pub",
+                      "byte_len": len(raw),
+                      "sha256": sha,
+                      "ole_magic_ok": raw.startswith(bytes.fromhex("d0cf11e0a1b11ae1")),
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n"
+          )
+          PY
+
+      - name: Decode exact Quill FONT and FDPC joins
+        run: |
+          python tools/quill-font-discriminator/decode_quill_font.py             ".inputs/Rights-Review-2019.pub"             --source-label "mass.gov Rights Review Volume 8 Issue 3 Jan 2019"             --output "out/rights-review-quill-font.json"
+          python tools/quill-font-discriminator/decode_quill_font.py             ".inputs/SampleNewsletter.pub"             --source-label "apache/poi SampleNewsletter.pub pinned Git blob"             --output "out/sample-newsletter-quill-font.json"
+
+      - name: Enforce bounded T163 discriminator
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          rights = json.loads(Path("out/rights-review-quill-font.json").read_text())
+          sample = json.loads(Path("out/sample-newsletter-quill-font.json").read_text())
+
+          assert rights["schema"] == "chaptera.quill-font-discriminator.v1"
+          assert sample["schema"] == "chaptera.quill-font-discriminator.v1"
+
+          # The prior 52-string census was only a prediction. This is the decisive stored-N check.
+          assert rights["quill"]["font_descriptor_count"] == 1
+          assert rights["font"]["total_record_count"] == 52
+          assert rights["font"]["chunks"][0]["stored_count"] == 52
+          assert rights["font"]["all_chunks_terminal_exact"] is True
+          assert rights["fdpc"]["all_indices_in_range"] is True
+          assert rights["fdpc"]["font_reference_count"] > 0
+
+          # Independent public mature fixture: same grammar must close exactly without
+          # hard-coding a record count learned from Rights Review.
+          assert sample["font"]["total_record_count"] > 0
+          assert sample["font"]["all_chunks_terminal_exact"] is True
+          assert sample["fdpc"]["all_indices_in_range"] is True
+          assert sample["fdpc"]["font_reference_count"] > 0
+
+          for doc in (rights, sample):
+              for chunk in doc["font"]["chunks"]:
+                  assert len(chunk["records"]) == chunk["stored_count"]
+                  for record in chunk["records"]:
+                      assert record["end"] > record["start"]
+                      assert "\x00" not in record["name"]
+
+          summary = {
+              "schema": "chaptera.pub-t-163-read-only-receipt.v1",
+              "claim": "quill_font_record_and_fdpc_join_only_not_full_fontemb_closure",
+              "rights_review": {
+                  "sha256": rights["source"]["sha256"],
+                  "stored_font_count": rights["font"]["total_record_count"],
+                  "terminal_exact": rights["font"]["all_chunks_terminal_exact"],
+                  "fdpc_font_reference_count": rights["fdpc"]["font_reference_count"],
+                  "distinct_fdpc_indices": sorted(set(rights["fdpc"]["font_indices"])),
+                  "distinct_joined_names": sorted(set(n for n in rights["fdpc"]["joined_names"] if n)),
+              },
+              "sample_newsletter": {
+                  "sha256": sample["source"]["sha256"],
+                  "stored_font_count": sample["font"]["total_record_count"],
+                  "terminal_exact": sample["font"]["all_chunks_terminal_exact"],
+                  "fdpc_font_reference_count": sample["fdpc"]["font_reference_count"],
+                  "distinct_fdpc_indices": sorted(set(sample["fdpc"]["font_indices"])),
+                  "distinct_joined_names": sorted(set(n for n in sample["fdpc"]["joined_names"] if n)),
+              },
+              "full_fontemb_done": False,
+              "remaining": [
+                  "exact 0x6C/Contents font-name ownership join",
+                  "verified none/full/subset-A/AB/ABC Publisher12 controls",
+                  "embedded payload or alternative wrapping identity",
+                  "subset glyph-set delta measurement",
+              ],
+          }
+          Path("out/summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Publish source-free summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          s = json.loads(Path("out/summary.json").read_text())
+          print("# PUB-T-163 — Quill FONT / FDPC read-only discriminator")
+          print()
+          for key in ("rights_review", "sample_newsletter"):
+              row = s[key]
+              print(f"## {key}")
+              print(f"- source SHA-256: `{row['sha256']}`")
+              print(f"- stored FONT records: **{row['stored_font_count']}**")
+              print(f"- exact terminal boundary: **{row['terminal_exact']}**")
+              print(f"- FDPC font references: **{row['fdpc_font_reference_count']}**")
+              print(f"- distinct FDPC indices: `{row['distinct_fdpc_indices']}`")
+              print(f"- joined names: `{row['distinct_joined_names']}`")
+              print()
+          print("This is not full FONTEMB-01 closure.")
+          PY
+          sha256sum out/*.json | tee out/SHA256SUMS.txt
+
+      - name: Prove raw PUB inputs are not in retained output
+        run: |
+          if find out -type f \( -iname '*.pub' -o -iname '*.ole' \) | grep -q .; then
+            echo "raw PUB/CFB leaked into artifact output" >&2
+            exit 1
+          fi
+
+      - name: Upload source-free T163 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-t-163-quill-font-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
