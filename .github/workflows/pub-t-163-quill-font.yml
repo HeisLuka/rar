@@ -39,7 +39,7 @@ jobs:
       - name: Fetch public Mass.gov Rights Review fixture
         run: |
           mkdir -p .inputs out
-          python tools/quill-font-discriminator/fetch_public_pub.py             --landing "$RIGHTS_LANDING"             --title-needle "$RIGHTS_TITLE"             --output ".inputs/Rights-Review-2019.pub"             --receipt "out/rights-review-source.json"
+          python tools/quill-font-discriminator/fetch_public_pub.py             --landing "$RIGHTS_LANDING"             --title-needle "$RIGHTS_TITLE"             --direct-candidate "$RIGHTS_DIRECT"             --expected-sha256 "$RIGHTS_SHA256"             --output ".inputs/Rights-Review-2019.pub"             --receipt "out/rights-review-source.json"
 
       - name: Fetch pinned Apache POI SampleNewsletter fixture
         env:
