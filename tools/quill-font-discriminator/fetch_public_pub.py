@@ -19,6 +19,8 @@ def main() -> int:
     ap.add_argument("--title-needle", required=True)
     ap.add_argument("--output", type=pathlib.Path, required=True)
     ap.add_argument("--receipt", type=pathlib.Path, required=True)
+    ap.add_argument("--direct-candidate")
+    ap.add_argument("--expected-sha256")
     args = ap.parse_args()
 
     headers = {
