@@ -1,0 +1,31 @@
+Object encroaches nonprintable region
+Object partially off page
+Object isn't visible
+Object doesn't have a line or fill
+Text box is empty
+Page has space below top margin
+Low-resolution picture
+Picture is missing
+Story with text in overflow area
+Story on scratch area
+Text has transparent colors
+Text has transparent effects
+Picture doesn't have alternative text
+Page can't be reached from first page
+Page doesn't have links
+Object with text is partially off the page
+HTML fragment is partially off the page
+Object is overlapping text
+Object with text is rotated
+Shape with text has a hyperlink on the shape
+Text is vertical
+Text is too big to fit in the frame
+Text is in a non-web-ready font
+Text is in a diagonal table cell
+Table borders are less than .75pt
+Text has hyphenation
+Text box with borders has zero margins
+Hyperlink links to another page in this document
+Picture is modified
+Picture is not scaled proportionally
+Never Run This Check Again
