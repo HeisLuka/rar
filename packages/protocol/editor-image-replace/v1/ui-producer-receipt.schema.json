@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/editor-image-replace/v1/ui-producer-receipt.schema.json",
+  "title": "Chaptera ReplaceImage UI producer receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "operation_contract",
+    "producer",
+    "build",
+    "fixture_kind",
+    "target_gate",
+    "asset_import",
+    "commit",
+    "replacement_binding",
+    "project_replay",
+    "preview",
+    "negative_probes",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.replace-image-ui-producer-receipt.v1"
+    },
+    "operation_contract": {
+      "const": "chaptera.replace-image.v1"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "integration"
+      ],
+      "properties": {
+        "kind": {
+          "const": "chaptera_desktop_editor"
+        },
+        "integration": {
+          "const": "local_private"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chaptera_version",
+        "platform",
+        "binary_sha256"
+      ],
+      "properties": {
+        "chaptera_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Za-z._+-]+$"
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos",
+            "linux"
+          ]
+        },
+        "binary_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "fixture_kind": {
+      "enum": [
+        "synthetic_image",
+        "real_pub_sanitized"
+      ]
+    },
+    "target_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image_slot_present",
+        "explicit_crop_present",
+        "direct_page_owned",
+        "valid_bounds",
+        "target_id_redacted"
+      ],
+      "properties": {
+        "image_slot_present": {
+          "const": true
+        },
+        "explicit_crop_present": {
+          "const": false
+        },
+        "direct_page_owned": {
+          "const": true
+        },
+        "valid_bounds": {
+          "const": true
+        },
+        "target_id_redacted": {
+          "const": true
+        }
+      }
+    },
+    "asset_import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mime",
+        "non_empty",
+        "signature_matches_declared_mime",
+        "content_addressed_sha256",
+        "duplicate_same_sha_reused",
+        "mime_conflict_rejected",
+        "filename_is_identity",
+        "url_is_identity",
+        "asset_sha_redacted"
+      ],
+      "properties": {
+        "mime": {
+          "enum": [
+            "image/png",
+            "image/jpeg"
+          ]
+        },
+        "non_empty": {
+          "const": true
+        },
+        "signature_matches_declared_mime": {
+          "const": true
+        },
+        "content_addressed_sha256": {
+          "const": true
+        },
+        "duplicate_same_sha_reused": {
+          "const": true
+        },
+        "mime_conflict_rejected": {
+          "const": true
+        },
+        "filename_is_identity": {
+          "const": false
+        },
+        "url_is_identity": {
+          "const": false
+        },
+        "asset_sha_redacted": {
+          "const": true
+        }
+      }
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_kind",
+        "operation_count_before",
+        "operation_count_after",
+        "registered_asset_required",
+        "same_asset_no_change_rejected",
+        "source_pub_unchanged"
+      ],
+      "properties": {
+        "operation_kind": {
+          "const": "ReplaceImage"
+        },
+        "operation_count_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation_count_after": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "registered_asset_required": {
+          "const": true
+        },
+        "same_asset_no_change_rejected": {
+          "const": true
+        },
+        "source_pub_unchanged": {
+          "const": true
+        }
+      }
+    },
+    "project_replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image_operation_schema_supported",
+        "replacement_asset_metadata_persisted",
+        "asset_bytes_required_on_replay",
+        "undo_restores_previous_asset",
+        "redo_restores_replacement_asset",
+        "fresh_replay_reproduces_replacement",
+        "replay_transactional"
+      ],
+      "properties": {
+        "image_operation_schema_supported": {
+          "const": true
+        },
+        "replacement_asset_metadata_persisted": {
+          "const": true
+        },
+        "asset_bytes_required_on_replay": {
+          "const": true
+        },
+        "undo_restores_previous_asset": {
+          "const": true
+        },
+        "redo_restores_replacement_asset": {
+          "const": true
+        },
+        "fresh_replay_reproduces_replacement": {
+          "const": true
+        },
+        "replay_transactional": {
+          "const": true
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replacement_overlay_preferred",
+        "source_geometry_unchanged",
+        "source_crop_state_unchanged"
+      ],
+      "properties": {
+        "replacement_overlay_preferred": {
+          "const": true
+        },
+        "source_geometry_unchanged": {
+          "const": true
+        },
+        "source_crop_state_unchanged": {
+          "const": true
+        }
+      }
+    },
+    "negative_probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "missing_image_slot_rejected",
+        "crop_bearing_target_rejected",
+        "invalid_bounds_rejected",
+        "non_page_owned_rejected",
+        "empty_asset_rejected",
+        "unsupported_mime_rejected",
+        "signature_mismatch_rejected",
+        "missing_registered_asset_rejected"
+      ],
+      "properties": {
+        "missing_image_slot_rejected": {
+          "const": true
+        },
+        "crop_bearing_target_rejected": {
+          "const": true
+        },
+        "invalid_bounds_rejected": {
+          "const": true
+        },
+        "non_page_owned_rejected": {
+          "const": true
+        },
+        "empty_asset_rejected": {
+          "const": true
+        },
+        "unsupported_mime_rejected": {
+          "const": true
+        },
+        "signature_mismatch_rejected": {
+          "const": true
+        },
+        "missing_registered_asset_rejected": {
+          "const": true
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pub_bytes_in_receipt",
+        "pub_filename_in_receipt",
+        "local_path_in_receipt",
+        "source_hash_in_receipt",
+        "node_id_in_receipt",
+        "asset_sha_in_receipt",
+        "replacement_bytes_in_receipt",
+        "document_text_in_receipt",
+        "customer_identity_in_receipt"
+      ],
+      "properties": {
+        "pub_bytes_in_receipt": {
+          "const": false
+        },
+        "pub_filename_in_receipt": {
+          "const": false
+        },
+        "local_path_in_receipt": {
+          "const": false
+        },
+        "source_hash_in_receipt": {
+          "const": false
+        },
+        "node_id_in_receipt": {
+          "const": false
+        },
+        "asset_sha_in_receipt": {
+          "const": false
+        },
+        "replacement_bytes_in_receipt": {
+          "const": false
+        },
+        "document_text_in_receipt": {
+          "const": false
+        },
+        "customer_identity_in_receipt": {
+          "const": false
+        }
+      }
+    },
+    "replacement_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "content_derived",
+        "import_matches_committed_asset",
+        "committed_matches_preview_asset",
+        "committed_matches_redo_asset",
+        "committed_matches_fresh_replay_asset"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "pattern": "^rb_[0-9a-f]{32}$"
+        },
+        "content_derived": {
+          "const": false
+        },
+        "import_matches_committed_asset": {
+          "const": true
+        },
+        "committed_matches_preview_asset": {
+          "const": true
+        },
+        "committed_matches_redo_asset": {
+          "const": true
+        },
+        "committed_matches_fresh_replay_asset": {
+          "const": true
+        }
+      }
+    }
+  }
+}
