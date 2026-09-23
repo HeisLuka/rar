@@ -1,0 +1,91 @@
+name: DC-STATIC-01 Design Checker static pass
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/dc-static-01.yml"
+      - "tools/dc-static/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dc-static-01-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-pass:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded PE analysis dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+          python -m py_compile tools/dc-static/analyze_design_checker_resources.py
+
+      - name: Acquire exact MSPUB14 from official Microsoft update
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & tools/dc-static/acquire_mspub14.ps1 -OutRoot out/dc-static-01
+
+      - name: Map resources, raw strings and companion modules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/dc-static/analyze_design_checker_resources.py `
+            --pe out/dc-static-01/private/mspub.exe `
+            --scan-root out/dc-static-01/layers `
+            --anchors tools/dc-static/design_checker_anchors.txt `
+            --out out/dc-static-01/public/design-checker-static.json `
+            --expected-sha256 27c00f7f06957f24d392f9c61fbd3b40282f15dc595caf66785b561f559d7b97 `
+            --min-matched 0
+
+      - name: Write bounded run summary
+        if: always()
+        shell: pwsh
+        run: |
+          "## DC-STATIC-01" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "" | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (Test-Path "out/dc-static-01/public/acquisition-summary.json") {
+            "### Acquisition" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "~~~json" | Add-Content $env:GITHUB_STEP_SUMMARY
+            Get-Content "out/dc-static-01/public/acquisition-summary.json" | Add-Content $env:GITHUB_STEP_SUMMARY
+            "~~~" | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          if (Test-Path "out/dc-static-01/public/design-checker-static.md") {
+            Get-Content "out/dc-static-01/public/design-checker-static.md" | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Guard against proprietary payload upload
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bad = @(Get-ChildItem "out/dc-static-01/public" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension.ToLowerInvariant() -in @(".exe", ".dll", ".msp", ".msi", ".cab", ".pub") })
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Error "Proprietary/raw payload escaped public evidence dir: $($_.FullName)" }
+            throw "Refusing artifact upload"
+          }
+
+      - name: Upload derived static evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc-static-01-${{ github.run_id }}
+          path: out/dc-static-01/public/**
+          if-no-files-found: warn
+          retention-days: 90
