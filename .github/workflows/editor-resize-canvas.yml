@@ -1,0 +1,24 @@
+name: Chaptera canvas resize interaction
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/editor-resize/v1/resize-gesture-v1.mjs"
+      - "packages/protocol/editor-resize/v1/resize-gesture-v1.test.mjs"
+      - "docs/chaptera-editor-resize-canvas-v1.md"
+      - ".github/workflows/editor-resize-canvas.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test source-neutral resize gesture contract
+        run: node --test packages/protocol/editor-resize/v1/resize-gesture-v1.test.mjs
