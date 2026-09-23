@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/research/auth-wrap/v1/native-receipt.schema.json",
+  "title": "AUTH-WRAP-01 native authority receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "task_id",
+    "receipt_kind",
+    "scope",
+    "environment",
+    "fixture",
+    "family_a",
+    "family_b",
+    "conclusion",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": { "const": "chaptera.auth-wrap-native-receipt.v1" },
+    "task_id": { "const": "PUB-T-150" },
+    "receipt_kind": { "enum": ["synthetic_contract", "native_observation"] },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publisher_family",
+        "universal_claim",
+        "closure_candidate"
+      ],
+      "properties": {
+        "publisher_family": { "const": "Publisher2019_build12527" },
+        "universal_claim": { "const": false },
+        "closure_candidate": { "type": "boolean" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publisher_version",
+        "publisher_build",
+        "reset_contract",
+        "reset_provider_receipt_verified",
+        "cold_restore_pair_verified",
+        "environment_fingerprint_sha256",
+        "host_identity_redacted"
+      ],
+      "properties": {
+        "publisher_version": { "const": "16.0" },
+        "publisher_build": { "const": 12527 },
+        "reset_contract": { "const": "pub-research-reset-receipt.v1" },
+        "reset_provider_receipt_verified": { "type": "boolean" },
+        "cold_restore_pair_verified": { "type": "boolean" },
+        "environment_fingerprint_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "host_identity_redacted": { "const": true }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lineage",
+        "public_fixture",
+        "sha256"
+      ],
+      "properties": {
+        "lineage": {
+          "enum": [
+            "apache_poi_sample_newsletter",
+            "aspose_computer_classes_flyer"
+          ]
+        },
+        "public_fixture": { "const": true },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "family_a": { "$ref": "#/$defs/familyA" },
+    "family_b": { "$ref": "#/$defs/familyB" },
+    "conclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_class",
+        "both_conflict_families_executed",
+        "save_reopen_evidence_complete",
+        "needs_additional_native_discriminator"
+      ],
+      "properties": {
+        "authority_class": {
+          "enum": [
+            "source",
+            "inverse_cache",
+            "spatial_cache",
+            "mixed",
+            "inconclusive"
+          ]
+        },
+        "both_conflict_families_executed": { "type": "boolean" },
+        "save_reopen_evidence_complete": { "type": "boolean" },
+        "needs_additional_native_discriminator": { "type": "boolean" }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pub_bytes_in_receipt",
+        "document_text_in_receipt",
+        "local_path_in_receipt",
+        "host_name_in_receipt",
+        "user_identity_in_receipt",
+        "screenshots_in_receipt"
+      ],
+      "properties": {
+        "pub_bytes_in_receipt": { "const": false },
+        "document_text_in_receipt": { "const": false },
+        "local_path_in_receipt": { "const": false },
+        "host_name_in_receipt": { "const": false },
+        "user_identity_in_receipt": { "const": false },
+        "screenshots_in_receipt": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "commonCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executed",
+        "publisher_open_succeeded",
+        "pre_save_layout_captured",
+        "pre_save_com_wrap_captured",
+        "save_succeeded",
+        "reopen_succeeded",
+        "post_save_graph_captured",
+        "post_save_fopt_captured"
+      ],
+      "properties": {
+        "executed": { "type": "boolean" },
+        "publisher_open_succeeded": { "type": "boolean" },
+        "pre_save_layout_captured": { "type": "boolean" },
+        "pre_save_com_wrap_captured": { "type": "boolean" },
+        "save_succeeded": { "type": "boolean" },
+        "reopen_succeeded": { "type": "boolean" },
+        "post_save_graph_captured": { "type": "boolean" },
+        "post_save_fopt_captured": { "type": "boolean" }
+      }
+    },
+    "familyA": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "capture",
+        "one_0x47_target_ref_changed",
+        "0x46_count_kept_consistent",
+        "geometry_unchanged_before_open",
+        "textwrap_fopt_unchanged_before_open",
+        "post_save_0x47_outcome",
+        "post_save_fopt_outcome",
+        "layout_outcome"
+      ],
+      "properties": {
+        "contract": { "const": "change_0x47_only" },
+        "capture": { "$ref": "#/$defs/commonCapture" },
+        "one_0x47_target_ref_changed": { "type": "boolean" },
+        "0x46_count_kept_consistent": { "type": "boolean" },
+        "geometry_unchanged_before_open": { "type": "boolean" },
+        "textwrap_fopt_unchanged_before_open": { "type": "boolean" },
+        "post_save_0x47_outcome": {
+          "enum": [
+            "patched_ref_preserved",
+            "baseline_ref_restored",
+            "spatially_regenerated",
+            "other_regeneration",
+            "not_observed"
+          ]
+        },
+        "post_save_fopt_outcome": {
+          "enum": [
+            "unchanged",
+            "changed",
+            "not_observed"
+          ]
+        },
+        "layout_outcome": {
+          "enum": [
+            "followed_patched_ref",
+            "followed_geometry_fopt",
+            "mixed",
+            "no_visible_change",
+            "not_observed"
+          ]
+        }
+      }
+    },
+    "familyB": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "capture",
+        "one_wrap_property_changed_via_com",
+        "geometry_unchanged_before_save",
+        "old_0x47_left_untouched_before_save",
+        "post_save_0x47_outcome",
+        "post_save_fopt_outcome",
+        "layout_outcome"
+      ],
+      "properties": {
+        "contract": { "const": "change_textwrap_fopt_only" },
+        "capture": { "$ref": "#/$defs/commonCapture" },
+        "one_wrap_property_changed_via_com": { "type": "boolean" },
+        "geometry_unchanged_before_save": { "type": "boolean" },
+        "old_0x47_left_untouched_before_save": { "type": "boolean" },
+        "post_save_0x47_outcome": {
+          "enum": [
+            "unchanged",
+            "regenerated_for_new_wrap_state",
+            "regenerated_for_geometry_only",
+            "other_regeneration",
+            "not_observed"
+          ]
+        },
+        "post_save_fopt_outcome": {
+          "enum": [
+            "requested_change_persisted",
+            "normalized_differently",
+            "reverted",
+            "not_observed"
+          ]
+        },
+        "layout_outcome": {
+          "enum": [
+            "followed_new_wrap_state",
+            "followed_old_0x47",
+            "mixed",
+            "no_visible_change",
+            "not_observed"
+          ]
+        }
+      }
+    }
+  }
+}
