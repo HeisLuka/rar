@@ -1,0 +1,23 @@
+{
+  "manifest_version": "chaptera.web-acceptance-inputs.v1",
+  "fixture": {
+    "name": "SampleNewsletter.pub",
+    "family": "mature-0x2c",
+    "upstream_repository": "apache/poi",
+    "upstream_git_blob": "94900925af5832c493784f3cb51563f838a64df8",
+    "byte_len": 291840,
+    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+  },
+  "required_real_receipts": {
+    "viewer_geometry": "apps/web/acceptance/receipts/viewer-geometry.real.json",
+    "revision_producer": "packages/protocol/revision/v1/producer-receipts/sample-newsletter.real.json",
+    "browser_acceptance": "apps/web/acceptance/receipts/browser-acceptance.real.json"
+  },
+  "public_validators": {
+    "scene_adapter": "tools/adapt_viewer_scene_v1.py",
+    "scene_schema": "packages/protocol/scene/v1/snapshot.schema.json",
+    "revision_receipt_validator": "tools/validate_revision_producer_receipt.py",
+    "browser_receipt_schema": "apps/web/acceptance/browser-acceptance-receipt.schema.json"
+  },
+  "closure_rule": "all_real_receipts_required"
+}
