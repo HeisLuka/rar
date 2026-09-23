@@ -1,0 +1,89 @@
+{
+  "protocol_version": "chaptera.scene.v1",
+  "document_id": "11111111-1111-4111-8111-111111111111",
+  "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "revision_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "snapshot_id": "sha256:29f350380d135cfbcb66eb157210d24641f61e441d3db65e56b58bc1ec7dba80",
+  "layout_environment": {
+    "environment_id": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "engine_revision": "layout-v1",
+    "font_set_fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "resource_fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "pages": [
+    {
+      "page_id": "11111111-1111-4111-8111-111111111112",
+      "order": 0,
+      "width_emu": 7772400,
+      "height_emu": 10058400
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "21111111-1111-4111-8111-111111111111",
+      "page_id": "11111111-1111-4111-8111-111111111112",
+      "parent_node_id": null,
+      "kind": "text_frame",
+      "bounds": {
+        "x": 914400,
+        "y": 914400,
+        "width": 5486400,
+        "height": 1371600
+      },
+      "z_order": 1,
+      "paint_order": 1,
+      "paint_id": "paint.frame.none",
+      "resource_id": null,
+      "transform": {
+        "a": "1",
+        "b": "0",
+        "c": "0",
+        "d": "1",
+        "tx": 0,
+        "ty": 0
+      }
+    }
+  ],
+  "stories": [
+    {
+      "story_id": "31111111-1111-4111-8111-111111111111",
+      "text": "Hello, Publisher",
+      "text_fidelity": "partial"
+    }
+  ],
+  "story_frames": [
+    {
+      "story_id": "31111111-1111-4111-8111-111111111111",
+      "frame_ordinal": 0,
+      "node_id": "21111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "paints": [
+    {
+      "paint_id": "paint.frame.none",
+      "fill": null,
+      "stroke": null
+    }
+  ],
+  "resources": [],
+  "diagnostics": [],
+  "capabilities": [
+    {
+      "key": "render.geometry",
+      "state": "supported",
+      "note": null
+    },
+    {
+      "key": "render.text",
+      "state": "partial",
+      "note": "V1 carries Story text and frame geometry; browser text layout is not authoritative."
+    }
+  ],
+  "fidelity": {
+    "state": "partial",
+    "reasons": [
+      "browser_text_layout_non_authoritative"
+    ]
+  },
+  "stacking_fidelity": "exact"
+}
