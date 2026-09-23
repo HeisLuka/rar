@@ -1,4 +1,4 @@
-name: WEB-ACCEPTANCE-01 preflight
+name: WEB-ACCEPTANCE-01 gate
 
 on:
   pull_request:
@@ -12,13 +12,24 @@ on:
       - "docs/web-editor-acceptance-preflight-v1.md"
       - ".github/workflows/web-acceptance-preflight.yml"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Acceptance gate mode"
+        required: true
+        default: "preflight"
+        type: choice
+        options:
+          - preflight
+          - strict
 
 permissions:
   contents: read
 
 jobs:
-  preflight:
+  acceptance-gate:
     runs-on: ubuntu-latest
+    env:
+      ACCEPTANCE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'preflight' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,25 +48,58 @@ jobs:
           raw = base64.b64decode(data["content"])
           pathlib.Path(".acceptance-input/SampleNewsletter.pub").write_bytes(raw)
           PY
-      - name: Validate real-PUB preflight without claiming closure
+      - name: Validate real-PUB acceptance gate
         run: |
-          python tools/validate_web_acceptance_preflight.py             --fixture .acceptance-input/SampleNewsletter.pub             --mode preflight             --output .acceptance-input/preflight.json
-      - name: Assert current claim is fail-closed when real receipts are absent
+          python tools/validate_web_acceptance_preflight.py \
+            --fixture .acceptance-input/SampleNewsletter.pub \
+            --mode "$ACCEPTANCE_MODE" \
+            --output .acceptance-input/acceptance-gate.json
+      - name: Assert claim matches requested mode
         run: |
           python - <<'PY'
-          import json, pathlib
-          result = json.loads(pathlib.Path(".acceptance-input/preflight.json").read_text())
-          if result["acceptance_ready"]:
-              print("all real receipts present; strict acceptance may now run")
+          import json, os, pathlib
+          mode = os.environ["ACCEPTANCE_MODE"]
+          result = json.loads(pathlib.Path(".acceptance-input/acceptance-gate.json").read_text())
+          if mode == "strict":
+              assert result["acceptance_ready"] is True
+              assert result["claim"] == "real_pub_browser_acceptance_ready"
+              assert result["blockers"] == []
+              print("strict real-PUB acceptance gate is ready")
           else:
-              assert result["claim"] == "preflight_only_not_product_acceptance"
-              assert "missing_real_revision_producer_receipt" in result["blockers"]
-              assert "missing_real_viewer_geometry_receipt" in result["blockers"]
-              assert "missing_real_browser_acceptance_receipt" in result["blockers"]
-              print("preflight correctly remains non-acceptance")
+              if result["acceptance_ready"]:
+                  assert result["claim"] == "real_pub_browser_acceptance_ready"
+                  print("all real receipts present; strict dispatch may now close the gate")
+              else:
+                  assert result["claim"] == "preflight_only_not_product_acceptance"
+                  assert "missing_real_revision_producer_receipt" in result["blockers"]
+                  assert "missing_real_viewer_geometry_receipt" in result["blockers"]
+                  assert "missing_real_browser_acceptance_receipt" in result["blockers"]
+                  print("preflight correctly remains non-acceptance")
+          PY
+      - name: Prove strict mode fails closed while real receipts are missing
+        if: env.ACCEPTANCE_MODE == 'preflight'
+        run: |
+          python - <<'PY'
+          import json, pathlib, subprocess, sys
+          result = json.loads(pathlib.Path(".acceptance-input/acceptance-gate.json").read_text())
+          if result["acceptance_ready"]:
+              print("real receipts already present; negative strict proof not applicable")
+              raise SystemExit(0)
+          command = [
+              sys.executable,
+              "tools/validate_web_acceptance_preflight.py",
+              "--fixture",
+              ".acceptance-input/SampleNewsletter.pub",
+              "--mode",
+              "strict",
+          ]
+          completed = subprocess.run(command, check=False)
+          if completed.returncode == 0:
+              raise SystemExit("strict mode unexpectedly passed without complete real receipts")
+          print("strict mode correctly failed closed")
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: web-acceptance-01-preflight
-          path: .acceptance-input/preflight.json
+          name: web-acceptance-01-${{ env.ACCEPTANCE_MODE }}
+          path: .acceptance-input/acceptance-gate.json
           if-no-files-found: error
