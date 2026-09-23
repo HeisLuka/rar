@@ -1,0 +1,59 @@
+name: PUB research packet contract
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tools/research-runner/**"
+      - "tools/windows/pub-runtime/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packet-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate SYNTH blank reduction R1 packet
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/research-runner/validate_packet.py `
+            --packet tools/research-runner/experiments/synth-blank-reduce-r1.packet.json `
+            --expected-environment publisher-2019
+
+      - name: Parse research PowerShell
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(
+            "tools/research-runner/prepare_native_run.ps1",
+            "tools/research-runner/finalize_native_run.ps1",
+            "tools/research-runner/operations/CfbStructuredStorage.psm1",
+            "tools/research-runner/operations/synth_blank_reduce_r1.ps1",
+            "tools/research-runner/tests/test_cfb_structured_storage.ps1",
+            "tools/windows/pub-runtime/PubRuntime.psm1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file).Path,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -ne 0) {
+              $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
+              throw "PowerShell parser rejected $file"
+            }
+          }
+
+      - name: Exercise Structured Storage deletion helper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pwsh -NoProfile -File tools/research-runner/tests/test_cfb_structured_storage.ps1
