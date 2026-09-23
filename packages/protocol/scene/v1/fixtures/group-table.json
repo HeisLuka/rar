@@ -1,0 +1,148 @@
+{
+  "protocol_version": "chaptera.scene.v1",
+  "document_id": "13333333-3333-4333-8333-333333333333",
+  "source_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "revision_id": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "snapshot_id": "sha256:e430a169fbee2bbabc1e18fea7ec1296dced540d1a7a344ad339fbc4fdd3606d",
+  "layout_environment": {
+    "environment_id": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "engine_revision": "layout-v1",
+    "font_set_fingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "resource_fingerprint": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "pages": [
+    {
+      "page_id": "13333333-3333-4333-8333-333333333334",
+      "order": 0,
+      "width_emu": 10058400,
+      "height_emu": 7772400
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "23333333-3333-4333-8333-333333333330",
+      "page_id": "13333333-3333-4333-8333-333333333334",
+      "parent_node_id": null,
+      "kind": "group",
+      "bounds": {
+        "x": 900000,
+        "y": 900000,
+        "width": 5000000,
+        "height": 4000000
+      },
+      "z_order": 1,
+      "paint_order": 1,
+      "paint_id": null,
+      "resource_id": null,
+      "transform": {
+        "a": "1",
+        "b": "0",
+        "c": "0",
+        "d": "1",
+        "tx": 0,
+        "ty": 0
+      }
+    },
+    {
+      "node_id": "23333333-3333-4333-8333-333333333331",
+      "page_id": "13333333-3333-4333-8333-333333333334",
+      "parent_node_id": "23333333-3333-4333-8333-333333333330",
+      "kind": "table",
+      "bounds": {
+        "x": 2600000,
+        "y": 1600000,
+        "width": 2800000,
+        "height": 1600000
+      },
+      "z_order": 2,
+      "paint_order": 2,
+      "paint_id": "paint.table",
+      "resource_id": null,
+      "transform": {
+        "a": "1",
+        "b": "0",
+        "c": "0",
+        "d": "1",
+        "tx": 0,
+        "ty": 0
+      }
+    },
+    {
+      "node_id": "23333333-3333-4333-8333-333333333332",
+      "page_id": "13333333-3333-4333-8333-333333333334",
+      "parent_node_id": "23333333-3333-4333-8333-333333333330",
+      "kind": "shape",
+      "bounds": {
+        "x": 1200000,
+        "y": 1600000,
+        "width": 1200000,
+        "height": 600000
+      },
+      "z_order": 3,
+      "paint_order": 3,
+      "paint_id": "paint.blue",
+      "resource_id": null,
+      "transform": {
+        "a": "1",
+        "b": "0",
+        "c": "0",
+        "d": "1",
+        "tx": 0,
+        "ty": 0
+      }
+    }
+  ],
+  "stories": [],
+  "story_frames": [],
+  "paints": [
+    {
+      "paint_id": "paint.blue",
+      "fill": {
+        "r": 32,
+        "g": 96,
+        "b": 192,
+        "a": 255
+      },
+      "stroke": null
+    },
+    {
+      "paint_id": "paint.table",
+      "fill": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 255
+      },
+      "stroke": {
+        "color": {
+          "r": 0,
+          "g": 0,
+          "b": 0,
+          "a": 255
+        },
+        "width_emu": 12700
+      }
+    }
+  ],
+  "resources": [],
+  "diagnostics": [],
+  "capabilities": [
+    {
+      "key": "render.groups",
+      "state": "supported",
+      "note": null
+    },
+    {
+      "key": "render.tables",
+      "state": "partial",
+      "note": "V1 exposes table bounds as a typed node; cell-level rendering is a later capability."
+    }
+  ],
+  "fidelity": {
+    "state": "partial",
+    "reasons": [
+      "table_cell_projection_deferred"
+    ]
+  },
+  "stacking_fidelity": "exact"
+}
