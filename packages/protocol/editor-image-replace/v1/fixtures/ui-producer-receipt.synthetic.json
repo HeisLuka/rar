@@ -1,0 +1,83 @@
+{
+  "receipt_version": "chaptera.replace-image-ui-producer-receipt.v1",
+  "operation_contract": "chaptera.replace-image.v1",
+  "producer": {
+    "kind": "chaptera_desktop_editor",
+    "integration": "local_private"
+  },
+  "build": {
+    "chaptera_version": "0.1.0-test",
+    "platform": "windows",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "fixture_kind": "synthetic_image",
+  "target_gate": {
+    "image_slot_present": true,
+    "explicit_crop_present": false,
+    "direct_page_owned": true,
+    "valid_bounds": true,
+    "target_id_redacted": true
+  },
+  "asset_import": {
+    "mime": "image/png",
+    "non_empty": true,
+    "signature_matches_declared_mime": true,
+    "content_addressed_sha256": true,
+    "duplicate_same_sha_reused": true,
+    "mime_conflict_rejected": true,
+    "filename_is_identity": false,
+    "url_is_identity": false,
+    "asset_sha_redacted": true
+  },
+  "commit": {
+    "operation_kind": "ReplaceImage",
+    "operation_count_before": 2,
+    "operation_count_after": 3,
+    "registered_asset_required": true,
+    "same_asset_no_change_rejected": true,
+    "source_pub_unchanged": true
+  },
+  "project_replay": {
+    "image_operation_schema_supported": true,
+    "replacement_asset_metadata_persisted": true,
+    "asset_bytes_required_on_replay": true,
+    "undo_restores_previous_asset": true,
+    "redo_restores_replacement_asset": true,
+    "fresh_replay_reproduces_replacement": true,
+    "replay_transactional": true
+  },
+  "preview": {
+    "replacement_overlay_preferred": true,
+    "source_geometry_unchanged": true,
+    "source_crop_state_unchanged": true
+  },
+  "negative_probes": {
+    "missing_image_slot_rejected": true,
+    "crop_bearing_target_rejected": true,
+    "invalid_bounds_rejected": true,
+    "non_page_owned_rejected": true,
+    "empty_asset_rejected": true,
+    "unsupported_mime_rejected": true,
+    "signature_mismatch_rejected": true,
+    "missing_registered_asset_rejected": true
+  },
+  "privacy": {
+    "pub_bytes_in_receipt": false,
+    "pub_filename_in_receipt": false,
+    "local_path_in_receipt": false,
+    "source_hash_in_receipt": false,
+    "node_id_in_receipt": false,
+    "asset_sha_in_receipt": false,
+    "replacement_bytes_in_receipt": false,
+    "document_text_in_receipt": false,
+    "customer_identity_in_receipt": false
+  },
+  "replacement_binding": {
+    "binding_id": "rb_0123456789abcdef0123456789abcdef",
+    "content_derived": false,
+    "import_matches_committed_asset": true,
+    "committed_matches_preview_asset": true,
+    "committed_matches_redo_asset": true,
+    "committed_matches_fresh_replay_asset": true
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "receipt_version": "chaptera.resize-node-producer-receipt.v1",
+  "operation_contract": "chaptera.resize-node.v1",
+  "producer": {
+    "kind": "chaptera_desktop_editor",
+    "integration": "local_private"
+  },
+  "build": {
+    "chaptera_version": "0.1.0-test",
+    "platform": "windows",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "fixture_kind": "synthetic_geometry",
+  "target_gate": {
+    "direct_page_owned": true,
+    "identity_transform": true,
+    "original_bounds_valid": true,
+    "node_id_redacted": true
+  },
+  "commit": {
+    "operation_kind": "ResizeNode",
+    "operation_count_before": 3,
+    "operation_count_after": 4,
+    "exact_before_captured": true,
+    "exact_after_captured": true,
+    "position_may_be_signed": true,
+    "after_width_positive": true,
+    "after_height_positive": true,
+    "size_changed": true,
+    "pure_move": false,
+    "bounds_commitments_distinct": true
+  },
+  "persistence": {
+    "project_schema": "pub-editor-v0.5",
+    "feature": "node.geometry.bounds",
+    "property_path": "node.bounds",
+    "format_representability": "lossless",
+    "native_pub_writer_state": "writer_blocked"
+  },
+  "undo_redo": {
+    "undo_restores_exact_before": true,
+    "redo_restores_exact_after": true
+  },
+  "replay": {
+    "fresh_session_reproduces_after": true,
+    "operation_count_preserved": true,
+    "legacy_v0_4_rejected": true,
+    "stale_before_rejected_transactionally": true
+  },
+  "exports": {
+    "idml_reflects_resized_bounds": true,
+    "odg_reflects_resized_bounds": true,
+    "source_pub_unchanged": true
+  },
+  "negative_probes": {
+    "identical_bounds_rejected_no_mutation": true,
+    "pure_move_rejected_no_mutation": true,
+    "non_positive_size_rejected_no_mutation": true,
+    "overflow_rejected_no_mutation": true,
+    "unsupported_target_rejected_no_mutation": true
+  },
+  "privacy": {
+    "pub_bytes_in_receipt": false,
+    "pub_filename_in_receipt": false,
+    "local_path_in_receipt": false,
+    "source_hash_in_receipt": false,
+    "node_id_in_receipt": false,
+    "document_text_in_receipt": false,
+    "customer_identity_in_receipt": false
+  }
+}

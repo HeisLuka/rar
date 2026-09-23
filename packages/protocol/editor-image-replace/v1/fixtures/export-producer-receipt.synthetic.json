@@ -1,0 +1,60 @@
+{
+  "receipt_version": "chaptera.replace-image-export-producer-receipt.v1",
+  "export_contract": "chaptera.replace-image-export.v1",
+  "producer": {
+    "kind": "chaptera_desktop_editor",
+    "integration": "local_private"
+  },
+  "build": {
+    "chaptera_version": "0.1.0-test",
+    "platform": "windows",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "fixture_kind": "synthetic_image",
+  "effective_asset": {
+    "resolved_by_content_sha256": true,
+    "asset_sha_redacted": true,
+    "source_asset_silently_reused": false
+  },
+  "idml": {
+    "can_serialize": true,
+    "exact_replacement_bytes": true,
+    "frame_geometry": "preserved",
+    "content_transform": "approximated",
+    "z_order": "approximated"
+  },
+  "odg": {
+    "can_serialize": true,
+    "exact_replacement_bytes": true,
+    "frame_geometry": "preserved",
+    "content_transform": "approximated",
+    "z_order": "preserved"
+  },
+  "unsupported_target": {
+    "policy": "block_with_explicit_loss",
+    "silent_drop": false,
+    "silent_source_fallback": false
+  },
+  "source_boundary": {
+    "source_pub_unchanged": true,
+    "native_pub_writer_promoted": false
+  },
+  "privacy": {
+    "pub_bytes_in_receipt": false,
+    "pub_filename_in_receipt": false,
+    "local_path_in_receipt": false,
+    "source_hash_in_receipt": false,
+    "node_id_in_receipt": false,
+    "asset_sha_in_receipt": false,
+    "replacement_bytes_in_receipt": false,
+    "export_bytes_in_receipt": false,
+    "customer_identity_in_receipt": false
+  },
+  "replacement_binding": {
+    "binding_id": "rb_0123456789abcdef0123456789abcdef",
+    "content_derived": false,
+    "effective_asset_matches_committed_replacement": true,
+    "idml_matches_effective_asset": true,
+    "odg_matches_effective_asset": true
+  }
+}

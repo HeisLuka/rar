@@ -1,0 +1,44 @@
+{
+  "receipt_version": "chaptera.editor-live-trial-package-receipt.v1",
+  "product": "Chaptera Editor",
+  "build": {
+    "chaptera_version": "0.1.0-test",
+    "platform": "windows",
+    "arch": "x86_64",
+    "package_kind": "portable_zip",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "zip_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "fixture_kind": "synthetic_integration",
+  "editor_boundary": {
+    "reader_only": false,
+    "editor_controls_enabled": true,
+    "native_save_pub_claimed": false,
+    "source_pub_immutable": true
+  },
+  "runtime_smoke": {
+    "launch_without_dev_toolchain": true,
+    "real_pub_opened": true,
+    "supported_story_edited": true,
+    "supported_object_dragged": true,
+    "undo_redo_verified": true,
+    "editor_project_saved": true,
+    "close_reopen_reproduced_state": true,
+    "unsupported_actions_fail_closed": true
+  },
+  "package_contents": {
+    "chaptera_executable_present": true,
+    "trial_readme_present": true,
+    "trial_readme_contract": "chaptera.editor-live-trial-readme.v1",
+    "installer_included": false,
+    "code_signing_claimed": false,
+    "auto_update_claimed": false
+  },
+  "privacy": {
+    "pub_bytes_in_receipt": false,
+    "pub_filename_in_receipt": false,
+    "local_path_in_receipt": false,
+    "document_text_in_receipt": false,
+    "customer_identity_in_receipt": false
+  }
+}

@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/product/editor-fixed-page-trial/v1/acceptance-receipt.schema.json",
+  "title": "Chaptera Editor fixed-page trial acceptance receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "receipt_kind",
+    "product",
+    "trial_phase",
+    "source_fixture",
+    "evidence_chain",
+    "user_path",
+    "export_result",
+    "safety",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.editor-fixed-page-trial-acceptance.v1"
+    },
+    "receipt_kind": {
+      "enum": [
+        "synthetic_contract",
+        "real_trial"
+      ]
+    },
+    "product": {
+      "const": "Chaptera Editor"
+    },
+    "trial_phase": {
+      "enum": [
+        "public_surrogate",
+        "private_customer"
+      ]
+    },
+    "source_fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_lineage",
+        "public_sha256",
+        "private_identity_redacted"
+      ],
+      "properties": {
+        "public_lineage": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "apache_poi_sample_newsletter",
+            null
+          ]
+        },
+        "public_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "private_identity_redacted": {
+          "const": true
+        }
+      }
+    },
+    "evidence_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "resize_node",
+        "replace_image_ui",
+        "replace_image_export",
+        "auth_wrap"
+      ],
+      "properties": {
+        "package": {
+          "$ref": "#/$defs/receiptRef"
+        },
+        "resize_node": {
+          "$ref": "#/$defs/receiptRef"
+        },
+        "replace_image_ui": {
+          "$ref": "#/$defs/replaceImageReceiptRef"
+        },
+        "replace_image_export": {
+          "$ref": "#/$defs/replaceImageReceiptRef"
+        },
+        "auth_wrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "receipt_sha256",
+            "validated",
+            "native_observation",
+            "closure_candidate",
+            "authority_class"
+          ],
+          "properties": {
+            "receipt_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "validated": {
+              "type": "boolean"
+            },
+            "native_observation": {
+              "type": "boolean"
+            },
+            "closure_candidate": {
+              "type": "boolean"
+            },
+            "authority_class": {
+              "enum": [
+                "source",
+                "inverse_cache",
+                "spatial_cache",
+                "mixed",
+                "inconclusive"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "user_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launch_without_dev_toolchain",
+        "pub_opened",
+        "supported_story_edited",
+        "supported_object_moved",
+        "supported_object_resized_from_canvas",
+        "supported_image_replaced",
+        "bounded_wrap_preserved",
+        "undo_redo_verified",
+        "editor_project_saved",
+        "close_reopen_reproduced_state",
+        "capability_loss_state_visible"
+      ],
+      "properties": {
+        "launch_without_dev_toolchain": {
+          "type": "boolean"
+        },
+        "pub_opened": {
+          "type": "boolean"
+        },
+        "supported_story_edited": {
+          "type": "boolean"
+        },
+        "supported_object_moved": {
+          "type": "boolean"
+        },
+        "supported_object_resized_from_canvas": {
+          "type": "boolean"
+        },
+        "supported_image_replaced": {
+          "type": "boolean"
+        },
+        "bounded_wrap_preserved": {
+          "type": "boolean"
+        },
+        "undo_redo_verified": {
+          "type": "boolean"
+        },
+        "editor_project_saved": {
+          "type": "boolean"
+        },
+        "close_reopen_reproduced_state": {
+          "type": "boolean"
+        },
+        "capability_loss_state_visible": {
+          "type": "boolean"
+        }
+      }
+    },
+    "export_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "edited_story_present",
+        "moved_geometry_present",
+        "resized_geometry_present",
+        "replacement_image_exact",
+        "bounded_wrap_result_preserved",
+        "blocking_loss_count",
+        "approximations_explicit"
+      ],
+      "properties": {
+        "target": {
+          "enum": [
+            "idml",
+            "odg"
+          ]
+        },
+        "edited_story_present": {
+          "type": "boolean"
+        },
+        "moved_geometry_present": {
+          "type": "boolean"
+        },
+        "resized_geometry_present": {
+          "type": "boolean"
+        },
+        "replacement_image_exact": {
+          "type": "boolean"
+        },
+        "bounded_wrap_result_preserved": {
+          "type": "boolean"
+        },
+        "blocking_loss_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approximations_explicit": {
+          "type": "boolean"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_pub_immutable",
+        "native_save_pub_claimed",
+        "unsupported_mutation_fails_closed",
+        "no_silent_source_image_fallback",
+        "no_hidden_network_upload"
+      ],
+      "properties": {
+        "source_pub_immutable": {
+          "type": "boolean"
+        },
+        "native_save_pub_claimed": {
+          "type": "boolean"
+        },
+        "unsupported_mutation_fails_closed": {
+          "type": "boolean"
+        },
+        "no_silent_source_image_fallback": {
+          "type": "boolean"
+        },
+        "no_hidden_network_upload": {
+          "type": "boolean"
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pub_bytes_in_receipt",
+        "private_filename_in_receipt",
+        "local_path_in_receipt",
+        "document_text_in_receipt",
+        "replacement_asset_bytes_in_receipt",
+        "customer_identity_in_receipt"
+      ],
+      "properties": {
+        "pub_bytes_in_receipt": {
+          "const": false
+        },
+        "private_filename_in_receipt": {
+          "const": false
+        },
+        "local_path_in_receipt": {
+          "const": false
+        },
+        "document_text_in_receipt": {
+          "const": false
+        },
+        "replacement_asset_bytes_in_receipt": {
+          "const": false
+        },
+        "customer_identity_in_receipt": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "receiptRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_sha256",
+        "validated"
+      ],
+      "properties": {
+        "receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "validated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "replaceImageReceiptRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_sha256",
+        "validated",
+        "replacement_binding_id"
+      ],
+      "properties": {
+        "receipt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "validated": {
+          "type": "boolean"
+        },
+        "replacement_binding_id": {
+          "type": "string",
+          "pattern": "^rb_[0-9a-f]{32}$"
+        }
+      }
+    }
+  }
+}

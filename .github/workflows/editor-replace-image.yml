@@ -1,0 +1,46 @@
+name: Chaptera ReplaceImage contracts
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/editor-image-replace/**"
+      - "tools/validate_replace_image_receipt.py"
+      - "tools/test_replace_image_receipt.py"
+      - "docs/chaptera-editor-replace-image-v1.md"
+      - ".github/workflows/editor-replace-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install jsonschema
+      - name: Validate ReplaceImage UI and export contracts
+        run: python -m unittest tools/test_replace_image_receipt.py
+      - name: Validate retained real UI receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          receipts=(packages/protocol/editor-image-replace/v1/ui-producer-receipts/*.json)
+          for receipt in "${receipts[@]}"; do
+            python tools/validate_replace_image_receipt.py ui "$receipt"
+          done
+          echo "validated_ui_receipts=${#receipts[@]}"
+      - name: Validate retained real export receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          receipts=(packages/protocol/editor-image-replace/v1/export-producer-receipts/*.json)
+          for receipt in "${receipts[@]}"; do
+            python tools/validate_replace_image_receipt.py export "$receipt"
+          done
+          echo "validated_export_receipts=${#receipts[@]}"

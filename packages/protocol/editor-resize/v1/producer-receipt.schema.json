@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/editor-resize/v1/producer-receipt.schema.json",
+  "title": "Chaptera ResizeNode producer receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "operation_contract",
+    "producer",
+    "build",
+    "fixture_kind",
+    "target_gate",
+    "commit",
+    "persistence",
+    "undo_redo",
+    "replay",
+    "exports",
+    "negative_probes",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.resize-node-producer-receipt.v1"
+    },
+    "operation_contract": {
+      "const": "chaptera.resize-node.v1"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "integration"],
+      "properties": {
+        "kind": { "const": "chaptera_desktop_editor" },
+        "integration": { "const": "local_private" }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chaptera_version", "platform", "binary_sha256"],
+      "properties": {
+        "chaptera_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Za-z._+-]+$"
+        },
+        "platform": {
+          "enum": ["windows", "macos", "linux"]
+        },
+        "binary_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "fixture_kind": {
+      "enum": ["synthetic_geometry", "real_pub_sanitized"]
+    },
+    "target_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direct_page_owned",
+        "identity_transform",
+        "original_bounds_valid",
+        "node_id_redacted"
+      ],
+      "properties": {
+        "direct_page_owned": { "const": true },
+        "identity_transform": { "const": true },
+        "original_bounds_valid": { "const": true },
+        "node_id_redacted": { "const": true }
+      }
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_kind",
+        "operation_count_before",
+        "operation_count_after",
+        "exact_before_captured",
+        "exact_after_captured",
+        "position_may_be_signed",
+        "after_width_positive",
+        "after_height_positive",
+        "size_changed",
+        "pure_move",
+        "bounds_commitments_distinct"
+      ],
+      "properties": {
+        "operation_kind": { "const": "ResizeNode" },
+        "operation_count_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation_count_after": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "exact_before_captured": { "const": true },
+        "exact_after_captured": { "const": true },
+        "position_may_be_signed": { "const": true },
+        "after_width_positive": { "const": true },
+        "after_height_positive": { "const": true },
+        "size_changed": { "const": true },
+        "pure_move": { "const": false },
+        "bounds_commitments_distinct": { "const": true }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_schema",
+        "feature",
+        "property_path",
+        "format_representability",
+        "native_pub_writer_state"
+      ],
+      "properties": {
+        "project_schema": { "const": "pub-editor-v0.5" },
+        "feature": { "const": "node.geometry.bounds" },
+        "property_path": { "const": "node.bounds" },
+        "format_representability": { "const": "lossless" },
+        "native_pub_writer_state": { "const": "writer_blocked" }
+      }
+    },
+    "undo_redo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "undo_restores_exact_before",
+        "redo_restores_exact_after"
+      ],
+      "properties": {
+        "undo_restores_exact_before": { "const": true },
+        "redo_restores_exact_after": { "const": true }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fresh_session_reproduces_after",
+        "operation_count_preserved",
+        "legacy_v0_4_rejected",
+        "stale_before_rejected_transactionally"
+      ],
+      "properties": {
+        "fresh_session_reproduces_after": { "const": true },
+        "operation_count_preserved": { "const": true },
+        "legacy_v0_4_rejected": { "const": true },
+        "stale_before_rejected_transactionally": { "const": true }
+      }
+    },
+    "exports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idml_reflects_resized_bounds",
+        "odg_reflects_resized_bounds",
+        "source_pub_unchanged"
+      ],
+      "properties": {
+        "idml_reflects_resized_bounds": { "const": true },
+        "odg_reflects_resized_bounds": { "const": true },
+        "source_pub_unchanged": { "const": true }
+      }
+    },
+    "negative_probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identical_bounds_rejected_no_mutation",
+        "pure_move_rejected_no_mutation",
+        "non_positive_size_rejected_no_mutation",
+        "overflow_rejected_no_mutation",
+        "unsupported_target_rejected_no_mutation"
+      ],
+      "properties": {
+        "identical_bounds_rejected_no_mutation": { "const": true },
+        "pure_move_rejected_no_mutation": { "const": true },
+        "non_positive_size_rejected_no_mutation": { "const": true },
+        "overflow_rejected_no_mutation": { "const": true },
+        "unsupported_target_rejected_no_mutation": { "const": true }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pub_bytes_in_receipt",
+        "pub_filename_in_receipt",
+        "local_path_in_receipt",
+        "source_hash_in_receipt",
+        "node_id_in_receipt",
+        "document_text_in_receipt",
+        "customer_identity_in_receipt"
+      ],
+      "properties": {
+        "pub_bytes_in_receipt": { "const": false },
+        "pub_filename_in_receipt": { "const": false },
+        "local_path_in_receipt": { "const": false },
+        "source_hash_in_receipt": { "const": false },
+        "node_id_in_receipt": { "const": false },
+        "document_text_in_receipt": { "const": false },
+        "customer_identity_in_receipt": { "const": false }
+      }
+    }
+  }
+}

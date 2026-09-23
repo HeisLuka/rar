@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/product/editor-live-trial/v1/package-receipt.schema.json",
+  "title": "Chaptera Editor live-trial portable package receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "product",
+    "build",
+    "fixture_kind",
+    "editor_boundary",
+    "runtime_smoke",
+    "package_contents",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.editor-live-trial-package-receipt.v1"
+    },
+    "product": {
+      "const": "Chaptera Editor"
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chaptera_version",
+        "platform",
+        "arch",
+        "package_kind",
+        "binary_sha256",
+        "zip_sha256"
+      ],
+      "properties": {
+        "chaptera_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Za-z._+-]+$"
+        },
+        "platform": { "const": "windows" },
+        "arch": { "const": "x86_64" },
+        "package_kind": { "const": "portable_zip" },
+        "binary_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "zip_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "fixture_kind": {
+      "enum": ["synthetic_integration", "real_pub_sanitized"]
+    },
+    "editor_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reader_only",
+        "editor_controls_enabled",
+        "native_save_pub_claimed",
+        "source_pub_immutable"
+      ],
+      "properties": {
+        "reader_only": { "const": false },
+        "editor_controls_enabled": { "const": true },
+        "native_save_pub_claimed": { "const": false },
+        "source_pub_immutable": { "const": true }
+      }
+    },
+    "runtime_smoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launch_without_dev_toolchain",
+        "real_pub_opened",
+        "supported_story_edited",
+        "supported_object_dragged",
+        "undo_redo_verified",
+        "editor_project_saved",
+        "close_reopen_reproduced_state",
+        "unsupported_actions_fail_closed"
+      ],
+      "properties": {
+        "launch_without_dev_toolchain": { "const": true },
+        "real_pub_opened": { "const": true },
+        "supported_story_edited": { "const": true },
+        "supported_object_dragged": { "const": true },
+        "undo_redo_verified": { "const": true },
+        "editor_project_saved": { "const": true },
+        "close_reopen_reproduced_state": { "const": true },
+        "unsupported_actions_fail_closed": { "const": true }
+      }
+    },
+    "package_contents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chaptera_executable_present",
+        "trial_readme_present",
+        "trial_readme_contract",
+        "installer_included",
+        "code_signing_claimed",
+        "auto_update_claimed"
+      ],
+      "properties": {
+        "chaptera_executable_present": { "const": true },
+        "trial_readme_present": { "const": true },
+        "trial_readme_contract": {
+          "const": "chaptera.editor-live-trial-readme.v1"
+        },
+        "installer_included": { "const": false },
+        "code_signing_claimed": { "const": false },
+        "auto_update_claimed": { "const": false }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pub_bytes_in_receipt",
+        "pub_filename_in_receipt",
+        "local_path_in_receipt",
+        "document_text_in_receipt",
+        "customer_identity_in_receipt"
+      ],
+      "properties": {
+        "pub_bytes_in_receipt": { "const": false },
+        "pub_filename_in_receipt": { "const": false },
+        "local_path_in_receipt": { "const": false },
+        "document_text_in_receipt": { "const": false },
+        "customer_identity_in_receipt": { "const": false }
+      }
+    }
+  }
+}

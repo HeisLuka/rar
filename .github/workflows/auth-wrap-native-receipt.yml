@@ -1,0 +1,36 @@
+name: AUTH-WRAP native receipt contract
+
+on:
+  pull_request:
+    paths:
+      - "packages/research/auth-wrap/**"
+      - "tools/validate_auth_wrap_native_receipt.py"
+      - "tools/test_auth_wrap_native_receipt.py"
+      - "docs/auth-wrap-native-receipt-v1.md"
+      - ".github/workflows/auth-wrap-native-receipt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install jsonschema
+      - name: Validate AUTH-WRAP receipt contract
+        run: python -m unittest tools/test_auth_wrap_native_receipt.py
+      - name: Validate retained native observation receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          receipts=(packages/research/auth-wrap/v1/native-receipts/*.json)
+          for receipt in "${receipts[@]}"; do
+            python tools/validate_auth_wrap_native_receipt.py "$receipt"
+          done
+          echo "validated_native_receipts=${#receipts[@]}"
