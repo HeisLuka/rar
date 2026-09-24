@@ -13,5 +13,11 @@ class T(unittest.TestCase):
         self.assertEqual(d.filename_from("https://x/download?id=2","Year 1 RE.pub"),"Year 1 RE.pub")
     def test_domain_normalization(self):
         self.assertEqual(d.hostname("https://www.Example.org/a"),"example.org")
+    def test_shard_values_are_stable_and_disjoint(self):
+        values=["a","b","c","d","e","f"]
+        self.assertEqual(d.shard_values(values,0,2),["a","c","e"])
+        self.assertEqual(d.shard_values(values,1,2),["b","d","f"])
+        with self.assertRaises(ValueError):
+            d.shard_values(values,2,2)
 
 if __name__=="__main__": unittest.main()
