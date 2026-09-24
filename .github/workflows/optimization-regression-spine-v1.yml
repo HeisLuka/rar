@@ -1,0 +1,27 @@
+name: OPT-REGRESSION-SPINE-01 comparator contract
+
+on:
+  pull_request:
+    paths:
+      - "tools/optimization_receipt_v1.py"
+      - "tools/test_optimization_receipt_v1.py"
+      - "tools/run_optimization_spine_contract.py"
+      - "docs/optimization-regression-spine-v1.md"
+      - ".github/workflows/optimization-regression-spine-v1.yml"
+      - ".github/workflows/render-bench-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comparator-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test strict compatibility, budgets and evidence authority
+        run: python tools/test_optimization_receipt_v1.py
