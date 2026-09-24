@@ -804,7 +804,7 @@ fn provider_error(error: ProviderError) -> BlobStoreError {
 }
 
 struct HashingBoundedReader<'a> {
-    inner: &'a mut dyn Read,
+    inner: &'a mut (dyn Read + Send),
     max_bytes: u64,
     bytes_read: u64,
     saw_eof: bool,
@@ -812,7 +812,7 @@ struct HashingBoundedReader<'a> {
 }
 
 impl<'a> HashingBoundedReader<'a> {
-    fn new(inner: &'a mut dyn Read, max_bytes: u64) -> Self {
+    fn new(inner: &'a mut (dyn Read + Send), max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
