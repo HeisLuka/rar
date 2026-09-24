@@ -13,6 +13,7 @@ pub mod runtime_error;
 pub mod serve;
 pub mod shutdown;
 pub mod source_ingress;
+pub mod sqlite_migrations;
 pub mod sqlite_store;
 pub mod state;
 pub mod worker;
