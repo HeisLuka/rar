@@ -323,6 +323,7 @@ async function main() {
       action: structuredClone(window.__historyActions.at(-1)),
       history_requests: window.__service.historyRequests,
       history_trace: structuredClone(window.__service.lastHistoryTraceContext),
+      source_hash: window.__shell.snapshot.source_hash,
       spans: structuredClone(window.__observability.spans),
       error: window.__historyError,
     }), initial.node_id);
@@ -451,7 +452,10 @@ async function main() {
         Object.keys(undo.action.request.command).length !== 1 ||
         Object.keys(redo.action.request.command).length !== 1,
       node_id_stable: redo.shell.selected_node_id === initial.node_id,
-      source_hash_stable: redo.shell.document_id === initial.node_id ? false : accepted.source_hash === initial.source_hash,
+      source_hash_stable:
+        accepted.source_hash === initial.source_hash &&
+        undo.source_hash === initial.source_hash &&
+        redo.source_hash === initial.source_hash,
       undo_restored_baseline_geometry: sameBounds(undo.bounds, initial.bounds),
       redo_restored_accepted_geometry: sameBounds(redo.bounds, accepted.bounds),
       undo_created_fresh_revision:
