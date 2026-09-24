@@ -76,7 +76,15 @@ except ModuleNotFoundError:
         raise ImportError("cannot load create_shape_container_v2 sibling module")
     _create_shape_v2_module = importlib.util.module_from_spec(_create_shape_v2_spec)
     sys.modules[_create_shape_v2_spec.name] = _create_shape_v2_module
-    _create_shape_v2_spec.loader.exec_module(_create_shape_v2_module)
+    _create_shape_v2_sibling_dir = str(_create_shape_v2_path.parent)
+    _create_shape_v2_added_path = _create_shape_v2_sibling_dir not in sys.path
+    if _create_shape_v2_added_path:
+        sys.path.insert(0, _create_shape_v2_sibling_dir)
+    try:
+        _create_shape_v2_spec.loader.exec_module(_create_shape_v2_module)
+    finally:
+        if _create_shape_v2_added_path:
+            sys.path.remove(_create_shape_v2_sibling_dir)
     validate_create_shape_v2_intent = _create_shape_v2_module.validate_create_shape_v2_intent
 
 
