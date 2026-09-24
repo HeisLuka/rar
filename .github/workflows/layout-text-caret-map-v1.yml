@@ -1,0 +1,29 @@
+name: Layout Text Caret Map V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/pub-text-caret-map/**"
+      - ".github/workflows/layout-text-caret-map-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check caret-map crate
+        run: cargo check -p pub-text-caret-map --all-targets
+      - name: Lint caret-map crate
+        run: cargo clippy -p pub-text-caret-map --all-targets -- -D warnings
+      - name: Test caret-map crate
+        run: cargo test -p pub-text-caret-map
