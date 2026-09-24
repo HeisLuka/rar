@@ -63,10 +63,13 @@ class CloudQuotaV1:
         interactive = sum(r.amount for r in rows if r.work_class == "interactive")
         export = sum(r.amount for r in rows if r.work_class == "export")
         background = sum(r.amount for r in rows if r.work_class == "background")
-        # Interactive fills shared first, then protected semantic headroom.
-        shared_interactive = min(interactive, self.shared_capacity)
+        # Export/background may consume only shared capacity. Interactive uses
+        # whatever shared capacity remains, then protected semantic headroom.
+        lower_class_shared = export + background
+        interactive_shared_available = max(0, self.shared_capacity - lower_class_shared)
+        shared_interactive = min(interactive, interactive_shared_available)
         protected_interactive = max(0, interactive - shared_interactive)
-        shared_total = min(self.shared_capacity, interactive) + export + background
+        shared_total = lower_class_shared + shared_interactive
         return {
             "interactive": interactive,
             "export": export,
@@ -109,8 +112,10 @@ class CloudQuotaV1:
                 raise QuotaRejected("background_budget_paused")
         else:
             total_interactive_after = usage["interactive"] + amount
-            # Interactive may use shared capacity plus protected semantic headroom.
-            if total_interactive_after > self.shared_capacity + self.semantic_headroom:
+            lower_class_shared = usage["export"] + usage["background"]
+            interactive_shared_available = max(0, self.shared_capacity - lower_class_shared)
+            interactive_capacity = interactive_shared_available + self.semantic_headroom
+            if total_interactive_after > interactive_capacity:
                 raise QuotaRejected("semantic_headroom_exhausted")
 
         reservation = Reservation(
