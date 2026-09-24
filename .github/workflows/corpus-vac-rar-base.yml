@@ -57,6 +57,15 @@ jobs:
 
           cls, _ = mod.classify(b"%PDF-1.7\n")
           assert cls == "pdf_mislabel", cls
+
+          assert (
+              mod.normalize_request_url("https://example.test/a file.pub?q=a b")
+              == "https://example.test/a%20file.pub?q=a%20b"
+          )
+          assert (
+              mod.normalize_request_url("https://example.test/a%20file.pub")
+              == "https://example.test/a%20file.pub"
+          )
           PY
 
       - name: Harvest pinned public smoke fixture

@@ -85,6 +85,15 @@ def url_filename(url: str) -> str:
 def pubish(text: str) -> bool:
     return ".pub" in norm(text)
 
+def normalize_request_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme.casefold() not in {"http", "https"}:
+        return url
+    path = quote(parsed.path, safe="/%:@!$&'()*+,;=-._~")
+    query = quote(parsed.query, safe="=&;%:+,/?@!$'()*[]-._~")
+    return parsed._replace(path=path, query=query).geturl()
+
+
 def request_bytes(
     url: str,
     timeout: float,
@@ -94,7 +103,8 @@ def request_bytes(
     headers = {"User-Agent": UA, "Accept": "*/*", "Accept-Language": "en-US,en;q=0.8"}
     if extra_headers:
         headers.update(extra_headers)
-    req = Request(url, headers=headers)
+    request_url = normalize_request_url(url)
+    req = Request(request_url, headers=headers)
     with urlopen(req, timeout=timeout) as resp:
         content_length = resp.headers.get("Content-Length")
         if content_length and max_bytes is not None and int(content_length) > max_bytes:
