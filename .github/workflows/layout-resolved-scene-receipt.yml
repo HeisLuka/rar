@@ -10,6 +10,9 @@ on:
       - "tools/test_build_layout_resolved_scene_receipt.py"
       - "tools/run_local_layout_resolved_scene_engine.py"
       - "tools/test_run_local_layout_resolved_scene_engine.py"
+      - "tools/resolved_graph_scene_bridge_v1.py"
+      - "tools/run_sample_newsletter_resolved_scene_bridge.py"
+      - "tools/test_resolved_graph_scene_bridge_v1.py"
       - ".github/workflows/layout-resolved-scene-receipt.yml"
   workflow_dispatch:
 
@@ -32,3 +35,5 @@ jobs:
         run: python tools/test_build_layout_resolved_scene_receipt.py -v
       - name: Prove no-reparse local engine launcher
         run: python tools/test_run_local_layout_resolved_scene_engine.py -v
+      - name: Prove reusable resolved-graph Scene bridge
+        run: python tools/test_resolved_graph_scene_bridge_v1.py -v
