@@ -23,7 +23,7 @@ jobs:
       - name: Install bounded acquisition dependencies
         run: python -m pip install "requests==2.32.5" "olefile==0.47"
 
-      - name: Acquire exact Carlton March and December PUBs
+      - name: Acquire exact Carlton PUBs from School Jotter hydration state
         shell: bash
         run: |
           set -euo pipefail
@@ -32,187 +32,133 @@ jobs:
           from __future__ import annotations
 
           import hashlib
-          import html
           import json
           import re
-          import shutil
-          import tempfile
-          from concurrent.futures import ThreadPoolExecutor, as_completed
           from pathlib import Path
-          from urllib.parse import unquote
 
           import requests
 
           PAGE = "https://www.carltonji.org.uk/parents/latest-letters"
-          OUT = Path("out/carlton")
-          EXACT = OUT / "exact"
-          DISC = OUT / "discovery"
-          EXACT.mkdir(parents=True, exist_ok=True)
-          DISC.mkdir(parents=True, exist_ok=True)
+          ROOT = Path("out/carlton")
+          EXACT = ROOT / "exact"
+          DISC = ROOT / "discovery"
 
-          expected = {
-              "march": {
-                  "sha256": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+          specs = {
+              "March 2026.pub": {
+                  "artifact_name": "March-2026.pub",
+                  "expected_id": "5a939344-76a6-4a6a-b30b-7237edac8bfa",
                   "size": 9_580_032,
-                  "filename": "March-2026.pub",
+                  "sha256": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
               },
-              "december": {
-                  "sha256": "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e",
+              "December 2025.pub": {
+                  "artifact_name": "December-2025.pub",
+                  "expected_id": "f7d0fadd-c2a9-4a8c-940b-c81844d0bc29",
                   "size": 9_988_608,
-                  "filename": "December-2025.pub",
+                  "sha256": "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e",
               },
           }
 
           session = requests.Session()
           session.headers.update({
-              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/1.1)",
+              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/2.0)",
               "Accept": "*/*",
           })
 
-          page = session.get(PAGE, timeout=30)
-          page.raise_for_status()
-          raw_html = page.text
-          (DISC / "latest-letters.html").write_text(raw_html, encoding="utf-8")
-          decoded = unquote(html.unescape(raw_html).replace("\\/", "/"))
+          response = session.get(PAGE, timeout=30)
+          response.raise_for_status()
+          raw = response.text
+          (DISC / "latest-letters.html").write_text(raw, encoding="utf-8")
 
-          for needle in ("March 2026.pub", "December 2025.pub"):
-              pos = decoded.find(needle)
-              if pos >= 0:
-                  lo = max(0, pos - 1200)
-                  hi = min(len(decoded), pos + 1200)
-                  print(f"CONTEXT {needle}:")
-                  print(decoded[lo:hi].replace("\n", " ")[:2400])
+          found = {}
+          for public_name, spec in specs.items():
+              needle = '"name":"' + public_name + '"'
+              idx = raw.find(needle)
+              if idx < 0:
+                  raise SystemExit(f"{public_name}: not present in hydration state")
 
-          candidates: set[str] = {
-              # Proven in historical PR #51.
-              "https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/5a/5a939344-76a6-4a6a-b30b-7237edac8bfa",
-              "https://docs-cdn.schooljotter3.com/1fd359a4-cb4e-412d-81a1-79f36166cafc/5a939344-76a6-4a6a-b30b-7237edac8bfa/5a939344-76a6-4a6a-b30b-7237edac8bfa.pub",
-              "https://docs-cdn.schooljotter3.com/1fd359a4-cb4e-412d-81a1-79f36166cafc/5a939344-76a6-4a6a-b30b-7237edac8bfa/March%202026.pub",
-          }
+              window = raw[max(0, idx - 600): min(len(raw), idx + 14000)]
 
-          for match in re.findall(r"https?://[^\s\"'<>]+", decoded):
-              clean = match.rstrip("),]}.;")
-              if (
-                  "schooljotter" in clean.lower()
-                  or "sj3-bucket-media" in clean.lower()
-                  or clean.lower().endswith(".pub")
-              ):
-                  candidates.add(clean)
+              file_match = re.search(
+                  r'"file":\{"id":"([^"]+)","name":"' + re.escape(public_name) + r'"',
+                  window,
+              )
+              if not file_match:
+                  raise SystemExit(f"{public_name}: file id not found")
+              file_id = file_match.group(1)
+              if file_id != spec["expected_id"]:
+                  raise SystemExit(
+                      f"{public_name}: file id drift {file_id} != {spec['expected_id']}"
+                  )
 
-          uuids = sorted(set(re.findall(
-              r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
-              decoded,
-          )))
-          known_site = "1fd359a4-cb4e-412d-81a1-79f36166cafc"
-          for value in uuids:
-              u = value.lower()
-              candidates.add(f"https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/{u[:2]}/{u}")
-              candidates.add(f"https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/{u[:2]}/{u}.pub")
-              candidates.add(f"https://docs-cdn.schooljotter3.com/{known_site}/{u}/{u}.pub")
-              candidates.add(f"https://docs-cdn.schooljotter3.com/{known_site}/{u}/March%202026.pub")
-              candidates.add(f"https://docs-cdn.schooljotter3.com/{known_site}/{u}/December%202025.pub")
+              size_match = re.search(
+                  r'"name":"' + re.escape(public_name) + r'".*?"size":(\d+)',
+                  window,
+                  flags=re.S,
+              )
+              if not size_match:
+                  raise SystemExit(f"{public_name}: declared size missing")
+              declared_size = int(size_match.group(1))
+              if declared_size != spec["size"]:
+                  raise SystemExit(
+                      f"{public_name}: declared size drift {declared_size} != {spec['size']}"
+                  )
 
-          candidate_list = sorted(candidates)
-          (DISC / "candidate-urls.json").write_text(
-              json.dumps(candidate_list, indent=2) + "\n", encoding="utf-8"
-          )
-          (DISC / "page-uuids.json").write_text(
-              json.dumps(uuids, indent=2) + "\n", encoding="utf-8"
-          )
-          print(f"page_status={page.status_code} uuids={len(uuids)} candidates={len(candidate_list)}")
-          print("UUIDS", json.dumps(uuids))
+              origin_match = re.search(
+                  r'"url":\{"origin":"((?:\\.|[^"\\])*)"',
+                  window,
+                  flags=re.S,
+              )
+              if not origin_match:
+                  raise SystemExit(f"{public_name}: signed origin URL missing")
+              origin = json.loads('"' + origin_match.group(1) + '"')
 
-          def fetch(url: str):
-              try:
-                  with session.get(url, timeout=(8, 25), stream=True, allow_redirects=True) as resp:
-                      if resp.status_code != 200:
-                          return {"url": url, "status": resp.status_code}
-                      length = resp.headers.get("content-length")
-                      if length:
-                          try:
-                              n = int(length)
-                          except ValueError:
-                              n = None
-                          if n is not None and n > 12_500_000:
-                              return {"url": url, "status": 200, "skip": f"content-length={n}"}
-                      fd, tmp_name = tempfile.mkstemp(prefix="carlton-", suffix=".candidate")
-                      Path(tmp_name).unlink(missing_ok=True)
-                      tmp = Path(tmp_name)
-                      h = hashlib.sha256()
-                      size = 0
-                      with tmp.open("wb") as fh:
-                          for chunk in resp.iter_content(1024 * 1024):
-                              if not chunk:
-                                  continue
-                              size += len(chunk)
-                              if size > 12_500_000:
-                                  tmp.unlink(missing_ok=True)
-                                  return {"url": url, "status": 200, "skip": "too-large"}
-                              h.update(chunk)
-                              fh.write(chunk)
-                      return {
-                          "url": url,
-                          "status": 200,
-                          "sha256": h.hexdigest(),
-                          "size": size,
-                          "tmp": str(tmp),
-                          "final_url": resp.url,
-                      }
-              except Exception as exc:
-                  return {"url": url, "error": f"{type(exc).__name__}: {exc}"}
+              print(
+                  f"{public_name}: id={file_id} declared_size={declared_size} "
+                  f"origin_host={requests.utils.urlparse(origin).hostname}"
+              )
 
-          found: dict[str, dict] = {}
-          observations: list[dict] = []
-          with ThreadPoolExecutor(max_workers=24) as pool:
-              futures = {pool.submit(fetch, url): url for url in candidate_list}
-              for future in as_completed(futures):
-                  result = future.result()
-                  observations.append({k: v for k, v in result.items() if k != "tmp"})
-                  sha = result.get("sha256")
-                  size = result.get("size")
-                  matched = False
-                  if sha:
-                      for key, spec in expected.items():
-                          if key in found:
+              target = EXACT / spec["artifact_name"]
+              h = hashlib.sha256()
+              size = 0
+              with session.get(origin, timeout=(10, 90), stream=True) as download:
+                  download.raise_for_status()
+                  with target.open("wb") as out:
+                      for chunk in download.iter_content(1024 * 1024):
+                          if not chunk:
                               continue
-                          if sha == spec["sha256"] and size == spec["size"]:
-                              dest = EXACT / spec["filename"]
-                              shutil.move(result["tmp"], dest)
-                              found[key] = {
-                                  "source_url": result.get("final_url") or result["url"],
-                                  "requested_url": result["url"],
-                                  "sha256": sha,
-                                  "size": size,
-                                  "path": str(dest),
-                              }
-                              print(f"FOUND {key}: size={size} sha={sha} url={found[key]['source_url']}")
-                              matched = True
-                              break
-                  if not matched:
-                      tmp = result.get("tmp")
-                      if tmp:
-                          Path(tmp).unlink(missing_ok=True)
+                          size += len(chunk)
+                          if size > spec["size"]:
+                              raise SystemExit(f"{public_name}: download exceeded expected size")
+                          h.update(chunk)
+                          out.write(chunk)
 
-          (DISC / "observations.json").write_text(
-              json.dumps(observations, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-          )
+              digest = h.hexdigest()
+              if size != spec["size"]:
+                  raise SystemExit(f"{public_name}: size {size} != {spec['size']}")
+              if digest != spec["sha256"]:
+                  raise SystemExit(f"{public_name}: sha256 {digest} != {spec['sha256']}")
+
+              found[public_name] = {
+                  "file_id": file_id,
+                  "size": size,
+                  "sha256": digest,
+                  "artifact_file": target.name,
+                  "source_page": PAGE,
+              }
+              print(f"VERIFIED {public_name}: size={size} sha256={digest}")
+
           (EXACT / "manifest.json").write_text(
               json.dumps(
                   {
-                      "schema": "chaptera.carlton-exact-pub-inputs.v1",
+                      "schema": "chaptera.carlton-exact-pub-inputs.v2",
                       "source_page": PAGE,
-                      "expected": expected,
-                      "found": found,
+                      "files": found,
                   },
                   indent=2,
                   sort_keys=True,
               ) + "\n",
               encoding="utf-8",
           )
-
-          missing = sorted(set(expected) - set(found))
-          if missing:
-              raise SystemExit(f"missing exact Carlton files: {missing}")
           PY
 
       - name: Verify exact source identities
@@ -232,15 +178,20 @@ jobs:
           import hashlib
           import json
           from pathlib import Path
+
           import olefile
 
           root = Path("out/carlton/exact")
           for pub in [root / "March-2026.pub", root / "December-2025.pub"]:
               label = pub.stem
               with olefile.OleFileIO(str(pub)) as ole:
-                  streams = ["/".join(parts) for parts in ole.listdir(streams=True, storages=False)]
-                  manifest = {"source_file": pub.name, "streams": streams, "contents": []}
-                  for parts in ole.listdir(streams=True, storages=False):
+                  stream_paths = ole.listdir(streams=True, storages=False)
+                  manifest = {
+                      "source_file": pub.name,
+                      "streams": ["/".join(parts) for parts in stream_paths],
+                      "contents": [],
+                  }
+                  for parts in stream_paths:
                       if parts[-1].lower() != "contents":
                           continue
                       data = ole.openstream(parts).read()
@@ -253,7 +204,8 @@ jobs:
                           "artifact_file": out.name,
                       })
                   (root / f"{label}-cfb-manifest.json").write_text(
-                      json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                      json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                      encoding="utf-8",
                   )
                   if not manifest["contents"]:
                       raise SystemExit(f"{pub}: no Contents stream")
@@ -277,7 +229,7 @@ jobs:
 
       - name: Upload acquisition diagnostics
         uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
           name: carlton-exact-acquisition-diagnostics
           path: |
