@@ -1,0 +1,32 @@
+name: RENDER-SCENE-IR-01 RenderScene compiler
+
+on:
+  pull_request:
+    paths:
+      - "tools/render_scene_v1.py"
+      - "tools/test_render_scene_v1.py"
+      - "tools/run_render_scene_contract.py"
+      - "docs/render-scene-v1.md"
+      - ".github/workflows/render-scene-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render-scene-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test deterministic compiler
+        run: python tools/test_render_scene_v1.py
+      - name: Produce RenderScene receipt
+        run: python tools/run_render_scene_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-scene-v1-contract
+          path: target/render-scene-v1/
+          if-no-files-found: error
