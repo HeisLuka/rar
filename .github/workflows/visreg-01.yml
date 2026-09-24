@@ -1,0 +1,62 @@
+name: VISREG-01 structured visual regression oracle
+
+on:
+  pull_request:
+    paths:
+      - "tools/visreg/**"
+      - ".github/workflows/visreg-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visreg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clean baseline
+        run: |
+          python tools/visreg/visreg.py             --golden tools/visreg/fixtures/golden.json             --candidate tools/visreg/fixtures/golden.json             --out target/visreg/clean.json             --expect-stage clean
+
+      - name: Geometry discriminator
+        run: |
+          python tools/visreg/visreg.py             --golden tools/visreg/fixtures/golden.json             --candidate tools/visreg/fixtures/geometry-regression.json             --out target/visreg/geometry.json             --expect-stage geometry
+
+      - name: Text/layout discriminator
+        run: |
+          python tools/visreg/visreg.py             --golden tools/visreg/fixtures/golden.json             --candidate tools/visreg/fixtures/text-layout-regression.json             --out target/visreg/text-layout.json             --expect-stage text_layout
+
+      - name: Render-only discriminator
+        run: |
+          python tools/visreg/visreg.py             --golden tools/visreg/fixtures/golden.json             --candidate tools/visreg/fixtures/render-only-regression.json             --out target/visreg/render-only.json             --expect-stage render_only
+
+      - name: Determinism check
+        run: |
+          python tools/visreg/visreg.py             --golden tools/visreg/fixtures/golden.json             --candidate tools/visreg/fixtures/text-layout-regression.json             --out target/visreg/determinism-a.json             --expect-stage text_layout
+          python tools/visreg/visreg.py             --golden tools/visreg/fixtures/golden.json             --candidate tools/visreg/fixtures/text-layout-regression.json             --out target/visreg/determinism-b.json             --expect-stage text_layout
+          cmp target/visreg/determinism-a.json target/visreg/determinism-b.json
+
+      - name: Assert origin backreferences
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("target/visreg/text-layout.json").read_text())
+          assert report["summary"]["primary_stage"] == "text_layout"
+          assert report["differences"], report
+          origins = [d["origin"] for d in report["differences"]]
+          assert all(o.get("page_id") == "page-1" for o in origins)
+          assert all(o.get("node_id") == "text-1" for o in origins)
+          assert any(o.get("story_id") == "story-1" for o in origins)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visreg-01-reports
+          path: target/visreg/*.json

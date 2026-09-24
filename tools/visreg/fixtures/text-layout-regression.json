@@ -1,0 +1,36 @@
+{
+  "schema": "chaptera.visreg.fixture.v1",
+  "fixture_id": "visreg-text-layout-regression-v1",
+  "pages": [
+    {
+      "page_id": "page-1",
+      "size_emu": [7772400, 10058400],
+      "objects": [
+        {
+          "node_id": "shape-1",
+          "kind": "shape",
+          "bounds_emu": [914400, 914400, 1828800, 914400],
+          "render": {
+            "normalized_digest": "sha256:shape-blue-v1"
+          }
+        },
+        {
+          "node_id": "text-1",
+          "kind": "text",
+          "story_id": "story-1",
+          "bounds_emu": [914400, 2286000, 3657600, 1371600],
+          "text": "Chaptera visual regressions",
+          "lines": [
+            {
+              "scalar_range": [0, 28],
+              "bounds_emu": [960120, 2331720, 3314700, 274320]
+            }
+          ],
+          "render": {
+            "normalized_digest": "sha256:text-black-v1"
+          }
+        }
+      ]
+    }
+  ]
+}
