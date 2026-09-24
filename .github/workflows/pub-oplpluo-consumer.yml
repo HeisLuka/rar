@@ -1,0 +1,103 @@
+name: PUB OplPluo Consumer Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pub-oplpluo-consumer.yml"
+      - "tools/pub-research/oplpluo_consumer_probe.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oplpluo-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install static-analysis dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --break-system-packages pefile capstone
+
+      - name: Acquire exact Microsoft MSPUB14
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=/tmp/oplpluo
+          mkdir -p "$root/outer" "$root/msp" "$root/patch" "$root/report"
+          url="https://download.microsoft.com/download/0/5/e/05e96d4b-4837-4775-a9b8-7bd185d9d524/publisher2010-kb3114395-fullfile-x86-glb.exe"
+          pkg="$root/pkg.exe"
+          curl --fail --location --retry 5 --retry-all-errors --output "$pkg" "$url"
+          echo "9bf8c3771b133781b29ffe24a913d62fd9a009a8c5da46a80e192805759063d8  $pkg" | sha256sum --check -
+          7z x -y "$pkg" -o"$root/outer" >/dev/null
+          msp="$(find "$root/outer" -type f -iname 'publisher-x-none.msp' | head -n1)"
+          test -n "$msp"
+          7z x -y "$msp" -o"$root/msp" >/dev/null
+          cab="$(find "$root/msp" -type f -name PATCH_CAB | head -n1)"
+          test -n "$cab"
+          7z x -y "$cab" -o"$root/patch" >/dev/null
+          exe="$root/patch/MSPUB.EXE"
+          test -f "$exe"
+          test "$(stat -c '%s' "$exe")" -eq 9675944
+          echo "27c00f7f06957f24d392f9c61fbd3b40282f15dc595caf66785b561f559d7b97  $exe" | sha256sum --check -
+          sha256sum "$exe" > "$root/report/mspub.sha256"
+
+      - name: Run bounded OplPluo/OplUo consumer analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/pub-research/oplpluo_consumer_probe.py             /tmp/oplpluo/patch/MSPUB.EXE             --out /tmp/oplpluo/report/oplpluo-consumer.json
+
+      - name: Evidence guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("/tmp/oplpluo/report/oplpluo-consumer-summary.json")
+          d=json.loads(p.read_text())
+          pluo={x["name"]:x for x in d["oplpluo_fields"]}
+          uo={x["name"]:x for x in d["opluo_fields"]}
+          assert "CUo" in pluo
+          assert "Rguo" in pluo
+          assert "Ohpo" in uo
+          assert "PgLast" in uo
+          assert "FShow" in uo
+          assert "Pgid" in uo
+          assert d["rtti_classes_found"].get("OplPluo",0) >= 1
+          print("feature-scoped anchors present")
+          PY
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          if test -f /tmp/oplpluo/report/summary.txt; then
+            {
+              echo '## PUB-T-451 OplPluo consumer pass'
+              echo
+              cat /tmp/oplpluo/report/summary.txt
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guard proprietary-byte boundary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          bad="$(find /tmp/oplpluo/report -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.pdb' -o -iname '*.cab' -o -iname '*.msp' -o -iname '*.msi' \) -print)"
+          test -z "$bad"
+
+      - name: Upload derived static evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-oplpluo-consumer-${{ github.run_id }}
+          path: /tmp/oplpluo/report/**
+          if-no-files-found: error
+          retention-days: 90
