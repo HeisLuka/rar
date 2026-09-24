@@ -1,0 +1,40 @@
+{
+  "schema": "chaptera.corpus-post-m1-delta.v1",
+  "recorded_at": "2026-09-24",
+  "comparison_baseline": {
+    "exact_sha_count": 950,
+    "authority": "Rar retained complete-Publisher-CFB union"
+  },
+  "delta": {
+    "exact_sha_count": 129,
+    "lane_counts": {
+      "class_templates": 52,
+      "training": 15,
+      "mvp_matrix": 62
+    },
+    "cross_lane_overlap_counts": {
+      "class_templates__training": 0,
+      "class_templates__mvp_matrix": 0,
+      "training__mvp_matrix": 0
+    }
+  },
+  "rar_union_after_delta_sha_count": 1079,
+  "source_evidence": {
+    "pull_request": 111,
+    "head_sha": "6782631ccc9b132fae38235cc3cb8e9bf7f5a0a2",
+    "workflow_run_id": 36009868061,
+    "job_id": 107667494461,
+    "cross_arm_artifact_id": 10812415542,
+    "cross_arm_artifact_digest": "sha256:e773f22e0ee2efa1851485b16fd954d76bce970eccb20cc41733403d1f03301b",
+    "source_artifacts": {
+      "class_templates": 10811670607,
+      "training": 10811710784,
+      "mvp_matrix": 10811134424
+    }
+  },
+  "authority_boundary": {
+    "global_previous_complete_file_bound": "1216..1239",
+    "global_authority_recomputed": false,
+    "reason": "The exact 129-SHA delta is proven disjoint from the Rar 950 baseline, but overlap against the separate historical 339-file authority has not yet been fully reconciled."
+  }
+}
