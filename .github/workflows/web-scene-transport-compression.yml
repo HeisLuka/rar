@@ -1,0 +1,27 @@
+name: WEB-SCENE-SCALE-01 transport compression baseline
+
+on:
+  pull_request:
+    paths:
+      - "tools/run_web_scene_transport_compression.mjs"
+      - ".github/workflows/web-scene-transport-compression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Measure raw/gzip/brotli Scene payloads
+        run: node tools/run_web_scene_transport_compression.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-scene-transport-compression
+          path: target/web-scene-transport/receipt.json
+          if-no-files-found: error
