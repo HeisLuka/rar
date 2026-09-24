@@ -315,6 +315,10 @@ def scan(args: argparse.Namespace) -> int:
         ledger, meta = load_ledger(args.sources, root)
         items = [ledger[k] for k in sorted(ledger)]
         nondeferred = [x for x in items if not x["deferred"]]
+        if args.only_source:
+            nondeferred = [
+                x for x in nondeferred if args.only_source in x["sources"]
+            ]
         selected = [
             item
             for idx, item in enumerate(nondeferred)
@@ -519,6 +523,7 @@ def main() -> int:
     scan_p.add_argument("--shard-count", type=int, default=1)
     scan_p.add_argument("--workers", type=int, default=4)
     scan_p.add_argument("--limit", type=int, default=0)
+    scan_p.add_argument("--only-source", default="")
     scan_p.add_argument("--timeout", type=float, default=30.0)
     scan_p.add_argument("--max-bytes", type=int, default=100 * 1024 * 1024)
     scan_p.add_argument(
