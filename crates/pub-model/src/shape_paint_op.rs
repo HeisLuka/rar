@@ -179,11 +179,9 @@ mod tests {
             after: fill(20, 30, 40, false),
         });
         let after = apply_shape_paint_operation_v1(&before, &operation).expect("apply");
-        let restored = apply_shape_paint_operation_v1(
-            &after,
-            &inverse_shape_paint_operation_v1(&operation),
-        )
-        .expect("inverse");
+        let restored =
+            apply_shape_paint_operation_v1(&after, &inverse_shape_paint_operation_v1(&operation))
+                .expect("inverse");
         assert_eq!(restored, before);
     }
 
