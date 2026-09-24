@@ -1,23 +1,19 @@
-name: PUB corpus authority receipt
+name: PUB current corpus authority
 
 on:
   pull_request:
     paths:
-      - 'tools/corpus/receipts/corpus-authority-lower-bound-2026-09-24.json'
       - 'tools/corpus/receipts/corpus-current-authority-2026-09-24.json'
       - 'tools/corpus/receipts/container-net-new-407-part-*.sha256.txt'
-      - 'tools/corpus/test_corpus_authority_receipt.py'
       - 'tools/corpus/test_corpus_current_authority.py'
-      - '.github/workflows/corpus-authority-receipt.yml'
+      - '.github/workflows/corpus-current-authority.yml'
   push:
     branches: [main]
     paths:
-      - 'tools/corpus/receipts/corpus-authority-lower-bound-2026-09-24.json'
       - 'tools/corpus/receipts/corpus-current-authority-2026-09-24.json'
       - 'tools/corpus/receipts/container-net-new-407-part-*.sha256.txt'
-      - 'tools/corpus/test_corpus_authority_receipt.py'
       - 'tools/corpus/test_corpus_current_authority.py'
-      - '.github/workflows/corpus-authority-receipt.yml'
+      - '.github/workflows/corpus-current-authority.yml'
 
 permissions:
   contents: read
@@ -31,5 +27,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python tools/corpus/test_corpus_authority_receipt.py
       - run: python tools/corpus/test_corpus_current_authority.py
