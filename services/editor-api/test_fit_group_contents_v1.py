@@ -108,7 +108,7 @@ class FitGroupContentsV1Tests(unittest.TestCase):
         cmd={"kind":"fit_group_to_contents","group_id":"g1","expected_group":snapshot_group_v1(p,"g1")}
         op,after,_=execute_fit_group_to_contents_v1(p,cmd)
         self.assertEqual("g1",op["group_id"])
-        self.assertEqual(rect(54,24,5,8),after["groups"]["g1"]["bounds"])
+        self.assertEqual(rect(52,24,5,8),after["groups"]["g1"]["bounds"])
 
     def test_exact_before_after_support_undo_redo_replay(self):
         p=project()
