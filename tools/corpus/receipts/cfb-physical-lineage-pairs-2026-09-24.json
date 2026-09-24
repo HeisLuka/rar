@@ -1,0 +1,29 @@
+{
+  "schema": "chaptera.cfb-physical-lineage-pairs.v1",
+  "pair_count": 13,
+  "roots": {
+    "pub40cd": {
+      "url": "https://archive.org/download/PUB40CD/PUB_40_CD.ISO",
+      "sha256": "cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59"
+    },
+    "pub97deluxe": {
+      "url": "https://archive.org/download/microsoft-publisher-97-cd-deluxe/microsoft-publisher-97-cd-deluxe.iso",
+      "sha256": "69043e0d2d23345163a27806914c99382490a27e5710fdb6af82ee7df33b4ce8"
+    }
+  },
+  "pairs": [
+    {"name":"B5160.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/B5160.PUB","sha256":"7fdc21b6a488470e42d81208805fd9731f223611ff9f420431247a4aa8ee391d","size":11776},"right":{"root":"pub97deluxe","member":"PageWiz/B5160.PUB","sha256":"faeb342445023c7782d4de083afc5b016b620332e31be972fe6cfc2e98603670","size":11776}},
+    {"name":"B5161.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/B5161.PUB","sha256":"6996349130cb43cd3357cc17b2e4eb8b050f7fc69ea62e3a24c57f08a0a5618d","size":11776},"right":{"root":"pub97deluxe","member":"PageWiz/B5161.PUB","sha256":"8be9f163244940fad1aeaf700c64271068839f185cce4d5bfde768edb9957531","size":11776}},
+    {"name":"B5162.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/B5162.PUB","sha256":"80a4494508d797d7f398cac632d4ac2a1d2ae81e6186b63c103c370f35f169dc","size":11264},"right":{"root":"pub97deluxe","member":"PageWiz/B5162.PUB","sha256":"cfa4e919e1be576d2f8a2277e503cb34febef39301549af0e659dc2e496ee7fb","size":11264}},
+    {"name":"B5163.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/B5163.PUB","sha256":"704a097e5596f837f3cf355e38439d15a9d9918e72a836f90c97d9bbafda8d82","size":11776},"right":{"root":"pub97deluxe","member":"PageWiz/B5163.PUB","sha256":"b98403efd48ced874b3e3c5790f2e2d2a8c13357d29665c1c3e18511fe3ee623","size":11776}},
+    {"name":"B5164.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/B5164.PUB","sha256":"05e2ce2cf4fc61991b8b70f24d23c1d028ec904756cb53d2e218c0b3e63da66f","size":11264},"right":{"root":"pub97deluxe","member":"PageWiz/B5164.PUB","sha256":"8e85f5fe5bb2aeafcf71f7a2248448b8317e89939847f914f8a693a9026ec56a","size":11264}},
+    {"name":"B5660.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/B5660.PUB","sha256":"36fdfe274efce9074ddafae7997041cbc867a007422c44ed3afab016d819f7b5","size":11776},"right":{"root":"pub97deluxe","member":"PageWiz/B5660.PUB","sha256":"5103362f268f977daf0addec0264ae76f8060fb70f813be54ca1a6b1194d8f78","size":11776}},
+    {"name":"D5160.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/D5160.PUB","sha256":"32eb237685993d972e6d7b97a5502b2ea0ff1eb4a6210b7de7714a9da6a99074","size":15872},"right":{"root":"pub97deluxe","member":"PageWiz/D5160.PUB","sha256":"b69ecd019b5f7b37f9721382d74b062fe7a996f126100fee2cf8cece37a91953","size":15872}},
+    {"name":"D5161.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/D5161.PUB","sha256":"3c2f92bb2fa4f1217337c2e46aa26a96bc48e9a22c18f08b5481356d268ed8b5","size":65536},"right":{"root":"pub97deluxe","member":"PageWiz/D5161.PUB","sha256":"4ba79e9e4d6ea77bfb2b623c68400476aa336e9656a29dc0f2a6b9a52fb6dabd","size":65536}},
+    {"name":"D5162.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/D5162.PUB","sha256":"1b4ef93211854dabf6d069c8941b8366a012edb528366b91c2bf956cf726fa79","size":20480},"right":{"root":"pub97deluxe","member":"PageWiz/D5162.PUB","sha256":"1e7443e105560c397a812d770e5016fa6ea83e15343f49a99079312fe2160a28","size":20480}},
+    {"name":"D5163.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/D5163.PUB","sha256":"056905e0243044d2fb3793cf52b102989f85407ed88b93d5b023eebb3ef2dd9a","size":23552},"right":{"root":"pub97deluxe","member":"PageWiz/D5163.PUB","sha256":"c54cbd65775d882155d134f3b2e4004cd13b00602c1c8cefe31a5a178aa5dd1f","size":23552}},
+    {"name":"D5164.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/D5164.PUB","sha256":"0619ceec89b7c466fbc4f094b101ca49b579ad7c16972670d71151b7bdef91d8","size":30720},"right":{"root":"pub97deluxe","member":"PageWiz/D5164.PUB","sha256":"d9d1072d0d345aee62ec33e7ee8e854f731f7370538413cfeef3720dd0779c42","size":30720}},
+    {"name":"D5660.PUB","left":{"root":"pub40cd","member":"PAGEWIZ/D5660.PUB","sha256":"69e9ddf017d729f6f4d64f93cbd2bcb21848421f357a6f513ca6832edd46f8e2","size":18944},"right":{"root":"pub97deluxe","member":"PageWiz/D5660.PUB","sha256":"e5de3d2862d1b4089f8d312618d6c164cee851cc26ff8f30343647e56d82f4bd","size":18944}},
+    {"name":"growth7.pub","left":{"root":"pub97deluxe","member":"PageWiz/growth7.pub","sha256":"5ccccd4483fe4a5838955c28dd14b84d40482fafc2d8a196740e3ebcc48e9780","size":121344},"right":{"root":"pub40cd","member":"PAGEWIZ/GROWTH7.PUB","sha256":"fc5964e7118ab5491e1dc50ef57ca383f4a20813729af8b3dc47cf7c2c041eac","size":121344}}
+  ]
+}

@@ -1,0 +1,51 @@
+name: CORPUS CFB physical diff
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/cfb_physical_diff.py'
+      - 'tools/corpus/receipts/cfb-physical-lineage-pairs-2026-09-24.json'
+      - '.github/workflows/corpus-cfb-physical-diff.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/cfb_physical_diff.py'
+      - 'tools/corpus/receipts/cfb-physical-lineage-pairs-2026-09-24.json'
+      - '.github/workflows/corpus-cfb-physical-diff.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate physical parser and retained pair receipt
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/cfb_physical_diff.py
+          python tools/corpus/cfb_physical_diff.py self-test
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          p=Path("tools/corpus/receipts/cfb-physical-lineage-pairs-2026-09-24.json")
+          d=json.loads(p.read_text())
+          assert d["pair_count"] == 13 == len(d["pairs"])
+          assert set(d["roots"]) == {"pub40cd","pub97deluxe"}
+          seen=set()
+          for pair in d["pairs"]:
+              assert pair["name"].casefold() not in seen
+              seen.add(pair["name"].casefold())
+              for side in ("left","right"):
+                  x=pair[side]
+                  assert x["root"] in d["roots"]
+                  assert re.fullmatch(r"[0-9a-f]{64}",x["sha256"])
+                  assert x["size"] > 0
+              assert pair["left"]["sha256"] != pair["right"]["sha256"]
+              assert pair["left"]["size"] == pair["right"]["size"]
+          PY
