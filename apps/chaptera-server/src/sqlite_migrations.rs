@@ -270,16 +270,16 @@ mod tests {
         ))
     }
 
-    async fn cleanup(path: &Path) {
+    fn cleanup(path: &Path) {
         for suffix in ["", "-wal", "-shm"] {
-            let _ = tokio::fs::remove_file(format!("{}{}", path.display(), suffix)).await;
+            let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
         }
     }
 
     #[tokio::test]
     async fn status_reports_all_migrations_pending_on_fresh_database() {
         let path = database_path("status");
-        cleanup(&path).await;
+        cleanup(&path);
         let runtime = SqliteMigrationRuntime::new(&path).unwrap();
 
         let report = runtime.status().await.unwrap();
@@ -287,13 +287,13 @@ mod tests {
         assert_eq!(report.applied_version, 0);
         assert_eq!(report.supported_version, 3);
         assert_eq!(report.pending_versions, vec![1, 2, 3]);
-        cleanup(&path).await;
+        cleanup(&path);
     }
 
     #[tokio::test]
     async fn up_applies_all_migrations_and_is_idempotent() {
         let path = database_path("up");
-        cleanup(&path).await;
+        cleanup(&path);
         let runtime = SqliteMigrationRuntime::new(&path).unwrap();
 
         let first = runtime.up().await.unwrap();
@@ -322,13 +322,13 @@ mod tests {
             assert_eq!(exists, 1, "missing table {table}");
         }
         pool.close().await;
-        cleanup(&path).await;
+        cleanup(&path);
     }
 
     #[tokio::test]
     async fn changed_applied_checksum_fails_closed() {
         let path = database_path("checksum");
-        cleanup(&path).await;
+        cleanup(&path);
         let runtime = SqliteMigrationRuntime::new(&path).unwrap();
         runtime.up().await.unwrap();
 
@@ -343,6 +343,6 @@ mod tests {
 
         let error = runtime.status().await.unwrap_err();
         assert_eq!(error.code, "migration_checksum_mismatch");
-        cleanup(&path).await;
+        cleanup(&path);
     }
 }
