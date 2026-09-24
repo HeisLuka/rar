@@ -14,6 +14,7 @@ PUBLIKE=re.compile(r"[.]pub$",re.I)
 ZIPLIKE=re.compile(r"[.]zip$",re.I)
 CONTAINER=re.compile(r"(?:[.]iso|[.]cab|[.]7z|[.]rar|[.]tar(?:[.]gz)?|[.]tgz)$",re.I)
 IA_DERIVATIVE_ZIP=re.compile(r"(?:_jp2|_thumb|_text|_hocr|_djvu|_scandata|_page_numbers|_files)[^/]*[.]zip$",re.I)
+IA_GENERATED_CONTAINER=re.compile(r"(?:_jp2|_thumb|_text|_hocr|_djvu|_scandata|_page_numbers|_files)[^/]*(?:[.]tar(?:[.]gz)?|[.]tgz|[.]7z|[.]rar|[.]iso|[.]cab)$",re.I)
 
 DEFAULT_QUERIES=[
     'title:"Microsoft Publisher" OR subject:"Microsoft Publisher" OR description:"Microsoft Publisher"',
@@ -89,6 +90,21 @@ def is_pub_or_zip_seed(file: dict) -> bool:
     return True
 
 
+def is_nonzip_container_seed(item: dict, file: dict) -> bool:
+    name=str(file.get("name") or "")
+    if not CONTAINER.search(name):
+        return False
+    if IA_GENERATED_CONTAINER.search(name):
+        return False
+    source=str(file.get("source") or "").strip().lower()
+    if source and source != "original":
+        return False
+    title=str(item.get("title") or "").casefold()
+    if "publisher" not in title and "office" not in title:
+        return False
+    return True
+
+
 def write_csv(rows,path):
     path.parent.mkdir(parents=True,exist_ok=True)
     keys=[]; seen=set()
@@ -128,7 +144,7 @@ def main():
                 name=str(f.get("name") or "")
                 if is_pub_or_zip_seed(f):
                     seeds.append(seed_row(ident,item,f))
-                elif CONTAINER.search(name):
+                elif is_nonzip_container_seed(item,f):
                     containers.append(seed_row(ident,item,f))
         except Exception as exc:
             errors.append({"identifier":ident,"error":f"{type(exc).__name__}: {exc}"})
