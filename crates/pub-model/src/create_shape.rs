@@ -23,6 +23,22 @@ pub struct CreateShapeV1 {
     pub paint: ShapePaintV1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ShapeDestinationV2 {
+    Page { id: String },
+    Group { id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateShapeV2 {
+    pub node_id: String,
+    pub page_id: String,
+    pub destination: ShapeDestinationV2,
+    pub bounds: RectEmuV1,
+    pub paint: ShapePaintV1,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ShapeKindV1 {
@@ -62,6 +78,52 @@ pub enum CreateShapeError {
     InvalidPaint(ShapePaintValidationError),
     ExplicitFillAndStrokeRequired,
     PaintMustBeAuthorCreated,
+}
+
+pub fn create_shape_entity_v2(
+    operation: &CreateShapeV2,
+) -> Result<AuthoredShapeV1, CreateShapeError> {
+    validate_uuid_v7_v1(&operation.node_id)?;
+    if operation.page_id.is_empty() {
+        return Err(CreateShapeError::EmptyPageId);
+    }
+    validate_rect_emu_v1(operation.bounds)?;
+    validate_shape_paint_v1(&operation.paint).map_err(CreateShapeError::InvalidPaint)?;
+    if operation.paint.fill.is_none() || operation.paint.stroke.is_none() {
+        return Err(CreateShapeError::ExplicitFillAndStrokeRequired);
+    }
+    if !matches!(
+        operation.paint.provenance,
+        ShapePaintProvenanceV1::AuthorCreated
+    ) {
+        return Err(CreateShapeError::PaintMustBeAuthorCreated);
+    }
+
+    let parent_id = match &operation.destination {
+        ShapeDestinationV2::Page { id } => {
+            if id.is_empty() || id != &operation.page_id {
+                return Err(CreateShapeError::EmptyPageId);
+            }
+            id.clone()
+        }
+        ShapeDestinationV2::Group { id } => {
+            if id.is_empty() {
+                return Err(CreateShapeError::EmptyPageId);
+            }
+            id.clone()
+        }
+    };
+
+    Ok(AuthoredShapeV1 {
+        node_id: operation.node_id.clone(),
+        page_id: operation.page_id.clone(),
+        parent_id,
+        shape_kind: ShapeKindV1::Rectangle,
+        bounds: operation.bounds,
+        transform: ShapeTransformV1::Identity,
+        paint: operation.paint.clone(),
+        provenance: EntityProvenanceV1::AuthorCreated,
+    })
 }
 
 pub fn create_shape_entity_v1(
@@ -184,6 +246,39 @@ mod tests {
             },
             paint: paint(),
         }
+    }
+
+    #[test]
+    fn create_shape_v2_preserves_explicit_page_or_group_parent() {
+        let page = CreateShapeV2 {
+            node_id: operation().node_id,
+            page_id: "page:1".to_owned(),
+            destination: ShapeDestinationV2::Page {
+                id: "page:1".to_owned(),
+            },
+            bounds: operation().bounds,
+            paint: paint(),
+        };
+        let page_entity = create_shape_entity_v2(&page).expect("page create");
+        assert_eq!(page_entity.parent_id, "page:1");
+
+        let group = CreateShapeV2 {
+            node_id: "01890f47-0c01-7abc-8def-0123456789ab".to_owned(),
+            page_id: "page:1".to_owned(),
+            destination: ShapeDestinationV2::Group {
+                id: "group:1".to_owned(),
+            },
+            bounds: RectEmuV1 {
+                x: 10,
+                y: 20,
+                width: 30,
+                height: 40,
+            },
+            paint: paint(),
+        };
+        let group_entity = create_shape_entity_v2(&group).expect("group create");
+        assert_eq!(group_entity.parent_id, "group:1");
+        assert_eq!(group_entity.page_id, "page:1");
     }
 
     #[test]
