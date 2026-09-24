@@ -185,32 +185,71 @@ pub struct SelectionGeometryV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaretMapError {
-    InvalidIdentifier { field: &'static str, value: String },
+    InvalidIdentifier {
+        field: &'static str,
+        value: String,
+    },
     EmptyLayoutEnvironment,
-    DuplicateStory { story_id: String },
-    UnknownStory { story_id: String },
-    DuplicateStoryLineOrder { story_id: String, order: u32 },
-    NonContiguousStoryLineOrder { story_id: String, expected: u32, actual: u32 },
-    InvalidScalarRange { start: u32, end: u32 },
-    LineOutsideStory { story_id: String },
+    DuplicateStory {
+        story_id: String,
+    },
+    UnknownStory {
+        story_id: String,
+    },
+    DuplicateStoryLineOrder {
+        story_id: String,
+        order: u32,
+    },
+    NonContiguousStoryLineOrder {
+        story_id: String,
+        expected: u32,
+        actual: u32,
+    },
+    InvalidScalarRange {
+        start: u32,
+        end: u32,
+    },
+    LineOutsideStory {
+        story_id: String,
+    },
     InvalidLineMetrics,
     InvalidGlyphAdvance,
     InvalidGlyphClusterOrder,
     GlyphClusterOutsideLine,
-    MeasuredWidthMismatch { expected: i64, actual: i64 },
+    MeasuredWidthMismatch {
+        expected: i64,
+        actual: i64,
+    },
     MetricOverflow,
-    NoLineOnPage { page_id: String },
-    StoryPositionUnplaced { story_id: String, scalar: u32 },
-    InternalClusterUnsupported { story_id: String, scalar: u32 },
-    CaretAffinityRequired { story_id: String, scalar: u32 },
-    CaretAffinityUnavailable { story_id: String, scalar: u32 },
+    NoLineOnPage {
+        page_id: String,
+    },
+    StoryPositionUnplaced {
+        story_id: String,
+        scalar: u32,
+    },
+    InternalClusterUnsupported {
+        story_id: String,
+        scalar: u32,
+    },
+    CaretAffinityRequired {
+        story_id: String,
+        scalar: u32,
+    },
+    CaretAffinityUnavailable {
+        story_id: String,
+        scalar: u32,
+    },
 }
 
 impl fmt::Display for CaretMapError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidIdentifier { field, value } => {
-                write!(formatter, "{field} is not a canonical lowercase UUID: {value}")
+                write!(
+                    formatter,
+                    "{field} is not a canonical lowercase UUID: {value}"
+                )
             }
             Self::EmptyLayoutEnvironment => write!(formatter, "layout environment id is required"),
             Self::DuplicateStory { story_id } => write!(formatter, "duplicate story {story_id}"),
@@ -218,7 +257,11 @@ impl fmt::Display for CaretMapError {
             Self::DuplicateStoryLineOrder { story_id, order } => {
                 write!(formatter, "duplicate story line order {story_id}:{order}")
             }
-            Self::NonContiguousStoryLineOrder { story_id, expected, actual } => {
+            Self::NonContiguousStoryLineOrder {
+                story_id,
+                expected,
+                actual,
+            } => {
                 write!(
                     formatter,
                     "story line order is not contiguous for {story_id}: expected {expected}, got {actual}"
@@ -231,12 +274,17 @@ impl fmt::Display for CaretMapError {
                 write!(formatter, "resolved line range exceeds story {story_id}")
             }
             Self::InvalidLineMetrics => write!(formatter, "resolved line metrics must be positive"),
-            Self::InvalidGlyphAdvance => write!(formatter, "LTR glyph advance must be non-negative"),
+            Self::InvalidGlyphAdvance => {
+                write!(formatter, "LTR glyph advance must be non-negative")
+            }
             Self::InvalidGlyphClusterOrder => {
                 write!(formatter, "glyph cluster order must be non-decreasing")
             }
             Self::GlyphClusterOutsideLine => {
-                write!(formatter, "glyph cluster lies outside the visible line range")
+                write!(
+                    formatter,
+                    "glyph cluster lies outside the visible line range"
+                )
             }
             Self::MeasuredWidthMismatch { expected, actual } => {
                 write!(
@@ -245,7 +293,9 @@ impl fmt::Display for CaretMapError {
                 )
             }
             Self::MetricOverflow => write!(formatter, "EMU metric arithmetic overflowed"),
-            Self::NoLineOnPage { page_id } => write!(formatter, "no resolved text line on page {page_id}"),
+            Self::NoLineOnPage { page_id } => {
+                write!(formatter, "no resolved text line on page {page_id}")
+            }
             Self::StoryPositionUnplaced { story_id, scalar } => {
                 write!(formatter, "story position is unplaced: {story_id}:{scalar}")
             }
@@ -442,9 +492,7 @@ fn line_stops(
     let mut x = 0_i64;
 
     for (index, (cluster_start, advance)) in groups.iter().enumerate() {
-        let cluster_end = groups
-            .get(index + 1)
-            .map_or(line.scalar_end, |next| next.0);
+        let cluster_end = groups.get(index + 1).map_or(line.scalar_end, |next| next.0);
         if cluster_end <= *cluster_start || cluster_end > line.scalar_end {
             return Err(CaretMapError::InvalidGlyphClusterOrder);
         }
@@ -499,7 +547,9 @@ pub fn build_caret_map(
         return Err(CaretMapError::EmptyLayoutEnvironment);
     }
 
-    input.stories.sort_by(|left, right| left.story_id.cmp(&right.story_id));
+    input
+        .stories
+        .sort_by(|left, right| left.story_id.cmp(&right.story_id));
     let mut story_lengths = BTreeMap::new();
     for story in &input.stories {
         require_uuid("story_id", &story.story_id)?;
@@ -583,13 +633,18 @@ pub fn build_caret_map(
 
     for line in &input.lines {
         let id = line_id(&line.story_id, line.story_line_order);
-        let ids = story_line_ids
-            .get(&line.story_id)
-            .ok_or_else(|| CaretMapError::UnknownStory {
-                story_id: line.story_id.clone(),
-            })?;
-        let order = usize::try_from(line.story_line_order).map_err(|_| CaretMapError::MetricOverflow)?;
-        let previous_line_id = order.checked_sub(1).and_then(|index| ids.get(index)).cloned();
+        let ids =
+            story_line_ids
+                .get(&line.story_id)
+                .ok_or_else(|| CaretMapError::UnknownStory {
+                    story_id: line.story_id.clone(),
+                })?;
+        let order =
+            usize::try_from(line.story_line_order).map_err(|_| CaretMapError::MetricOverflow)?;
+        let previous_line_id = order
+            .checked_sub(1)
+            .and_then(|index| ids.get(index))
+            .cloned();
         let next_line_id = ids.get(order.saturating_add(1)).cloned();
         let (mut line_stops, unsupported_internal_scalars) = line_stops(line, &id)?;
 
@@ -807,10 +862,7 @@ fn intersect(left: ScalarRangeV1, right: ScalarRangeV1) -> Option<ScalarRangeV1>
     (start < end).then_some(ScalarRangeV1 { start, end })
 }
 
-fn covered_within(
-    semantic: ScalarRangeV1,
-    placed: &[ScalarRangeV1],
-) -> Vec<ScalarRangeV1> {
+fn covered_within(semantic: ScalarRangeV1, placed: &[ScalarRangeV1]) -> Vec<ScalarRangeV1> {
     merge_ranges(
         placed
             .iter()
@@ -819,10 +871,7 @@ fn covered_within(
     )
 }
 
-fn subtract_covered(
-    semantic: ScalarRangeV1,
-    covered: &[ScalarRangeV1],
-) -> Vec<ScalarRangeV1> {
+fn subtract_covered(semantic: ScalarRangeV1, covered: &[ScalarRangeV1]) -> Vec<ScalarRangeV1> {
     if semantic.is_empty() {
         return Vec::new();
     }
@@ -849,16 +898,10 @@ fn subtract_covered(
     result
 }
 
-fn stop_x(
-    map: &ResolvedTextCaretMapV1,
-    line_id_value: &str,
-    scalar: u32,
-) -> Option<(i64, i64)> {
+fn stop_x(map: &ResolvedTextCaretMapV1, line_id_value: &str, scalar: u32) -> Option<(i64, i64)> {
     map.stops
         .iter()
-        .find(|stop| {
-            stop.line_id == line_id_value && stop.scalar == scalar && !stop.logical_only
-        })
+        .find(|stop| stop.line_id == line_id_value && stop.scalar == scalar && !stop.logical_only)
         .map(|stop| (stop.page_position_emu.x, stop.frame_position_emu.x))
 }
 
@@ -1044,7 +1087,10 @@ mod tests {
             scalar_start: start,
             scalar_end: end,
             consumed_scalar_end: consumed,
-            page_origin_emu: EmuPointV1 { x: page_x, y: page_y },
+            page_origin_emu: EmuPointV1 {
+                x: page_x,
+                y: page_y,
+            },
             frame_origin_emu: EmuPointV1 {
                 x: if frame_id == FRAME_A { 1000 } else { 5000 },
                 y: 2000,
@@ -1147,8 +1193,14 @@ mod tests {
         let downstream =
             resolve_story_position(&map, STORY, 3, Some(CaretAffinityV1::Downstream)).unwrap();
         assert_ne!(upstream.line_id, downstream.line_id);
-        assert_eq!(map.lines[0].next_line_id, Some(map.lines[1].line_id.clone()));
-        assert_eq!(map.lines[1].previous_line_id, Some(map.lines[0].line_id.clone()));
+        assert_eq!(
+            map.lines[0].next_line_id,
+            Some(map.lines[1].line_id.clone())
+        );
+        assert_eq!(
+            map.lines[1].previous_line_id,
+            Some(map.lines[0].line_id.clone())
+        );
     }
 
     #[test]
@@ -1174,21 +1226,16 @@ mod tests {
                 scalar: 1,
             })
         );
-        let full_cluster = selection_geometry(
-            &ligature,
-            STORY,
-            ScalarRangeV1::new(0, 2).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(full_cluster.coverage_state, SelectionCoverageStateV1::Complete);
+        let full_cluster =
+            selection_geometry(&ligature, STORY, ScalarRangeV1::new(0, 2).unwrap()).unwrap();
+        assert_eq!(
+            full_cluster.coverage_state,
+            SelectionCoverageStateV1::Complete
+        );
         assert_eq!(full_cluster.fragments[0].page_rect_emu.width, 200);
 
-        let inside_cluster = selection_geometry(
-            &ligature,
-            STORY,
-            ScalarRangeV1::new(1, 2).unwrap(),
-        )
-        .unwrap();
+        let inside_cluster =
+            selection_geometry(&ligature, STORY, ScalarRangeV1::new(1, 2).unwrap()).unwrap();
         assert_eq!(
             inside_cluster.coverage_state,
             SelectionCoverageStateV1::Unsupported
@@ -1235,9 +1282,7 @@ mod tests {
             )],
         );
         assert_eq!(
-            resolve_story_position(&map, STORY, 1, None)
-                .unwrap()
-                .scalar,
+            resolve_story_position(&map, STORY, 1, None).unwrap().scalar,
             1
         );
     }
@@ -1262,15 +1307,13 @@ mod tests {
             resolve_story_position(&map, STORY, 2, Some(CaretAffinityV1::Upstream)).unwrap();
         assert_eq!(after_delimiter.scalar, 2);
 
-        let delimiter = selection_geometry(
-            &map,
-            STORY,
-            ScalarRangeV1::new(1, 2).unwrap(),
-        )
-        .unwrap();
+        let delimiter = selection_geometry(&map, STORY, ScalarRangeV1::new(1, 2).unwrap()).unwrap();
         assert_eq!(delimiter.coverage_state, SelectionCoverageStateV1::Complete);
         assert!(delimiter.fragments.is_empty());
-        assert_eq!(delimiter.covered_ranges, vec![ScalarRangeV1 { start: 1, end: 2 }]);
+        assert_eq!(
+            delimiter.covered_ranges,
+            vec![ScalarRangeV1 { start: 1, end: 2 }]
+        );
     }
 
     #[test]
@@ -1307,7 +1350,10 @@ mod tests {
         assert_eq!(map.lines[0].frame_id, FRAME_A);
         assert_eq!(map.lines[1].story_line_order, 1);
         assert_eq!(map.lines[1].frame_id, FRAME_B);
-        assert_eq!(map.lines[0].next_line_id, Some(map.lines[1].line_id.clone()));
+        assert_eq!(
+            map.lines[0].next_line_id,
+            Some(map.lines[1].line_id.clone())
+        );
     }
 
     #[test]
@@ -1333,24 +1379,33 @@ mod tests {
             )],
         );
 
-        let complete =
-            selection_geometry(&map, STORY, ScalarRangeV1::new(1, 4).unwrap()).unwrap();
+        let complete = selection_geometry(&map, STORY, ScalarRangeV1::new(1, 4).unwrap()).unwrap();
         assert_eq!(complete.coverage_state, SelectionCoverageStateV1::Complete);
-        assert_eq!(complete.covered_ranges, vec![ScalarRangeV1 { start: 1, end: 4 }]);
+        assert_eq!(
+            complete.covered_ranges,
+            vec![ScalarRangeV1 { start: 1, end: 4 }]
+        );
         assert!(complete.unplaced_ranges.is_empty());
 
-        let partial =
-            selection_geometry(&map, STORY, ScalarRangeV1::new(3, 8).unwrap()).unwrap();
+        let partial = selection_geometry(&map, STORY, ScalarRangeV1::new(3, 8).unwrap()).unwrap();
         assert_eq!(partial.coverage_state, SelectionCoverageStateV1::Partial);
-        assert_eq!(partial.covered_ranges, vec![ScalarRangeV1 { start: 3, end: 5 }]);
-        assert_eq!(partial.unplaced_ranges, vec![ScalarRangeV1 { start: 5, end: 8 }]);
+        assert_eq!(
+            partial.covered_ranges,
+            vec![ScalarRangeV1 { start: 3, end: 5 }]
+        );
+        assert_eq!(
+            partial.unplaced_ranges,
+            vec![ScalarRangeV1 { start: 5, end: 8 }]
+        );
 
-        let unplaced =
-            selection_geometry(&map, STORY, ScalarRangeV1::new(6, 9).unwrap()).unwrap();
+        let unplaced = selection_geometry(&map, STORY, ScalarRangeV1::new(6, 9).unwrap()).unwrap();
         assert_eq!(unplaced.coverage_state, SelectionCoverageStateV1::Unplaced);
         assert!(unplaced.fragments.is_empty());
         assert!(unplaced.covered_ranges.is_empty());
-        assert_eq!(unplaced.unplaced_ranges, vec![ScalarRangeV1 { start: 6, end: 9 }]);
+        assert_eq!(
+            unplaced.unplaced_ranges,
+            vec![ScalarRangeV1 { start: 6, end: 9 }]
+        );
     }
 
     #[test]
