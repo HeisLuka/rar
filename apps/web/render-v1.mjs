@@ -131,6 +131,7 @@ export function buildRenderPlan(snapshot, rawView = {}) {
           kind: resource.kind,
           availability: resource.availability,
           mime: resource.mime,
+          content_hash: resource.content_hash,
           fetch_handle: resource.fetch_handle
         }) : null,
         diagnostics: Object.freeze([...(diagnosticsByNode.get(node.node_id) ?? [])]),
