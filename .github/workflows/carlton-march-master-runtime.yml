@@ -112,22 +112,69 @@ jobs:
               origin = json.loads('"' + origin_match.group(1) + '"')
 
               target = PRIVATE / spec["artifact_name"]
-              digest = hashlib.sha256()
-              size = 0
-              with session.get(origin, timeout=(10, 90), stream=True) as download:
-                  download.raise_for_status()
-                  with target.open("wb") as out:
-                      for chunk in download.iter_content(1024 * 1024):
-                          if not chunk:
+              suffix = Path(spec["artifact_name"]).suffix
+              stable_s3 = (
+                  "https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/"
+                  f"{file_id[:2]}/{file_id}"
+              )
+              known_site = "1fd359a4-cb4e-412d-81a1-79f36166cafc"
+              docs_by_id = (
+                  f"https://docs-cdn.schooljotter3.com/{known_site}/"
+                  f"{file_id}/{file_id}{suffix}"
+              )
+              docs_by_name = (
+                  f"https://docs-cdn.schooljotter3.com/{known_site}/"
+                  f"{file_id}/" + requests.utils.quote(public_name)
+              )
+              candidates = [stable_s3, docs_by_id, docs_by_name, origin]
+
+              downloaded_from = None
+              sha256 = None
+              size = None
+              for candidate in candidates:
+                  digest = hashlib.sha256()
+                  candidate_size = 0
+                  try:
+                      with session.get(
+                          candidate,
+                          timeout=(10, 90),
+                          stream=True,
+                          allow_redirects=True,
+                      ) as download:
+                          if download.status_code != 200:
+                              print(
+                                  f"candidate miss {public_name}: "
+                                  f"status={download.status_code} host="
+                                  f"{requests.utils.urlparse(candidate).hostname}"
+                              )
                               continue
-                          size += len(chunk)
-                          digest.update(chunk)
-                          out.write(chunk)
-              sha256 = digest.hexdigest()
-              if size != declared_size:
-                  raise SystemExit(
-                      f"{public_name}: downloaded size {size} != declared {declared_size}"
-                  )
+                          with target.open("wb") as out:
+                              for chunk in download.iter_content(1024 * 1024):
+                                  if not chunk:
+                                      continue
+                                  candidate_size += len(chunk)
+                                  digest.update(chunk)
+                                  out.write(chunk)
+                      if candidate_size != declared_size:
+                          target.unlink(missing_ok=True)
+                          print(
+                              f"candidate size mismatch {public_name}: "
+                              f"{candidate_size} != {declared_size}"
+                          )
+                          continue
+                      downloaded_from = candidate
+                      size = candidate_size
+                      sha256 = digest.hexdigest()
+                      break
+                  except requests.RequestException as exc:
+                      target.unlink(missing_ok=True)
+                      print(
+                          f"candidate error {public_name}: "
+                          f"{type(exc).__name__}"
+                      )
+
+              if downloaded_from is None or sha256 is None or size is None:
+                  raise SystemExit(f"{public_name}: all public download candidates failed")
               if (
                   spec["expected_sha256"] is not None
                   and sha256 != spec["expected_sha256"]
@@ -140,9 +187,11 @@ jobs:
                   "size": size,
                   "sha256": sha256,
                   "artifact_file": target.name,
+                  "source_host": requests.utils.urlparse(downloaded_from).hostname,
               }
               print(
-                  f"ACQUIRED {public_name}: id={file_id} size={size} sha256={sha256}"
+                  f"ACQUIRED {public_name}: id={file_id} size={size} sha256={sha256} "
+                  f"host={requests.utils.urlparse(downloaded_from).hostname}"
               )
 
           (PRIVATE / "acquisition.json").write_text(
