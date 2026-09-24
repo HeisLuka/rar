@@ -52,21 +52,21 @@ jobs:
               "filename":"publisher2007-kb4011203-fullfile-x86-glb.exe",
               "sha256":"3bbf13b5d646cdf3d77988a4e9f605ca35154b8dfb3950b19f0f2a9a6925af16",
               "expected_mspub":"3d482ddb0e07c7232c903c888724c1d332a7cb5e029f964688606352a04a5683",
-              "download_id":"56150",
+              "url":"https://download.microsoft.com/download/b/e/7/be7a9cfd-8414-449b-9eb2-73015e6c27e6/publisher2007-kb4011203-fullfile-x86-glb.exe",
             },
             {
               "generation":"Office 2013 / Publisher 2013",
               "filename":"publisher2013-kb4484347-fullfile-x86-glb.exe",
               "sha256":"1d23566085af14554b7d17f53ec268b57370f91fad07f326aed03c20d35441e4",
               "expected_mspub":"578937a126bb5f7e5c2e0c9ec80f52abe74a6846bc9f5fdde286b28e95538344",
-              "download_id":"104174",
+              "url":"https://download.microsoft.com/download/6/c/1/6c1eb392-fb46-4b49-8e4b-70468d5eee78/publisher2013-kb4484347-fullfile-x86-glb.exe",
             },
             {
               "generation":"Office 2016 / Publisher 2016",
               "filename":"publisher2016-kb5002492-fullfile-x86-glb.exe",
               "sha256":"073368fbe962507a425d99c0176363d8548e6f96231bd15d12a3bd080f6f1b22",
               "expected_mspub":"7bca60abd07655518f0797d4cb55cbc0f588389626ebc0c7035f2b1c9efaaa5b",
-              "download_id":"105867",
+              "url":"https://download.microsoft.com/download/d/8/f/d8f0e12b-9f3d-4b89-a66f-faeaa8713241/publisher2016-kb5002492-fullfile-x86-glb.exe",
             },
           ]
 
