@@ -76,19 +76,20 @@ def _fail(code: str, message: str) -> None:
 def _validate_browser_request_shape(request: dict) -> dict:
     if not isinstance(request, dict):
         _fail("invalid_browser_text_intent", "browser StoryRangeIntentV1 must be an object")
-    expected_outer = {
+    required_outer = {
         "protocol_version",
         "document_id",
         "source_hash",
         "base_revision_id",
         "client_operation_id",
-        "depends_on_client_operation_id",
         "command",
     }
-    if set(request) != expected_outer:
+    optional_outer = {"depends_on_client_operation_id"}
+    fields = set(request)
+    if not required_outer.issubset(fields) or fields - required_outer - optional_outer:
         _fail(
             "invalid_browser_text_intent",
-            "browser StoryRangeIntentV1 fields are not exact V1",
+            "browser StoryRangeIntentV1 fields are not valid V1",
         )
     if request.get("protocol_version") != "chaptera.story-range-intent.v1":
         _fail("invalid_browser_text_intent", "browser text protocol_version mismatch")
@@ -233,7 +234,7 @@ def lower_browser_story_range_intent_v1(
         "source_hash": browser_request["source_hash"],
         "base_revision_id": browser_request["base_revision_id"],
         "client_operation_id": browser_request["client_operation_id"],
-        "depends_on_client_operation_id": browser_request["depends_on_client_operation_id"],
+        "depends_on_client_operation_id": browser_request.get("depends_on_client_operation_id"),
         "command": {
             "kind": "story_edit_transaction",
             "story_id": command["story_id"],
