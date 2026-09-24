@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Source-free structural novelty replay for the admitted 407-SHA container delta."""
+"""Structural novelty replay for the retained 407-SHA container delta.
+
+The replay is deliberately independent of expiring Actions artifacts.  The
+target SHA set is loaded from the five permanent receipts merged by rar#177.
+Six public root containers are pinned by URL, exact SHA-256, and byte length.
+Each root is downloaded once, statically inventoried with the existing 7z
+primitive, and only .pub members whose exact SHA belongs to the retained
+407-SHA set are probed.
+"""
 from __future__ import annotations
 
 import argparse
 import hashlib
-import itertools
 import json
-import os
+import re
 import sys
 import tempfile
 import time
-import zipfile
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -19,114 +25,90 @@ sys.path.insert(0, str(HERE))
 import pub_container_extract as containers  # type: ignore
 import structural_novelty as novelty  # type: ignore
 
-SCHEMA = "chaptera.container-delta-structural-novelty.v1"
+SCHEMA = "chaptera.container-delta-structural-novelty.v2"
 EXPECTED_SHA = 407
-EXPECTED_ROOTS = 12
 EXPECTED_COVER_ROOTS = 6
 EXPECTED_COVER_BYTES = 762_499_072
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+SHA_RECEIPTS = [
+    HERE / "receipts" / f"container-net-new-407-part-{i:02d}.sha256.txt"
+    for i in range(1, 6)
+]
+
+ROOTS = [
+    {
+        "url": "https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+        "sha256": "36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a",
+        "size_bytes": 47_730_688,
+        "expected_target_sha": 128,
+    },
+    {
+        "url": "https://archive.org/download/microsoft-publisher-2.0_202011/microsoft-publisher-2.0.iso",
+        "sha256": "8f1e46dd43be728d7b39f53cf4f642149b19eebe0c74103270fc14ecae1291c4",
+        "size_bytes": 23_851_008,
+        "expected_target_sha": 20,
+    },
+    {
+        "url": "https://archive.org/download/microsoft-publisher-97-cd-deluxe/microsoft-publisher-97-cd-deluxe.iso",
+        "sha256": "69043e0d2d23345163a27806914c99382490a27e5710fdb6af82ee7df33b4ce8",
+        "size_bytes": 138_719_232,
+        "expected_target_sha": 13,
+    },
+    {
+        "url": "https://archive.org/download/pub-40-cd/PUB_40_CD.iso",
+        "sha256": "3abd372fd3a1def03cf17ca6277533a8a1bcfbe88b56a213f9c389035020a78b",
+        "size_bytes": 138_719_232,
+        "expected_target_sha": 16,
+    },
+    {
+        "url": "https://archive.org/download/pub97no/PUB_40_CD.ISO",
+        "sha256": "c44fc471b42e3381efeec1d069161c05331d1ebd883d764e9c04a5c6392177c7",
+        "size_bytes": 142_080_000,
+        "expected_target_sha": 238,
+    },
+    {
+        "url": "https://archive.org/download/video-professor-learn-publisher/Learn_Publisher_Disc_3.iso",
+        "sha256": "e6e86f2fd5d0430437c5fdb06db5958776475c84ec80b5085d45fe96d3a5d5cd",
+        "size_bytes": 271_398_912,
+        "expected_target_sha": 4,
+    },
+]
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def load_target_shas() -> set[str]:
+    out: set[str] = set()
+    for path in SHA_RECEIPTS:
+        if not path.is_file():
+            raise ValueError(f"missing retained SHA receipt: {path}")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            sha = line.strip().lower()
+            if not sha:
+                continue
+            if not HEX64.fullmatch(sha):
+                raise ValueError(f"malformed SHA in {path.name}: {sha!r}")
+            if sha in out:
+                raise ValueError(f"duplicate retained SHA across receipt parts: {sha}")
+            out.add(sha)
+    if len(out) != EXPECTED_SHA:
+        raise ValueError(f"expected {EXPECTED_SHA} retained SHA, got {len(out)}")
+    return out
 
 
-def download_receipt(artifact_id: int, artifact_sha256: str, work: Path) -> list[dict]:
-    archive = work / "receipt.zip"
-    novelty.download_artifact("HeisLuka/rar", artifact_id, os.environ.get("GITHUB_TOKEN", ""), archive)
-    actual = sha256_file(archive)
-    if actual != artifact_sha256:
-        raise ValueError(f"receipt artifact digest mismatch expected={artifact_sha256} actual={actual}")
-    dest = work / "receipt"
-    dest.mkdir()
-    novelty.safe_extract_zip(archive, dest)
-    rows = json.loads((dest / "container-net-new.json").read_text(encoding="utf-8"))
-    if not isinstance(rows, list):
-        raise ValueError("container-net-new.json must contain a list")
-    if len(rows) != EXPECTED_SHA or len({r.get("sha256") for r in rows}) != EXPECTED_SHA:
-        raise ValueError(f"expected {EXPECTED_SHA} exact SHA rows")
-    return rows
-
-
-def observation_key(p: dict) -> tuple:
-    return (
-        str(p.get("container_url") or ""),
-        str(p.get("root_sha256") or ""),
-        str(p.get("archive_member") or ""),
-    )
-
-
-def root_inventory(rows: list[dict]) -> tuple[set[str], dict[tuple, set[str]], dict[tuple, list[tuple[str, dict]]]]:
-    all_sha: set[str] = set()
-    root_sets: dict[tuple, set[str]] = defaultdict(set)
-    root_obs: dict[tuple, list[tuple[str, dict]]] = defaultdict(list)
-    for row in rows:
-        sha = str(row.get("sha256") or "").lower()
-        if len(sha) != 64:
-            raise ValueError("malformed delta SHA")
-        all_sha.add(sha)
-        provenance = row.get("provenance")
-        if not isinstance(provenance, list) or not provenance:
-            raise ValueError(f"missing provenance for {sha}")
-        for p in provenance:
-            url = str(p.get("container_url") or "").strip()
-            root_sha = str(p.get("root_sha256") or "").lower()
-            size = int(p.get("root_size_bytes") or 0)
-            depth = int(p.get("container_depth") or 0)
-            member = str(p.get("archive_member") or "").strip()
-            if not url or len(root_sha) != 64 or size <= 0 or not member:
-                raise ValueError(f"incomplete root locator for {sha}")
-            if depth != 0:
-                raise ValueError(f"delta replay currently requires depth=0; got {depth} for {sha}")
-            key = (url, root_sha, size)
-            root_sets[key].add(sha)
-            root_obs[key].append((sha, p))
-    if len(all_sha) != EXPECTED_SHA:
-        raise ValueError(f"expected {EXPECTED_SHA} delta SHA, got {len(all_sha)}")
-    if len(root_sets) != EXPECTED_ROOTS:
-        raise ValueError(f"expected {EXPECTED_ROOTS} exact roots, got {len(root_sets)}")
-    return all_sha, dict(root_sets), dict(root_obs)
-
-
-def minimum_cover(universe: set[str], root_sets: dict[tuple, set[str]]) -> list[tuple]:
-    roots = sorted(root_sets)
-    best = None
-    for mask in range(1, 1 << len(roots)):
-        selected = [roots[i] for i in range(len(roots)) if mask & (1 << i)]
-        byte_cost = sum(int(key[2]) for key in selected)
-        if best is not None and byte_cost > best[0]:
-            continue
-        covered = set().union(*(root_sets[key] for key in selected))
-        if covered != universe:
-            continue
-        candidate = (byte_cost, len(selected), selected)
-        if best is None or candidate[:2] < best[:2]:
-            best = candidate
-    if best is None:
-        raise ValueError("no exact root cover exists")
-    byte_cost, count, selected = best
-    if count != EXPECTED_COVER_ROOTS or byte_cost != EXPECTED_COVER_BYTES:
-        raise ValueError(
-            f"cover drift: roots={count} bytes={byte_cost}; "
-            f"expected roots={EXPECTED_COVER_ROOTS} bytes={EXPECTED_COVER_BYTES}"
-        )
-    return selected
-
-
-def assign_sha(universe: set[str], selected: list[tuple], root_sets: dict[tuple, set[str]]) -> dict[tuple, set[str]]:
-    assigned = {key: set() for key in selected}
-    for sha in sorted(universe):
-        candidates = [key for key in selected if sha in root_sets[key]]
-        if not candidates:
-            raise ValueError(f"selected cover misses {sha}")
-        key = min(candidates, key=lambda x: (int(x[2]), str(x[0]), str(x[1])))
-        assigned[key].add(sha)
-    if set().union(*assigned.values()) != universe:
-        raise ValueError("assignment does not cover universe")
-    return assigned
+def validate_roots() -> None:
+    if len(ROOTS) != EXPECTED_COVER_ROOTS:
+        raise ValueError(f"expected {EXPECTED_COVER_ROOTS} pinned roots")
+    if sum(int(root["size_bytes"]) for root in ROOTS) != EXPECTED_COVER_BYTES:
+        raise ValueError("pinned root byte total drift")
+    seen = set()
+    for root in ROOTS:
+        if root["url"] in seen:
+            raise ValueError("duplicate pinned root URL")
+        seen.add(root["url"])
+        if not HEX64.fullmatch(str(root["sha256"])):
+            raise ValueError("malformed pinned root SHA")
+        if int(root["size_bytes"]) <= 0 or int(root["expected_target_sha"]) <= 0:
+            raise ValueError("invalid pinned root metadata")
 
 
 def fetch_root(url: str, path: Path, timeout: float, max_bytes: int, attempts: int = 3) -> dict:
@@ -143,97 +125,136 @@ def fetch_root(url: str, path: Path, timeout: float, max_bytes: int, attempts: i
     raise last
 
 
-def extract_exact(archive: Path, member: str, expected_sha: str, expected_size: int, td: Path, command_timeout: int, max_member_bytes: int) -> bytes:
-    out = td / ("member-" + hashlib.sha256((expected_sha + member).encode()).hexdigest()[:16] + ".pub")
+def candidate_members(archive: Path, command_timeout: int, max_member_bytes: int) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    for entry in containers.list_7z(archive, command_timeout):
+        name = str(entry.get("Path") or "")
+        if containers.ext_kind(name) != "pub" or not containers.safe_member(name):
+            continue
+        if entry.get("Encrypted", "-") == "+":
+            continue
+        if "L" in str(entry.get("Attributes") or ""):
+            continue
+        try:
+            size = int(entry.get("Size", "0") or 0)
+        except ValueError:
+            continue
+        if size < 0 or size > max_member_bytes:
+            continue
+        out.append((name, size))
+    out.sort()
+    return out
+
+
+def extract_member_bytes(
+    archive: Path,
+    member: str,
+    expected_size: int,
+    td: Path,
+    command_timeout: int,
+    max_member_bytes: int,
+) -> bytes:
+    token = hashlib.sha256(member.encode("utf-8")).hexdigest()[:16]
+    path = td / f"member-{token}.pub"
     try:
-        actual_size = containers.extract_member(archive, member, out, command_timeout, max_member_bytes)
-        data = out.read_bytes()
+        actual_size = containers.extract_member(
+            archive, member, path, command_timeout, max_member_bytes
+        )
+        data = path.read_bytes()
     finally:
-        out.unlink(missing_ok=True)
-    if expected_size and actual_size != expected_size:
-        raise ValueError(f"member size mismatch expected={expected_size} actual={actual_size}")
-    actual_sha = hashlib.sha256(data).hexdigest()
-    if actual_sha != expected_sha:
-        raise ValueError(f"member SHA mismatch expected={expected_sha} actual={actual_sha}")
+        path.unlink(missing_ok=True)
+    if actual_size != expected_size:
+        raise ValueError(
+            f"member size mismatch expected={expected_size} actual={actual_size}"
+        )
     return data
 
 
-def pick_observation(sha: str, key: tuple, root_obs: dict[tuple, list[tuple[str, dict]]]) -> dict:
-    matches = [p for row_sha, p in root_obs[key] if row_sha == sha]
-    if not matches:
-        raise ValueError(f"no observation for {sha} in selected root")
-    return sorted(matches, key=observation_key)[0]
-
-
 def scan_root(args: argparse.Namespace) -> int:
+    target = load_target_shas()
+    validate_roots()
+    if not (0 <= args.root_index < len(ROOTS)):
+        raise ValueError("root-index outside pinned root set")
+    root = ROOTS[args.root_index]
     args.out.mkdir(parents=True, exist_ok=True)
+
     with tempfile.TemporaryDirectory(prefix="rar-delta407-") as raw:
         td = Path(raw)
-        rows = download_receipt(args.receipt_artifact_id, args.receipt_artifact_sha256, td)
-        universe, root_sets, root_obs = root_inventory(rows)
-        selected = minimum_cover(universe, root_sets)
-        assigned = assign_sha(universe, selected, root_sets)
-        if not (0 <= args.root_index < len(selected)):
-            raise ValueError("root-index outside selected cover")
-        key = selected[args.root_index]
-        url, expected_root_sha, expected_root_size = key
         archive = td / "root-container.bin"
-        meta = fetch_root(url, archive, args.timeout, args.max_container_bytes)
-        if meta["sha256"] != expected_root_sha:
+        meta = fetch_root(
+            str(root["url"]), archive, args.timeout, args.max_container_bytes
+        )
+        if meta["sha256"] != root["sha256"]:
             raise ValueError(
-                f"root SHA mismatch expected={expected_root_sha} actual={meta['sha256']}"
+                f"root SHA mismatch expected={root['sha256']} actual={meta['sha256']}"
             )
-        if int(meta["size"]) != int(expected_root_size):
+        if int(meta["size"]) != int(root["size_bytes"]):
             raise ValueError(
-                f"root size mismatch expected={expected_root_size} actual={meta['size']}"
+                f"root size mismatch expected={root['size_bytes']} actual={meta['size']}"
             )
 
-        results = []
-        for sha in sorted(assigned[key]):
-            p = pick_observation(sha, key, root_obs)
-            base = {
+        matched: dict[str, dict] = {}
+        inventoried = candidate_members(
+            archive, args.command_timeout, args.max_member_bytes
+        )
+        for member, declared_size in inventoried:
+            data = extract_member_bytes(
+                archive,
+                member,
+                declared_size,
+                td,
+                args.command_timeout,
+                args.max_member_bytes,
+            )
+            sha = hashlib.sha256(data).hexdigest()
+            if sha not in target:
+                continue
+            first = novelty.cfb_probe(data)
+            second = novelty.cfb_probe(data)
+            if first != second:
+                raise RuntimeError(f"probe_nondeterministic:{sha}")
+            row = {
                 "sha256": sha,
                 "sources": ["container_net_new_407"],
-                "filenames": [Path(str(p["archive_member"])).name],
-                "container_url": url,
-                "root_sha256": expected_root_sha,
-                "archive_member": str(p["archive_member"]),
+                "filenames": [Path(member).name],
+                "container_url": root["url"],
+                "root_sha256": root["sha256"],
+                "archive_member": member,
+                **first,
+                "status": "ok",
+                "rehydrated_from": "container_delta_407",
             }
-            try:
-                data = extract_exact(
-                    archive,
-                    str(p["archive_member"]),
-                    sha,
-                    int(p.get("size_bytes") or 0),
-                    td,
-                    args.command_timeout,
-                    args.max_member_bytes,
+            prior = matched.get(sha)
+            if prior is not None:
+                keys = (
+                    "path_fingerprint_sha256",
+                    "topology_fingerprint_sha256",
+                    "size_bucket_fingerprint_sha256",
+                    "content_topology_fingerprint_sha256",
                 )
-                first = novelty.cfb_probe(data)
-                second = novelty.cfb_probe(data)
-                if first != second:
-                    raise RuntimeError("probe_nondeterministic")
-                results.append({**base, **first, "status": "ok", "rehydrated_from": "container_delta_407"})
-            except Exception as exc:
-                results.append({
-                    **base,
-                    "status": "probe_failed",
-                    "errors": [f"{type(exc).__name__}:{novelty.safe_text(exc)}"],
-                })
+                if any(prior.get(k) != row.get(k) for k in keys):
+                    raise ValueError(f"same-SHA fingerprint disagreement inside root: {sha}")
+            matched.setdefault(sha, row)
 
-        results.sort(key=lambda r: r["sha256"])
+        if len(matched) != int(root["expected_target_sha"]):
+            raise ValueError(
+                f"root target-set drift: expected {root['expected_target_sha']} "
+                f"retained SHA, found {len(matched)}"
+            )
+
+        rows = [matched[k] for k in sorted(matched)]
         (args.out / "fingerprints.json").write_text(
-            json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8"
+            json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         summary = {
             "schema": SCHEMA,
             "root_index": args.root_index,
-            "selected_cover_root_count": len(selected),
-            "selected_cover_total_bytes": sum(int(x[2]) for x in selected),
-            "root_url": url,
-            "root_sha256": expected_root_sha,
-            "assigned_sha": len(assigned[key]),
-            "status": dict(Counter(r["status"] for r in results)),
+            "root_url": root["url"],
+            "root_sha256": root["sha256"],
+            "root_size_bytes": root["size_bytes"],
+            "candidate_pub_members": len(inventoried),
+            "matched_retained_sha": len(matched),
+            "status": {"ok": len(matched)},
         }
         (args.out / "summary.json").write_text(
             json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -243,16 +264,38 @@ def scan_root(args: argparse.Namespace) -> int:
 
 
 def aggregate(args: argparse.Namespace) -> int:
-    rows = []
+    target = load_target_shas()
+    validate_roots()
+    observations = []
     for path in args.input.rglob("fingerprints.json"):
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, list):
-            rows.extend(payload)
-    by_sha = {row["sha256"]: row for row in rows}
+            observations.extend(payload)
+
+    by_sha: dict[str, dict] = {}
+    for row in observations:
+        sha = str(row.get("sha256") or "")
+        if sha not in target:
+            raise ValueError(f"replay emitted non-target SHA: {sha}")
+        prior = by_sha.get(sha)
+        if prior is not None:
+            keys = (
+                "path_fingerprint_sha256",
+                "topology_fingerprint_sha256",
+                "size_bucket_fingerprint_sha256",
+                "content_topology_fingerprint_sha256",
+            )
+            if any(prior.get(k) != row.get(k) for k in keys):
+                raise ValueError(f"cross-root fingerprint mismatch for {sha}")
+        by_sha.setdefault(sha, row)
+
+    missing = sorted(target - set(by_sha))
+    if missing:
+        raise ValueError(f"selected six-root replay missed {len(missing)} retained SHA")
     if len(by_sha) != EXPECTED_SHA:
         raise ValueError(f"expected {EXPECTED_SHA} unique replay rows, got {len(by_sha)}")
-    canonical = [by_sha[k] for k in sorted(by_sha)]
 
+    canonical = [by_sha[k] for k in sorted(by_sha)]
     temp = args.out / "_source"
     temp.mkdir(parents=True, exist_ok=True)
     (temp / "fingerprints.json").write_text(
@@ -264,38 +307,30 @@ def aggregate(args: argparse.Namespace) -> int:
 
     summary_path = args.out / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    summary.update({
-        "schema": SCHEMA,
-        "cohort": "container_net_new_407",
-        "expected_sha": EXPECTED_SHA,
-        "selected_cover_root_count": EXPECTED_COVER_ROOTS,
-        "selected_cover_total_bytes": EXPECTED_COVER_BYTES,
-    })
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    summary.update(
+        {
+            "schema": SCHEMA,
+            "cohort": "container_net_new_407",
+            "expected_sha": EXPECTED_SHA,
+            "selected_cover_root_count": EXPECTED_COVER_ROOTS,
+            "selected_cover_total_bytes": EXPECTED_COVER_BYTES,
+            "observation_rows": len(observations),
+        }
+    )
+    summary_path.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     print(json.dumps(summary, indent=2))
     return 0
 
 
 def self_test() -> int:
-    universe = {"a", "b", "c", "d"}
-    roots = {
-        ("u1", "1" * 64, 10): {"a", "b"},
-        ("u2", "2" * 64, 12): {"c", "d"},
-        ("u3", "3" * 64, 50): {"a", "b", "c", "d"},
-    }
-    # Exercise assignment separately; production cover has immutable cardinality/byte assertions.
-    assigned = assign_sha(universe, [("u1", "1" * 64, 10), ("u2", "2" * 64, 12)], roots)
-    assert set().union(*assigned.values()) == universe
-    with tempfile.TemporaryDirectory(prefix="delta407-test-") as raw:
-        td = Path(raw)
-        archive = td / "sample.zip"
-        payload = b"container-delta-replay"
-        with zipfile.ZipFile(archive, "w") as zf:
-            zf.writestr("x.pub", payload)
-        sha = hashlib.sha256(payload).hexdigest()
-        out = extract_exact(archive, "x.pub", sha, len(payload), td, 20, 1024 * 1024)
-        assert out == payload
-    print("container delta 407 self-test ok")
+    target = load_target_shas()
+    validate_roots()
+    assert len(target) == 407
+    assert sum(int(root["size_bytes"]) for root in ROOTS) == 762_499_072
+    assert sum(int(root["expected_target_sha"]) for root in ROOTS) >= 407
+    print("container delta 407 retained-input self-test ok")
     return 0
 
 
@@ -304,8 +339,6 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("scan-root")
-    s.add_argument("--receipt-artifact-id", type=int, required=True)
-    s.add_argument("--receipt-artifact-sha256", required=True)
     s.add_argument("--root-index", type=int, required=True)
     s.add_argument("--out", type=Path, required=True)
     s.add_argument("--timeout", type=float, default=60.0)
