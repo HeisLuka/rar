@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/authoring-authored-stack/v1/reorder-intent.schema.json",
+  "title": "Chaptera ReorderAuthoredStackV1 intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "source_hash",
+    "base_revision_id",
+    "client_operation_id",
+    "command"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.authored-stack-reorder-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "client_operation_id": {"type": "string", "minLength": 8},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "page_id", "node_id", "expected_before", "mode"],
+      "properties": {
+        "kind": {"const": "reorder_authored_stack"},
+        "page_id": {"type": "string", "minLength": 1},
+        "node_id": {"type": "string", "minLength": 1},
+        "expected_before": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "mode": {
+          "enum": ["step_forward", "step_backward", "to_front", "to_back"]
+        }
+      }
+    }
+  }
+}
