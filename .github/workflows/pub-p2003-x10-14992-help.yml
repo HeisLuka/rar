@@ -1,0 +1,206 @@
+name: PUB 2003 X10-14992 English help extraction
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pub-p2003-x10-14992-help.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inert media/MSI tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools cabextract genisoimage file
+
+      - name: Resolve one original IA media member
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          curl -fL --retry 4 --retry-delay 3 --max-time 120             https://archive.org/metadata/X10-14992 -o out/metadata.json
+          python3 - <<'PY'
+          import json, urllib.parse
+          from pathlib import Path
+
+          d=json.load(open("out/metadata.json",encoding="utf-8"))
+          md=d.get("metadata",{}) or {}
+          files=d.get("files",[]) or []
+          exts=(".iso",".mdf",".img",".bin",".7z",".zip",".rar")
+          rows=[]
+          for f in files:
+              name=str(f.get("name",""))
+              low=name.lower()
+              try: size=int(f.get("size") or 0)
+              except: size=0
+              if low.endswith(exts) and size >= 50_000_000:
+                  score=0
+                  if str(f.get("source","")).lower()=="original": score += 10
+                  if low.endswith(".iso"): score += 8
+                  if "office11" in low or "x10-14992" in low or "publisher" in low: score += 6
+                  rows.append((score,size,name,f))
+          if not rows:
+              raise SystemExit("no bounded installation-media candidate in X10-14992 metadata")
+          rows.sort(key=lambda x:(-x[0],-x[1],x[2]))
+          score,size,name,f=rows[0]
+          receipt={
+              "identifier":"X10-14992",
+              "title":md.get("title"),
+              "language":md.get("language"),
+              "date":md.get("date"),
+              "selected_name":name,
+              "selected_size":size,
+              "selected_source":f.get("source"),
+              "provider_md5":f.get("md5"),
+              "provider_sha1":f.get("sha1"),
+              "score":score,
+              "candidate_count":len(rows),
+              "candidates":[{"name":x[2],"size":x[1],"source":x[3].get("source"),"md5":x[3].get("md5"),"sha1":x[3].get("sha1"),"score":x[0]} for x in rows],
+              "boundary":"Archive metadata selects acquisition candidate only; authenticity is strengthened only by byte hash, media volume and Publisher MSI/locale checks below."
+          }
+          Path("out/selection.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          Path("out/media-url.txt").write_text("https://archive.org/download/X10-14992/"+urllib.parse.quote(name),encoding="utf-8")
+          print(json.dumps(receipt,indent=2,ensure_ascii=False))
+          PY
+
+      - name: Download and verify selected media
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(cat out/media-url.txt)"
+          curl -fL --retry 5 --retry-delay 5 --max-time 2400 "$url" -o out/media.bin
+          sha256sum out/media.bin | tee out/media-sha256.txt
+          sha1sum out/media.bin | tee out/media-sha1.txt
+          md5sum out/media.bin | tee out/media-md5.txt
+          stat -c 'size_bytes=%s' out/media.bin | tee out/media-size.txt
+          file out/media.bin | tee out/media-file.txt
+          python3 - <<'PY'
+          import hashlib,json
+          s=json.load(open("out/selection.json"))
+          b=open("out/media.bin","rb").read()
+          md5=hashlib.md5(b).hexdigest()
+          sha1=hashlib.sha1(b).hexdigest()
+          if s.get("provider_md5") and md5.lower()!=str(s["provider_md5"]).lower():
+              raise SystemExit(f"provider MD5 mismatch: {md5} != {s['provider_md5']}")
+          if s.get("provider_sha1") and sha1.lower()!=str(s["provider_sha1"]).lower():
+              raise SystemExit(f"provider SHA1 mismatch: {sha1} != {s['provider_sha1']}")
+          print("provider hash checks: PASS")
+          PY
+
+      - name: Unwrap media and identify Publisher MSI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/wrap out/disc out/cabs
+          # Try selected member as disc first; if it is an archive wrapper, expand once and use the largest image-like child.
+          if isoinfo -d -i out/media.bin > out/volume.txt 2>&1; then
+            cp out/media.bin out/disc.iso
+          else
+            7z x -y out/media.bin -oout/wrap > out/wrapper-extract.txt 2>&1
+            inner="$(find out/wrap -type f -printf '%s\t%p\n' | sort -nr | awk -F '\t' '$1>=50000000{print $2; exit}')"
+            test -n "$inner"
+            cp "$inner" out/disc.iso
+            isoinfo -d -i out/disc.iso > out/volume.txt 2>&1 || {
+              file out/disc.iso | tee out/inner-file.txt
+              exit 2
+            }
+          fi
+          7z x -y out/disc.iso -oout/disc > out/disc-extract.txt 2>&1
+          find out/disc -type f -printf '%P\t%s\n' | sort > out/disc-files.tsv
+          pubmsi="$(find out/disc -type f -iname 'PUB.MSI' -print -quit)"
+          test -n "$pubmsi"
+          cp "$pubmsi" out/PUB.MSI
+          msiinfo export out/PUB.MSI Property > out/pub-property.idt
+          msiinfo export out/PUB.MSI File > out/pub-file.idt
+          msiinfo export out/PUB.MSI Media > out/pub-media.idt
+          grep -Ei '^Product(Name|Version|Language)|Publisher' out/pub-property.idt | tee out/pub-property-summary.txt || true
+          grep -i 'VBAPB10' out/pub-file.idt | tee out/pub-vbapb10-file-row.txt
+          test -s out/pub-vbapb10-file-row.txt
+          grep -Eq '^ProductLanguage[[:space:]]+1033([[:space:]]|$)' out/pub-property.idt
+
+      - name: Extract exact English VBAPB10 help payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > out/cab-vbapb10-hits.txt
+          while IFS= read -r cab; do
+            [ -n "$cab" ] || continue
+            hits="$(7z l "$cab" 2>/dev/null | grep -i 'VBAPB10' || true)"
+            if [ -n "$hits" ]; then
+              printf 'CAB=%s\n%s\n' "$cab" "$hits" >> out/cab-vbapb10-hits.txt
+              d="out/cabs/$(basename "$cab").d"
+              mkdir -p "$d"
+              7z x -y "$cab" -o"$d" > /dev/null 2>&1 || true
+            fi
+          done < <(find out/disc -type f -iname '*.cab' | sort)
+          test -s out/cab-vbapb10-hits.txt
+          find out/cabs -type f -iname '*VBAPB10*' -printf '%s\t%p\n' | sort > out/vbapb10-files.tsv
+          test -s out/vbapb10-files.tsv
+          target="$(awk -F '\t' 'tolower($2) ~ /vbapb10/ {print $2; exit}' out/vbapb10-files.tsv)"
+          test -n "$target"
+          cp "$target" out/VBAPB10-P2003-1033.CHM
+          sha256sum out/VBAPB10-P2003-1033.CHM | tee out/vbapb10-sha256.txt
+          sha1sum out/VBAPB10-P2003-1033.CHM | tee out/vbapb10-sha1.txt
+          md5sum out/VBAPB10-P2003-1033.CHM | tee out/vbapb10-md5.txt
+          stat -c 'size_bytes=%s' out/VBAPB10-P2003-1033.CHM | tee out/vbapb10-size.txt
+          file out/VBAPB10-P2003-1033.CHM | tee out/vbapb10-file.txt
+
+      - name: Produce bounded provenance receipt
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          selection=json.load(open("out/selection.json"))
+          def read(p): return Path(p).read_text(encoding="utf-8",errors="replace").strip()
+          data=Path("out/VBAPB10-P2003-1033.CHM").read_bytes()
+          prop=read("out/pub-property.idt")
+          volume=read("out/volume.txt")
+          receipt={
+              "schema":"rar-p2003-vbapb10-english-v1",
+              "ia_identifier":"X10-14992",
+              "ia_selection":selection,
+              "media_sha256":read("out/media-sha256.txt").split()[0],
+              "media_sha1":read("out/media-sha1.txt").split()[0],
+              "media_md5":read("out/media-md5.txt").split()[0],
+              "volume_evidence":volume,
+              "product_language_1033":bool(re.search(r"^ProductLanguage\s+1033(?:\s|$)",prop,re.M)),
+              "publisher_msi_present":True,
+              "vbapb10_file_row":read("out/pub-vbapb10-file-row.txt"),
+              "vbapb10_size":len(data),
+              "vbapb10_sha256":hashlib.sha256(data).hexdigest(),
+              "vbapb10_sha1":hashlib.sha1(data).hexdigest(),
+              "vbapb10_md5":hashlib.md5(data).hexdigest(),
+              "boundary":"Exact English/1033 Publisher 2003 help-carrier receipt from one provenance-pinned IA media item. This establishes developer-help bytes, not runtime licensing or PUB wire semantics."
+          }
+          Path("out/p2003-vbapb10-receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps({k:receipt[k] for k in ["media_sha256","product_language_1033","vbapb10_size","vbapb10_sha256"]},indent=2))
+          PY
+
+      - name: Upload bounded help evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2003-x10-14992-vbapb10-${{ github.run_id }}
+          path: |
+            out/selection.json
+            out/media-*.txt
+            out/volume.txt
+            out/pub-*.idt
+            out/pub-*.txt
+            out/cab-vbapb10-hits.txt
+            out/vbapb10-files.tsv
+            out/vbapb10-*.txt
+            out/p2003-vbapb10-receipt.json
+            out/VBAPB10-P2003-1033.CHM
+          if-no-files-found: error
+          retention-days: 30
