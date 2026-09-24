@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Test deterministic diagnostics
-        run: python -m unittest -v tools/test_preflight_v1.py
+        run: python tools/test_preflight_v1.py
       - name: Produce preflight receipt
         run: python tools/run_preflight_contract.py
       - uses: actions/upload-artifact@v4
