@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+pub mod prepared_paragraph;
 pub mod runtime;
 
 pub type FingerprintV1 = [u8; 32];
