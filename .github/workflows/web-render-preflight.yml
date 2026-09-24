@@ -7,6 +7,10 @@ on:
       - "apps/web/render-v1.test.mjs"
       - "apps/web/render-benchmark.html"
       - "tools/run_web_renderer_benchmark.mjs"
+      - "apps/web/observability-v1.mjs"
+      - "apps/web/render-telemetry-v1.mjs"
+      - "apps/web/render-telemetry-v1.test.mjs"
+      - "tools/run_render_telemetry_benchmark.mjs"
       - "docs/web-editor-render-surface-v1.md"
       - ".github/workflows/web-render-preflight.yml"
   workflow_dispatch:
@@ -39,3 +43,21 @@ jobs:
         with:
           name: web-render-preflight-${{ matrix.browser }}
           path: target/web-render/${{ matrix.browser }}-*
+
+  telemetry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Unit-test renderer telemetry extension
+        run: node --test apps/web/render-telemetry-v1.test.mjs
+      - name: Measure disabled/counters/full overhead
+        run: node tools/run_render_telemetry_benchmark.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-telemetry-${{ github.run_id }}
+          path: target/render-telemetry/receipt.json
+          if-no-files-found: error
