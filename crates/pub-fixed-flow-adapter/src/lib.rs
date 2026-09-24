@@ -119,10 +119,19 @@ pub enum FixedFlowError {
     InvalidUuid(&'static str),
     InvalidLineHeight,
     InvalidFontSize,
-    NonCanonicalLineIndex { expected: usize, actual: usize },
-    InvalidScalarRange { line_index: usize },
-    ZeroUnitsPerEm { line_index: usize },
-    BaselineOverflow { line_index: usize },
+    NonCanonicalLineIndex {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidScalarRange {
+        line_index: usize,
+    },
+    ZeroUnitsPerEm {
+        line_index: usize,
+    },
+    BaselineOverflow {
+        line_index: usize,
+    },
     ClusterBeforeScalarBase {
         run_index: usize,
         cluster: u32,
@@ -145,7 +154,10 @@ impl fmt::Display for FixedFlowError {
             Self::InvalidLineHeight => write!(f, "line_height_emu must be positive"),
             Self::InvalidFontSize => write!(f, "font_size_emu must be positive"),
             Self::NonCanonicalLineIndex { expected, actual } => {
-                write!(f, "line index {actual} is not canonical position {expected}")
+                write!(
+                    f,
+                    "line index {actual} is not canonical position {expected}"
+                )
             }
             Self::InvalidScalarRange { line_index } => {
                 write!(f, "line {line_index} has scalar_end < scalar_start")
@@ -306,11 +318,11 @@ pub fn materialize_fixed_runs_v1(
             .ok_or(FixedFlowError::BaselineOverflow {
                 line_index: line.line_index,
             })?;
-        let baseline_y = row_offset
-            .checked_add(input.font_size_emu)
-            .ok_or(FixedFlowError::BaselineOverflow {
+        let baseline_y = row_offset.checked_add(input.font_size_emu).ok_or(
+            FixedFlowError::BaselineOverflow {
                 line_index: line.line_index,
-            })?;
+            },
+        )?;
 
         runs.push(FixedTextRunV1 {
             run_index: line.line_index,
@@ -328,9 +340,7 @@ pub fn materialize_fixed_runs_v1(
     Ok(runs)
 }
 
-pub fn build_receipt_v1(
-    input: &ShapedFlowInputV1,
-) -> Result<ShapedFlowReceiptV1, FixedFlowError> {
+pub fn build_receipt_v1(input: &ShapedFlowInputV1) -> Result<ShapedFlowReceiptV1, FixedFlowError> {
     let runs = materialize_fixed_runs_v1(input)?;
 
     let mut line_receipts = Vec::with_capacity(input.lines.len());
@@ -399,7 +409,13 @@ mod tests {
         }
     }
 
-    fn line(index: usize, row: u32, start: u32, end: u32, glyphs: Vec<ResolvedGlyphV1>) -> ShapedLineInputV1 {
+    fn line(
+        index: usize,
+        row: u32,
+        start: u32,
+        end: u32,
+        glyphs: Vec<ResolvedGlyphV1>,
+    ) -> ShapedLineInputV1 {
         ShapedLineInputV1 {
             line_index: index,
             frame_line_index: row,
@@ -450,8 +466,14 @@ mod tests {
         let second = &runs[1];
         assert_eq!(second.glyphs[0].cluster, 2);
         assert_eq!(second.glyphs[1].cluster, 3);
-        assert_eq!(run_local_cluster_v1(1, second.glyphs[0].cluster, second.scalar_base, 2).unwrap(), 0);
-        assert_eq!(run_local_cluster_v1(1, second.glyphs[1].cluster, second.scalar_base, 2).unwrap(), 1);
+        assert_eq!(
+            run_local_cluster_v1(1, second.glyphs[0].cluster, second.scalar_base, 2).unwrap(),
+            0
+        );
+        assert_eq!(
+            run_local_cluster_v1(1, second.glyphs[1].cluster, second.scalar_base, 2).unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -470,7 +492,10 @@ mod tests {
     fn receipt_hashes_prove_glyph_sequence_identity_and_no_ascii_gate() {
         let receipt = build_receipt_v1(&input()).expect("receipt");
         assert_eq!(receipt.lines.len(), 2);
-        assert_eq!(receipt.lines[1].glyph_sequence_hash, receipt.runs[1].glyph_sequence_hash);
+        assert_eq!(
+            receipt.lines[1].glyph_sequence_hash,
+            receipt.runs[1].glyph_sequence_hash
+        );
         assert_eq!(receipt.runs[1].scalar_base, 2);
         assert_eq!(receipt.runs[1].baseline_y, 2200);
         assert!(receipt.story_overset);
