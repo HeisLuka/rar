@@ -384,7 +384,10 @@ mod tests {
                 width_emu: 19_050,
             })
         );
-        assert_eq!(project_layout_shape_paint_v1(&entity.paint).fill, paint.fill);
+        assert_eq!(
+            project_layout_shape_paint_v1(&entity.paint).fill,
+            paint.fill
+        );
         assert_eq!(
             project_editable_export_shape_paint_v1(&entity.paint).stroke,
             paint.stroke
