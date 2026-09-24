@@ -5,8 +5,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
-pub const DEFAULT_LISTEN: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+pub const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -80,7 +79,12 @@ mod tests {
 
     #[test]
     fn accepts_loopback_and_private_addresses() {
-        for address in ["127.0.0.1:8080", "10.0.0.5:8080", "192.168.1.5:8080", "[fd00::5]:8080"] {
+        for address in [
+            "127.0.0.1:8080",
+            "10.0.0.5:8080",
+            "192.168.1.5:8080",
+            "[fd00::5]:8080",
+        ] {
             let config = RuntimeConfig {
                 listen: address.parse::<SocketAddr>().unwrap(),
             };
