@@ -1,0 +1,147 @@
+name: CORPUS-VAC Wayback retry 35949861453
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/corpus-vac-wayback-retry-35949861453.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: corpus-vac-wayback-retry-35949861453
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download immutable base aggregate from run 35949861453
+        uses: actions/download-artifact@v4
+        with:
+          name: wayback-aggregate-35949861453
+          path: base
+          github-token: ${{ github.token }}
+          run-id: 35949861453
+
+      - name: Retry only failed CDX queries
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/wayback_pub_seed.py \
+            --url 'https://www.adelphi.edu/brand/wp-content/uploads/sites/55/2020/08/Adelphi-TriFold.pub' \
+            --url 'https://www.tnstate.edu/publications/documents/pubtemplatenewsletter1.pub' \
+            --url 'https://www.wichita.edu/services/printing/_documents/Publisher_8.5x11_portrait_fullbleed_template.pub' \
+            --domain 'adelphi.edu' \
+            --domain 'christchurch-pellon.calderdale.sch.uk' \
+            --domain 'effectivechurchcom.com' \
+            --domain 'ludwell.wilts.sch.uk' \
+            --domain 'stpauls-school.co.uk' \
+            --domain 'txwes.edu' \
+            --domain 'uaf.edu' \
+            --domain 'westga.edu' \
+            --domain 'wichita.edu' \
+            --exact-limit 20 \
+            --domain-limit 500 \
+            --delay 2.0 \
+            --timeout 60 \
+            --retries 3 \
+            --out out/retry_seed.csv \
+            --summary out/retry_seed.summary.json
+          cat out/retry_seed.summary.json
+
+      - name: Harvest only newly discovered retry captures
+        run: |
+          set -euo pipefail
+          mkdir -p out/retry
+          rows="$(wc -l < out/retry_seed.csv || true)"
+          if [ "${rows:-0}" -gt 1 ]; then
+            python tools/corpus/harvest_pub.py \
+              --seed out/retry_seed.csv \
+              --out out/retry \
+              --max-files -1 \
+              --timeout 25 \
+              --max-bytes 104857600 \
+              --per-host-delay 0.2
+          else
+            printf '[]\n' > out/retry/manifest.json
+          fi
+
+      - name: Remove retry payload bytes before artifact upload
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/retry -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+
+      - name: Merge immutable base + retry by original URL and capture digest
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          base = json.loads(Path("base/manifest.json").read_text(encoding="utf-8"))
+          retry_path = Path("out/retry/manifest.json")
+          retry = json.loads(retry_path.read_text(encoding="utf-8")) if retry_path.exists() else []
+          retry_summary = json.loads(Path("out/retry_seed.summary.json").read_text(encoding="utf-8"))
+
+          def key(row):
+              original = (row.get("wayback_original_url") or "").casefold()
+              digest = row.get("wayback_digest") or ""
+              if original or digest:
+                  return ("capture", original, digest)
+              return ("fallback", row.get("direct_url") or "", row.get("sha256") or "")
+
+          merged = {}
+          for row in base:
+              merged.setdefault(key(row), row)
+          for row in retry:
+              merged.setdefault(key(row), row)
+
+          rows = list(merged.values())
+          errors = retry_summary.get("errors") or []
+          summary = {
+              "schema": "rar-wayback-retry-union-v1",
+              "base_run_id": 35949861453,
+              "base_manifest_rows": len(base),
+              "retry_manifest_rows": len(retry),
+              "merged_manifest_rows": len(rows),
+              "merged_unique_sha256": len({r.get("sha256") for r in rows if r.get("sha256")}),
+              "merged_original_urls": len({r.get("wayback_original_url") for r in rows if r.get("wayback_original_url")}),
+              "retry_query_errors": errors,
+              "retry_query_error_count": len(errors),
+              "classification": dict(Counter(r.get("classification", "") for r in rows)),
+              "fetch_status": dict(Counter(r.get("fetch_status", "") for r in rows)),
+          }
+          out = Path("out/union")
+          out.mkdir(parents=True, exist_ok=True)
+          (out / "manifest.json").write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+          (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+
+      - name: Upload retry and union receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayback-retry-union-${{ github.run_id }}
+          path: |
+            out/retry_seed.csv
+            out/retry_seed.summary.json
+            out/retry/manifest.json
+            out/retry/manifest.csv
+            out/union/manifest.json
+            out/union/summary.json
+          if-no-files-found: warn
+          retention-days: 30
