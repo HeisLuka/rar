@@ -61,6 +61,33 @@ except ModuleNotFoundError:
     )
 
 
+try:
+    from create_shape_v1 import (
+        validate_create_shape_intent_v1,
+        validate_creation_paint_v1,
+        validate_rect_emu_v1,
+        validate_uuid7_node_id_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _create_shape_path = pathlib.Path(__file__).with_name("create_shape_v1.py")
+    _create_shape_spec = importlib.util.spec_from_file_location(
+        "chaptera_create_shape_v1",
+        _create_shape_path,
+    )
+    if _create_shape_spec is None or _create_shape_spec.loader is None:
+        raise ImportError("cannot load create_shape_v1 sibling module")
+    _create_shape_module = importlib.util.module_from_spec(_create_shape_spec)
+    sys.modules[_create_shape_spec.name] = _create_shape_module
+    _create_shape_spec.loader.exec_module(_create_shape_module)
+    validate_create_shape_intent_v1 = _create_shape_module.validate_create_shape_intent_v1
+    validate_creation_paint_v1 = _create_shape_module.validate_creation_paint_v1
+    validate_rect_emu_v1 = _create_shape_module.validate_rect_emu_v1
+    validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
+
+
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
 
@@ -296,6 +323,18 @@ class RevisionKernel:
             request_validator=self._validate_text_frame_columns_request_shape,
             canonical_validator=self._validate_canonical_text_frame_columns,
             pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_create_shape(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_create_shape_request_shape,
+            canonical_validator=self._validate_canonical_create_shape,
         )
 
     def commit_shape_fill(
@@ -1097,6 +1136,65 @@ class RevisionKernel:
             )
         if before == after:
             raise ValueError("canonical SetTextFrameColumns must change column state")
+
+    @staticmethod
+    def _validate_create_shape_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.create-shape-intent.v1":
+            raise ValueError("V1 CreateShape protocol_version is required")
+        validate_create_shape_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_create_shape(command: dict, operation: dict) -> None:
+        expected_keys = {
+            "kind",
+            "node_id",
+            "page_id",
+            "parent_id",
+            "shape_kind",
+            "bounds",
+            "transform",
+            "paint",
+            "provenance",
+        }
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != expected_keys
+            or operation.get("kind") != "create_shape"
+        ):
+            raise ValueError("authoritative executor returned malformed CreateShape operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical CreateShape NodeId differs from accepted intent")
+        if operation.get("page_id") != command.get("page_id"):
+            raise ValueError("canonical CreateShape page differs from accepted intent")
+        if operation.get("parent_id") != command.get("page_id"):
+            raise ValueError("canonical CreateShape parent must equal accepted page")
+        if operation.get("shape_kind") != "rectangle":
+            raise ValueError("canonical CreateShape must create ordinary rectangle")
+        if operation.get("transform") != {"kind": "identity"}:
+            raise ValueError("canonical CreateShape transform must be identity")
+        if operation.get("provenance") != {"kind": "author_created"}:
+            raise ValueError("canonical CreateShape entity provenance must be author_created")
+
+        validate_uuid7_node_id_v1(operation.get("node_id"))
+        validate_rect_emu_v1(operation.get("bounds"), "canonical CreateShape bounds")
+        if operation.get("bounds") != command.get("bounds"):
+            raise ValueError("canonical CreateShape bounds differ from accepted intent")
+
+        paint = operation.get("paint")
+        if not isinstance(paint, dict) or set(paint) != {"fill", "stroke", "provenance"}:
+            raise ValueError("canonical CreateShape paint must contain fill/stroke/provenance")
+        if paint.get("provenance") != {"kind": "author_created"}:
+            raise ValueError("canonical CreateShape paint provenance must be author_created")
+        validate_creation_paint_v1(
+            {
+                "fill": paint.get("fill"),
+                "stroke": paint.get("stroke"),
+            }
+        )
+        if paint.get("fill") != command.get("paint", {}).get("fill"):
+            raise ValueError("canonical CreateShape fill differs from accepted intent")
+        if paint.get("stroke") != command.get("paint", {}).get("stroke"):
+            raise ValueError("canonical CreateShape stroke differs from accepted intent")
 
     @staticmethod
     def _validate_srgb_color(color: dict, label: str) -> None:
