@@ -94,7 +94,7 @@ jobs:
             if grep -i 'PUBCONV' "out/msi-scan/$safe.File.txt" >> out/pubconv-msi-hits.txt; then
               printf 'MSI=%s\n' "$msi" >> out/pubconv-msi-hits.txt
             fi
-          done < <(find out/extracted out/unshield -type f -iname '*.msi' | sort)
+          done < <(find out/extracted -type f -iname '*.msi' | sort)
           cat out/pubconv-msi-hits.txt
 
           owner_msi="$(grep '^MSI=' out/pubconv-msi-hits.txt | head -n1 | cut -d= -f2- || true)"
@@ -198,7 +198,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends p7zip-full msitools
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools unshield binutils
           mkdir -p out/extracted out/msi-scan
           7z x -y out/CorelDRAWGraphicsSuiteX4Installer_EN.exe -oout/extracted >/tmp/7z-corel.log 2>&1
           find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
@@ -247,7 +247,7 @@ jobs:
               found=1
               break
             fi
-          done < <(find out/extracted -type f -iname '*.msi' | sort)
+          done < <(find out/extracted out/unshield -type f -iname '*.msi' | sort)
           echo "=== MSI INVENTORY ==="
           cat out/msi-files.txt || true
           echo "=== RAW PRODUCT/PUB HITS ==="
@@ -368,7 +368,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Resolve Internet Archive item and fetch exact Publisher 2002 image
+      - name: Resolve Internet Archive item and fetch exact Publisher 2002 media container
         shell: bash
         run: |
           set -euo pipefail
@@ -378,16 +378,14 @@ jobs:
           python3 - <<'PY' > out/selected-file.txt
           import json
           d=json.load(open("out/metadata.json"))
-          files=d.get("files",[])
           cand=[]
-          for f in files:
+          for f in d.get("files",[]):
               name=f.get("name","")
               size=int(f.get("size") or 0)
               lo=name.lower()
-              # X08-20172 is preserved by IA as an original 7z containing the disc image,
-              # not as a loose ISO. Prefer direct images if present, otherwise the largest
-              # original archive container and verify its IA hashes before extraction.
-              if lo.endswith((".iso",".img",".bin",".mdf",".7z")) and f.get("source")=="original":
+              if f.get("source")!="original":
+                  continue
+              if lo.endswith((".iso",".img",".bin",".mdf",".7z")):
                   rank=2 if lo.endswith((".iso",".img",".bin",".mdf")) else 1
                   cand.append((rank,size,name,f.get("sha1"),f.get("md5")))
           cand.sort(reverse=True)
@@ -412,13 +410,41 @@ jobs:
           if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2002-container.bin | awk '{print $1}')" = "$expected_md5"; fi
           file out/publisher2002-container.bin | tee out/container-file.txt
 
-          if printf '%s' "$image" | grep -Eqi '\\.7z
+          if printf '%s' "$image" | grep -Eqi '\\.7z$'; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends p7zip-full
+            mkdir -p out/publisher2002-extracted
+            7z x -y out/publisher2002-container.bin -oout/publisher2002-extracted > out/container-extract.txt
+            find out/publisher2002-extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
+            media="$(find out/publisher2002-extracted -type f \( -iname '*.iso' -o -iname '*.img' -o -iname '*.bin' -o -iname '*.mdf' \) -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+            test -n "$media"
+            cp "$media" out/publisher2002-media.bin
+          else
+            cp out/publisher2002-container.bin out/publisher2002-media.bin
+          fi
+          test "$(stat -c %s out/publisher2002-media.bin)" -gt 100000000
+          sha256sum out/publisher2002-media.bin | tee out/sha256.txt
+          sha1sum out/publisher2002-media.bin | tee out/sha1.txt
+          md5sum out/publisher2002-media.bin | tee out/md5.txt
+          stat -c 'size_bytes=%s' out/publisher2002-media.bin | tee out/size.txt
+          file out/publisher2002-media.bin | tee out/file.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: publisher-2002-exact-media-${{ github.run_id }}
-          path: out/**
-          if-no-files-found: error
+          path: |
+            out/metadata.json
+            out/selected-file.txt
+            out/selection.txt
+            out/source-url.txt
+            out/container-*.txt
+            out/sha256.txt
+            out/sha1.txt
+            out/md5.txt
+            out/size.txt
+            out/file.txt
+            out/publisher2002-media.bin
+          if-no-files-found: warn
           retention-days: 14
           compression-level: 0
 
