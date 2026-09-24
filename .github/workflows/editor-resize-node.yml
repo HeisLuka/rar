@@ -6,6 +6,10 @@ on:
       - "packages/protocol/editor-resize/**"
       - "tools/validate_resize_node_producer_receipt.py"
       - "tools/test_resize_node_producer_receipt.py"
+      - "tools/build_resize_node_producer_receipt.py"
+      - "tools/test_build_resize_node_producer_receipt.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_revision_store.py"
       - "docs/chaptera-editor-resize-node-v1.md"
       - ".github/workflows/editor-resize-node.yml"
   workflow_dispatch:
@@ -24,6 +28,10 @@ jobs:
       - run: python -m pip install jsonschema
       - name: Validate ResizeNode receipt contract
         run: python -m unittest tools/test_resize_node_producer_receipt.py
+      - name: Validate ResizeNode revision envelope
+        run: python services/editor-api/test_revision_store.py -v
+      - name: Validate local ResizeNode producer orchestration
+        run: python tools/test_build_resize_node_producer_receipt.py -v
       - name: Validate retained real ResizeNode receipts
         shell: bash
         run: |
