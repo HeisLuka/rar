@@ -98,21 +98,21 @@ class NestedNudgePlanV1Tests(unittest.TestCase):
             self.assertEqual(result.before_page.width, result.after_page.width)
             self.assertEqual(result.before_page.height, result.after_page.height)
 
-    def test_coarse_up_nudge_is_document_space_not_local_scale(self):
+    def test_coarse_down_nudge_is_document_space_not_local_scale(self):
         plan = nested_nudge.plan_nested_nudge_v1(
             scope=self.scope,
             selection_snapshot=self.snapshot,
             ancestry=self.ancestry,
             members=self.members,
-            direction="up",
+            direction="down",
             modifier_state="coarse",
         )
         self.assertEqual("planned", plan.status)
-        self.assertEqual((0, -COARSE_NUDGE_EMU), plan.requested_page_delta)
-        self.assertEqual((0, -(COARSE_NUDGE_EMU // 2)), plan.local_translation)
+        self.assertEqual((0, COARSE_NUDGE_EMU), plan.requested_page_delta)
+        self.assertEqual((0, COARSE_NUDGE_EMU // 2), plan.local_translation)
         for result in plan.members:
             self.assertEqual(
-                result.before_page.y - COARSE_NUDGE_EMU,
+                result.before_page.y + COARSE_NUDGE_EMU,
                 result.after_page.y,
             )
 
@@ -189,19 +189,22 @@ class NestedNudgePlanV1Tests(unittest.TestCase):
             page_id="page:1",
             edges=(path_edge("g0", None, ("a", "b")),),
         )
+        # Scale 5/2. D=118872 maps back to local 47549, but
+        # round(47549*5/2)=118873, so the translated anchor itself is not
+        # exactly representable.
         ancestry = (
             transform_edge(
                 "g0",
                 "page:1",
                 None,
                 ("a", "b"),
-                RectEmu(0, 0, 7, 100_000),
-                RectEmu(0, 0, 3, 100_000),
+                RectEmu(0, 0, 500_000, 100_000),
+                RectEmu(0, 0, 200_000, 100_000),
             ),
         )
         members = (
-            NestedMultiMemberV1("a", RectEmu(0, 10, 1, 10)),
-            NestedMultiMemberV1("b", RectEmu(2, 40, 1, 10)),
+            NestedMultiMemberV1("a", RectEmu(0, 10, 10_000, 10)),
+            NestedMultiMemberV1("b", RectEmu(100_000, 40, 10_000, 10)),
         )
         plan = nested_nudge.plan_nested_nudge_v1(
             scope=scope,
