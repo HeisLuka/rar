@@ -143,7 +143,7 @@ pub trait BlobProvider: Send + Sync {
         &self,
         object_locator: &str,
         expected_byte_len: u64,
-        input: &mut (dyn AsyncRead + Unpin + Send),
+        input: Box<dyn AsyncRead + Unpin + Send>,
     ) -> Result<ProviderObjectMetadata, ProviderError>;
 
     async fn head_exact(
@@ -320,24 +320,41 @@ impl BlobStoreService {
         );
 
         let mut hashing = HashingBoundedReader::new(input, request.byte_len);
-        let create_result = self
-            .provider
-            .create_immutable(&object_locator, request.byte_len, &mut hashing)
-            .await;
+        let (mut upload_writer, upload_reader) = tokio::io::duplex(COPY_BUFFER_BYTES);
+        let create = self.provider.create_immutable(
+            &object_locator,
+            request.byte_len,
+            Box::new(upload_reader),
+        );
+        let pump = async {
+            tokio::io::copy(&mut hashing, &mut upload_writer)
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))?;
+            upload_writer
+                .shutdown()
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))
+        };
+        let (create_result, pump_result) = tokio::join!(create, pump);
 
         let metadata = match create_result {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => self
-                .provider
-                .head_exact(&object_locator)
-                .await
-                .map_err(provider_error)?
-                .ok_or_else(|| {
-                    BlobStoreError::new(
-                        "provider_unknown_unreconciled",
-                        "create outcome is unknown and exact object is absent",
-                    )
-                })?,
+            Ok(metadata) => {
+                pump_result?;
+                metadata
+            }
+            Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => {
+                pump_result?;
+                self.provider
+                    .head_exact(&object_locator)
+                    .await
+                    .map_err(provider_error)?
+                    .ok_or_else(|| {
+                        BlobStoreError::new(
+                            "provider_unknown_unreconciled",
+                            "create outcome is unknown and exact object is absent",
+                        )
+                    })?
+            }
             Err(error) if error.kind == ProviderErrorKind::AlreadyExists => {
                 return Err(BlobStoreError::new(
                     "physical_key_collision",
@@ -1202,7 +1219,7 @@ mod tests {
             &self,
             object_locator: &str,
             expected_byte_len: u64,
-            input: &mut (dyn AsyncRead + Unpin + Send),
+            mut input: Box<dyn AsyncRead + Unpin + Send>,
         ) -> Result<ProviderObjectMetadata, ProviderError> {
             let mut bytes = Vec::new();
             input
@@ -1554,15 +1571,15 @@ mod tests {
     async fn provider_create_only_rejects_same_key_overwrite() {
         let provider = FakeProvider::new(capabilities());
         let locator = "quarantine/tenant-a/upload-1";
-        let mut first = Cursor::new(b"one".to_vec());
+        let first = Cursor::new(b"one".to_vec());
         provider
-            .create_immutable(locator, 3, &mut first)
+            .create_immutable(locator, 3, Box::new(first))
             .await
             .unwrap();
 
-        let mut second = Cursor::new(b"two".to_vec());
+        let second = Cursor::new(b"two".to_vec());
         let error = provider
-            .create_immutable(locator, 3, &mut second)
+            .create_immutable(locator, 3, Box::new(second))
             .await
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::AlreadyExists);
