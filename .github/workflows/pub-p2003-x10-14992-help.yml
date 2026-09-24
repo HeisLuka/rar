@@ -1,5 +1,7 @@
 name: PUB 2003 X10-14992 English help extraction
 
+# DEVHELP-XVER-01 rerun discriminator after PR #73 CRLF normalization.
+
 on:
   push:
     branches: [main]
