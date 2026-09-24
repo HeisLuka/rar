@@ -27,8 +27,8 @@ pub use create_shape::{
 };
 
 pub use fragment::{
-    AUTHORING_FRAGMENT_SCHEMA_V1, SINGLE_RECTANGLE_ENTITY_ID_V1, AuthoringFragmentError,
-    AuthoringFragmentV1, FragmentSourceProvenanceV1, PasteFragmentResultV1, PasteFragmentV1,
-    PasteIdentityRemapV1, RectangleFragmentEntityV1, TranslationEmuV1,
+    AUTHORING_FRAGMENT_SCHEMA_V1, AuthoringFragmentError, AuthoringFragmentV1,
+    FragmentSourceProvenanceV1, PasteFragmentResultV1, PasteFragmentV1, PasteIdentityRemapV1,
+    RectangleFragmentEntityV1, SINGLE_RECTANGLE_ENTITY_ID_V1, TranslationEmuV1,
     capture_rectangle_fragment_v1, materialize_paste_fragment_v1,
 };
