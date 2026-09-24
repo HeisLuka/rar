@@ -1,4 +1,4 @@
-# Rerun marker: 2026-09-24 exact ProductCode extraction receipt
+# Corel X4 exact Filters MSI -> IEPUB.flt static fingerprint
 name: PUB Corel X4 Filters archaeology
 
 on:
@@ -19,211 +19,142 @@ concurrency:
 jobs:
   extract:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install inert extraction tools
+      - name: Install inert MSI and PE tools
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full msitools unshield binutils file
+          sudo apt-get install -y msitools binutils file python3-pefile
 
-      - name: Download exact acquired Corel X4 artifact
+      - name: Download exact Corel X4 Filters MSI evidence
         uses: actions/download-artifact@v4
         with:
-          name: corel-x4-trial-35983938022
+          name: corel-x4-filters-35986080377
           path: acquired
           github-token: ${{ github.token }}
-          run-id: 35983938022
+          run-id: 35986080377
 
-      - name: Verify exact installer identity
+      - name: Verify exact Filters MSI identity and contract
         shell: bash
         env:
-          EXPECTED_SHA256: "2f8e777984730bea9453306e535cc0a96fc4d3d907ac311fcdbbd13bd165fda7"
-          EXPECTED_SHA1: "9b1232bb63cf1257c447146da8e059297fcffa35"
-        run: |
-          set -euo pipefail
-          installer="$(find acquired -type f -name 'CorelDRAWGraphicsSuiteX4Installer_EN.exe' -print -quit)"
-          test -n "$installer"
-          test "$(sha256sum "$installer" | awk '{print $1}')" = "$EXPECTED_SHA256"
-          test "$(sha1sum "$installer" | awk '{print $1}')" = "$EXPECTED_SHA1"
-          mkdir -p out
-          printf '%s\n' "$installer" > out/installer-path.txt
-          sha256sum "$installer" > out/installer-sha256.txt
-          sha1sum "$installer" > out/installer-sha1.txt
-          stat -c 'size_bytes=%s' "$installer" > out/installer-size.txt
-          file "$installer" > out/installer-file.txt
-
-      - name: Extract installer without execution
-        run: |
-          set -euo pipefail
-          installer="$(cat out/installer-path.txt)"
-          mkdir -p extracted inner unshield-tree
-          7z x -y -oextracted "$installer" > out/7z-extract.log 2>&1 || {
-            rc=$?
-            tail -n 200 out/7z-extract.log
-            exit "$rc"
-          }
-
-          overlay="$(find extracted -maxdepth 1 -type f -name '[[]0]' -print -quit || true)"
-          if [ -n "$overlay" ]; then
-            file "$overlay" > out/overlay-file.txt || true
-            7z l "$overlay" > out/overlay-7z-list.txt 2>&1 || true
-            7z x -y -oinner "$overlay" > out/overlay-7z-extract.txt 2>&1 || true
-          fi
-
-          while IFS= read -r cab; do
-            [ -n "$cab" ] || continue
-            if unshield l "$cab" > /tmp/unshield-list.txt 2>/dev/null; then
-              key="$(printf '%s' "$cab" | sha256sum | cut -c1-16)"
-              dest="unshield-tree/$key"
-              mkdir -p "$dest"
-              unshield x -d "$dest" "$cab" > "out/unshield-$key.log" 2>&1 || true
-            fi
-          done < <(find extracted inner -type f -iname 'data*.cab' | sort)
-
-          find extracted inner unshield-tree -type f -printf '%P\t%s\n' | sort > out/extracted-files.tsv
-          find extracted inner unshield-tree -type f -iname '*.msi' -printf '%p\n' | sort > out/msi-paths.txt
-          if [ ! -s out/msi-paths.txt ]; then
-            echo "No MSI exposed after first-level, overlay and InstallShield CAB extraction." > out/no-msi-after-nested-extraction.txt
-          fi
-
-      - name: Identify Filters MSI by exact ProductCode
-        shell: bash
-        env:
+          EXPECTED_SHA256: "fe3f3246f4858af2c7d8c4f8f5f02d1a905403dda43a3ef7500dbae4308307b4"
           FILTERS_PRODUCT_CODE: "{7F05E704-30A6-421A-97A7-8EEB1C7FF017}"
         run: |
           set -euo pipefail
-          mkdir -p out/msi
-          found=""
-          while IFS= read -r msi; do
-            [ -n "$msi" ] || continue
-            key="$(printf '%s' "$msi" | sha256sum | cut -c1-16)"
-            base="out/msi/$key"
-            mkdir -p "$base"
-            printf '%s\n' "$msi" > "$base/path.txt"
-            sha256sum "$msi" > "$base/sha256.txt"
-            msiinfo export "$msi" Property > "$base/Property.idt" 2>"$base/property.stderr" || true
-            msiinfo export "$msi" File > "$base/File.idt" 2>"$base/file.stderr" || true
-            msiinfo export "$msi" Component > "$base/Component.idt" 2>"$base/component.stderr" || true
-            if grep -Fqi "$FILTERS_PRODUCT_CODE" "$base/Property.idt"; then
-              found="$msi"
-              printf '%s\n' "$msi" > out/filters-msi-path.txt
-              cp "$base/Property.idt" out/filters-Property.idt
-              cp "$base/File.idt" out/filters-File.idt
-              cp "$base/Component.idt" out/filters-Component.idt
-              sha256sum "$msi" > out/filters-msi-sha256.txt
-              stat -c 'size_bytes=%s' "$msi" > out/filters-msi-size.txt
-              break
-            fi
-          done < out/msi-paths.txt
+          mkdir -p out
+          msi="$(find acquired -type f -iname 'Filters.msi' -print -quit)"
+          test -n "$msi"
+          actual="$(sha256sum "$msi" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+          cp "$msi" out/Filters.msi
+          sha256sum out/Filters.msi > out/filters-msi-sha256.txt
+          sha1sum out/Filters.msi > out/filters-msi-sha1.txt
+          md5sum out/Filters.msi > out/filters-msi-md5.txt
+          stat -c 'size_bytes=%s' out/Filters.msi > out/filters-msi-size.txt
+          file out/Filters.msi > out/filters-msi-file.txt
+          msiinfo export out/Filters.msi Property > out/filters-Property.idt
+          msiinfo export out/Filters.msi File > out/filters-File.idt
+          msiinfo export out/Filters.msi Component > out/filters-Component.idt
+          grep -Fqi "$FILTERS_PRODUCT_CODE" out/filters-Property.idt
+          grep -Ei 'ProductCode|ProductName|ProductVersion|Manufacturer' out/filters-Property.idt > out/filters-property-summary.txt
+          grep -Ei 'iepub\.flt|pub|publisher|cdrpub' out/filters-File.idt > out/filters-pub-hits.txt || true
+          grep -Ei '^iepub\.flt[[:space:]]' out/filters-File.idt > out/iepub-file-table-row.txt
+          test -s out/iepub-file-table-row.txt
 
-          if [ -z "$found" ]; then
-            echo "Exact Filters ProductCode not found in extracted MSI Property tables." > out/filters-not-found.txt
-            grep -RaiE '7F05E704|Filters|PUB|Publisher|IEPUB' out/msi > out/msi-search.txt || true
-            exit 2
-          fi
-
-      - name: Extract Filters MSI and inventory PUB candidates
+      - name: Extract exact IEPUB.flt from Filters MSI
         run: |
           set -euo pipefail
-          msi="$(cat out/filters-msi-path.txt)"
           mkdir -p filters-tree
-          msiextract -C filters-tree "$msi" > out/msiextract.log 2>&1 || {
-            rc=$?
-            cat out/msiextract.log
-            exit "$rc"
-          }
-
+          msiextract -C filters-tree out/Filters.msi > out/msiextract.log 2>&1
           find filters-tree -type f -printf '%P\t%s\n' | sort > out/filters-tree.tsv
-          grep -Ei '(^|[^A-Za-z])(pub|publisher|iepub|cdrpub)|\.flt($|[^A-Za-z])' out/filters-File.idt > out/file-table-pub-candidates.txt || true
+          iepub="$(find filters-tree -type f -iname 'IEPUB.flt' -print -quit)"
+          test -n "$iepub"
+          cp "$iepub" out/IEPUB.flt
+          test "$(stat -c %s out/IEPUB.flt)" = "513312"
+          sha256sum out/IEPUB.flt > out/iepub-sha256.txt
+          sha1sum out/IEPUB.flt > out/iepub-sha1.txt
+          md5sum out/IEPUB.flt > out/iepub-md5.txt
+          stat -c 'size_bytes=%s' out/IEPUB.flt > out/iepub-size.txt
+          file out/IEPUB.flt > out/iepub-file.txt
+          objdump -p out/IEPUB.flt > out/iepub-objdump-p.txt 2>&1 || true
+          objdump -x out/IEPUB.flt > out/iepub-objdump-x.txt 2>&1 || true
+          strings -a -n 4 out/IEPUB.flt > out/iepub-strings-ascii.txt
+          strings -el -n 4 out/IEPUB.flt > out/iepub-strings-utf16.txt
+          grep -iE 'publisher|mspub|\.pub|microsoft|corel|copyright|version|filter'             out/iepub-strings-ascii.txt out/iepub-strings-utf16.txt > out/iepub-interesting-strings.txt || true
 
-          python3 - <<'PY'
-          import hashlib, json, re, subprocess
-          from pathlib import Path
-
-          root=Path("filters-tree")
-          candidates=[]
-          name_re=re.compile(r"(pub|publisher|iepub|cdrpub)",re.I)
-          content_needles=[b"microsoft publisher",b"mspublisher",b"publisher",b".pub"]
-
-          for p in root.rglob("*"):
-              if not p.is_file():
-                  continue
-              by_name=bool(name_re.search(p.name))
-              try:
-                  data=p.read_bytes() if p.stat().st_size <= 64*1024*1024 else b""
-              except Exception:
-                  continue
-              low=data.lower() if data else b""
-              by_content=any(n in low for n in content_needles) if low else False
-              if not (by_name or by_content):
-                  continue
-              digest=hashlib.sha256(data if data else p.read_bytes()).hexdigest()
-              item={
-                  "path":str(p.relative_to(root)),
-                  "size":p.stat().st_size,
-                  "sha256":digest,
-                  "name_match":by_name,
-                  "content_match":by_content,
-              }
-              try:
-                  item["file"]=subprocess.check_output(["file","-b",str(p)],text=True).strip()
-              except Exception:
-                  item["file"]=""
-              candidates.append(item)
-
-          Path("out/pub-candidates.json").write_text(
-              json.dumps(candidates,indent=2,ensure_ascii=False),encoding="utf-8"
-          )
-          print(json.dumps(candidates,indent=2,ensure_ascii=False))
-          PY
-
-          while IFS=$'\t' read -r rel size; do
-            [ -n "$rel" ] || continue
-            path="filters-tree/$rel"
-            if file "$path" | grep -qiE 'PE32|MS-DOS executable'; then
-              safe="$(printf '%s' "$rel" | tr '/\\ :' '____' | tr -cd 'A-Za-z0-9._-')"
-              strings -a -n 5 "$path" | grep -iE 'publisher|mspub|\.pub|iepub|cdrpub' > "out/${safe}.strings.txt" || true
-              objdump -p "$path" > "out/${safe}.objdump-p.txt" 2>&1 || true
-              sha256sum "$path" > "out/${safe}.sha256.txt"
-            fi
-          done < out/filters-tree.tsv
-
-      - name: Build bounded classification receipt
-        if: always()
+      - name: Produce PE/version/import fingerprint
         run: |
+          set -euo pipefail
           python3 - <<'PY'
-          import json
+          import hashlib, json, pefile
           from pathlib import Path
 
-          out=Path("out")
-          candidates=[]
-          p=out/"pub-candidates.json"
-          if p.exists():
-              candidates=json.loads(p.read_text(encoding="utf-8"))
-
-          summary={
-              "schema":"rar-corel-x4-pub-filter-v1",
-              "source_run_id":35983938022,
-              "source_artifact_id":10801580707,
-              "installer_sha256":"2f8e777984730bea9453306e535cc0a96fc4d3d907ac311fcdbbd13bd165fda7",
+          p=Path("out/IEPUB.flt")
+          data=p.read_bytes()
+          pe=pefile.PE(str(p), fast_load=False)
+          imports=[]
+          if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
+              for entry in pe.DIRECTORY_ENTRY_IMPORT:
+                  dll=(entry.dll or b"").decode("ascii","replace")
+                  names=[]
+                  for imp in entry.imports:
+                      names.append({
+                          "name": (imp.name or b"").decode("ascii","replace") if imp.name else None,
+                          "ordinal": imp.ordinal,
+                      })
+                  imports.append({"dll":dll,"symbols":names})
+          file_info={}
+          for block in getattr(pe, "FileInfo", []) or []:
+              if not isinstance(block, list):
+                  block=[block]
+              for item in block:
+                  if getattr(item, "Key", b"") == b"StringFileInfo":
+                      for st in item.StringTable:
+                          for k,v in st.entries.items():
+                              file_info[k.decode("utf-8","replace") if isinstance(k,bytes) else str(k)] = (
+                                  v.decode("utf-8","replace") if isinstance(v,bytes) else str(v)
+                              )
+          receipt={
+              "schema":"rar-corel-x4-iepub-static-v1",
+              "source_run_id":35986080377,
+              "source_artifact_id":10802585819,
+              "filters_msi_sha256":"fe3f3246f4858af2c7d8c4f8f5f02d1a905403dda43a3ef7500dbae4308307b4",
               "filters_product_code":"{7F05E704-30A6-421A-97A7-8EEB1C7FF017}",
-              "filters_msi_found":(out/"filters-msi-path.txt").exists(),
-              "candidate_count":len(candidates),
-              "candidates":candidates,
-              "boundary":"Static inert extraction only; candidate naming/strings do not by themselves prove parser lineage or semantic fidelity.",
+              "filters_product_name":"CorelDRAW Graphics Suite X4 - Filters",
+              "filters_product_version":"14.2",
+              "iepub_filename":"IEPUB.flt",
+              "iepub_expected_file_table_version":"14.0.0.701",
+              "iepub_size":len(data),
+              "iepub_sha256":hashlib.sha256(data).hexdigest(),
+              "machine":hex(pe.FILE_HEADER.Machine),
+              "timestamp":pe.FILE_HEADER.TimeDateStamp,
+              "image_base":hex(pe.OPTIONAL_HEADER.ImageBase),
+              "entry_point_rva":hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint),
+              "file_version_info":file_info,
+              "imports":imports,
+              "boundary":"Static extraction/fingerprint only. Presence in Corel X4 Filters proves shipped PUB import component identity, not semantic fidelity or lineage with Microsoft code."
           }
-          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
-          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          Path("out/iepub-receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps({
+              "iepub_sha256":receipt["iepub_sha256"],
+              "size":receipt["iepub_size"],
+              "file_version_info":file_info,
+              "import_dlls":[x["dll"] for x in imports],
+          },indent=2,ensure_ascii=False))
           PY
 
-      - name: Upload evidence receipt only
-        if: always()
+      - name: Upload bounded static evidence
         uses: actions/upload-artifact@v4
         with:
-          name: corel-x4-filters-analysis-${{ github.run_id }}
-          path: out/**
+          name: corel-x4-iepub-static-${{ github.run_id }}
+          path: |
+            out/filters-*.txt
+            out/filters-*.idt
+            out/iepub-*.txt
+            out/iepub-receipt.json
+            out/IEPUB.flt
           if-no-files-found: error
           retention-days: 30
