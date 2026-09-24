@@ -142,6 +142,28 @@ except ModuleNotFoundError:
 
 
 try:
+    from document_text_replace_all_v1 import (
+        DocumentTextReplaceAllError,
+        DocumentTextReplaceAllNoOp,
+        execute_document_text_replace_all_v1,
+        validate_document_text_replace_all_operation_v1,
+        validate_document_text_replace_all_request_v1,
+    )
+except ModuleNotFoundError:
+    import pathlib
+
+    _document_replace_all_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _document_replace_all_dir not in sys.path:
+        sys.path.insert(0, _document_replace_all_dir)
+    from document_text_replace_all_v1 import (
+        DocumentTextReplaceAllError,
+        DocumentTextReplaceAllNoOp,
+        execute_document_text_replace_all_v1,
+        validate_document_text_replace_all_operation_v1,
+        validate_document_text_replace_all_request_v1,
+    )
+
+try:
     from multi_story_text_transaction_v1 import (
         MultiStoryTextTransactionError,
         execute_multi_story_text_transaction_v1,
@@ -683,6 +705,82 @@ class RevisionKernel:
                 retryable=False,
             )
             self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
+
+    def commit_document_text_replace_all(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_document_text_replace_all_v1,
+    ) -> dict:
+        """Commit exhaustive publication-wide literal Replace All atomically."""
+        normalized = copy.deepcopy(request)
+        command = normalized.get("command")
+        if isinstance(command, dict) and isinstance(
+            command.get("paragraph_ids_by_match"), list
+        ):
+            command["paragraph_ids_by_match"] = sorted(
+                command["paragraph_ids_by_match"],
+                key=lambda item: (
+                    item.get("story_id", ""),
+                    item.get("match_ordinal", -1),
+                )
+                if isinstance(item, dict)
+                else ("", -1),
+            )
+
+        try:
+            return self._commit_command(
+                normalized,
+                executor,
+                request_validator=validate_document_text_replace_all_request_v1,
+                canonical_validator=validate_document_text_replace_all_operation_v1,
+            )
+        except DocumentTextReplaceAllNoOp as exc:
+            document_id = normalized["document_id"]
+            client_operation_id = normalized["client_operation_id"]
+            request_digest = hash_id(normalized)
+            idem_key = (document_id, client_operation_id)
+            current = self._documents[document_id].current_revision_id
+            record = self._revisions[current]
+            result = {
+                "protocol_version": "chaptera.document-text-replace-all-noop.v1",
+                "document_id": document_id,
+                "source_hash": self._documents[document_id].source_hash,
+                "base_revision_id": normalized["base_revision_id"],
+                "revision_id": current,
+                "state_id": record.state_id,
+                "client_operation_id": client_operation_id,
+                "reason": "zero_matches",
+                "query": exc.query,
+                "replacement_text": exc.replacement_text,
+                "state_changed": False,
+                "scene_refresh": "none",
+            }
+            self._idempotency[idem_key] = (
+                request_digest,
+                copy.deepcopy(result),
+            )
+            return result
+        except DocumentTextReplaceAllError as exc:
+            document_id = normalized["document_id"]
+            client_operation_id = normalized["client_operation_id"]
+            request_digest = hash_id(normalized)
+            idem_key = (document_id, client_operation_id)
+            current = (
+                self._documents[document_id].current_revision_id
+                if document_id in self._documents
+                else None
+            )
+            result = self._rejected(
+                normalized,
+                code=exc.code,
+                current_revision_id=current,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (
+                request_digest,
+                copy.deepcopy(result),
+            )
             return result
 
     def commit_multi_story_text_transaction(
