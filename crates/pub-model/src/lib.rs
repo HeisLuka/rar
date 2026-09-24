@@ -9,8 +9,8 @@ mod create_shape;
 mod fragment;
 mod projection_context;
 mod shape_paint;
-mod source_identity;
 mod shape_paint_op;
+mod source_identity;
 
 pub use shape_paint::{
     AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, ShapePaintV1,
@@ -43,6 +43,6 @@ pub use projection_context::{
 
 pub use source_identity::{
     PUB_SOURCE_ADAPTER_ID_V1, SOURCE_DERIVED_NAMESPACE_V1, SourceIdentityError,
-    derive_pub_node_id_v1, derive_pub_page_id_v1, derive_pub_story_id_v1,
-    derive_source_uuid_v5_v1, pub_contents_object_key_v1, pub_quill_story_object_key_v1,
+    derive_pub_node_id_v1, derive_pub_page_id_v1, derive_pub_story_id_v1, derive_source_uuid_v5_v1,
+    pub_contents_object_key_v1, pub_quill_story_object_key_v1,
 };
