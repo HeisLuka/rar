@@ -47,7 +47,20 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          bad="$(find out/pub-sandbox-hash-probe -type f ( -iname '*.exe' -o -iname '*.dll' -o -iname '*.pdb' -o -iname '*.dmp' -o -iname '*.mdmp' -o -iname '*.zip' -o -iname '*.7z' ) -print 2>/dev/null || true)"
+          bad="$(find out/pub-sandbox-hash-probe -type f -print 2>/dev/null | grep -Ei '\\.(exe|dll|pdb|dmp|mdmp|zip|7z)
+          if [[ -n "$bad" ]]; then
+            echo "$bad" >&2
+            exit 4
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pub-sandbox-hash-probe-${{ github.run_id }}
+          path: out/pub-sandbox-hash-probe/**
+          if-no-files-found: error
+          retention-days: 90
+ || true)"
           if [[ -n "$bad" ]]; then
             echo "$bad" >&2
             exit 4
