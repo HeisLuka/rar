@@ -1,0 +1,34 @@
+name: ENGINE-COPY-LEDGER-01 contract
+
+on:
+  pull_request:
+    paths:
+      - "tools/copy_ledger_v1.py"
+      - "tools/test_copy_ledger_v1.py"
+      - "tools/run_copy_ledger_contract.py"
+      - "tools/optimization_receipt_v1.py"
+      - "docs/copy-ledger-v1.md"
+      - ".github/workflows/copy-ledger-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  copy-ledger-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test copy-ledger schema and optimization-spine integration
+        run: python tools/test_copy_ledger_v1.py
+      - name: Emit public synthetic measurement fixture
+        run: python tools/run_copy_ledger_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: copy-ledger-contract-v1
+          path: target/copy-ledger-v1/measurement.json
+          if-no-files-found: error
