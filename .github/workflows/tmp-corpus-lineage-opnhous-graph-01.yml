@@ -1,0 +1,569 @@
+name: TEMP CORPUS OPNHOUS graph discriminator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-opnhous-graph-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Canonicalize exact OPNHOUS no-Quill 0x22 pair
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import difflib
+          import hashlib
+          import json
+          import math
+          import struct
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          import olefile
+
+          UA = "rar-corpus-lineage-opnhous-graph/1.0"
+          SECTOR = 2048
+
+          SPECS = {
+              "left": {
+                  "sha256": "0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c",
+                  "size": 11264,
+                  "member": "PAGEWIZ/OPNHOUS.PUB",
+                  "archive_url": "https://archive.org/download/PUB40CD/PUB_40_CD.ISO",
+                  "source_page": "https://archive.org/details/PUB40CD",
+              },
+              "right": {
+                  "sha256": "227961e2fba4a6fb814aa2da47e79b19d55ff04e87e49d9c5ceef8d07ce36d0e",
+                  "size": 11264,
+                  "member": "PageWiz/OPNHOUS.PUB",
+                  "archive_url": "https://archive.org/download/pub-40-cd/PUB_40_CD.iso",
+                  "source_page": "https://archive.org/details/pub-40-cd",
+              },
+          }
+
+          def sha256(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def u16(data: bytes, off: int) -> int:
+              if off < 0 or off + 2 > len(data):
+                  raise ValueError(f"u16 out of bounds @{off}")
+              return int.from_bytes(data[off:off+2], "little")
+
+          def u32(data: bytes, off: int) -> int:
+              if off < 0 or off + 4 > len(data):
+                  raise ValueError(f"u32 out of bounds @{off}")
+              return int.from_bytes(data[off:off+4], "little")
+
+          class RangeISO:
+              def __init__(self, archive_url: str):
+                  self.archive_url = archive_url
+                  self.dir_cache = {}
+                  self.delivery_url = self._select()
+
+              def _candidate_urls(self):
+                  p = urllib.parse.urlparse(self.archive_url)
+                  parts = p.path.split("/")
+                  ident = parts[2]
+                  filename = "/".join(parts[3:])
+                  req = urllib.request.Request(
+                      f"https://archive.org/metadata/{ident}",
+                      headers={"User-Agent": UA},
+                  )
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      meta = json.load(r)
+                  out = []
+                  directory = str(meta.get("dir") or "")
+                  for key in ("d1", "d2"):
+                      host = str(meta.get(key) or "")
+                      if host and directory:
+                          out.append(
+                              "https://" + host + directory.rstrip("/") + "/" +
+                              urllib.parse.quote(filename, safe="/")
+                          )
+                  out.extend([self.archive_url, self.archive_url + "?download=1"])
+                  return list(dict.fromkeys(out))
+
+              def _range(self, url: str, start: int, length: int) -> bytes:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": UA,
+                          "Range": f"bytes={start}-{start+length-1}",
+                          "Accept-Encoding": "identity",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=45) as r:
+                      if getattr(r, "status", None) != 206 and not r.headers.get("Content-Range"):
+                          raise ValueError("range unsupported")
+                      data = r.read(length + 1)
+                  if len(data) != length:
+                      raise ValueError(f"range length drift {len(data)} != {length}")
+                  return data
+
+              def _select(self):
+                  last = None
+                  for url in self._candidate_urls():
+                      for attempt in range(3):
+                          try:
+                              pvd = self._range(url, 16 * SECTOR, SECTOR)
+                              if pvd[:6] != b"\x01CD001":
+                                  raise ValueError("not ISO9660 PVD")
+                              return url
+                          except Exception as exc:
+                              last = exc
+                              if attempt < 2:
+                                  time.sleep(2 ** attempt)
+                  raise last
+
+              def read(self, start: int, length: int) -> bytes:
+                  last = None
+                  for attempt in range(3):
+                      try:
+                          return self._range(self.delivery_url, start, length)
+                      except Exception as exc:
+                          last = exc
+                          if attempt < 2:
+                              time.sleep(2 ** attempt)
+                  raise last
+
+              @staticmethod
+              def rec(rec: bytes):
+                  name = rec[33:33+rec[32]].decode("ascii", "strict")
+                  extent = int.from_bytes(rec[2:6], "little")
+                  size = int.from_bytes(rec[10:14], "little")
+                  flags = rec[25]
+                  return name, extent, size, flags
+
+              def directory(self, extent: int, size: int):
+                  key = (extent, size)
+                  if key in self.dir_cache:
+                      return self.dir_cache[key]
+                  data = self.read(extent * SECTOR, size)
+                  out = {}
+                  pos = 0
+                  while pos < len(data):
+                      n = data[pos]
+                      if n == 0:
+                          pos = ((pos // SECTOR) + 1) * SECTOR
+                          continue
+                      name, ex, sz, fl = self.rec(data[pos:pos+n])
+                      if name not in ("\x00", "\x01"):
+                          out[name.split(";")[0].upper()] = (ex, sz, fl)
+                      pos += n
+                  self.dir_cache[key] = out
+                  return out
+
+              def member(self, path: str) -> bytes:
+                  pvd = self.read(16 * SECTOR, SECTOR)
+                  rl = pvd[156]
+                  _, extent, size, flags = self.rec(pvd[156:156+rl])
+                  parts = [x.upper() for x in path.strip("/").split("/") if x]
+                  for i, part in enumerate(parts):
+                      listing = self.directory(extent, size)
+                      if part not in listing:
+                          raise KeyError(f"missing ISO member component {part}")
+                      extent, size, flags = listing[part]
+                      if i + 1 < len(parts) and not (flags & 2):
+                          raise ValueError(f"{part} is not directory")
+                  if flags & 2:
+                      raise ValueError("target is directory")
+                  return self.read(extent * SECTOR, size)
+
+          def extract_contents(pub: bytes) -> bytes:
+              with olefile.OleFileIO(pub) as ole:
+                  return ole.openstream(["Contents"]).read()
+
+          def control_positions(text: bytes):
+              crlf = []
+              for i in range(len(text) - 1):
+                  if text[i:i+2] == b"\r\n":
+                      crlf.append(i + 2)
+              return {
+                  "shape_end_0c": [i + 1 for i, b in enumerate(text) if b == 0x0C],
+                  "cell_sep_0f": [i for i, b in enumerate(text) if b == 0x0F],
+                  "field_05": [i for i, b in enumerate(text) if b == 0x05],
+                  "field_06": [i for i, b in enumerate(text) if b == 0x06],
+                  "vertical_tab_0b": [i for i, b in enumerate(text) if b == 0x0B],
+                  "paragraph_end_crlf": crlf,
+              }
+
+          def diff_summary(a: bytes, b: bytes):
+              sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+              ops = []
+              for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                  if tag == "equal":
+                      continue
+                  ops.append({
+                      "tag": tag,
+                      "left_offset": i1,
+                      "left_len": i2 - i1,
+                      "right_offset": j1,
+                      "right_len": j2 - j1,
+                      "left_sha256": sha256(a[i1:i2]),
+                      "right_sha256": sha256(b[j1:j2]),
+                  })
+              cp = 0
+              while cp < min(len(a), len(b)) and a[cp] == b[cp]:
+                  cp += 1
+              cs = 0
+              while cs < min(len(a), len(b)) - cp and a[-1-cs] == b[-1-cs]:
+                  cs += 1
+              return {
+                  "left_len": len(a),
+                  "right_len": len(b),
+                  "sequence_match_ratio": round(sm.ratio(), 6),
+                  "common_prefix": cp,
+                  "common_suffix": cs,
+                  "delta_span_count": len(ops),
+                  "delta_spans": ops[:64],
+              }
+
+          def normalize_offsets(chunk: bytes, replacements: dict[int, int]) -> bytes:
+              data = bytearray(chunk)
+              if len(data) < 4:
+                  return bytes(data)
+              # Heuristic only: canonicalize aligned and unaligned literal u32 occurrences
+              # of known physical offsets to stable synthetic values.
+              for pos in range(0, len(data) - 3):
+                  value = int.from_bytes(data[pos:pos+4], "little")
+                  if value in replacements:
+                      data[pos:pos+4] = int(replacements[value]).to_bytes(4, "little")
+              return bytes(data)
+
+          def parse_contents(contents: bytes):
+              if len(contents) < 0x1A:
+                  raise ValueError("Contents too short")
+              family = u16(contents, 2)
+              if contents[:2] != b"\xe8\xac" or family != 0x22:
+                  raise ValueError(f"unexpected Contents family {contents[:4].hex()}")
+
+              content_version = u16(contents, 4)
+              text_root = u32(contents, 0x12)
+              trailer = u32(contents, 0x16)
+              meta = text_root + 14
+              text_start = u32(contents, meta)
+              text_end = u32(contents, meta + 4)
+              prop1 = u16(contents, meta + 8)
+              prop2 = u16(contents, meta + 10)
+              prop3 = u16(contents, meta + 12)
+              prop3_end = u16(contents, meta + 14)
+
+              if not (0 <= text_start <= text_end <= len(contents)):
+                  raise ValueError("invalid text bounds")
+              text = contents[text_start:text_end]
+
+              page_count = math.ceil(len(contents) / 0x200)
+              pages = {}
+              for idx in range(page_count):
+                  p = contents[idx*0x200:min((idx+1)*0x200, len(contents))]
+                  pages[str(idx)] = {"len": len(p), "sha256": sha256(p)}
+              char_pages = {}
+              for idx in range(prop1, prop2):
+                  if idx >= page_count:
+                      raise ValueError("character property page out of range")
+                  p = contents[idx*0x200:min((idx+1)*0x200, len(contents))]
+                  char_pages[str(idx)] = {"len": len(p), "sha256": sha256(p)}
+
+              if trailer + 2 > len(contents):
+                  raise ValueError("trailer out of range")
+              num_blocks = u16(contents, trailer)
+              entries = []
+              for i in range(num_blocks):
+                  off = trailer + 2 + i * 10
+                  if off + 10 > len(contents):
+                      raise ValueError("truncated trailer directory")
+                  service = u16(contents, off)
+                  oid = u16(contents, off + 2)
+                  parent = u16(contents, off + 4)
+                  chunk_off = u32(contents, off + 6)
+                  if chunk_off + 2 > len(contents):
+                      raise ValueError(f"chunk offset out of bounds: {chunk_off}")
+                  marker = u16(contents, chunk_off)
+                  entries.append({
+                      "index": i,
+                      "service": service,
+                      "id": oid,
+                      "parent": parent,
+                      "chunk_offset": chunk_off,
+                      "marker": marker,
+                  })
+
+              offsets = sorted({e["chunk_offset"] for e in entries})
+              boundary_candidates = offsets + ([trailer] if trailer not in offsets else [])
+              chunks = {}
+              for e in entries:
+                  start = e["chunk_offset"]
+                  greater = [x for x in boundary_candidates if x > start]
+                  end = min(greater) if greater else len(contents)
+                  if end < start:
+                      raise ValueError("negative chunk")
+                  raw = contents[start:end]
+                  chunks[str(e["id"])] = {
+                      "id": e["id"],
+                      "parent": e["parent"],
+                      "service": e["service"],
+                      "marker": e["marker"],
+                      "offset": start,
+                      "len": len(raw),
+                      "sha256": sha256(raw),
+                      "_raw": raw,
+                  }
+
+              canonical_graph = [
+                  {
+                      "id": e["id"],
+                      "parent": e["parent"],
+                      "service": e["service"],
+                      "marker": e["marker"],
+                      "chunk_len": chunks[str(e["id"])]["len"],
+                  }
+                  for e in sorted(entries, key=lambda x: (x["id"], x["parent"], x["marker"], x["index"]))
+              ]
+
+              return {
+                  "contents_len": len(contents),
+                  "contents_sha256": sha256(contents),
+                  "family_marker": "0x0022",
+                  "content_version": content_version,
+                  "text_root_offset": text_root,
+                  "trailer_offset": trailer,
+                  "text_meta": {
+                      "text_start": text_start,
+                      "text_end": text_end,
+                      "text_len": len(text),
+                      "text_sha256": sha256(text),
+                      "prop1_index": prop1,
+                      "prop2_index": prop2,
+                      "prop3_index": prop3,
+                      "prop3_end": prop3_end,
+                      "controls": control_positions(text),
+                  },
+                  "page_hashes": pages,
+                  "char_property_pages": char_pages,
+                  "num_blocks": num_blocks,
+                  "directory_entries": entries,
+                  "canonical_graph": canonical_graph,
+                  "chunks": chunks,
+              }
+
+          payloads = {}
+          deliveries = {}
+          parsed = {}
+          for side, spec in SPECS.items():
+              iso = RangeISO(spec["archive_url"])
+              pub = iso.member(spec["member"])
+              if len(pub) != spec["size"] or sha256(pub) != spec["sha256"]:
+                  raise ValueError(f"{side} exact member drift")
+              contents = extract_contents(pub)
+              payloads[side] = contents
+              deliveries[side] = iso.delivery_url
+              parsed[side] = parse_contents(contents)
+
+          left = parsed["left"]
+          right = parsed["right"]
+
+          scalar_keys = [
+              "content_version", "text_root_offset", "trailer_offset", "num_blocks"
+          ]
+          scalar_diff = {
+              k: {"left": left[k], "right": right[k]}
+              for k in scalar_keys if left[k] != right[k]
+          }
+          text_meta_keys = [
+              "text_start", "text_end", "text_len",
+              "prop1_index", "prop2_index", "prop3_index", "prop3_end"
+          ]
+          text_meta_diff = {
+              k: {"left": left["text_meta"][k], "right": right["text_meta"][k]}
+              for k in text_meta_keys
+              if left["text_meta"][k] != right["text_meta"][k]
+          }
+          text_exact = left["text_meta"]["text_sha256"] == right["text_meta"]["text_sha256"]
+          controls_equal = left["text_meta"]["controls"] == right["text_meta"]["controls"]
+
+          all_page_ids = sorted(set(left["page_hashes"]) | set(right["page_hashes"]), key=int)
+          changed_pages = [
+              idx for idx in all_page_ids
+              if left["page_hashes"].get(idx) != right["page_hashes"].get(idx)
+          ]
+          char_pages_equal = left["char_property_pages"] == right["char_property_pages"]
+
+          graph_equal = left["canonical_graph"] == right["canonical_graph"]
+          left_by_id = {e["id"]: e for e in left["directory_entries"]}
+          right_by_id = {e["id"]: e for e in right["directory_entries"]}
+          common_ids = sorted(set(left_by_id) & set(right_by_id))
+          offset_deltas = []
+          for oid in common_ids:
+              lo = left_by_id[oid]["chunk_offset"]
+              ro = right_by_id[oid]["chunk_offset"]
+              if lo != ro:
+                  offset_deltas.append({
+                      "id": oid,
+                      "marker": left_by_id[oid]["marker"],
+                      "left_offset": lo,
+                      "right_offset": ro,
+                      "delta": ro - lo,
+                  })
+
+          # Stable normalization tokens by semantic object identity.
+          lrep = {
+              left["text_root_offset"]: 0xF1000001,
+              left["trailer_offset"]: 0xF1000002,
+              left["text_meta"]["text_start"]: 0xF1000003,
+              left["text_meta"]["text_end"]: 0xF1000004,
+          }
+          rrep = {
+              right["text_root_offset"]: 0xF1000001,
+              right["trailer_offset"]: 0xF1000002,
+              right["text_meta"]["text_start"]: 0xF1000003,
+              right["text_meta"]["text_end"]: 0xF1000004,
+          }
+          for oid in common_ids:
+              token = 0xF2000000 | (oid & 0xFFFF)
+              lrep[left_by_id[oid]["chunk_offset"]] = token
+              rrep[right_by_id[oid]["chunk_offset"]] = token
+
+          chunk_comparisons = []
+          changed_chunk_ids = []
+          normalized_equal_ids = []
+          for oid in common_ids:
+              lc = left["chunks"][str(oid)]
+              rc = right["chunks"][str(oid)]
+              raw_equal = lc["sha256"] == rc["sha256"]
+              ln = normalize_offsets(lc["_raw"], lrep)
+              rn = normalize_offsets(rc["_raw"], rrep)
+              norm_equal = sha256(ln) == sha256(rn)
+              if not raw_equal:
+                  changed_chunk_ids.append(oid)
+              if not raw_equal and norm_equal:
+                  normalized_equal_ids.append(oid)
+              row = {
+                  "id": oid,
+                  "left_parent": lc["parent"],
+                  "right_parent": rc["parent"],
+                  "left_marker": lc["marker"],
+                  "right_marker": rc["marker"],
+                  "left_len": lc["len"],
+                  "right_len": rc["len"],
+                  "raw_equal": raw_equal,
+                  "relocation_normalized_equal": norm_equal,
+              }
+              if not raw_equal:
+                  row["delta"] = diff_summary(lc["_raw"], rc["_raw"])
+              chunk_comparisons.append(row)
+
+          if text_exact and controls_equal and char_pages_equal and graph_equal:
+              if changed_chunk_ids and len(normalized_equal_ids) == len(changed_chunk_ids):
+                  classification = "directory-chunk-relocation-reserialization"
+              elif changed_chunk_ids:
+                  classification = "bounded-object-chunk-mutation"
+              else:
+                  classification = "directory-offset-only-reserialization"
+          elif not text_exact or not char_pages_equal:
+              classification = "text-or-style-mutation"
+          elif not graph_equal:
+              classification = "object-graph-mutation"
+          else:
+              classification = "mixed"
+
+          # Remove raw bytes before retained output.
+          for side in ("left", "right"):
+              for c in parsed[side]["chunks"].values():
+                  c.pop("_raw", None)
+
+          receipt = {
+              "schema": "chaptera.corpus-lineage-opnhous-graph.v1",
+              "files": {
+                  side: {
+                      "sha256": SPECS[side]["sha256"],
+                      "member": SPECS[side]["member"],
+                      "source_page": SPECS[side]["source_page"],
+                      "selected_delivery_url": deliveries[side],
+                  }
+                  for side in ("left", "right")
+              },
+              "left": parsed["left"],
+              "right": parsed["right"],
+              "comparison": {
+                  "scalar_diff": scalar_diff,
+                  "text_meta_diff": text_meta_diff,
+                  "text_exact": text_exact,
+                  "controls_equal": controls_equal,
+                  "char_property_pages_equal": char_pages_equal,
+                  "changed_0x200_pages": changed_pages,
+                  "canonical_graph_equal": graph_equal,
+                  "directory_offset_deltas": offset_deltas,
+                  "changed_chunk_ids": changed_chunk_ids,
+                  "relocation_normalized_equal_chunk_ids": normalized_equal_ids,
+                  "chunk_comparisons": chunk_comparisons,
+                  "classification": classification,
+              },
+              "source_safe": True,
+              "raw_pub_retained": False,
+          }
+
+          summary = {
+              "schema": "chaptera.corpus-lineage-opnhous-graph-summary.v1",
+              "all_exact_members_verified": True,
+              "text_exact": text_exact,
+              "controls_equal": controls_equal,
+              "char_property_pages_equal": char_pages_equal,
+              "canonical_graph_equal": graph_equal,
+              "changed_page_count": len(changed_pages),
+              "changed_pages": changed_pages,
+              "directory_offset_delta_count": len(offset_deltas),
+              "changed_chunk_count": len(changed_chunk_ids),
+              "changed_chunk_ids": changed_chunk_ids,
+              "relocation_normalized_equal_chunk_count": len(normalized_equal_ids),
+              "relocation_normalized_equal_chunk_ids": normalized_equal_ids,
+              "classification": classification,
+              "source_safe": True,
+          }
+
+          out = Path("out")
+          out.mkdir(exist_ok=True)
+          (out / "receipt.json").write_text(
+              json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-opnhous-graph-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
