@@ -34,7 +34,7 @@ jobs:
           tools/iss_extract/iss_extract l out/corel.exe | tee out/iss-list.txt
           (
             cd out/iss
-            "$GITHUB_WORKSPACE/tools/iss_extract/iss_extract" x ../corel.exe
+            "$GITHUB_WORKSPACE/tools/iss_extract/iss_extract" x ../corel.exe || true
           ) | tee out/iss-extract.txt
           find out/iss -type f -printf '%s\t%p\n' | sort -nr > out/iss-files.txt
 
