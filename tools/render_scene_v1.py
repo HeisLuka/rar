@@ -35,7 +35,7 @@ def compile_render_scene(source):
             transforms.append(copy.deepcopy(value))
         return transform_index[key]
 
-    rects, images, glyph_atoms, atom_map, paint_seq, diagnostics = [], [], [], {}, [], []
+    rects, images, glyph_atoms, atom_map, paint_seq, diagnostics = [], [], [], [], [], []
     node_atoms = {}
 
     for node in nodes:
