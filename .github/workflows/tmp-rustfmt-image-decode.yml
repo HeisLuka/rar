@@ -23,16 +23,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Fix Clippy fixture construction
+        run: >-
+          python -c 'from pathlib import Path; p=Path("crates/chaptera-image-decode-contract/src/lib.rs"); s=p.read_text(); old="        let mut limits = DecodeLimitsV1::default();\n        limits.max_total_pixels = 3;"; new="        let limits = DecodeLimitsV1 {\n            max_total_pixels: 3,\n            ..DecodeLimitsV1::default()\n        };"; assert old in s; p.write_text(s.replace(old,new))'
       - name: Format only task crate
         run: cargo fmt -p chaptera-image-decode-contract
-      - name: Commit focused formatting
+      - name: Commit focused cleanup
         run: |
           if git diff --quiet -- "crates/chaptera-image-decode-contract"; then
-            echo "No formatting changes"
+            echo "No changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "crates/chaptera-image-decode-contract"
-          git commit -m "IMAGE-DECODE-CONTRACT-01: rustfmt focused crate"
+          git commit -m "IMAGE-DECODE-CONTRACT-01: satisfy Clippy fixture law"
           git push origin HEAD:image-decode-contract-01
