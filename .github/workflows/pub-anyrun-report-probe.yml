@@ -1,0 +1,62 @@
+name: PUB ANY.RUN Report Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/symbols/anyrun_report_probe.py"
+      - ".github/workflows/pub-anyrun-report-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pub-anyrun-report-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate probe
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/symbols/anyrun_report_probe.py
+
+      - name: Probe public ANY.RUN report metadata endpoints
+        run: |
+          set -euo pipefail
+          python tools/symbols/anyrun_report_probe.py             --out out/pub-anyrun-report-probe             --timeout 25             --delay 0.35
+
+      - name: Write summary
+        if: always()
+        run: |
+          if [[ -f out/pub-anyrun-report-probe/summary.json ]]; then
+            echo "## Publisher ANY.RUN public report probe" >> "$GITHUB_STEP_SUMMARY"
+            cat out/pub-anyrun-report-probe/summary.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guard metadata-only artifact
+        if: always()
+        run: |
+          set -euo pipefail
+          bad="$(find out/pub-anyrun-report-probe -type f -print 2>/dev/null | grep -Ei '\.(exe|dll|pdb|dmp|mdmp|pcap|zip|7z|cab|msp|msi)$' || true)"
+          if [[ -n "$bad" ]]; then
+            echo "$bad" >&2
+            exit 4
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pub-anyrun-report-probe-${{ github.run_id }}
+          path: out/pub-anyrun-report-probe/**
+          if-no-files-found: error
+          retention-days: 90
