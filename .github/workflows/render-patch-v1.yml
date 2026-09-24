@@ -1,0 +1,33 @@
+name: RENDER-PATCH-01 ScenePatch contract
+
+on:
+  pull_request:
+    paths:
+      - "tools/scene_patch_v1.py"
+      - "tools/test_scene_patch_v1.py"
+      - "tools/run_scene_patch_contract.py"
+      - "tools/render_scene_v1.py"
+      - "docs/scene-patch-v1.md"
+      - ".github/workflows/render-patch-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scene-patch-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test incremental patch equivalence
+        run: python tools/test_scene_patch_v1.py
+      - name: Produce ScenePatch receipt
+        run: python tools/run_scene_patch_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scene-patch-v1-contract
+          path: target/scene-patch-v1/
+          if-no-files-found: error
