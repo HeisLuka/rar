@@ -2,6 +2,7 @@
 members = [
   "apps/chaptera-server",
   "crates/pub-model",
+  "crates/pub-master-projection",
   "crates/pub-paint-bridge",
   "crates/pub-plccmob-projection",
 ]
