@@ -1,0 +1,222 @@
+name: CORPUS-VAC bounded production probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/corpus-vac-bounded-production-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  common-crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check duckdb==1.4.1
+      - name: Discover bounded global PUB candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/cc
+          python tools/corpus/commoncrawl_global_pub_seed.py \
+            --crawl-count 1 --min-year 2021 --max-parquet-files 2 \
+            --max-candidates-per-crawl 20 --batch-size 2 \
+            --out out/cc/seed.csv --summary out/cc/discovery.json
+      - name: Harvest bounded exact bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/cc/seed.csv --out out/cc/harvest \
+            --max-files 20 --timeout 20 --max-bytes 104857600 \
+            --per-host-delay 0.05
+      - name: Summarize and remove raw bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/cc/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "source":"common_crawl_bounded_probe",
+            "rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+          }
+          Path("out/cc/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/cc/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-bounded-cc-${{ github.run_id }}
+          path: out/cc/**
+          retention-days: 14
+
+  wayback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded Wayback candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/wayback
+          python tools/corpus/wayback_pub_seed.py \
+            --seed tools/corpus/smoke_seed.csv \
+            --max-domains 2 --exact-limit 5 --domain-limit 10 --delay 0.2 \
+            --out out/wayback/seed.csv --summary out/wayback/discovery.json
+      - name: Harvest bounded exact bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/wayback/seed.csv --out out/wayback/harvest \
+            --max-files 20 --timeout 20 --max-bytes 104857600 \
+            --per-host-delay 0.1
+      - name: Summarize and remove raw bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/wayback/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "source":"wayback_bounded_probe",
+            "rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+          }
+          Path("out/wayback/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/wayback/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-bounded-wayback-${{ github.run_id }}
+          path: out/wayback/**
+          retention-days: 14
+
+  internet-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded IA candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/ia
+          python tools/corpus/internet_archive_pub_seed.py \
+            --rows 10 --pages 1 --max-items 20 --delay 0.1 \
+            --out out/ia/seed.csv --containers out/ia/containers.csv \
+            --summary out/ia/discovery.json
+      - name: Harvest bounded exact bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/ia/seed.csv --out out/ia/harvest \
+            --max-files 20 --timeout 25 --max-bytes 104857600 \
+            --max-archive-total-bytes 314572800 --max-archive-members 200 \
+            --per-host-delay 0.1
+      - name: Summarize and remove raw bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/ia/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "source":"internet_archive_bounded_probe",
+            "rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+          }
+          Path("out/ia/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/ia/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-bounded-ia-${{ github.run_id }}
+          path: out/ia/**
+          retention-days: 14
+
+  github-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded GitHub-history candidates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/github
+          python tools/corpus/github_history_pub_seed.py \
+            --repo apache/poi --no-search --max-repos 1 \
+            --history-depth 500 --max-paths-per-repo 25 --max-captures-per-path 2 \
+            --out out/github/seed.csv --summary out/github/discovery.json
+      - name: Harvest bounded exact bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/github/seed.csv --out out/github/harvest \
+            --max-files 20 --timeout 20 --max-bytes 104857600 \
+            --per-host-delay 0.05
+      - name: Summarize and remove raw bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/github/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "source":"github_history_bounded_probe",
+            "rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+          }
+          Path("out/github/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/github/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-bounded-github-${{ github.run_id }}
+          path: out/github/**
+          retention-days: 14
