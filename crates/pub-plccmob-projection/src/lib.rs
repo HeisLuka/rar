@@ -4,6 +4,7 @@
 //! the exact later-0x2C PlcCmob wire admitted by PLCCMOB-PROJECTION-01 plus the
 //! source-free join needed to emit the existing public receipt contract.
 
+use pub_model::{CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -30,7 +31,7 @@ const PLC_CMOB_FIXED_PREFIX_SIZE: usize = 16;
 const PLC_CMOB_ROW_SIZE: usize = 24;
 
 pub const RECEIPT_VERSION_V1: &str = "chaptera.plccmob-projection-receipt.v1";
-pub const PROJECTION_CONTEXT_VERSION_V1: &str = "chaptera.pub-projection-context.v1";
+pub const PROJECTION_CONTEXT_VERSION_V1: &str = PUB_PROJECTION_CONTEXT_SCHEMA_V1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawSpanV1 {
@@ -116,18 +117,7 @@ pub struct PlcCmobReceiptSummaryV1 {
     pub raw_size: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlcCmobRelationReceiptV1 {
-    pub source_order: usize,
-    pub cmo_id: u32,
-    pub carrier_ohpo: u32,
-    pub carrier_cmo_id: u32,
-    pub target_qsid: u32,
-    pub carrier_node_id: String,
-    pub carrier_story_id: Option<String>,
-    pub target_story_id: String,
-    pub target_frame_node_id: Option<String>,
-}
+pub type PlcCmobRelationReceiptV1 = CmoProjectionRelationV1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlcCmobTargetReceiptV1 {
@@ -777,7 +767,7 @@ pub fn build_projection_receipt_v1(
             },
         )?;
 
-        relations.push(PlcCmobRelationReceiptV1 {
+        relations.push(CmoProjectionRelationV1 {
             source_order: entry.source_order,
             cmo_id: entry.cmo_id,
             carrier_ohpo: entry.carrier_ohpo,
@@ -830,6 +820,14 @@ pub fn build_projection_receipt_v1(
         },
         fail_closed_probes: default_fail_closed_probes_v1(),
     })
+}
+
+
+pub fn build_pub_projection_context_v1(
+    input: &PlcCmobProjectionInputV1,
+) -> Result<PubProjectionContextV1, PlcCmobProjectionError> {
+    let receipt = build_projection_receipt_v1(input)?;
+    Ok(PubProjectionContextV1::with_cmo_relations(receipt.relations))
 }
 
 #[cfg(test)]
@@ -1032,6 +1030,22 @@ mod tests {
         let mut truncated = fixture(&[(1, 218, 319)]);
         truncated.pop();
         assert!(parse_confirmed_mature_plc_cmob(&truncated).is_err());
+    }
+
+    #[test]
+    fn successful_join_materializes_shared_projection_context() {
+        let context = build_pub_projection_context_v1(&valid_input()).expect("context");
+        assert_eq!(context.schema_version, PROJECTION_CONTEXT_VERSION_V1);
+        assert_eq!(context.cmo_relations.len(), 2);
+        assert_eq!(context.cmo_relations[0].source_order, 0);
+        assert_eq!(context.cmo_relations[1].source_order, 1);
+        assert_eq!(
+            context
+                .cmo_relations_for_target_qsid(49)
+                .map(|relation| relation.carrier_ohpo)
+                .collect::<Vec<_>>(),
+            vec![441, 446]
+        );
     }
 
     #[test]
