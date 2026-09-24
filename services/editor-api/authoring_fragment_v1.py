@@ -11,12 +11,32 @@ from __future__ import annotations
 
 import copy
 
-from create_shape_v1 import (
-    CreateShapeError,
-    validate_creation_paint_v1,
-    validate_rect_emu_v1,
-    validate_uuid7_node_id_v1,
-)
+try:
+    from create_shape_v1 import (
+        CreateShapeError,
+        validate_creation_paint_v1,
+        validate_rect_emu_v1,
+        validate_uuid7_node_id_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+    import sys
+
+    _create_shape_path = pathlib.Path(__file__).with_name("create_shape_v1.py")
+    _create_shape_spec = importlib.util.spec_from_file_location(
+        "chaptera_fragment_create_shape_v1",
+        _create_shape_path,
+    )
+    if _create_shape_spec is None or _create_shape_spec.loader is None:
+        raise ImportError("cannot load create_shape_v1 sibling module")
+    _create_shape_module = importlib.util.module_from_spec(_create_shape_spec)
+    sys.modules[_create_shape_spec.name] = _create_shape_module
+    _create_shape_spec.loader.exec_module(_create_shape_module)
+    CreateShapeError = _create_shape_module.CreateShapeError
+    validate_creation_paint_v1 = _create_shape_module.validate_creation_paint_v1
+    validate_rect_emu_v1 = _create_shape_module.validate_rect_emu_v1
+    validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
 
 AUTHORING_FRAGMENT_SCHEMA_V1 = "chaptera.authoring-fragment.v1"
 SINGLE_RECTANGLE_ENTITY_ID_V1 = "entity:0"
