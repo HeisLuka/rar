@@ -134,11 +134,15 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ResolvedGraphSceneError, "differs"):
             compare_viewer_and_adapter_scene(broken, scene)
 
-    def test_non_empty_projection_context_fails_closed(self):
-        with self.assertRaisesRegex(ResolvedGraphSceneError, "outside"):
+    def test_non_empty_cmo_projection_context_still_fails_closed(self):
+        with self.assertRaisesRegex(ResolvedGraphSceneError, "cmo_relations"):
             project_resolved_graph_scene(
                 graph(),
-                context={"master_relations": [{"x": 1}], "cmo_relations": []},
+                context={
+                    "schema_version": "chaptera.pub-projection-context.v1",
+                    "master_relations": [],
+                    "cmo_relations": [{"x": 1}],
+                },
             )
 
     def test_move_project_changes_current_graph_and_scene_snapshot(self):
