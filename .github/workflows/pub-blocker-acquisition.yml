@@ -410,7 +410,7 @@ jobs:
           if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2002-container.bin | awk '{print $1}')" = "$expected_md5"; fi
           file out/publisher2002-container.bin | tee out/container-file.txt
 
-          if printf '%s' "$image" | grep -Eqi '\\.7z$'; then
+          if [[ "$image" == *.7z ]]; then
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends p7zip-full
             mkdir -p out/publisher2002-extracted
@@ -423,6 +423,17 @@ jobs:
             cp out/publisher2002-container.bin out/publisher2002-media.bin
           fi
           test "$(stat -c %s out/publisher2002-media.bin)" -gt 100000000
+          # Static-only help-file probe. Never execute setup/media.
+          mkdir -p out/publisher2002-disc
+          7z x -y out/publisher2002-media.bin -oout/publisher2002-disc > out/media-extract.txt 2>&1 || true
+          find out/publisher2002-disc -type f -iname 'VBAPB10.CHM' -printf '%s\t%p\n' > out/vbapb10-hits.txt || true
+          if [ -s out/vbapb10-hits.txt ]; then
+            chm="$(head -n1 out/vbapb10-hits.txt | cut -f2-)"
+            cp "$chm" out/VBAPB10-P2002.CHM
+            sha256sum out/VBAPB10-P2002.CHM | tee out/vbapb10-sha256.txt
+            sha1sum out/VBAPB10-P2002.CHM | tee out/vbapb10-sha1.txt
+            md5sum out/VBAPB10-P2002.CHM | tee out/vbapb10-md5.txt
+          fi
           sha256sum out/publisher2002-media.bin | tee out/sha256.txt
           sha1sum out/publisher2002-media.bin | tee out/sha1.txt
           md5sum out/publisher2002-media.bin | tee out/md5.txt
@@ -444,8 +455,93 @@ jobs:
             out/size.txt
             out/file.txt
             out/publisher2002-media.bin
+            out/vbapb10-hits.txt
+            out/VBAPB10-P2002.CHM
+            out/vbapb10-*.txt
           if-no-files-found: warn
           retention-days: 14
+          compression-level: 0
+
+  publisher-2003-static-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Fetch exact Publisher 2003 Action Pack media and probe VBAPB10.CHM
+        shell: bash
+        env:
+          EXPECTED_SHA256: "4970402ee5f59b9e7f5a7ac24561db7b0f4f0f352be815e1df3ebe88f5b1ae25"
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          ident='X10-15121'
+          curl -fL --retry 3 --max-time 120 "https://archive.org/metadata/$ident" -o out/metadata.json
+          python3 - <<'PY' > out/selected-file.txt
+          import json
+          d=json.load(open("out/metadata.json"))
+          cand=[]
+          for f in d.get("files",[]):
+              name=f.get("name",""); size=int(f.get("size") or 0); lo=name.lower()
+              if f.get("source")=="original" and lo.endswith((".iso",".7z",".zip",".mdf",".img")):
+                  rank=2 if lo.endswith((".iso",".mdf",".img")) else 1
+                  cand.append((rank,size,name,f.get("sha1"),f.get("md5")))
+          cand.sort(reverse=True)
+          if not cand: raise SystemExit("no original media/container")
+          _,size,name,sha1,md5=cand[0]
+          print(name); print(size); print(sha1 or ""); print(md5 or "")
+          PY
+          name="$(sed -n '1p' out/selected-file.txt)"
+          size="$(sed -n '2p' out/selected-file.txt)"
+          sha1="$(sed -n '3p' out/selected-file.txt)"
+          md5="$(sed -n '4p' out/selected-file.txt)"
+          printf 'identifier=%s\nfile=%s\nexpected_size=%s\nexpected_sha1=%s\nexpected_md5=%s\n' "$ident" "$name" "$size" "$sha1" "$md5" | tee out/selection.txt
+          url="https://archive.org/download/$ident/$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$name")"
+          curl -fL --retry 4 --retry-delay 5 --max-time 3600 "$url" -o out/source.bin
+          test "$(stat -c %s out/source.bin)" -eq "$size"
+          if [ -n "$sha1" ]; then test "$(sha1sum out/source.bin | awk '{print $1}')" = "$sha1"; fi
+          if [ -n "$md5" ]; then test "$(md5sum out/source.bin | awk '{print $1}')" = "$md5"; fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full
+          mkdir -p out/container out/disc
+          if [[ "$name" == *.7z || "$name" == *.zip ]]; then
+            7z x -y out/source.bin -oout/container > out/container-extract.txt
+            media="$(find out/container -type f \( -iname '*.iso' -o -iname '*.mdf' -o -iname '*.img' \) -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+            test -n "$media"
+            cp "$media" out/publisher2003-media.bin
+          else
+            cp out/source.bin out/publisher2003-media.bin
+          fi
+          actual="$(sha256sum out/publisher2003-media.bin | awk '{print $1}')"
+          printf '%s  %s\n' "$actual" out/publisher2003-media.bin | tee out/sha256.txt
+          test "$actual" = "$EXPECTED_SHA256"
+          sha1sum out/publisher2003-media.bin | tee out/sha1.txt
+          md5sum out/publisher2003-media.bin | tee out/md5.txt
+          stat -c 'size_bytes=%s' out/publisher2003-media.bin | tee out/size.txt
+          file out/publisher2003-media.bin | tee out/file.txt
+          7z x -y out/publisher2003-media.bin -oout/disc > out/media-extract.txt 2>&1 || true
+          find out/disc -type f -iname 'VBAPB10.CHM' -printf '%s\t%p\n' > out/vbapb10-hits.txt || true
+          if [ -s out/vbapb10-hits.txt ]; then
+            chm="$(head -n1 out/vbapb10-hits.txt | cut -f2-)"
+            cp "$chm" out/VBAPB10-P2003.CHM
+            sha256sum out/VBAPB10-P2003.CHM | tee out/vbapb10-sha256.txt
+            sha1sum out/VBAPB10-P2003.CHM | tee out/vbapb10-sha1.txt
+            md5sum out/VBAPB10-P2003.CHM | tee out/vbapb10-md5.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-2003-static-media-${{ github.run_id }}
+          path: |
+            out/selection.txt
+            out/sha256.txt
+            out/sha1.txt
+            out/md5.txt
+            out/size.txt
+            out/file.txt
+            out/vbapb10-hits.txt
+            out/VBAPB10-P2003.CHM
+            out/vbapb10-*.txt
+          if-no-files-found: warn
+          retention-days: 30
           compression-level: 0
 
   publisher-2000-trial-candidate:
