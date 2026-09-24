@@ -61,13 +61,32 @@ pub enum MasterProjectionError {
     InvalidPageId,
     DuplicatePageId(String),
     DuplicateSeqNum(u32),
-    NonPageRecord { seq_num: u32, raw_type: u16 },
-    DuplicateMasterField { seq_num: u32 },
-    WrongField { seq_num: u32, actual: u8 },
-    WrongWire { seq_num: u32, actual: u8 },
-    UnresolvedMaster { source_seq_num: u32, master_seq_num: u32 },
-    TargetNotPage { master_seq_num: u32, raw_type: u16 },
-    SelfReference { seq_num: u32 },
+    NonPageRecord {
+        seq_num: u32,
+        raw_type: u16,
+    },
+    DuplicateMasterField {
+        seq_num: u32,
+    },
+    WrongField {
+        seq_num: u32,
+        actual: u8,
+    },
+    WrongWire {
+        seq_num: u32,
+        actual: u8,
+    },
+    UnresolvedMaster {
+        source_seq_num: u32,
+        master_seq_num: u32,
+    },
+    TargetNotPage {
+        master_seq_num: u32,
+        raw_type: u16,
+    },
+    SelfReference {
+        seq_num: u32,
+    },
     DuplicateSourceRelation(String),
 }
 
@@ -78,7 +97,10 @@ impl fmt::Display for MasterProjectionError {
             Self::DuplicatePageId(id) => write!(f, "duplicate page id {id}"),
             Self::DuplicateSeqNum(seq) => write!(f, "duplicate PAGE seqNum {seq}"),
             Self::NonPageRecord { seq_num, raw_type } => {
-                write!(f, "source seqNum {seq_num} is raw type 0x{raw_type:02x}, not PAGE")
+                write!(
+                    f,
+                    "source seqNum {seq_num} is raw type 0x{raw_type:02x}, not PAGE"
+                )
             }
             Self::DuplicateMasterField { seq_num } => {
                 write!(f, "PAGE {seq_num} contains duplicate field0x0D")
@@ -87,7 +109,10 @@ impl fmt::Display for MasterProjectionError {
                 write!(f, "PAGE {seq_num}: expected field0x0D, got 0x{actual:02x}")
             }
             Self::WrongWire { seq_num, actual } => {
-                write!(f, "PAGE {seq_num}: field0x0D must use wire0x68, got 0x{actual:02x}")
+                write!(
+                    f,
+                    "PAGE {seq_num}: field0x0D must use wire0x68, got 0x{actual:02x}"
+                )
             }
             Self::UnresolvedMaster {
                 source_seq_num,
@@ -103,9 +128,14 @@ impl fmt::Display for MasterProjectionError {
                 f,
                 "master handle {master_seq_num} resolves to raw type 0x{raw_type:02x}, not PAGE"
             ),
-            Self::SelfReference { seq_num } => write!(f, "PAGE {seq_num} references itself as master"),
+            Self::SelfReference { seq_num } => {
+                write!(f, "PAGE {seq_num} references itself as master")
+            }
             Self::DuplicateSourceRelation(id) => {
-                write!(f, "source page {id} has more than one admitted master relation")
+                write!(
+                    f,
+                    "source page {id} has more than one admitted master relation"
+                )
             }
         }
     }
@@ -177,13 +207,12 @@ pub fn build_master_relations_v1(
                 seq_num: page.seq_num,
             });
         }
-        let target = pages_by_seq
-            .get(&field.value)
-            .copied()
-            .ok_or(MasterProjectionError::UnresolvedMaster {
+        let target = pages_by_seq.get(&field.value).copied().ok_or(
+            MasterProjectionError::UnresolvedMaster {
                 source_seq_num: page.seq_num,
                 master_seq_num: field.value,
-            })?;
+            },
+        )?;
         if target.raw_type != RAW_TYPE_PAGE {
             return Err(MasterProjectionError::TargetNotPage {
                 master_seq_num: target.seq_num,
@@ -273,10 +302,12 @@ mod tests {
         let context = build_projection_context_v1(&input).expect("context");
         assert_eq!(context.master_relations.len(), 3);
         assert!(context.cmo_relations.is_empty());
-        assert!(context
-            .master_relations
-            .iter()
-            .all(|relation| relation.master_page_seq_num == 263));
+        assert!(
+            context
+                .master_relations
+                .iter()
+                .all(|relation| relation.master_page_seq_num == 263)
+        );
     }
 
     #[test]
@@ -284,7 +315,11 @@ mod tests {
         let input = MasterProjectionInputV1 {
             pages: vec![page(263, 263, None), page(266, 266, None)],
         };
-        assert!(build_master_relations_v1(&input).expect("relations").is_empty());
+        assert!(
+            build_master_relations_v1(&input)
+                .expect("relations")
+                .is_empty()
+        );
     }
 
     #[test]

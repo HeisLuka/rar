@@ -138,7 +138,9 @@ mod tests {
         ]);
 
         assert_eq!(
-            context.master_for_page(page_a).map(|relation| relation.master_page_id.as_str()),
+            context
+                .master_for_page(page_a)
+                .map(|relation| relation.master_page_id.as_str()),
             Some(master)
         );
         assert!(context.cmo_relations.is_empty());
