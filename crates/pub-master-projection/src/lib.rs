@@ -5,7 +5,9 @@
 //! crate owns the semantic admission law: field 0x0D must be wire 0x68 and
 //! resolve to an existing raw 0x43 PAGE without duplication or self-reference.
 
-use pub_model::{MasterProjectionRelationV1, PubProjectionContextV1};
+use pub_model::{
+    MasterProjectionRelationV1, PubProjectionContextV1, derive_pub_page_id_v1,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,6 +41,26 @@ pub struct MasterProjectionInputV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageProjectionCoordinateV1 {
+    pub seq_num: u32,
+    pub raw_type: u16,
+    #[serde(default)]
+    pub master_fields: Vec<ExactReferenceFieldV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MasterProjectionSourceInputV1 {
+    pub source_hash: String,
+    pub pages: Vec<PageProjectionCoordinateV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MasterProjectionSourceOutputV1 {
+    pub context: PubProjectionContextV1,
+    pub receipt: MasterProjectionReceiptV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MasterProjectionReceiptV1 {
     pub receipt_version: String,
     pub projection_context_version: String,
@@ -59,6 +81,9 @@ pub struct MasterProjectionInvariantsV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MasterProjectionError {
     InvalidPageId,
+    CanonicalPageIdentity {
+        seq_num: u32,
+    },
     DuplicatePageId(String),
     DuplicateSeqNum(u32),
     NonPageRecord {
@@ -94,6 +119,9 @@ impl fmt::Display for MasterProjectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidPageId => write!(f, "page_id must be canonical lowercase UUID"),
+            Self::CanonicalPageIdentity { seq_num } => {
+                write!(f, "could not derive canonical PAGE identity for seqNum {seq_num}")
+            }
             Self::DuplicatePageId(id) => write!(f, "duplicate page id {id}"),
             Self::DuplicateSeqNum(seq) => write!(f, "duplicate PAGE seqNum {seq}"),
             Self::NonPageRecord { seq_num, raw_type } => {
@@ -249,6 +277,37 @@ pub fn build_projection_context_v1(
     ))
 }
 
+pub fn materialize_source_input_v1(
+    input: &MasterProjectionSourceInputV1,
+) -> Result<MasterProjectionInputV1, MasterProjectionError> {
+    let pages = input
+        .pages
+        .iter()
+        .map(|page| {
+            let page_id = derive_pub_page_id_v1(&input.source_hash, page.seq_num)
+                .map_err(|_| MasterProjectionError::CanonicalPageIdentity {
+                    seq_num: page.seq_num,
+                })?;
+            Ok(PageProjectionSourceV1 {
+                page_id,
+                seq_num: page.seq_num,
+                raw_type: page.raw_type,
+                master_fields: page.master_fields.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, MasterProjectionError>>()?;
+    Ok(MasterProjectionInputV1 { pages })
+}
+
+pub fn build_source_output_v1(
+    input: &MasterProjectionSourceInputV1,
+) -> Result<MasterProjectionSourceOutputV1, MasterProjectionError> {
+    let materialized = materialize_source_input_v1(input)?;
+    let receipt = build_receipt_v1(&materialized)?;
+    let context = PubProjectionContextV1::with_master_relations(receipt.relations.clone());
+    Ok(MasterProjectionSourceOutputV1 { context, receipt })
+}
+
 pub fn build_receipt_v1(
     input: &MasterProjectionInputV1,
 ) -> Result<MasterProjectionReceiptV1, MasterProjectionError> {
@@ -287,6 +346,45 @@ mod tests {
                 })
                 .unwrap_or_default(),
         }
+    }
+
+    #[test]
+    fn source_coordinates_derive_canonical_page_ids_and_context() {
+        let source_hash = "11".repeat(32);
+        let input = MasterProjectionSourceInputV1 {
+            source_hash: source_hash.clone(),
+            pages: vec![
+                PageProjectionCoordinateV1 {
+                    seq_num: 263,
+                    raw_type: RAW_TYPE_PAGE,
+                    master_fields: vec![],
+                },
+                PageProjectionCoordinateV1 {
+                    seq_num: 266,
+                    raw_type: RAW_TYPE_PAGE,
+                    master_fields: vec![ExactReferenceFieldV1 {
+                        field_id: MASTER_FIELD_ID,
+                        block_type: REFERENCE_U32_WIRE,
+                        value: 263,
+                    }],
+                },
+            ],
+        };
+
+        let materialized = materialize_source_input_v1(&input).expect("materialized");
+        assert_eq!(
+            materialized.pages[0].page_id,
+            derive_pub_page_id_v1(&source_hash, 263).expect("master page id")
+        );
+        assert_eq!(
+            materialized.pages[1].page_id,
+            derive_pub_page_id_v1(&source_hash, 266).expect("source page id")
+        );
+
+        let output = build_source_output_v1(&input).expect("source output");
+        assert_eq!(output.receipt.relation_count, 1);
+        assert_eq!(output.context.master_relations, output.receipt.relations);
+        assert!(output.context.cmo_relations.is_empty());
     }
 
     #[test]
