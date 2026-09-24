@@ -17,37 +17,60 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Carve Corel X4 embedded ZIP and extract Filters.msi
+      - name: Extract Corel X4 InstallShield payload and locate Filters.msi
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends p7zip-full msitools binutils file
-          mkdir -p out/outer out/zip
+          sudo apt-get install -y --no-install-recommends build-essential git unshield msitools file
+          mkdir -p out/iss out/unshield
           url="https://web.archive.org/web/20130509032142id_/http://www.corel.com/akdlm/6763/downloads/trials/GraphicsSuiteX4/CorelDRAWGraphicsSuiteX4Installer_EN.exe"
           curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/corel.exe
           test "$(sha1sum out/corel.exe | awk '{print $1}')" = "9b1232bb63cf1257c447146da8e059297fcffa35"
-          7z x -y out/corel.exe -oout/outer > out/outer-extract.txt 2>&1
-          overlay="$(find out/outer -maxdepth 1 -type f -name '[[]0]' | head -n1)"
-          test -n "$overlay"
-          python3 - <<'PY' | tee out/zip-python.txt
-          import zipfile
-          from pathlib import Path
-          src=Path("out/outer/[0]")
-          with zipfile.ZipFile(src) as z:
-              names=z.namelist()
-              print("entries", len(names))
-              for n in names:
-                  if any(k in n.lower() for k in ["filters.msi","publisher","cdrpub"]):
-                      print("HIT", n)
-              matches=[n for n in names if n.lower().endswith("filters.msi")]
-              if not matches:
-                  raise SystemExit("Filters.msi not found in prefixed ZIP")
-              target=matches[0]
-              Path("out/Filters.msi").write_bytes(z.read(target))
-              Path("out/filters-zip-path.txt").write_text(target+"\n")
-              Path("out/zip-files.txt").write_text("\n".join(names)+"\n")
-          PY
+
+          git clone -q https://github.com/hifi/iss_extract.git tools/iss_extract
+          git -C tools/iss_extract checkout -q 01232146c9284a86958817817849f320e77f5fb7
+          make -C tools/iss_extract
+          tools/iss_extract/iss_extract l out/corel.exe | tee out/iss-list.txt
+          (
+            cd out/iss
+            ../../../tools/iss_extract/iss_extract x ../corel.exe
+          ) | tee out/iss-extract.txt
+          find out/iss -type f -printf '%s\t%p\n' | sort -nr > out/iss-files.txt
+
+          # First, accept a directly embedded Filters.msi if present.
+          filters="$(find out/iss -type f -iname 'Filters.msi' | head -n1 || true)"
+
+          # Otherwise, descend into extracted InstallShield data cabinets.
+          if [ -z "$filters" ]; then
+            while IFS= read -r cab; do
+              d="out/unshield/$(basename "$cab").d"
+              mkdir -p "$d"
+              (
+                cd "$(dirname "$cab")"
+                unshield x -d "$GITHUB_WORKSPACE/$d" "$(basename "$cab")"
+              ) >"$d/unshield.log" 2>&1 || true
+            done < <(find out/iss -type f -iname 'data*.cab' | sort)
+            find out/unshield -type f -printf '%s\t%p\n' | sort -nr > out/unshield-files.txt
+            filters="$(find out/unshield -type f -iname 'Filters.msi' | head -n1 || true)"
+          fi
+
+          # Some packages store component MSI under a non-obvious filename. Use ProductCode as fallback.
+          if [ -z "$filters" ]; then
+            : > out/msi-candidates.txt
+            while IFS= read -r msi; do
+              prop="out/$(basename "$msi").Property.txt"
+              msiinfo export "$msi" Property > "$prop" 2>/dev/null || continue
+              if grep -qi '7F05E704-30A6-421A-97A7-8EEB1C7FF017' "$prop"; then
+                printf '%s\n' "$msi" | tee -a out/msi-candidates.txt
+                filters="$msi"
+                break
+              fi
+            done < <(find out/iss out/unshield -type f -iname '*.msi' | sort)
+          fi
+
+          test -n "$filters"
+          cp "$filters" out/Filters.msi
           sha256sum out/Filters.msi | tee out/filters-sha256.txt
           sha1sum out/Filters.msi | tee out/filters-sha1.txt
           md5sum out/Filters.msi | tee out/filters-md5.txt
@@ -58,17 +81,18 @@ jobs:
           msiinfo export out/Filters.msi Component > out/filters-Component.txt || true
           grep -Ei 'ProductCode|ProductName|ProductVersion|Manufacturer' out/filters-Property.txt | tee out/filters-property-summary.txt
           grep -Ei 'pub|publisher|cdrpub' out/filters-File.txt | tee out/filters-pub-hits.txt || true
-          grep -Ei '7F05E704-30A6-421A-97A7-8EEB1C7FF017' out/filters-Property.txt | tee out/filters-productcode-hit.txt || true
+          grep -Ei '7F05E704-30A6-421A-97A7-8EEB1C7FF017' out/filters-Property.txt | tee out/filters-productcode-hit.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: corel-x4-filters-${{ github.run_id }}
           path: |
-            out/zip-python.txt
-            out/filters-zip-path.txt
-            out/zip-files.txt
+            out/iss-list.txt
+            out/iss-files.txt
+            out/unshield-files.txt
             out/Filters.msi
             out/filters-*.txt
+            out/msi-candidates.txt
           if-no-files-found: warn
           retention-days: 30
           compression-level: 0
