@@ -1,0 +1,27 @@
+name: Authoring MoveNodes V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_move_nodes.py"
+      - ".github/workflows/authoring-move-nodes-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run atomic MoveNodes revision tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_move_nodes
+      - name: Run existing revision kernel regressions
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store
