@@ -1,0 +1,34 @@
+name: Fit Group Contents V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/fit_group_contents_v1.py"
+      - "services/editor-api/test_fit_group_contents_v1.py"
+      - "services/editor-api/group_refit_plan_v1.py"
+      - "services/editor-api/authored_group_geometry_v1.py"
+      - "services/editor-api/revision_store.py"
+      - ".github/workflows/fit-group-contents-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run canonical FitGroupToContents tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_fit_group_contents_v1
+      - name: Re-run Group refit primitives
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_refit_plan_v1 test_authored_group_geometry_v1
+      - name: Re-run revision kernel regression
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store
