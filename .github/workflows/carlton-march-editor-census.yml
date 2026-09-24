@@ -21,60 +21,31 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/carlton/download
-          python -m pip install -q selenium
-          python - <<'PY'
-          import hashlib, os, shutil, time
-          from pathlib import Path
-          from selenium import webdriver
-          from selenium.webdriver.common.by import By
-          from selenium.webdriver.chrome.options import Options
-          from selenium.webdriver.chrome.service import Service
-          from selenium.webdriver.support.ui import WebDriverWait
-
-          out = Path("out/carlton/download").resolve()
-          opts = Options()
-          opts.add_argument("--headless=new")
-          opts.add_argument("--no-sandbox")
-          opts.add_argument("--disable-dev-shm-usage")
-          opts.add_experimental_option("prefs", {
-              "download.default_directory": str(out),
-              "download.prompt_for_download": False,
-              "download.directory_upgrade": True,
-              "safebrowsing.enabled": True,
-          })
-          driver_path = shutil.which("chromedriver")
-          driver = webdriver.Chrome(service=Service(driver_path) if driver_path else Service(), options=opts)
-          try:
-              driver.get("https://www.carltonji.org.uk/parents/latest-letters")
-              wait = WebDriverWait(driver, 30)
-              row = wait.until(lambda d: next(
-                  (r for r in d.find_elements(By.CSS_SELECTOR, "tr") if "March 2026.pub" in r.text),
-                  None
-              ))
-              button = row.find_element(By.CSS_SELECTOR, '[title="Download"]')
-              driver.execute_script("arguments[0].click()", button)
-              deadline = time.time() + 60
-              candidate = None
-              while time.time() < deadline:
-                  pubs = [p for p in out.iterdir() if p.is_file() and p.suffix.lower() == ".pub" and not p.name.endswith(".crdownload")]
-                  if pubs:
-                      candidate = max(pubs, key=lambda p: p.stat().st_mtime)
-                      if candidate.stat().st_size == 9580032:
-                          break
-                  time.sleep(0.5)
-              if candidate is None:
-                  raise SystemExit("browser download produced no .pub")
-              data = candidate.read_bytes()
-              digest = hashlib.sha256(data).hexdigest()
-              print("downloaded", candidate, len(data), digest)
-              assert len(data) == 9580032
-              assert digest == "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
-              canonical = out / "March-2026.pub"
-              if candidate != canonical:
-                  candidate.replace(canonical)
-          finally:
-              driver.quit()
-          PY
+          expected=bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3
+          urls=(
+            "https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/5a/5a939344-76a6-4a6a-b30b-7237edac8bfa"
+            "https://docs-cdn.schooljotter3.com/1fd359a4-cb4e-412d-81a1-79f36166cafc/5a939344-76a6-4a6a-b30b-7237edac8bfa/5a939344-76a6-4a6a-b30b-7237edac8bfa.pub"
+            "https://docs-cdn.schooljotter3.com/1fd359a4-cb4e-412d-81a1-79f36166cafc/5a939344-76a6-4a6a-b30b-7237edac8bfa/March%202026.pub"
+          )
+          ok=0
+          for url in "${urls[@]}"; do
+            echo "trying $url"
+            rm -f out/carlton/download/candidate
+            if curl -fL --retry 2 --connect-timeout 15 --max-time 90 "$url" -o out/carlton/download/candidate; then
+              size=$(stat -c %s out/carlton/download/candidate)
+              sha=$(sha256sum out/carlton/download/candidate | awk '{print $1}')
+              echo "candidate size=$size sha=$sha"
+              if [ "$size" = "9580032" ] && [ "$sha" = "$expected" ]; then
+                mv out/carlton/download/candidate out/carlton/download/March-2026.pub
+                ok=1
+                break
+              fi
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            echo "No static School Jotter object URL matched exact PUB" >&2
+            exit 1
+          fi
           echo "CARLTON_PUB=$PWD/out/carlton/download/March-2026.pub" >> "$GITHUB_ENV"
       - name: Run current Chaptera Editor census
         shell: bash
