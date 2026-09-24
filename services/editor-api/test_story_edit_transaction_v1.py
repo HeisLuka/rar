@@ -468,6 +468,27 @@ class StoryEditTransactionV1Tests(unittest.TestCase):
         self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
         self.assertEqual("ABC\r", self.current_core().paragraph_state.story_text)
 
+    def test_unknown_imported_provenance_rejects_before_any_participant_commit(self):
+        core = make_core_state(
+            "ABC\r",
+            provenance="imported_unknown",
+        )
+        _, baseline = self.register(core)
+        result = self.kernel.commit_story_edit_transaction(
+            self.request(
+                baseline,
+                op_id="story-tx-00000020",
+                start=1,
+                end=2,
+                expected="B",
+                replacement="X",
+            )
+        )
+        self.assertEqual("edit_domain_unknown", result["code"])
+        self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+        self.assertEqual("ABC\r", self.current_core().paragraph_state.story_text)
+        self.assertEqual(0, len(self.kernel.current_revision(DOCUMENT_ID).project["operations"]))
+
     def test_generic_anchor_uses_shared_transform_inside_same_candidate(self):
         anchor = GenericAnchoredSemanticV1(
             semantic_id="bookmark:1",
