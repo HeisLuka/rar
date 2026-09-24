@@ -1,0 +1,123 @@
+name: CORPUS-VAC expanded novelty probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/corpus-vac-expanded-novelty-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  positive-domains:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover across seeded public positive domains
+        run: |
+          set -euo pipefail
+          mkdir -p out/domains
+          python tools/corpus/positive_domain_pub_seed.py \
+            --seed tools/corpus/public_legacy_seed.csv \
+            --seed tools/corpus/smoke_seed.csv \
+            --max-domains 12 --max-pages-per-domain 30 --max-depth 2 \
+            --max-candidates-per-domain 50 --delay 0.2 \
+            --out out/domains/seed.csv --summary out/domains/discovery.json
+      - name: Harvest bounded candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/domains/seed.csv --out out/domains/harvest \
+            --max-files 50 --timeout 20 --max-bytes 104857600 \
+            --per-host-delay 0.2
+      - name: Summarize and remove raw bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/domains/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "source":"positive_domains_expanded_probe",
+            "rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "hosts":len({r.get("crawl_domain","") for r in rows if r.get("crawl_domain")}),
+          }
+          Path("out/domains/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/domains/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-expanded-domains-${{ github.run_id }}
+          path: out/domains/**
+          retention-days: 14
+
+  github-history-expanded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover across pinned repository set
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/github
+          python tools/corpus/github_history_pub_seed.py \
+            --repo-file tools/corpus/pub_history_repositories.txt \
+            --search-pages 1 --max-repos 4 --history-depth 1000 \
+            --max-paths-per-repo 100 --max-captures-per-path 2 --max-releases 20 \
+            --out out/github/seed.csv --summary out/github/discovery.json
+      - name: Harvest bounded candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/github/seed.csv --out out/github/harvest \
+            --max-files 60 --timeout 20 --max-bytes 104857600 \
+            --per-host-delay 0.05
+      - name: Summarize and remove raw bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/github/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "source":"github_history_expanded_probe",
+            "rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "source_repos":sorted({r.get("github_repo","") for r in rows if r.get("github_repo")}),
+          }
+          Path("out/github/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/github/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-expanded-github-${{ github.run_id }}
+          path: out/github/**
+          retention-days: 14
