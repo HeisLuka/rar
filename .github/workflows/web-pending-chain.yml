@@ -1,0 +1,25 @@
+name: WEB-PENDING-CHAIN-01 causal queue
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/pending-chain-v1.mjs"
+      - "apps/web/pending-chain-v1.test.mjs"
+      - "docs/web-pending-chain-v1.md"
+      - ".github/workflows/web-pending-chain.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pending-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run pending-chain contract tests
+        run: node --test apps/web/pending-chain-v1.test.mjs
