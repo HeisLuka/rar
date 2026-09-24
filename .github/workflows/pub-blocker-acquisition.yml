@@ -1,4 +1,5 @@
 name: PUB blocker artifact acquisition
+# observable acquisition run
 
 on:
   workflow_dispatch:
