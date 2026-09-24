@@ -1,0 +1,26 @@
+name: Authoring picture frame receipt V1
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/authoring-picture-frame/**"
+      - "tools/validate_authoring_picture_frame_receipt.py"
+      - "tools/test_authoring_picture_frame_receipt.py"
+      - ".github/workflows/authoring-picture-frame-receipt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install schema validator
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Run picture frame state-axis contract tests
+        run: python tools/test_authoring_picture_frame_receipt.py -v
