@@ -99,9 +99,7 @@ pub enum ShapePaintValidationError {
     NonExactSourceConfidence,
 }
 
-pub fn validate_shape_paint_v1(
-    paint: &ShapePaintV1,
-) -> Result<(), ShapePaintValidationError> {
+pub fn validate_shape_paint_v1(paint: &ShapePaintV1) -> Result<(), ShapePaintValidationError> {
     if paint.fill.is_none() && paint.stroke.is_none() {
         return Err(ShapePaintValidationError::EmptyPaint);
     }
@@ -134,9 +132,7 @@ pub fn author_created_shape_paint_v1(
     Ok(paint)
 }
 
-pub fn canonical_shape_paint_hash_v1(
-    paint: &ShapePaintV1,
-) -> Result<String, serde_json::Error> {
+pub fn canonical_shape_paint_hash_v1(paint: &ShapePaintV1) -> Result<String, serde_json::Error> {
     let bytes = serde_json::to_vec(paint)?;
     let digest = Sha256::digest(bytes);
     let mut hex = String::with_capacity(64);
@@ -167,7 +163,11 @@ fn validate_source_ref(source_ref: &SourceRefV1) -> Result<(), ShapePaintValidat
             field: "object_key",
         });
     }
-    if source_ref.path.as_ref().is_some_and(|value| value.is_empty()) {
+    if source_ref
+        .path
+        .as_ref()
+        .is_some_and(|value| value.is_empty())
+    {
         return Err(ShapePaintValidationError::EmptySourceField { field: "path" });
     }
 
@@ -286,10 +286,9 @@ mod tests {
             }),
         )
         .expect("paint");
-        let round_trip: ShapePaintV1 = serde_json::from_slice(
-            &serde_json::to_vec(&first).expect("serialize"),
-        )
-        .expect("deserialize");
+        let round_trip: ShapePaintV1 =
+            serde_json::from_slice(&serde_json::to_vec(&first).expect("serialize"))
+                .expect("deserialize");
 
         assert_eq!(first, round_trip);
         assert_eq!(
