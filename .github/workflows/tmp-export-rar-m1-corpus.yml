@@ -1,0 +1,101 @@
+name: TEMP export Rar M1 corpus
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/corpus/tmp_export_rar_union.py'
+      - '.github/workflows/tmp-export-rar-m1-corpus.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tmp-export-rar-m1-corpus-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  direct:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Export direct/ZIP/WARC corpus shard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/corpus/tmp_export_rar_union.py direct \
+            --shard ${{ matrix.shard }} \
+            --shard-count 4 \
+            --out out/direct-${{ matrix.shard }}
+      - name: Verify no duplicate SHA in shard
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('out/direct-${{ matrix.shard }}/index.json')
+          rows=json.loads(p.read_text())
+          shas=[r['sha256'] for r in rows]
+          assert len(shas)==len(set(shas)), (len(shas),len(set(shas)))
+          print('files',len(shas))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rar-m1-direct-${{ matrix.shard }}
+          path: out/direct-${{ matrix.shard }}/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
+
+  containers:
+    strategy:
+      fail-fast: false
+      matrix:
+        container_index: [0, 1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parser and archive tool
+        run: |
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Export exact members from source container
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/corpus/tmp_export_rar_union.py containers \
+            --container-index ${{ matrix.container_index }} \
+            --out out/container-${{ matrix.container_index }}
+      - name: Verify no duplicate SHA in shard
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('out/container-${{ matrix.container_index }}/index.json')
+          rows=json.loads(p.read_text())
+          shas=[r['sha256'] for r in rows]
+          assert len(shas)==len(set(shas)), (len(shas),len(set(shas)))
+          print('files',len(shas))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rar-m1-container-${{ matrix.container_index }}
+          path: out/container-${{ matrix.container_index }}/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
