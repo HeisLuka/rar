@@ -295,6 +295,36 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_shape_fill(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_shape_fill_request_shape,
+            canonical_validator=self._validate_canonical_shape_fill,
+            pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_shape_stroke(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_shape_stroke_request_shape,
+            canonical_validator=self._validate_canonical_shape_stroke,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_delete_node(
         self,
         request: dict,
@@ -1064,6 +1094,134 @@ class RevisionKernel:
             )
         if before == after:
             raise ValueError("canonical SetTextFrameColumns must change column state")
+
+    @staticmethod
+    def _validate_srgb_color(color: dict, label: str) -> None:
+        if not isinstance(color, dict) or set(color) != {"r", "g", "b"}:
+            raise ValueError(f"{label} must contain exactly r/g/b")
+        for channel in ("r", "g", "b"):
+            value = color.get(channel)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+                or value > 255
+            ):
+                raise ValueError(f"{label}.{channel} must be an sRGB byte")
+
+    @staticmethod
+    def _validate_shape_fill_state(fill: dict, label: str) -> None:
+        if not isinstance(fill, dict) or set(fill) != {"visible", "color"}:
+            raise ValueError(f"{label} must contain exactly visible/color")
+        if not isinstance(fill.get("visible"), bool):
+            raise ValueError(f"{label}.visible must be boolean")
+        RevisionKernel._validate_srgb_color(fill.get("color"), f"{label}.color")
+
+    @staticmethod
+    def _validate_shape_stroke_state(stroke: dict, label: str) -> None:
+        if not isinstance(stroke, dict) or set(stroke) != {"visible", "color", "width_emu"}:
+            raise ValueError(f"{label} must contain exactly visible/color/width_emu")
+        if not isinstance(stroke.get("visible"), bool):
+            raise ValueError(f"{label}.visible must be boolean")
+        RevisionKernel._validate_srgb_color(stroke.get("color"), f"{label}.color")
+        width = stroke.get("width_emu")
+        if (
+            not isinstance(width, int)
+            or isinstance(width, bool)
+            or width <= 0
+            or width > MAX_SAFE_EMU
+        ):
+            raise ValueError(f"{label}.width_emu must be a positive JavaScript-safe EMU integer")
+
+    @staticmethod
+    def _validate_shape_fill_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.shape-fill-intent.v1":
+            raise ValueError("V1 shape fill protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "node_id", "expected_before", "after"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "set_fill"
+            or set(command) != allowed
+        ):
+            raise ValueError("SetFill contains non-intent/authoritative fields")
+        node_id = command.get("node_id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("SetFill node_id is required")
+        RevisionKernel._validate_shape_fill_state(
+            command.get("expected_before"),
+            "expected_before fill",
+        )
+        RevisionKernel._validate_shape_fill_state(command.get("after"), "after fill")
+        if command["expected_before"] == command["after"]:
+            raise ValueError("SetFill no-op is not a durable edit")
+
+    @staticmethod
+    def _validate_shape_stroke_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.shape-stroke-intent.v1":
+            raise ValueError("V1 shape stroke protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "node_id", "expected_before", "after"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "set_stroke"
+            or set(command) != allowed
+        ):
+            raise ValueError("SetStroke contains non-intent/authoritative fields")
+        node_id = command.get("node_id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("SetStroke node_id is required")
+        RevisionKernel._validate_shape_stroke_state(
+            command.get("expected_before"),
+            "expected_before stroke",
+        )
+        RevisionKernel._validate_shape_stroke_state(command.get("after"), "after stroke")
+        if command["expected_before"] == command["after"]:
+            raise ValueError("SetStroke no-op is not a durable edit")
+
+    @staticmethod
+    def _validate_canonical_shape_fill(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "node_id", "before", "after"}
+            or operation.get("kind") != "set_fill"
+        ):
+            raise ValueError("authoritative executor returned malformed SetFill operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical SetFill targets a different node")
+        RevisionKernel._validate_shape_fill_state(operation.get("before"), "canonical before fill")
+        RevisionKernel._validate_shape_fill_state(operation.get("after"), "canonical after fill")
+        if operation["before"] != command.get("expected_before"):
+            raise ValueError("canonical SetFill before-state differs from expected precondition")
+        if operation["after"] != command.get("after"):
+            raise ValueError("canonical SetFill after-state differs from accepted intent")
+        if operation["before"] == operation["after"]:
+            raise ValueError("canonical SetFill must change fill state")
+
+    @staticmethod
+    def _validate_canonical_shape_stroke(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "node_id", "before", "after"}
+            or operation.get("kind") != "set_stroke"
+        ):
+            raise ValueError("authoritative executor returned malformed SetStroke operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical SetStroke targets a different node")
+        RevisionKernel._validate_shape_stroke_state(
+            operation.get("before"),
+            "canonical before stroke",
+        )
+        RevisionKernel._validate_shape_stroke_state(
+            operation.get("after"),
+            "canonical after stroke",
+        )
+        if operation["before"] != command.get("expected_before"):
+            raise ValueError("canonical SetStroke before-state differs from expected precondition")
+        if operation["after"] != command.get("after"):
+            raise ValueError("canonical SetStroke after-state differs from accepted intent")
+        if operation["before"] == operation["after"]:
+            raise ValueError("canonical SetStroke must change stroke state")
 
     @staticmethod
     def _validate_crop_state(crop: dict, label: str) -> None:
