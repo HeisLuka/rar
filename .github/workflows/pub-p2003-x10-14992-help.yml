@@ -126,9 +126,9 @@ jobs:
             if ! msiinfo export "$msi" Property > "$prop" 2>/dev/null; then
               continue
             fi
-            pname="$(awk -F '\t' '$1=="ProductName"{print $2; exit}' "$prop" || true)"
-            pver="$(awk -F '\t' '$1=="ProductVersion"{print $2; exit}' "$prop" || true)"
-            plang="$(awk -F '\t' '$1=="ProductLanguage"{print $2; exit}' "$prop" || true)"
+            pname="$(awk -F '\t' '$1=="ProductName"{print $2; exit}' "$prop" | tr -d '\r' || true)"
+            pver="$(awk -F '\t' '$1=="ProductVersion"{print $2; exit}' "$prop" | tr -d '\r' || true)"
+            plang="$(awk -F '\t' '$1=="ProductLanguage"{print $2; exit}' "$prop" | tr -d '\r' || true)"
             printf '%s\t%s\t%s\t%s\n' "$msi" "$pname" "$pver" "$plang" >> out/msi-candidates.tsv
             if [[ ! -s out/publisher-msi-path.txt ]] && [[ "${pname,,}" == *publisher* ]] && [[ "$plang" == "1033" ]]; then
               printf '%s' "$msi" > out/publisher-msi-path.txt
@@ -147,7 +147,7 @@ jobs:
           msiinfo export out/PUB.MSI Media > out/pub-media.idt
           grep -Ei '^Product(Name|Version|Language)|Publisher' out/pub-property.idt | tee out/pub-property-summary.txt || true
           grep -i 'VBAPB10' out/pub-file.idt | tee out/pub-vbapb10-file-row.txt || true
-          grep -Eq '^ProductLanguage[[:space:]]+1033([[:space:]]|$)' out/pub-property.idt
+          tr -d '\r' < out/pub-property.idt | grep -Eq '^ProductLanguage[[:space:]]+1033([[:space:]]|$)'
 
       - name: Extract exact English VBAPB10 help payload
         shell: bash
@@ -195,7 +195,7 @@ jobs:
               "media_sha1":read("out/media-sha1.txt").split()[0],
               "media_md5":read("out/media-md5.txt").split()[0],
               "volume_evidence":volume,
-              "product_language_1033":bool(re.search(r"^ProductLanguage\s+1033(?:\s|$)",prop,re.M)),
+              "product_language_1033":bool(re.search(r"^ProductLanguage\s+1033(?:\s|$)",prop.replace("\r",""),re.M)),
               "publisher_msi_present":True,
               "publisher_msi_path":read("out/publisher-msi-path.txt"),
               "vbapb10_file_row":read("out/pub-vbapb10-file-row.txt"),
