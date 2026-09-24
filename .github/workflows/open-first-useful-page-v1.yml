@@ -1,0 +1,32 @@
+name: OPEN-FIRST-USEFUL-PAGE-01 receipt contract
+
+on:
+  pull_request:
+    paths:
+      - "tools/open_first_useful_page_v1.py"
+      - "tools/test_open_first_useful_page_v1.py"
+      - "tools/run_open_first_useful_page_contract.py"
+      - "docs/open-first-useful-page-v1.md"
+      - ".github/workflows/open-first-useful-page-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  open-receipt-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test open receipt contract
+        run: python tools/test_open_first_useful_page_v1.py
+      - name: Emit synthetic contract receipt
+        run: python tools/run_open_first_useful_page_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-first-useful-page-v1-contract
+          path: target/open-first-useful-page-v1/receipt.json
+          if-no-files-found: error
