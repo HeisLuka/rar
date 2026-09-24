@@ -1,0 +1,104 @@
+name: CORPUS-VAC forum attachments
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/forum_sources.csv'
+      - 'tools/corpus/forum_pub_locator.py'
+      - 'tools/corpus/test_forum_pub_locator.py'
+      - '.github/workflows/corpus-vac-forum-attachments.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/forum_sources.csv'
+      - 'tools/corpus/forum_pub_locator.py'
+      - 'tools/corpus/test_forum_pub_locator.py'
+      - '.github/workflows/corpus-vac-forum-attachments.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-vac-forum-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate and bounded live source smoke
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/forum_pub_locator.py tools/corpus/test_forum_pub_locator.py
+          python tools/corpus/test_forum_pub_locator.py
+          mkdir -p out
+          python tools/corpus/forum_pub_locator.py \
+            --registry tools/corpus/forum_sources.csv \
+            --max-pages 2 --delay 0.5 \
+            --out out/forum_seed.csv --summary out/forum.summary.json
+          cat out/forum.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forum-smoke-${{ github.run_id }}
+          path: out/**
+          retention-days: 7
+
+  production:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Mine forum/support locators
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/forum_pub_locator.py \
+            --registry tools/corpus/forum_sources.csv \
+            --max-pages 100 --delay 1.0 \
+            --out out/forum_seed.csv --summary out/forum.summary.json
+      - name: Try live/source-page resolution
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/forum_seed.csv --out out/live \
+            --max-files -1 --timeout 25 --max-bytes 104857600 --per-host-delay 0.5
+      - name: Generate Wayback handoff and recover archived candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/wayback_pub_seed.py \
+            --seed out/forum_seed.csv --max-domains 20 --exact-limit 20 --domain-limit 200 --delay 1.0 \
+            --out out/forum_wayback_seed.csv --summary out/forum_wayback.summary.json
+          python tools/corpus/harvest_pub.py \
+            --seed out/forum_wayback_seed.csv --out out/wayback \
+            --max-files -1 --timeout 25 --max-bytes 104857600 --per-host-delay 0.2
+      - name: Remove all raw payloads before public artifact upload
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/live out/wayback -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: forum-attachment-receipt-${{ github.run_id }}
+          path: |
+            out/forum_seed.csv
+            out/forum.summary.json
+            out/forum_wayback_seed.csv
+            out/forum_wayback.summary.json
+            out/live/manifest.json
+            out/live/manifest.csv
+            out/wayback/manifest.json
+            out/wayback/manifest.csv
+          if-no-files-found: warn
+          retention-days: 30
