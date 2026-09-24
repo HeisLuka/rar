@@ -9,12 +9,20 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from authz_v1 import (
-    AuthzKernel,
-    CAP_EDIT,
-    CAP_EDIT_GEOMETRY,
-    CAP_EDIT_TEXT,
-)
+try:
+    from .authz_v1 import (
+        AuthzKernel,
+        CAP_EDIT,
+        CAP_EDIT_GEOMETRY,
+        CAP_EDIT_TEXT,
+    )
+except ImportError:
+    from authz_v1 import (
+        AuthzKernel,
+        CAP_EDIT,
+        CAP_EDIT_GEOMETRY,
+        CAP_EDIT_TEXT,
+    )
 
 
 class AuthorizedRevisionGateway:
