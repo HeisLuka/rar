@@ -152,37 +152,37 @@ jobs:
           strings -a out/Korva.elf > out/reports/strings.txt
 
           cat > out/reports/needles.txt <<'EOF'
-libmspub
-librevenge
-writerperfect
-LibreOffice
-unfair-codec-pub
-Quill/QuillSub/CONTENTS
-Escher
-cfb-0.14.0
-cfb 0.14.0
-pagewell_core
-korva_lib
-import_pub_bytes
-extract_text
-extract_images
-probe_image
-sniff_image
-write_pub
-save_pub
-export_pub
-write_pwl_bytes
-save_pwl
-read_pwl_bytes
-pagewell-document
-manifest.json
-document.json
-.kva
-Tauri
-tauri
-rustc 1.98.1
-LLD 22.1.8
-EOF
+          libmspub
+          librevenge
+          writerperfect
+          LibreOffice
+          unfair-codec-pub
+          Quill/QuillSub/CONTENTS
+          Escher
+          cfb-0.14.0
+          cfb 0.14.0
+          pagewell_core
+          korva_lib
+          import_pub_bytes
+          extract_text
+          extract_images
+          probe_image
+          sniff_image
+          write_pub
+          save_pub
+          export_pub
+          write_pwl_bytes
+          save_pwl
+          read_pwl_bytes
+          pagewell-document
+          manifest.json
+          document.json
+          .kva
+          Tauri
+          tauri
+          rustc 1.98.1
+          LLD 22.1.8
+          EOF
 
           : > out/reports/needle-hits.txt
           while IFS= read -r needle; do
