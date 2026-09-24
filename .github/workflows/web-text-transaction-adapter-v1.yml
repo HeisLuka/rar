@@ -1,0 +1,33 @@
+name: Web Text Transaction Adapter V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/web_text_transaction_adapter_v1.py"
+      - "services/editor-api/test_web_text_transaction_adapter_v1.py"
+      - "services/editor-api/story_edit_transaction_v1.py"
+      - "services/editor-api/text_ingress_v1.py"
+      - "services/editor-api/security/authorized_revision_gateway.py"
+      - ".github/workflows/web-text-transaction-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prove browser intent lowers to canonical Story transaction
+        working-directory: services/editor-api
+        run: python -m unittest -v test_web_text_transaction_adapter_v1
+      - name: Regression Story transaction and text ingress
+        working-directory: services/editor-api
+        run: python -m unittest -v test_story_edit_transaction_v1 test_text_ingress_v1
+      - name: Regression authorization gateway
+        working-directory: services/editor-api
+        run: python -m unittest -v security.test_authorized_revision_gateway
