@@ -21,6 +21,7 @@ pub use shape_paint_op::{
 };
 
 pub use create_shape::{
-    AuthoredShapeV1, CreateShapeError, CreateShapeV1, EntityProvenanceV1, RectEmuV1, ShapeKindV1,
-    ShapeTransformV1, create_shape_entity_v1, validate_rect_emu_v1, validate_uuid_v7_v1,
+    AuthoredShapeV1, CreateShapeError, CreateShapeV1, CreateShapeV2, EntityProvenanceV1, RectEmuV1,
+    ShapeDestinationV2, ShapeKindV1, ShapeTransformV1, create_shape_entity_v1,
+    create_shape_entity_v2, validate_rect_emu_v1, validate_uuid_v7_v1,
 };
