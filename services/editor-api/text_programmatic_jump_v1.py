@@ -257,6 +257,14 @@ def _prepare_enter_or_switch(
                 pending_interaction_metadata=(("entry_reason", request.reason),),
             )
         except TextEditSessionError as exc:
+            if (
+                request.selection_mode == "collapsed_caret"
+                and exc.code in {"unplaced_story_position", "internal_cluster_unsupported"}
+            ):
+                _fail(
+                    "collapsed_target_unplaced",
+                    "collapsed programmatic caret requires an admitted physical stop",
+                )
             _fail(exc.code, str(exc))
         return entered.session, "enter", False, False
 
@@ -276,6 +284,14 @@ def _prepare_enter_or_switch(
             pending_interaction_metadata=(("entry_reason", request.reason),),
         )
     except TextEditSessionError as exc:
+        if (
+            request.selection_mode == "collapsed_caret"
+            and exc.code in {"unplaced_story_position", "internal_cluster_unsupported"}
+        ):
+            _fail(
+                "collapsed_target_unplaced",
+                "collapsed programmatic caret requires an admitted physical stop",
+            )
         _fail(exc.code, str(exc))
     return (
         switched.session,
