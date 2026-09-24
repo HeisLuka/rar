@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/validation/visreg/v1/report.schema.json",
+  "title": "Chaptera VISREG V1 structured visual regression report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_version",
+    "document_id",
+    "source_hash",
+    "baseline_snapshot_id",
+    "candidate_snapshot_id",
+    "layout_environment_id",
+    "summary",
+    "differences",
+    "report_hash"
+  ],
+  "properties": {
+    "report_version": { "const": "chaptera.visreg.report.v1" },
+    "document_id": { "type": "string" },
+    "source_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "baseline_snapshot_id": { "$ref": "#/$defs/hashId" },
+    "candidate_snapshot_id": { "$ref": "#/$defs/hashId" },
+    "layout_environment_id": { "$ref": "#/$defs/hashId" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "difference_count",
+        "stage_counts",
+        "semantic_or_layout_change",
+        "render_only",
+        "equivalent"
+      ],
+      "properties": {
+        "difference_count": { "type": "integer", "minimum": 0 },
+        "stage_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "structure",
+            "layout",
+            "text_layout",
+            "render_input",
+            "render",
+            "contract"
+          ],
+          "properties": {
+            "structure": { "type": "integer", "minimum": 0 },
+            "layout": { "type": "integer", "minimum": 0 },
+            "text_layout": { "type": "integer", "minimum": 0 },
+            "render_input": { "type": "integer", "minimum": 0 },
+            "render": { "type": "integer", "minimum": 0 },
+            "contract": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "semantic_or_layout_change": { "type": "boolean" },
+        "render_only": { "type": "boolean" },
+        "equivalent": { "type": "boolean" }
+      }
+    },
+    "differences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage",
+          "code",
+          "origin_type",
+          "origin_id",
+          "page_id",
+          "before",
+          "after"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "structure",
+              "layout",
+              "text_layout",
+              "render_input",
+              "render",
+              "contract"
+            ]
+          },
+          "code": { "type": "string", "minLength": 1 },
+          "origin_type": { "type": "string", "minLength": 1 },
+          "origin_id": { "type": "string", "minLength": 1 },
+          "page_id": { "type": ["string", "null"] },
+          "before": {},
+          "after": {}
+        }
+      }
+    },
+    "report_hash": { "$ref": "#/$defs/hashId" }
+  },
+  "$defs": {
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
