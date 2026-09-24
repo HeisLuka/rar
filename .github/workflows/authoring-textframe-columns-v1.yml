@@ -6,6 +6,8 @@ on:
       - "packages/protocol/authoring-textframe-columns/**"
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_text_frame_columns.py"
+      - "tools/build_text_frame_columns_runtime_receipt.py"
+      - "tools/test_build_text_frame_columns_runtime_receipt.py"
       - ".github/workflows/authoring-textframe-columns-v1.yml"
   workflow_dispatch:
 
@@ -25,6 +27,8 @@ jobs:
       - name: Run SetTextFrameColumns revision-kernel tests
         working-directory: services/editor-api
         run: python -m unittest -v test_text_frame_columns
+      - name: Run local runtime evidence orchestration tests
+        run: python tools/test_build_text_frame_columns_runtime_receipt.py -v
       - name: Validate public intent schema
         run: |
           python - <<'PY'
