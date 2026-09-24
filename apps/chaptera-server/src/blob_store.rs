@@ -871,10 +871,9 @@ impl AsyncRead for HashingBoundedReader<'_> {
                     return Poll::Ready(Ok(()));
                 }
                 let newly_read = &limited.filled()[before..];
-                this.bytes_read = this
-                    .bytes_read
-                    .checked_add(count as u64)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
+                this.bytes_read = this.bytes_read.checked_add(count as u64).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
+                })?;
                 if this.bytes_read > this.max_bytes {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -953,10 +952,9 @@ impl AsyncRead for HashingOwnedReader {
                     return Poll::Ready(Ok(()));
                 }
                 let newly_read = &limited.filled()[before..];
-                this.bytes_read = this
-                    .bytes_read
-                    .checked_add(count as u64)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
+                this.bytes_read = this.bytes_read.checked_add(count as u64).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
+                })?;
                 if this.bytes_read > this.max_bytes {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::InvalidData,
