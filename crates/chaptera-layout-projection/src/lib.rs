@@ -103,13 +103,7 @@ pub fn project_story_text_v1(input: StoryProjectionInputV1) -> ProjectedStoryTex
                 "story_scalar_count_overflow",
                 "Story scalar count does not fit the V1 u32 coordinate space",
             )];
-            return finish_projection(
-                input.story_id,
-                0,
-                Vec::new(),
-                Vec::new(),
-                diagnostics,
-            );
+            return finish_projection(input.story_id, 0, Vec::new(), Vec::new(), diagnostics);
         }
     };
 
@@ -140,8 +134,12 @@ pub fn project_story_text_v1(input: StoryProjectionInputV1) -> ProjectedStoryTex
         Vec::new()
     };
 
-    let normalized_inputs =
-        normalize_shaping_runs(&input.story_id, scalar_len, input.shaping_runs, &mut diagnostics);
+    let normalized_inputs = normalize_shaping_runs(
+        &input.story_id,
+        scalar_len,
+        input.shaping_runs,
+        &mut diagnostics,
+    );
 
     let shaping_runs = if paragraph_identity_valid && normalized_inputs.is_some() {
         split_shaping_runs_at_paragraphs(
@@ -646,16 +644,8 @@ mod tests {
 
     #[test]
     fn shaping_run_input_enumeration_order_is_not_semantic() {
-        let left = project(
-            "ABCD",
-            &["p1"],
-            vec![run(2, 4, "b"), run(0, 2, "a")],
-        );
-        let right = project(
-            "ABCD",
-            &["p1"],
-            vec![run(0, 2, "a"), run(2, 4, "b")],
-        );
+        let left = project("ABCD", &["p1"], vec![run(2, 4, "b"), run(0, 2, "a")]);
+        let right = project("ABCD", &["p1"], vec![run(0, 2, "a"), run(2, 4, "b")]);
 
         assert_eq!(left, right);
         assert_eq!(
@@ -678,11 +668,7 @@ mod tests {
     #[test]
     fn split_and_merge_states_follow_canonical_paragraph_identity_law() {
         let base = project("AB", &["p-upstream"], vec![run(0, 2, "style-a")]);
-        let split = project(
-            "A\rB",
-            &["p-upstream", "p-new"],
-            vec![run(0, 3, "style-a")],
-        );
+        let split = project("A\rB", &["p-upstream", "p-new"], vec![run(0, 3, "style-a")]);
         let merged = project("AB", &["p-upstream"], vec![run(0, 2, "style-a")]);
 
         assert!(base.is_usable_for_preparation());
