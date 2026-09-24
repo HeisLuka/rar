@@ -1,0 +1,50 @@
+name: WEB-ACCESSIBILITY-FOCUS-01 contract
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/accessibility-focus-v1.mjs"
+      - "apps/web/accessibility-focus-v1.test.mjs"
+      - "apps/web/accessibility-focus-contract.html"
+      - "tools/run_web_accessibility_focus_contract.mjs"
+      - "docs/web-accessibility-focus-v1.md"
+      - ".github/workflows/web-accessibility-focus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  logic-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run semantic focus unit tests
+        run: node --test apps/web/accessibility-focus-v1.test.mjs
+
+  browser-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run accessibility/focus browser contract
+        run: node tools/run_web_accessibility_focus_contract.mjs ${{ matrix.browser }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-accessibility-focus-v1-${{ matrix.browser }}
+          path: target/web-accessibility-focus-v1/${{ matrix.browser }}-receipt.json
+          if-no-files-found: error
