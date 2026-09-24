@@ -824,7 +824,6 @@ pub fn build_projection_receipt_v1(
     })
 }
 
-
 pub fn build_pub_projection_context_v1(
     input: &PlcCmobProjectionInputV1,
 ) -> Result<PubProjectionContextV1, PlcCmobProjectionError> {
