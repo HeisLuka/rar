@@ -1,0 +1,29 @@
+name: Picture Place Plan V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/picture_place_plan_v1.py"
+      - "services/editor-api/test_picture_place_plan_v1.py"
+      - "services/editor-api/picture_resize_plan_v1.py"
+      - ".github/workflows/picture-place-plan-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run exact PictureFrame placement planner tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_picture_place_plan_v1
+      - name: Re-run shared picture ratio primitive tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_picture_resize_plan_v1
