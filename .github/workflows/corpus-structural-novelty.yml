@@ -3,14 +3,12 @@ name: CORPUS structural novelty
 on:
   pull_request:
     paths:
-      - 'tools/corpus/structural_probe/**'
       - 'tools/corpus/structural_novelty.py'
       - 'tools/corpus/structural_novelty_sources.json'
       - '.github/workflows/corpus-structural-novelty.yml'
   push:
     branches: [main]
     paths:
-      - 'tools/corpus/structural_probe/**'
       - 'tools/corpus/structural_novelty.py'
       - 'tools/corpus/structural_novelty_sources.json'
       - '.github/workflows/corpus-structural-novelty.yml'
@@ -25,33 +23,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Validate Python
-        run: |
-          set -euo pipefail
-          python -m py_compile tools/corpus/structural_novelty.py
-      - name: Build pinned structural probe
-        run: |
-          set -euo pipefail
-          cargo build --release --manifest-path tools/corpus/structural_probe/Cargo.toml
-          tools/corpus/structural_probe/target/release/rar-pub-structural-probe --help >/dev/null 2>&1 || test $? -eq 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: structural-probe-${{ github.run_id }}
-          path: tools/corpus/structural_probe/target/release/rar-pub-structural-probe
-          if-no-files-found: error
-          retention-days: 7
-
   smoke:
     if: github.event_name == 'pull_request'
-    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -59,19 +32,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
-        with:
-          name: structural-probe-${{ github.run_id }}
-          path: bin
-      - name: Run three-file exact-SHA smoke
+      - name: Install pinned public CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Validate and run three-file exact-SHA smoke
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          chmod +x bin/rar-pub-structural-probe
+          python -m py_compile tools/corpus/structural_novelty.py
           python tools/corpus/structural_novelty.py scan \
             --sources tools/corpus/structural_novelty_sources.json \
-            --probe bin/rar-pub-structural-probe \
             --out out/shard0 \
             --only-source github_history \
             --limit 3 \
@@ -81,13 +51,18 @@ jobs:
           from pathlib import Path
           s=json.loads(Path("out/shard0/summary.json").read_text())
           assert s["source_union_count"] == 950, s
+          assert s["deferred_container_union_count"] == 425, s
+          assert s["nondeferred_union_count"] == 525, s
           assert s["selected"] == 3, s
           assert s["status"].get("ok") == 3, s
-          assert s["deferred_container_union_count"] == 425, s
           PY
           python tools/corpus/structural_novelty.py aggregate \
             --input out \
             --out out/aggregate
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: structural-novelty-smoke-${{ github.run_id }}
@@ -97,7 +72,6 @@ jobs:
 
   scan:
     if: github.event_name != 'pull_request'
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -109,19 +83,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
-        with:
-          name: structural-probe-${{ github.run_id }}
-          path: bin
+      - name: Install pinned public CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
       - name: Scan exact-SHA shard
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          chmod +x bin/rar-pub-structural-probe
+          python -m py_compile tools/corpus/structural_novelty.py
           python tools/corpus/structural_novelty.py scan \
             --sources tools/corpus/structural_novelty_sources.json \
-            --probe bin/rar-pub-structural-probe \
             --out out \
             --shard-index "${{ matrix.shard }}" \
             --shard-count 4 \
@@ -152,13 +123,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Aggregate source-free fingerprints
+        run: |
+          set -euo pipefail
+          python tools/corpus/structural_novelty.py aggregate \
+            --input shards \
+            --out aggregate
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("aggregate/summary.json").read_text())
+          assert s["analyzed_rows"] == 525, s
+          PY
+        env:
+          PYTHONPATH: tools/corpus
       - uses: actions/download-artifact@v4
         with:
           pattern: structural-novelty-shard-${{ github.run_id }}-*
           path: shards
-      - name: Aggregate source-free fingerprints
+      - name: Re-aggregate after shard download
         run: |
           set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          rm -rf aggregate
           python tools/corpus/structural_novelty.py aggregate \
             --input shards \
             --out aggregate
