@@ -152,7 +152,8 @@ pub fn project_editable_export_shape_paint_v1(paint: &ShapePaintV1) -> EditableE
 mod tests {
     use super::*;
     use pub_model::{
-        AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, SourceRoleV1,
+        AuthorityClassV1, ReadConfidenceV1, SetFillV1, SetStrokeV1, ShapePaintOperationV1,
+        ShapePaintProvenanceV1, SourceRoleV1, apply_shape_paint_operation_v1,
         author_created_shape_paint_v1,
     };
 
@@ -337,6 +338,70 @@ mod tests {
             }
         );
         assert_eq!(authored.provenance, ShapePaintProvenanceV1::AuthorCreated);
+    }
+
+    #[test]
+    fn authored_set_fill_and_stroke_flow_through_view_layout_and_export_projections() {
+        let initial = author_created_shape_paint_v1(
+            Some(SolidFillV1 {
+                visible: true,
+                color: Srgb8 { r: 1, g: 2, b: 3 },
+            }),
+            Some(SolidStrokeV1 {
+                visible: true,
+                color: Srgb8 { r: 4, g: 5, b: 6 },
+                width_emu: 12_700,
+            }),
+        )
+        .expect("initial");
+
+        let filled = apply_shape_paint_operation_v1(
+            &initial,
+            &ShapePaintOperationV1::SetFill(SetFillV1 {
+                node_id: "shape:authored:1".to_owned(),
+                before: initial.fill.clone().expect("fill"),
+                after: SolidFillV1 {
+                    visible: false,
+                    color: Srgb8 { r: 9, g: 8, b: 7 },
+                },
+            }),
+        )
+        .expect("set fill");
+        let painted = apply_shape_paint_operation_v1(
+            &filled,
+            &ShapePaintOperationV1::SetStroke(SetStrokeV1 {
+                node_id: "shape:authored:1".to_owned(),
+                before: filled.stroke.clone().expect("stroke"),
+                after: SolidStrokeV1 {
+                    visible: true,
+                    color: Srgb8 {
+                        r: 0x44,
+                        g: 0x55,
+                        b: 0x66,
+                    },
+                    width_emu: 25_400,
+                },
+            }),
+        )
+        .expect("set stroke");
+
+        let viewer = project_viewer_node_paint_v1(&painted).expect("visible stroke");
+        assert_eq!(viewer.solid_fill_rgb, None);
+        assert_eq!(
+            viewer.solid_line,
+            Some(ViewerSolidLineV1 {
+                rgb: [0x44, 0x55, 0x66],
+                width_emu: 25_400,
+            })
+        );
+
+        let layout = project_layout_shape_paint_v1(&painted);
+        assert_eq!(layout.fill, painted.fill);
+        assert_eq!(layout.stroke, painted.stroke);
+
+        let export = project_editable_export_shape_paint_v1(&painted);
+        assert_eq!(export.fill, painted.fill);
+        assert_eq!(export.stroke, painted.stroke);
     }
 
     #[test]

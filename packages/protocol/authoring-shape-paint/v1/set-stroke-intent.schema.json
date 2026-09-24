@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.local/protocol/authoring-shape-paint/v1/set-stroke-intent.schema.json",
+  "title": "Chaptera SetStroke intent V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "document_id", "source_hash", "base_revision_id", "client_operation_id", "command"],
+  "properties": {
+    "protocol_version": {"const": "chaptera.shape-stroke-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "client_operation_id": {"type": "string", "minLength": 1},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "node_id", "expected_before", "after"],
+      "properties": {
+        "kind": {"const": "set_stroke"},
+        "node_id": {"type": "string", "minLength": 1},
+        "expected_before": {"$ref": "#/$defs/stroke"},
+        "after": {"$ref": "#/$defs/stroke"}
+      }
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["r", "g", "b"],
+      "properties": {
+        "r": {"type": "integer", "minimum": 0, "maximum": 255},
+        "g": {"type": "integer", "minimum": 0, "maximum": 255},
+        "b": {"type": "integer", "minimum": 0, "maximum": 255}
+      }
+    },
+    "stroke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visible", "color", "width_emu"],
+      "properties": {
+        "visible": {"type": "boolean"},
+        "color": {"$ref": "#/$defs/color"},
+        "width_emu": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+      }
+    }
+  }
+}
