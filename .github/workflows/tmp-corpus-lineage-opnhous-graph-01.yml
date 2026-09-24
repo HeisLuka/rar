@@ -17,23 +17,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install analysis and pinned libmspub build dependencies
+      - name: Install independent Ubuntu libmspub parser
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check olefile==0.47
           sudo apt-get update -qq
-          sudo apt-get install -y autoconf automake libtool pkg-config libboost-dev libicu-dev zlib1g-dev librevenge-dev
-      - name: Build pinned current libmspub
-        run: |
-          set -euo pipefail
-          git clone -q https://github.com/LibreOffice/libmspub.git /tmp/libmspub
-          git -C /tmp/libmspub checkout -q 2b094242f97923f918972d5f1bfd26cd915f836c
-          cd /tmp/libmspub
-          ./autogen.sh --prefix=/tmp/libmspub-install >/tmp/libmspub-configure.log 2>&1
-          make -j2 >/tmp/libmspub-make.log 2>&1
-          make install >/tmp/libmspub-install.log 2>&1
-          test -x /tmp/libmspub-install/bin/pub2raw
-          test -x /tmp/libmspub-install/bin/pub2xhtml
+          sudo apt-get install -y libmspub-tools
+          command -v pub2raw
+          command -v pub2xhtml
+          dpkg-query -W -f='${Package} ${Version}\n' libmspub-tools libmspub-0.1-1 | tee /tmp/libmspub-package.txt
+          pub2raw --version | tee /tmp/pub2raw-version.txt
       - name: Scan relocated property pages and run independent parser acceptance
         run: |
           set -euo pipefail
@@ -179,7 +172,6 @@ jobs:
               return {"timeout":True,"stdout_len":len(e.stdout or b""),"stderr_len":len(e.stderr or b"")}
 
           env=os.environ.copy()
-          env["LD_LIBRARY_PATH"]="/tmp/libmspub-install/lib:"+env.get("LD_LIBRARY_PATH","")
           rows={}
           with tempfile.TemporaryDirectory(prefix="opnhous-accept-") as td0:
             td=Path(td0)
@@ -190,9 +182,9 @@ jobs:
               c=contents(pub);tm=text_model(c)
               if c[0x0c:0x0e].hex()!="8800" or u16(c,4)!=300:raise ValueError("dialect drift")
               scans=scan_pages(c,tm)
-              raw=run_tool(["/tmp/libmspub-install/bin/pub2raw",str(p)],env)
+              raw=run_tool(["pub2raw",str(p)],env)
               xhtml_path=str(td/(side+".xhtml"))
-              xhtml=run_tool(["/tmp/libmspub-install/bin/pub2xhtml",str(p),xhtml_path],env,xhtml_path)
+              xhtml=run_tool(["pub2xhtml",str(p),xhtml_path],env,xhtml_path)
               rows[side]={
                 "sha256":s["sha256"],"source_page":s["source_page"],"selected_delivery_url":iso.delivery,
                 "text_len":tm["len"],"text_sha256":sha(tm["text"]),
@@ -229,7 +221,7 @@ jobs:
             "right_pub2xhtml_returncode":rows["right"]["pub2xhtml"].get("returncode"),
             "right_isSupported_via_pub2raw":right_supported,
             "classification":classification,
-            "libmspub_commit":"2b094242f97923f918972d5f1bfd26cd915f836c",
+            "libmspub_package":"Ubuntu noble libmspub-tools 0.1.4-3build7",
             "source_safe":True
           }
           receipt={"schema":"chaptera.opnhous-independent-acceptance.v4","rows":rows,"summary":summary,"raw_pub_retained":False,"source_safe":True}
