@@ -87,6 +87,32 @@ except ModuleNotFoundError:
     validate_rect_emu_v1 = _create_shape_module.validate_rect_emu_v1
     validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
 
+try:
+    from authoring_fragment_v1 import (
+        canonical_paste_fragment_operation_v1,
+        validate_paste_fragment_intent_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _authoring_fragment_path = pathlib.Path(__file__).with_name("authoring_fragment_v1.py")
+    _authoring_fragment_spec = importlib.util.spec_from_file_location(
+        "chaptera_authoring_fragment_v1",
+        _authoring_fragment_path,
+    )
+    if _authoring_fragment_spec is None or _authoring_fragment_spec.loader is None:
+        raise ImportError("cannot load authoring_fragment_v1 sibling module")
+    _authoring_fragment_module = importlib.util.module_from_spec(_authoring_fragment_spec)
+    sys.modules[_authoring_fragment_spec.name] = _authoring_fragment_module
+    _authoring_fragment_spec.loader.exec_module(_authoring_fragment_module)
+    canonical_paste_fragment_operation_v1 = (
+        _authoring_fragment_module.canonical_paste_fragment_operation_v1
+    )
+    validate_paste_fragment_intent_v1 = (
+        _authoring_fragment_module.validate_paste_fragment_intent_v1
+    )
+
 
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
@@ -335,6 +361,18 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_create_shape_request_shape,
             canonical_validator=self._validate_canonical_create_shape,
+        )
+
+    def commit_paste_fragment(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_paste_fragment_request_shape,
+            canonical_validator=self._validate_canonical_paste_fragment,
         )
 
     def commit_shape_fill(
@@ -1195,6 +1233,18 @@ class RevisionKernel:
             raise ValueError("canonical CreateShape fill differs from accepted intent")
         if paint.get("stroke") != command.get("paint", {}).get("stroke"):
             raise ValueError("canonical CreateShape stroke differs from accepted intent")
+
+    @staticmethod
+    def _validate_paste_fragment_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.paste-fragment-intent.v1":
+            raise ValueError("V1 PasteFragment protocol_version is required")
+        validate_paste_fragment_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_paste_fragment(command: dict, operation: dict) -> None:
+        expected = canonical_paste_fragment_operation_v1(command)
+        if operation != expected:
+            raise ValueError("authoritative executor returned non-canonical PasteFragment operation")
 
     @staticmethod
     def _validate_srgb_color(color: dict, label: str) -> None:
