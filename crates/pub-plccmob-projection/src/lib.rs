@@ -6,6 +6,7 @@
 
 use pub_model::{
     CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1,
+    derive_pub_node_id_v1, derive_pub_page_id_v1, derive_pub_story_id_v1,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -102,6 +103,38 @@ pub struct TargetSourceV1 {
     pub target_story_id: String,
     pub target_frame_node_id: Option<String>,
     pub object_marker_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarrierSourceIdentityV1 {
+    pub carrier_ohpo: u32,
+    pub carrier_cmo_id: u32,
+    pub carrier_story_qsid: Option<u32>,
+    pub source_parent_seq_num: u32,
+    pub effective_parent_seq_num: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetSourceIdentityV1 {
+    pub target_qsid: u32,
+    pub target_frame_seq_nums: Vec<u32>,
+    pub object_marker_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlcCmobSourceProjectionInputV1 {
+    pub source_hash: String,
+    pub producer: ProducerV1,
+    pub opl_docq_field: ExactU32FieldV1,
+    pub plccmob_chunk: PlcCmobChunkInputV1,
+    pub carriers: Vec<CarrierSourceIdentityV1>,
+    pub targets: Vec<TargetSourceIdentityV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlcCmobSourceProjectionOutputV1 {
+    pub context: PubProjectionContextV1,
+    pub receipt: PlcCmobProjectionReceiptV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +267,16 @@ pub enum PlcCmobProjectionError {
     InvalidUuid {
         field: &'static str,
     },
+    CanonicalIdentity {
+        field: &'static str,
+    },
+    MissingTargetFrame {
+        target_qsid: u32,
+    },
+    DuplicateTargetFrame {
+        target_qsid: u32,
+        seq_num: u32,
+    },
     CarrierReparented {
         carrier_ohpo: u32,
     },
@@ -335,6 +378,19 @@ impl fmt::Display for PlcCmobProjectionError {
                 write!(f, "duplicate target Qsid {target_qsid}")
             }
             Self::InvalidUuid { field } => write!(f, "invalid lowercase canonical UUID in {field}"),
+            Self::CanonicalIdentity { field } => {
+                write!(f, "could not derive canonical source identity for {field}")
+            }
+            Self::MissingTargetFrame { target_qsid } => {
+                write!(f, "target Qsid {target_qsid} has no resolved source frame")
+            }
+            Self::DuplicateTargetFrame {
+                target_qsid,
+                seq_num,
+            } => write!(
+                f,
+                "target Qsid {target_qsid} repeats source frame seqNum {seq_num}"
+            ),
             Self::CarrierReparented { carrier_ohpo } => {
                 write!(f, "carrier {carrier_ohpo} was reparented")
             }
@@ -852,6 +908,115 @@ pub fn build_pub_projection_context_v1(
     ))
 }
 
+pub fn materialize_source_projection_input_v1(
+    input: &PlcCmobSourceProjectionInputV1,
+) -> Result<PlcCmobProjectionInputV1, PlcCmobProjectionError> {
+    let carriers = input
+        .carriers
+        .iter()
+        .map(|carrier| {
+            let carrier_node_id = derive_pub_node_id_v1(&input.source_hash, carrier.carrier_ohpo)
+                .map_err(|_| PlcCmobProjectionError::CanonicalIdentity {
+                    field: "carrier_node_id",
+                })?;
+            let carrier_story_id = carrier
+                .carrier_story_qsid
+                .map(|qsid| {
+                    derive_pub_story_id_v1(&input.source_hash, qsid).map_err(|_| {
+                        PlcCmobProjectionError::CanonicalIdentity {
+                            field: "carrier_story_id",
+                        }
+                    })
+                })
+                .transpose()?;
+            let source_parent_id =
+                derive_pub_page_id_v1(&input.source_hash, carrier.source_parent_seq_num).map_err(
+                    |_| PlcCmobProjectionError::CanonicalIdentity {
+                        field: "source_parent_id",
+                    },
+                )?;
+            let effective_parent_id =
+                derive_pub_page_id_v1(&input.source_hash, carrier.effective_parent_seq_num)
+                    .map_err(|_| PlcCmobProjectionError::CanonicalIdentity {
+                        field: "effective_parent_id",
+                    })?;
+
+            Ok(CarrierSourceV1 {
+                carrier_ohpo: carrier.carrier_ohpo,
+                carrier_cmo_id: carrier.carrier_cmo_id,
+                carrier_node_id,
+                carrier_story_id,
+                source_parent_id,
+                effective_parent_id,
+            })
+        })
+        .collect::<Result<Vec<_>, PlcCmobProjectionError>>()?;
+
+    let targets = input
+        .targets
+        .iter()
+        .map(|target| {
+            if target.target_frame_seq_nums.is_empty() {
+                return Err(PlcCmobProjectionError::MissingTargetFrame {
+                    target_qsid: target.target_qsid,
+                });
+            }
+
+            let mut seen_frames = BTreeSet::new();
+            for seq_num in &target.target_frame_seq_nums {
+                if !seen_frames.insert(*seq_num) {
+                    return Err(PlcCmobProjectionError::DuplicateTargetFrame {
+                        target_qsid: target.target_qsid,
+                        seq_num: *seq_num,
+                    });
+                }
+            }
+
+            let target_story_id =
+                derive_pub_story_id_v1(&input.source_hash, target.target_qsid).map_err(|_| {
+                    PlcCmobProjectionError::CanonicalIdentity {
+                        field: "target_story_id",
+                    }
+                })?;
+            let target_frame_node_id = if target.target_frame_seq_nums.len() == 1 {
+                Some(
+                    derive_pub_node_id_v1(&input.source_hash, target.target_frame_seq_nums[0])
+                        .map_err(|_| PlcCmobProjectionError::CanonicalIdentity {
+                            field: "target_frame_node_id",
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            Ok(TargetSourceV1 {
+                target_qsid: target.target_qsid,
+                target_story_id,
+                target_frame_node_id,
+                object_marker_count: target.object_marker_count,
+            })
+        })
+        .collect::<Result<Vec<_>, PlcCmobProjectionError>>()?;
+
+    Ok(PlcCmobProjectionInputV1 {
+        source_hash: input.source_hash.clone(),
+        producer: input.producer.clone(),
+        opl_docq_field: input.opl_docq_field.clone(),
+        plccmob_chunk: input.plccmob_chunk.clone(),
+        carriers,
+        targets,
+    })
+}
+
+pub fn build_source_projection_output_v1(
+    input: &PlcCmobSourceProjectionInputV1,
+) -> Result<PlcCmobSourceProjectionOutputV1, PlcCmobProjectionError> {
+    let materialized = materialize_source_projection_input_v1(input)?;
+    let receipt = build_projection_receipt_v1(&materialized)?;
+    let context = PubProjectionContextV1::with_cmo_relations(receipt.relations.clone());
+    Ok(PlcCmobSourceProjectionOutputV1 { context, receipt })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -952,6 +1117,126 @@ mod tests {
                 object_marker_count: 2,
             }],
         }
+    }
+
+    #[test]
+    fn source_identity_input_derives_canonical_ids_and_keeps_multiframe_target_unbound() {
+        let source_hash = "11".repeat(32);
+        let source = PlcCmobSourceProjectionInputV1 {
+            source_hash: source_hash.clone(),
+            producer: ProducerV1 {
+                implementation: "rar-pub-plccmob-projection".to_owned(),
+                commit_or_build: "identity-test".to_owned(),
+                core_integration: true,
+            },
+            opl_docq_field: ExactU32FieldV1 {
+                field_id: 0x05,
+                block_type: 0x70,
+                value: 900,
+            },
+            plccmob_chunk: PlcCmobChunkInputV1 {
+                seq_num: 900,
+                raw_type: 0x70,
+                hex: encode_hex(&fixture(&[(1, 218, 319), (2, 218, 323)])),
+            },
+            carriers: vec![
+                CarrierSourceIdentityV1 {
+                    carrier_ohpo: 319,
+                    carrier_cmo_id: 1,
+                    carrier_story_qsid: Some(298),
+                    source_parent_seq_num: 279,
+                    effective_parent_seq_num: 279,
+                },
+                CarrierSourceIdentityV1 {
+                    carrier_ohpo: 323,
+                    carrier_cmo_id: 2,
+                    carrier_story_qsid: None,
+                    source_parent_seq_num: 279,
+                    effective_parent_seq_num: 279,
+                },
+            ],
+            targets: vec![TargetSourceIdentityV1 {
+                target_qsid: 218,
+                target_frame_seq_nums: vec![437, 438],
+                object_marker_count: 2,
+            }],
+        };
+
+        let materialized = materialize_source_projection_input_v1(&source).expect("materialized");
+        assert_eq!(
+            materialized.carriers[0].carrier_node_id,
+            derive_pub_node_id_v1(&source_hash, 319).expect("carrier node")
+        );
+        assert_eq!(
+            materialized.carriers[0].carrier_story_id.as_deref(),
+            Some(
+                derive_pub_story_id_v1(&source_hash, 298)
+                    .expect("carrier story")
+                    .as_str()
+            )
+        );
+        assert_eq!(
+            materialized.targets[0].target_story_id,
+            derive_pub_story_id_v1(&source_hash, 218).expect("target story")
+        );
+        assert_eq!(materialized.targets[0].target_frame_node_id, None);
+
+        let output = build_source_projection_output_v1(&source).expect("output");
+        assert_eq!(output.receipt.relations.len(), 2);
+        assert_eq!(output.context.cmo_relations, output.receipt.relations);
+        assert!(output
+            .context
+            .cmo_relations
+            .iter()
+            .all(|relation| relation.target_frame_node_id.is_none()));
+    }
+
+    #[test]
+    fn source_identity_input_requires_resolved_unique_frame_list() {
+        let mut source = PlcCmobSourceProjectionInputV1 {
+            source_hash: "11".repeat(32),
+            producer: ProducerV1 {
+                implementation: "rar-pub-plccmob-projection".to_owned(),
+                commit_or_build: "identity-test".to_owned(),
+                core_integration: true,
+            },
+            opl_docq_field: ExactU32FieldV1 {
+                field_id: 0x05,
+                block_type: 0x70,
+                value: 900,
+            },
+            plccmob_chunk: PlcCmobChunkInputV1 {
+                seq_num: 900,
+                raw_type: 0x70,
+                hex: encode_hex(&fixture(&[(1, 218, 319)])),
+            },
+            carriers: vec![CarrierSourceIdentityV1 {
+                carrier_ohpo: 319,
+                carrier_cmo_id: 1,
+                carrier_story_qsid: None,
+                source_parent_seq_num: 279,
+                effective_parent_seq_num: 279,
+            }],
+            targets: vec![TargetSourceIdentityV1 {
+                target_qsid: 218,
+                target_frame_seq_nums: vec![],
+                object_marker_count: 1,
+            }],
+        };
+
+        assert!(matches!(
+            materialize_source_projection_input_v1(&source),
+            Err(PlcCmobProjectionError::MissingTargetFrame { target_qsid: 218 })
+        ));
+
+        source.targets[0].target_frame_seq_nums = vec![437, 437];
+        assert!(matches!(
+            materialize_source_projection_input_v1(&source),
+            Err(PlcCmobProjectionError::DuplicateTargetFrame {
+                target_qsid: 218,
+                seq_num: 437
+            })
+        ));
     }
 
     #[test]
