@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/web-scene-producer-a-ci-probe.yml"
+      - "vendor/producer-a/**"
   workflow_dispatch:
 
 permissions:
@@ -30,9 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .web-v0
-          curl -fL --retry 3 --retry-delay 2 \
-            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
-            -o .web-v0/SampleNewsletter.pub
+          curl -fL --retry 3 --retry-delay 2             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"             -o .web-v0/SampleNewsletter.pub
           python - <<'PY'
           import hashlib
           from pathlib import Path
@@ -46,64 +45,17 @@ jobs:
           print({"byte_len": len(raw), "sha256": actual_sha})
           PY
 
-      - name: Checkout frozen Viewer producer provenance
-        uses: actions/checkout@v4
-        with:
-          repository: HeisLuka/yab
-          ref: 2416bf1af401caa997e588b41285816422a7d59b
-          path: .web-v0/donor
-          persist-credentials: false
-
-      - name: Build minimum Viewer producer probe
+      - name: Build Rar-owned Producer A slice
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/chaptera-producer-a
-          mkdir -p /tmp/chaptera-producer-a/src
-          donor="$GITHUB_WORKSPACE/.web-v0/donor/crates/pub-viewer"
-          cat > /tmp/chaptera-producer-a/Cargo.toml <<EOF
-          [package]
-          name = "chaptera-producer-a-probe"
-          version = "0.0.0"
-          edition = "2024"
-
-          [dependencies]
-          anyhow = "1"
-          serde_json = "1"
-          pub-viewer = { path = "$donor" }
-          EOF
-          cat > /tmp/chaptera-producer-a/src/main.rs <<'RS'
-          use anyhow::{Context, Result};
-          use std::{env, fs};
-
-          fn main() -> Result<()> {
-              let path = env::args().nth(1).context("fixture path argument missing")?;
-              let bytes = fs::read(path).context("read pinned PUB fixture")?;
-              let visual = pub_viewer::open_mature_0x2c_geometry(
-                  &bytes,
-                  pub_viewer::viewer_geometry_environment_v0_1(),
-              )
-              .context("open mature-0x2c Viewer geometry")?;
-              print!("{}", serde_json::to_string(&visual)?);
-              Ok(())
-          }
-          RS
-          cargo build --manifest-path /tmp/chaptera-producer-a/Cargo.toml --locked 2>/tmp/producer-build.err || {
-            cat /tmp/producer-build.err >&2
-            cargo build --manifest-path /tmp/chaptera-producer-a/Cargo.toml
-          }
+          cargo build             --manifest-path vendor/producer-a/Cargo.toml             -p chaptera-producer-a
 
       - name: Generate real ViewerGeometryDocument receipt
         shell: bash
         run: |
           set -euo pipefail
-          python tools/build_viewer_geometry_receipt.py \
-            --source-hash 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf \
-            --source-byte-len 291840 \
-            --output .web-v0/viewer-geometry.real.json \
-            -- python tools/run_local_viewer_geometry_cli.py \
-              --fixture .web-v0/SampleNewsletter.pub \
-              -- /tmp/chaptera-producer-a/target/debug/chaptera-producer-a-probe "{fixture}"
+          python tools/build_viewer_geometry_receipt.py             --source-hash 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf             --source-byte-len 291840             --output .web-v0/viewer-geometry.real.json             -- python tools/run_local_viewer_geometry_cli.py               --fixture .web-v0/SampleNewsletter.pub               -- vendor/producer-a/target/debug/chaptera-producer-a "{fixture}"
 
       - name: Validate exact Viewer receipt
         run: python tools/validate_viewer_geometry_receipt.py .web-v0/viewer-geometry.real.json
@@ -113,10 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           cp .web-v0/viewer-geometry.real.json apps/web/acceptance/receipts/viewer-geometry.real.json
-          python tools/validate_web_acceptance_preflight.py \
-            --fixture .web-v0/SampleNewsletter.pub \
-            --mode preflight \
-            --output .web-v0/web-acceptance-preflight.json
+          python tools/validate_web_acceptance_preflight.py             --fixture .web-v0/SampleNewsletter.pub             --mode preflight             --output .web-v0/web-acceptance-preflight.json
           python - <<'PY'
           import json
           from pathlib import Path
