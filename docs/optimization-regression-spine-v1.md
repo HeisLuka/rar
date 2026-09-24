@@ -23,3 +23,8 @@ Public synthetic/product-grounded measurements may justify keeping or reverting 
 ## First producer
 
 `chaptera.render-bench.v1` is the first integrated producer. The adapter captures CPU compile/patch/frame/preview latency, compiled bytes and Python allocation metrics while retaining GPU latency, GPU residency and cost as explicit unknowns. Because the current Render benchmark still has `real_pub_scene_present=false`, its measurement snapshot has `technology_decision_allowed=false`.
+
+
+## Copy/materialization producer
+
+`chaptera.copy-ledger.v1` is a second integrated producer. Its adapter exposes total materialized bytes, avoidable duplicate bytes, observed allocation/event-peak counters and per-payload-class materialization/amplification metrics through the same measurement schema. Synthetic copy-ledger fixtures remain unable to authorize product technology decisions; only sanitized `real_pub_source_free` evidence can do so.
