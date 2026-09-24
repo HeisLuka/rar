@@ -861,18 +861,19 @@ def exact_anchor_report(v, instructions, by_addr):
     for label,target in KNOWN_ANCHORS.items():
         callers=_direct_callers(instructions,target)
         caller_details=[]
-        for callsite in callers:
-            idx=by_addr.get(callsite)
-            if idx is None:
-                continue
-            fn=_function_start_near(instructions,idx,max_back=0x300)
-            fn_callers=[] if fn is None else _direct_callers(instructions,fn)
-            caller_details.append({
-                "callsite":f"0x{callsite:08X}",
-                "function_start":None if fn is None else f"0x{fn:08X}",
-                "function_direct_callers":[f"0x{x:08X}" for x in fn_callers],
-                "context":context(instructions,idx,before=32,after=48),
-            })
+        if label in ("oplpluo_ctor", "page_or_pluo_predicate"):
+            for callsite in callers:
+                idx=by_addr.get(callsite)
+                if idx is None:
+                    continue
+                fn=_function_start_near(instructions,idx,max_back=0x300)
+                fn_callers=[] if fn is None else _direct_callers(instructions,fn)
+                caller_details.append({
+                    "callsite":f"0x{callsite:08X}",
+                    "function_start":None if fn is None else f"0x{fn:08X}",
+                    "function_direct_callers":[f"0x{x:08X}" for x in fn_callers],
+                    "context":context(instructions,idx,before=32,after=48),
+                })
         out[label]={
             "direct_callers":[f"0x{x:08X}" for x in callers],
             "direct_caller_details":caller_details,
