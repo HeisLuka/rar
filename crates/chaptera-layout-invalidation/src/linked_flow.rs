@@ -161,7 +161,7 @@ pub fn resolve_linked_story_full_v1(
 
     let mut resolved = Vec::with_capacity(ordered_frames.len());
 
-    for (frame_index, frame) in ordered_frames.iter().enumerate() {
+    for (frame_index, _) in ordered_frames.iter().enumerate() {
         let result = resolve_one_frame_v1(
             prepared,
             &ordered_frames,
@@ -231,13 +231,17 @@ pub fn resolve_linked_story_incremental_v1(
     };
 
     if old_chain_matches {
-        for index in 0..actual_start {
-            let current_dependency = frame_dependency_fingerprint_v1(ordered_frames[index]);
-            if current_dependency != old.frames[index].frame_dependency_fingerprint {
-                actual_start = index;
-                mode = IncrementalExecutionModeV1::FullFallback;
-                break;
-            }
+        if let Some((index, _)) = ordered_frames
+            .iter()
+            .enumerate()
+            .take(actual_start)
+            .find(|(index, frame)| {
+                frame_dependency_fingerprint_v1(frame)
+                    != old.frames[*index].frame_dependency_fingerprint
+            })
+        {
+            actual_start = index;
+            mode = IncrementalExecutionModeV1::FullFallback;
         }
     }
 
@@ -582,11 +586,7 @@ fn prepared_suffix_fingerprint_v1(prepared: &PreparedStoryIndexV1, cursor: u32) 
         payload.extend_from_slice(&paragraph.position_fingerprint);
         payload.extend_from_slice(&paragraph.prepared.output_fingerprint);
 
-        let local_offset = if cursor > paragraph.scalar_base {
-            cursor - paragraph.scalar_base
-        } else {
-            0
-        };
+        let local_offset = cursor.saturating_sub(paragraph.scalar_base);
         push_u32(&mut payload, local_offset);
     }
 
