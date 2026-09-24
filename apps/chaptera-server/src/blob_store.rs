@@ -155,9 +155,16 @@ pub trait BlobProvider: Send + Sync {
         generation: &str,
     ) -> Result<Box<dyn Read + Send>, ProviderError>;
 
-    async fn delete_exact(&self, object_locator: &str, generation: &str) -> Result<(), ProviderError>;
+    async fn delete_exact(
+        &self,
+        object_locator: &str,
+        generation: &str,
+    ) -> Result<(), ProviderError>;
 
-    async fn issue_grant(&self, request: &ProviderGrantRequest) -> Result<ProviderGrant, ProviderError>;
+    async fn issue_grant(
+        &self,
+        request: &ProviderGrantRequest,
+    ) -> Result<ProviderGrant, ProviderError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,10 +318,10 @@ impl BlobStoreService {
         );
 
         let mut hashing = HashingBoundedReader::new(input, request.byte_len);
-        let create_result =
-            self.provider
-                .create_immutable(&object_locator, request.byte_len, &mut hashing)
-                .await;
+        let create_result = self
+            .provider
+            .create_immutable(&object_locator, request.byte_len, &mut hashing)
+            .await;
 
         let metadata = match create_result {
             Ok(metadata) => metadata,
@@ -619,7 +626,10 @@ impl BlobStoreService {
         })
     }
 
-    async fn verify_physical_exact(&self, physical: &PhysicalBlobRecord) -> Result<(), BlobStoreError> {
+    async fn verify_physical_exact(
+        &self,
+        physical: &PhysicalBlobRecord,
+    ) -> Result<(), BlobStoreError> {
         let metadata = self
             .provider
             .head_exact(&physical.object_locator)
