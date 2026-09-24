@@ -200,6 +200,7 @@ def apply_create_shape_v1(base_project: dict, command: dict) -> tuple[dict, dict
         "kind": "create_shape",
         "node_id": node_id,
         "page_id": command["page_id"],
+        "parent_id": command["page_id"],
         "shape_kind": "rectangle",
         "bounds": copy.deepcopy(command["bounds"]),
         "transform": {"kind": "identity"},
