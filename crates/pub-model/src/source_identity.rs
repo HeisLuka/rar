@@ -36,7 +36,10 @@ impl fmt::Display for SourceIdentityError {
             Self::EmptySourceObjectKey => f.write_str("source object key must not be empty"),
             Self::EmptySemanticRole => f.write_str("semantic role must not be empty"),
             Self::InvalidSemanticRole { index, byte } => {
-                write!(f, "invalid semantic role byte 0x{byte:02x} at index {index}")
+                write!(
+                    f,
+                    "invalid semantic role byte 0x{byte:02x} at index {index}"
+                )
             }
             Self::ComponentTooLong => f.write_str("source identity component does not fit u32"),
         }
@@ -107,10 +110,7 @@ pub fn derive_pub_node_id_v1(
     )
 }
 
-pub fn derive_pub_story_id_v1(
-    source_hash: &str,
-    qsid: u32,
-) -> Result<String, SourceIdentityError> {
+pub fn derive_pub_story_id_v1(source_hash: &str, qsid: u32) -> Result<String, SourceIdentityError> {
     derive_source_uuid_v5_v1(
         source_hash,
         PUB_SOURCE_ADAPTER_ID_V1,
@@ -120,7 +120,11 @@ pub fn derive_pub_story_id_v1(
 }
 
 fn decode_lower_hex_sha256(value: &str) -> Result<[u8; 32], SourceIdentityError> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return Err(SourceIdentityError::InvalidSourceHash);
     }
 
@@ -200,13 +204,9 @@ mod tests {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
 
-        let id = derive_source_uuid_v5_v1(
-            &source_hash,
-            "pub-rs",
-            "contents/0x2c/seq/330",
-            "cdm.story",
-        )
-        .expect("golden vector");
+        let id =
+            derive_source_uuid_v5_v1(&source_hash, "pub-rs", "contents/0x2c/seq/330", "cdm.story")
+                .expect("golden vector");
 
         assert_eq!(id, "3c3cfd8a-2347-5cf4-977d-34e4f346f6df");
     }
