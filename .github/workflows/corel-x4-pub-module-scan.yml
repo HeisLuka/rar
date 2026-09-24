@@ -1,0 +1,93 @@
+name: Corel X4 PUB module scan
+
+on:
+  push:
+    branches:
+      - research/pub-acquisition-targeted
+    paths:
+      - ".github/workflows/corel-x4-pub-module-scan.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download exact Filters MSI artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/artifact out/extracted
+          gh run download 35986080377 --repo ${{ github.repository }} --name corel-x4-filters-35986080377 --dir out/artifact
+          test -f out/artifact/Filters.msi
+          test "$(sha256sum out/artifact/Filters.msi | awk '{print $1}')" = "fe3f3246f4858af2c7d8c4f8f5f02d1a905403dda43a3ef7500dbae4308307b4"
+      - name: Extract and fingerprint PUB candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends msitools binutils file
+          msiextract -C out/extracted out/artifact/Filters.msi > out/msiextract.txt
+          find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
+          grep -Ei 'pub|publisher|cdrpub' out/extracted-files.txt > out/name-hits.txt || true
+
+          : > out/string-hits.txt
+          : > out/candidates.txt
+          while IFS= read -r f; do
+            mime="$(file -b --mime-type "$f" || true)"
+            case "$mime" in
+              application/x-dosexec|application/vnd.microsoft.portable-executable)
+                if strings -a -n 6 "$f" | grep -Eqi 'Microsoft Publisher|\.pub([^A-Za-z]|$)|cdrPUB|Publisher'; then
+                  printf '%s\n' "$f" >> out/candidates.txt
+                  {
+                    echo "===== $f ====="
+                    strings -a -n 6 "$f" | grep -Ei 'Microsoft Publisher|\.pub([^A-Za-z]|$)|cdrPUB|Publisher' | head -n 200 || true
+                  } >> out/string-hits.txt
+                fi
+                ;;
+            esac
+          done < <(find out/extracted -type f | sort)
+
+          : > out/candidate-fingerprints.txt
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            {
+              echo "===== $f ====="
+              stat -c 'size=%s' "$f"
+              sha256sum "$f"
+              sha1sum "$f"
+              md5sum "$f"
+              file "$f"
+              echo "--- imports ---"
+              objdump -p "$f" 2>/dev/null | grep -E 'DLL Name:|ImageBase|Time/Date|Subsystem' || true
+              echo "--- version-ish strings ---"
+              strings -el "$f" | grep -Ei 'CompanyName|FileDescription|FileVersion|ProductName|ProductVersion|Copyright|Publisher|cdrPUB' | head -n 100 || true
+            } >> out/candidate-fingerprints.txt
+          done < out/candidates.txt
+
+          echo "=== NAME HITS ==="
+          cat out/name-hits.txt || true
+          echo "=== CANDIDATES ==="
+          cat out/candidates.txt || true
+          echo "=== STRING HITS ==="
+          cat out/string-hits.txt || true
+          echo "=== FINGERPRINTS ==="
+          cat out/candidate-fingerprints.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corel-x4-pub-module-scan-${{ github.run_id }}
+          path: |
+            out/extracted-files.txt
+            out/name-hits.txt
+            out/candidates.txt
+            out/string-hits.txt
+            out/candidate-fingerprints.txt
+          if-no-files-found: warn
+          retention-days: 30
