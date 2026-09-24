@@ -39,11 +39,11 @@ class CFB:
   return out
  def chain(self,s,t,label):
   if s in (FREE,END):return []
-  out=[];seen=set()
+  out=[];seen=set();bound=self.nsec if t is self.fat else len(t)
   while s!=END:
-   if s in SPECIAL or s in seen or s>=self.nsec or s>=len(t):raise ValueError(label+' chain')
+   if s in SPECIAL or s in seen or s>=bound or s>=len(t):raise ValueError(label+' chain')
    seen.add(s);out.append(s);s=t[s]
-   if len(out)>self.nsec+1:raise ValueError(label+' long')
+   if len(out)>bound+1:raise ValueError(label+' long')
   return out
  def _dirs(self):
   out=[];idx=0
@@ -147,7 +147,10 @@ def minimal(state=0):
  for sid in range(1,8):v[sid]=sid+1
  v[8]=END;v[9]=FAT;struct.pack_into('<'+'I'*128,b,5120,*v);return bytes(b)
 def selftest():
- a,b=minimal(0),minimal(1);x,y=CFB(a),CFB(b);d=[i for i,(p,q) in enumerate(zip(a,b)) if p!=q];assert d==[736] and x.lab[d[0]]==y.lab[d[0]]=='directory[1].state';print('cfb physical diff self-test ok');return 0
+ a,b=minimal(0),minimal(1);x,y=CFB(a),CFB(b);d=[i for i,(p,q) in enumerate(zip(a,b)) if p!=q];assert d==[736] and x.lab[d[0]]==y.lab[d[0]]=='directory[1].state'
+ fake=CFB.__new__(CFB);fake.nsec=10;fake.fat=[END]*10;mini=[FREE]*32;mini[20]=21;mini[21]=END
+ assert fake.chain(20,mini,'mini-regression')==[20,21]
+ print('cfb physical diff self-test ok');return 0
 def main():
  p=argparse.ArgumentParser();s=p.add_subparsers(dest='cmd',required=True);c=s.add_parser('compare');c.add_argument('--left',type=Path,required=True);c.add_argument('--right',type=Path,required=True);c.add_argument('--name',default='');c.add_argument('--out',type=Path,required=True);s.add_parser('self-test');a=p.parse_args()
  if a.cmd=='self-test':return selftest()
