@@ -1,0 +1,125 @@
+name: Chaptera Editor public validation sweep
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/editor-public-validation-sweep.yml"
+      - "packages/product/editor-fixed-page-trial/**"
+      - "packages/product/editor-live-trial/**"
+      - "packages/protocol/editor-image-replace/**"
+      - "packages/protocol/editor-resize/**"
+      - "packages/research/auth-wrap/**"
+      - "tools/validate_editor_fixed_page_trial_receipt.py"
+      - "tools/test_editor_fixed_page_trial_receipt.py"
+      - "tools/validate_editor_live_trial_package_receipt.py"
+      - "tools/test_editor_live_trial_package_receipt.py"
+      - "tools/validate_replace_image_receipt.py"
+      - "tools/test_replace_image_receipt.py"
+      - "tools/validate_resize_node_producer_receipt.py"
+      - "tools/test_resize_node_producer_receipt.py"
+      - "tools/validate_auth_wrap_native_receipt.py"
+      - "tools/test_auth_wrap_native_receipt.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install "jsonschema==4.23.0"
+      - name: Run Editor receipt contract tests
+        run: |
+          python -m unittest -v             tools/test_editor_fixed_page_trial_receipt.py             tools/test_editor_live_trial_package_receipt.py             tools/test_replace_image_receipt.py             tools/test_resize_node_producer_receipt.py             tools/test_auth_wrap_native_receipt.py
+      - name: Run canvas resize interaction contract
+        run: node --test packages/protocol/editor-resize/v1/resize-gesture-v1.test.mjs
+      - name: Validate retained real receipts and write census
+        run: |
+          mkdir -p target/editor-validation-sweep
+          python - <<'PY'
+          import glob
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          groups = [
+              {
+                  "key": "fixed_page_trial",
+                  "glob": "packages/product/editor-fixed-page-trial/v1/receipts/*.json",
+                  "validator": ["tools/validate_editor_fixed_page_trial_receipt.py"],
+              },
+              {
+                  "key": "live_trial_package",
+                  "glob": "packages/product/editor-live-trial/v1/receipts/*.json",
+                  "validator": ["tools/validate_editor_live_trial_package_receipt.py"],
+              },
+              {
+                  "key": "replace_image_ui",
+                  "glob": "packages/protocol/editor-image-replace/v1/ui-producer-receipts/*.json",
+                  "validator": ["tools/validate_replace_image_receipt.py", "ui"],
+              },
+              {
+                  "key": "replace_image_export",
+                  "glob": "packages/protocol/editor-image-replace/v1/export-producer-receipts/*.json",
+                  "validator": ["tools/validate_replace_image_receipt.py", "export"],
+              },
+              {
+                  "key": "resize_node",
+                  "glob": "packages/protocol/editor-resize/v1/producer-receipts/*.json",
+                  "validator": ["tools/validate_resize_node_producer_receipt.py"],
+              },
+              {
+                  "key": "auth_wrap_native",
+                  "glob": "packages/research/auth-wrap/v1/native-receipts/*.json",
+                  "validator": ["tools/validate_auth_wrap_native_receipt.py"],
+              },
+          ]
+
+          result = {
+              "receipt_kind": "chaptera.editor-public-validation-sweep.v1",
+              "repository": os.environ.get("GITHUB_REPOSITORY"),
+              "commit_sha": os.environ.get("GITHUB_SHA"),
+              "contract_tests": "pass",
+              "canvas_resize_contract": "pass",
+              "real_receipts": {},
+              "total_real_receipts": 0,
+              "missing_real_receipt_classes": [],
+          }
+
+          for group in groups:
+              files = sorted(glob.glob(group["glob"]))
+              for file in files:
+                  subprocess.run(
+                      [sys.executable, *group["validator"], file],
+                      check=True,
+                  )
+              result["real_receipts"][group["key"]] = {
+                  "count": len(files),
+                  "files": [pathlib.Path(file).name for file in files],
+              }
+              result["total_real_receipts"] += len(files)
+              if not files:
+                  result["missing_real_receipt_classes"].append(group["key"])
+
+          pathlib.Path("target/editor-validation-sweep/summary.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-public-validation-sweep
+          path: target/editor-validation-sweep/summary.json
+          if-no-files-found: error
