@@ -1,0 +1,58 @@
+name: PUB-T-603 exact v11 PUBFILT acquisition
+
+on:
+  pull_request:
+    paths:
+      - "tools/research/pub_t_603_pubfilt_v11.py"
+      - ".github/workflows/pub-t-603-pubfilt-v11.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquire-and-classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded static-analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full
+          python -m pip install --disable-pip-version-check pefile==2024.8.26
+
+      - name: Run exact-v11 acquisition probe
+        run: |
+          python tools/research/pub_t_603_pubfilt_v11.py             --work target/pub-t-603/work             --out target/pub-t-603/receipt
+
+      - name: Enforce no-substitute authority
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("target/pub-t-603/receipt/acquisition-manifest.json")
+          data = json.loads(p.read_text())
+          assert data["target_dll"]["version"] == "11.0.5704.0"
+          assert data["target_dll"]["size"] == 27200
+          assert data["target_dll"]["sha256"] == "0238a45be62da10cf98ff9b7aeac11ad55b9a1f6a69d2d2356c8fcab538105bc"
+          for item in data["dll_candidates"]:
+              if item.get("exact_target"):
+                  assert item["size"] == data["target_dll"]["size"]
+                  assert item["sha256"] == data["target_dll"]["sha256"]
+          if not data["exact_target_found"]:
+              assert data["result"] == "bounded acquisition negative"
+              assert "no substitute build was accepted" in data["claim"]
+          PY
+
+      - name: Upload source-free research receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-t-603-pubfilt-v11-receipt
+          path: target/pub-t-603/receipt/
+          if-no-files-found: error
