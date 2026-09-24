@@ -40,7 +40,7 @@ RECORDS=[
 ("2016","PRTF9.DLL","prtf9.pdb","8A0C3C03022A4827B2951F3AD87B54082"),
 ]
 
-def req(params, timeout=45, retries=2):
+def req(params, timeout=12, retries=0):
     u=CDX+"?"+urlencode(params)
     last=None
     for i in range(retries+1):
