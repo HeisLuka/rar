@@ -236,7 +236,10 @@ impl MigrationRuntime for SqliteMigrationRuntime {
 }
 
 fn supported_version() -> i64 {
-    MIGRATIONS.last().map(|migration| migration.version).unwrap_or(0)
+    MIGRATIONS
+        .last()
+        .map(|migration| migration.version)
+        .unwrap_or(0)
 }
 
 fn migration_sha256(sql: &str) -> String {
@@ -244,9 +247,9 @@ fn migration_sha256(sql: &str) -> String {
 }
 
 fn now_ms() -> Result<i64, RuntimeError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| RuntimeError::new("system_clock_invalid", "system clock is before UNIX epoch"))?;
+    let duration = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| {
+        RuntimeError::new("system_clock_invalid", "system clock is before UNIX epoch")
+    })?;
     i64::try_from(duration.as_millis()).map_err(|_| {
         RuntimeError::new(
             "system_clock_invalid",
@@ -256,7 +259,10 @@ fn now_ms() -> Result<i64, RuntimeError> {
 }
 
 fn runtime_sqlite_error(code: &'static str, error: impl std::fmt::Display) -> RuntimeError {
-    RuntimeError::new(code, error.to_string().chars().take(512).collect::<String>())
+    RuntimeError::new(
+        code,
+        error.to_string().chars().take(512).collect::<String>(),
+    )
 }
 
 #[cfg(test)]
