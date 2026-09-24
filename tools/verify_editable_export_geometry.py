@@ -185,7 +185,9 @@ def verify_export(path: Path, target: str, node_id: str, rect: RectEmu) -> dict:
     canonical_node_hex(node_id)
 
     with zipfile.ZipFile(path, "r") as package:
-        package.testzip()
+        bad_member = package.testzip()
+        if bad_member is not None:
+            raise AssertionError(f"export package CRC failed for member {bad_member}")
         detail = (
             verify_idml(package, node_id, rect)
             if target == "idml"
