@@ -9,6 +9,7 @@ pub mod migrate;
 pub mod runtime_error;
 pub mod serve;
 pub mod shutdown;
+pub mod sqlite_store;
 pub mod source_ingress;
 pub mod state;
 pub mod worker;
