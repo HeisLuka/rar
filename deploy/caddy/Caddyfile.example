@@ -1,0 +1,33 @@
+# Example only. CLOUD-EDGE-01 owns final Host/Origin/CORS/CSRF/header policy.
+# Replace cloud.example.invalid with the canonical test/production origin.
+cloud.example.invalid {
+    encode
+
+    # Used only when CLOUD-BLOB-STORE-V0-01 cannot prove a safe direct-upload
+    # capability for this upload class.
+    @stream_upload path /v1/uploads/*/content
+    request_body @stream_upload {
+        max_size 256MB
+    }
+
+    @normal_api {
+        path /v1/*
+        not path /v1/uploads/*/content
+    }
+    request_body @normal_api {
+        max_size 8MB
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+    }
+
+    # Caddy reverse_proxy handles WebSocket upgrade/tunnelling itself.
+    reverse_proxy 127.0.0.1:8080 {
+        transport http {
+            dial_timeout 2s
+            response_header_timeout 30s
+        }
+    }
+}

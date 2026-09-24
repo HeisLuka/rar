@@ -1,0 +1,29 @@
+name: CLOUD-DEPLOY-01 static host packet
+
+on:
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "docs/cloud-single-host-v0.md"
+      - "tools/validate_cloud_deploy_v0.py"
+      - ".github/workflows/cloud-deploy-v0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-host-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate public-safe deployment packet
+        run: python tools/validate_cloud_deploy_v0.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-deploy-v0-static-receipt
+          path: target/cloud-deploy-v0/receipt.json
+          if-no-files-found: error

@@ -1,0 +1,50 @@
+[Unit]
+Description=Chaptera Cloud web/runtime
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/chaptera
+
+[Service]
+Type=simple
+User=chaptera
+Group=chaptera
+Slice=chaptera.slice
+WorkingDirectory=/var/lib/chaptera
+
+# CLOUD-SERVER-RUNTIME-01 owns the exact CLI/config contract.
+# Keep this template on the already-frozen public operator verbs only.
+ExecStartPre=/opt/chaptera/current/chaptera doctor
+ExecStart=/opt/chaptera/current/chaptera serve
+
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=45s
+
+StateDirectory=chaptera
+CacheDirectory=chaptera
+RuntimeDirectory=chaptera-web
+EnvironmentFile=-/etc/chaptera/chaptera.env
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+MemoryHigh=960M
+MemoryMax=1280M
+TasksMax=256
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
