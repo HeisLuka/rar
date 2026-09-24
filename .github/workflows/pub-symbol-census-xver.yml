@@ -1,0 +1,367 @@
+name: PUB Cross-Version Symbol Census
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pub-symbol-census-xver.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  xver-symbol-census:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download, verify, extract, identify CodeView, and probe symbol store
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path out/pub-symbol-xver | Out-Null
+          @'
+          import csv, hashlib, html, json, os, re, shutil, struct, subprocess, time
+          import urllib.error, urllib.request, uuid
+          from pathlib import Path
+
+          ROOT = Path("out/pub-symbol-xver")
+          PRIVATE = ROOT / "private"
+          PUBLIC = ROOT / "public"
+          PRIVATE.mkdir(parents=True, exist_ok=True)
+          PUBLIC.mkdir(parents=True, exist_ok=True)
+
+          TARGETS = {"MSPUB.EXE","MORPH9.DLL","PTXT9.DLL","PUBCONV.DLL","PRTF9.DLL","PUBTRAP.DLL"}
+          SYMBOL_ROOT = "https://msdl.microsoft.com/download/symbols"
+          PACKAGES = [
+            {
+              "generation":"Office XP / Publisher 2002",
+              "filename":"OfficeXpSp3-kb832671-fullfile-enu.exe",
+              "sha256":"734e0757ecb28e40b0c45058748bbf540581db35d1df95cfd8b17ca33ce78e5c",
+              "expected_mspub":"02603be3cc900d167aa4842f64320f8550c44d36cb149e0c824830f502d73fdc",
+              "url":"http://download.microsoft.com/download/9/1/f/91ffc6b2-0745-470b-8dd3-1285b85db12b/OfficeXpSp3-kb832671-fullfile-enu.exe",
+            },
+            {
+              "generation":"Office 2007 / Publisher 2007",
+              "filename":"publisher2007-kb4011203-fullfile-x86-glb.exe",
+              "sha256":"3bbf13b5d646cdf3d77988a4e9f605ca35154b8dfb3950b19f0f2a9a6925af16",
+              "expected_mspub":"3d482ddb0e07c7232c903c888724c1d332a7cb5e029f964688606352a04a5683",
+              "download_id":"56150",
+            },
+            {
+              "generation":"Office 2013 / Publisher 2013",
+              "filename":"publisher2013-kb4484347-fullfile-x86-glb.exe",
+              "sha256":"1d23566085af14554b7d17f53ec268b57370f91fad07f326aed03c20d35441e4",
+              "expected_mspub":"578937a126bb5f7e5c2e0c9ec80f52abe74a6846bc9f5fdde286b28e95538344",
+              "download_id":"104174",
+            },
+            {
+              "generation":"Office 2016 / Publisher 2016",
+              "filename":"publisher2016-kb5002492-fullfile-x86-glb.exe",
+              "sha256":"073368fbe962507a425d99c0176363d8548e6f96231bd15d12a3bd080f6f1b22",
+              "expected_mspub":"7bca60abd07655518f0797d4cb55cbc0f588389626ebc0c7035f2b1c9efaaa5b",
+              "download_id":"105867",
+            },
+          ]
+
+          def sha256(path):
+              h=hashlib.sha256()
+              with open(path,"rb") as f:
+                  for b in iter(lambda:f.read(1024*1024),b""):
+                      h.update(b)
+              return h.hexdigest()
+
+          def resolve_url(pkg):
+              if pkg.get("url"):
+                  return pkg["url"]
+              page=f"https://www.microsoft.com/en-us/download/confirmation.aspx?id={pkg['download_id']}"
+              req=urllib.request.Request(page,headers={"User-Agent":"Mozilla/5.0"})
+              with urllib.request.urlopen(req,timeout=30) as r:
+                  body=html.unescape(r.read().decode("utf-8","replace"))
+              name=re.escape(pkg["filename"])
+              pats=[
+                  rf'https://download\.microsoft\.com/download/[^"\'<>\s]+/{name}',
+                  rf'https://download\.microsoft\.com/[^"\'<>\s]*{name}',
+              ]
+              for pat in pats:
+                  m=re.search(pat,body,re.I)
+                  if m:
+                      return m.group(0)
+              urls=re.findall(r'https://download\.microsoft\.com/[^"\'<>\s]+',body,re.I)
+              for u in urls:
+                  if pkg["filename"].lower() in u.lower():
+                      return u
+              raise RuntimeError(f"could not resolve Microsoft download URL for {pkg['filename']}")
+
+          def download(url,dest):
+              req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0"})
+              with urllib.request.urlopen(req,timeout=120) as r, open(dest,"wb") as f:
+                  shutil.copyfileobj(r,f,1024*1024)
+
+          def is_candidate(path):
+              ext=path.suffix.lower()
+              if ext in {".msp",".msi",".cab"}:
+                  return True
+              if path.name.upper()=="PATCH_CAB":
+                  return True
+              try:
+                  with open(path,"rb") as f:
+                      sig=f.read(8)
+                  if sig[:4]==b"MSCF":
+                      return True
+              except Exception:
+                  pass
+              return False
+
+          def seven_extract(src,dest):
+              dest.mkdir(parents=True,exist_ok=True)
+              p=subprocess.run(["7z","x",str(src),f"-o{dest}","-y"],
+                               stdout=subprocess.DEVNULL,stderr=subprocess.STDOUT)
+              return p.returncode==0 and any(dest.iterdir())
+
+          def recursive_extract(package, root):
+              layer0=root/"00-package"
+              if not seven_extract(package,layer0):
+                  raise RuntimeError(f"7z could not extract outer package {package.name}")
+              queue=[]
+              for p in layer0.rglob("*"):
+                  if p.is_file() and is_candidate(p):
+                      queue.append((p,1))
+              seen=set()
+              idx=1
+              while queue:
+                  src,depth=queue.pop(0)
+                  if depth>6:
+                      continue
+                  h=sha256(src)
+                  if h in seen:
+                      continue
+                  seen.add(h)
+                  dest=root/f"{idx:03d}-{re.sub(r'[^A-Za-z0-9._-]','_',src.stem)[:60]}"
+                  idx+=1
+                  if not seven_extract(src,dest):
+                      continue
+                  for p in dest.rglob("*"):
+                      if p.is_file() and is_candidate(p):
+                          queue.append((p,depth+1))
+              return {"expanded_containers":len(seen),"layers":idx}
+
+          def rva_to_off(rva,sections):
+              for va,vsz,raw,rsz in sections:
+                  if va <= rva < va+max(vsz,rsz):
+                      return raw+(rva-va)
+              return None
+
+          def parse_codeview(path):
+              data=path.read_bytes()
+              if len(data)<0x100 or data[:2]!=b"MZ":
+                  return []
+              peoff=struct.unpack_from("<I",data,0x3c)[0]
+              if data[peoff:peoff+4]!=b"PE\0\0":
+                  return []
+              coff=peoff+4
+              nsec=struct.unpack_from("<H",data,coff+2)[0]
+              optsz=struct.unpack_from("<H",data,coff+16)[0]
+              opt=coff+20
+              magic=struct.unpack_from("<H",data,opt)[0]
+              if magic==0x10b:
+                  dd=opt+96
+              elif magic==0x20b:
+                  dd=opt+112
+              else:
+                  return []
+              debug_rva,debug_size=struct.unpack_from("<II",data,dd+6*8)
+              sec_off=opt+optsz
+              sections=[]
+              for i in range(nsec):
+                  s=sec_off+i*40
+                  vsz=struct.unpack_from("<I",data,s+8)[0]
+                  va=struct.unpack_from("<I",data,s+12)[0]
+                  rsz=struct.unpack_from("<I",data,s+16)[0]
+                  raw=struct.unpack_from("<I",data,s+20)[0]
+                  sections.append((va,vsz,raw,rsz))
+              doff=rva_to_off(debug_rva,sections)
+              if doff is None:
+                  return []
+              out=[]
+              for p in range(doff,min(doff+debug_size,len(data)-27),28):
+                  typ=struct.unpack_from("<I",data,p+12)[0]
+                  size=struct.unpack_from("<I",data,p+16)[0]
+                  ptr=struct.unpack_from("<I",data,p+24)[0]
+                  if typ!=2 or ptr<=0 or ptr+size>len(data):
+                      continue
+                  blob=data[ptr:ptr+size]
+                  if blob[:4]==b"RSDS" and len(blob)>=25:
+                      guid=uuid.UUID(bytes_le=blob[4:20])
+                      age=struct.unpack_from("<I",blob,20)[0]
+                      pdb=blob[24:].split(b"\0",1)[0].decode("utf-8","replace")
+                      out.append({"kind":"RSDS","guid":str(guid),"age":age,
+                                  "pdb_path":pdb,"pdb_name":Path(pdb.replace("\\","/")).name})
+                  elif blob[:4]==b"NB10" and len(blob)>=17:
+                      sig,age=struct.unpack_from("<II",blob,8)
+                      pdb=blob[16:].split(b"\0",1)[0].decode("utf-8","replace")
+                      out.append({"kind":"NB10","signature":f"{sig:08X}","age":age,
+                                  "pdb_path":pdb,"pdb_name":Path(pdb.replace("\\","/")).name})
+              return out
+
+          def probe_symbol(cv):
+              if cv["kind"]=="RSDS":
+                  ident=uuid.UUID(cv["guid"]).hex.upper()+format(cv["age"],"X")
+              else:
+                  ident=cv["signature"]+format(cv["age"],"X")
+              pdb=cv["pdb_name"]
+              compressed=pdb[:-1]+"_" if pdb else pdb
+              probes=[]
+              for name in dict.fromkeys([pdb,pdb.lower(),compressed,compressed.lower()]):
+                  if not name:
+                      continue
+                  url=f"{SYMBOL_ROOT}/{pdb}/{ident}/{name}"
+                  req=urllib.request.Request(url,method="GET",
+                                             headers={"User-Agent":"pub-symbol-xver/1","Range":"bytes=0-0"})
+                  try:
+                      with urllib.request.urlopen(req,timeout=20) as r:
+                          status=int(getattr(r,"status",200))
+                          rec={"url":url,"status":status,"length":r.headers.get("Content-Length")}
+                  except urllib.error.HTTPError as e:
+                      rec={"url":url,"status":int(e.code),"length":e.headers.get("Content-Length")}
+                  except Exception as e:
+                      rec={"url":url,"status":None,"error":f"{type(e).__name__}: {e}"}
+                  probes.append(rec)
+                  if rec.get("status") in (200,206):
+                      return ident,"SYMBOL_PRESENT",rec,probes
+                  time.sleep(0.1)
+              return ident,"CODEVIEW_PRESENT_SYMBOL_NOT_FOUND",None,probes
+
+          package_receipts=[]
+          records=[]
+          for pkg in PACKAGES:
+              safe=re.sub(r"[^A-Za-z0-9._-]","_",pkg["generation"])
+              pdir=PRIVATE/safe
+              pdir.mkdir(parents=True,exist_ok=True)
+              url=resolve_url(pkg)
+              package=pdir/pkg["filename"]
+              download(url,package)
+              actual=sha256(package)
+              if actual.lower()!=pkg["sha256"].lower():
+                  raise RuntimeError(f"package hash mismatch for {pkg['filename']}: {actual}")
+              layers=pdir/"layers"
+              ex=recursive_extract(package,layers)
+
+              found_mspub=False
+              seen_modules=set()
+              generation_rows=[]
+              for p in layers.rglob("*"):
+                  if not p.is_file() or p.name.upper() not in TARGETS:
+                      continue
+                  h=sha256(p)
+                  key=(p.name.upper(),h)
+                  if key in seen_modules:
+                      continue
+                  seen_modules.add(key)
+                  if p.name.upper()=="MSPUB.EXE" and h.lower()==pkg["expected_mspub"].lower():
+                      found_mspub=True
+                  cvs=parse_codeview(p)
+                  base={
+                    "generation":pkg["generation"],
+                    "package":pkg["filename"],
+                    "package_sha256":actual,
+                    "module":p.name.upper(),
+                    "module_sha256":h,
+                    "size":p.stat().st_size,
+                    "relative_path":str(p.relative_to(pdir)).replace("\\","/"),
+                  }
+                  if not cvs:
+                      row={**base,"codeview":"NO_CODEVIEW","symbol_result":"NO_CODEVIEW"}
+                      records.append(row); generation_rows.append(row)
+                  else:
+                      for cv in cvs:
+                          ident,result,hit,probes=probe_symbol(cv)
+                          row={**base,**cv,"codeview":cv["kind"],"symbol_index":ident,
+                               "symbol_result":result,"symbol_hit":hit,"probes":probes}
+                          records.append(row); generation_rows.append(row)
+
+              if not found_mspub:
+                  got=[r["module_sha256"] for r in generation_rows if r["module"]=="MSPUB.EXE"]
+                  raise RuntimeError(f"expected registered MSPUB hash not recovered for {pkg['generation']}; got={got}")
+
+              package_receipts.append({
+                "generation":pkg["generation"],
+                "filename":pkg["filename"],
+                "resolved_url":url,
+                "sha256":actual,
+                "expected_mspub":pkg["expected_mspub"],
+                "registered_mspub_recovered":True,
+                **ex,
+                "unique_target_module_hashes":len({(r["module"],r["module_sha256"]) for r in generation_rows}),
+              })
+
+          summary={
+            "schema":"pub-symbol-xver-census.v1",
+            "symbol_store":SYMBOL_ROOT,
+            "package_receipts":package_receipts,
+            "record_count":len(records),
+            "unique_module_hashes":len({(r["generation"],r["module"],r["module_sha256"]) for r in records}),
+            "codeview_present":sum(r.get("codeview") not in (None,"NO_CODEVIEW") for r in records),
+            "symbol_present":sum(r.get("symbol_result")=="SYMBOL_PRESENT" for r in records),
+            "symbol_missing":sum(r.get("symbol_result")=="CODEVIEW_PRESENT_SYMBOL_NOT_FOUND" for r in records),
+            "no_codeview":sum(r.get("symbol_result")=="NO_CODEVIEW" for r in records),
+            "records":records,
+          }
+          (PUBLIC/"xver-symbol-census.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          with (PUBLIC/"xver-symbol-census.tsv").open("w",newline="",encoding="utf-8") as f:
+              w=csv.writer(f,delimiter="\t")
+              w.writerow(["generation","package","module","module_sha256","codeview","pdb_name","guid_or_signature","age","symbol_index","symbol_result"])
+              for r in records:
+                  w.writerow([r.get("generation"),r.get("package"),r.get("module"),r.get("module_sha256"),
+                              r.get("codeview"),r.get("pdb_name"),r.get("guid") or r.get("signature"),
+                              r.get("age"),r.get("symbol_index"),r.get("symbol_result")])
+          lines=["# PUB Cross-Version Symbol Census","",
+                 f"- Unique module hashes: {summary['unique_module_hashes']}",
+                 f"- CodeView present: {summary['codeview_present']}",
+                 f"- Symbols present: {summary['symbol_present']}",
+                 f"- Symbols not found: {summary['symbol_missing']}",
+                 f"- No CodeView: {summary['no_codeview']}",""]
+          for p in package_receipts:
+              lines.append(f"## {p['generation']}")
+              lines.append(f"- Package: {p['filename']} SHA256={p['sha256']}")
+              lines.append(f"- Registered MSPUB recovered: {p['registered_mspub_recovered']}")
+              rows=[r for r in records if r["generation"]==p["generation"]]
+              for r in rows:
+                  lines.append(f"- {r['module']} {r['module_sha256'][:16]}: {r.get('pdb_name','-')} "
+                               f"{r.get('guid',r.get('signature','-'))} age={r.get('age','-')} -> {r['symbol_result']}")
+              lines.append("")
+          (PUBLIC/"summary.md").write_text("\n".join(lines)+"\n",encoding="utf-8")
+          print("\n".join(lines))
+          '@ | Set-Content -Encoding UTF8 out/pub-symbol-xver/run.py
+          python out/pub-symbol-xver/run.py
+
+      - name: Publish summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path out/pub-symbol-xver/public/summary.md) {
+            Get-Content out/pub-symbol-xver/public/summary.md | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Guard evidence boundary
+        if: always()
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem out/pub-symbol-xver/public -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(exe|dll|pdb|pd_|cab|msp|msi)$' }
+          if ($bad) { $bad | Format-Table | Out-String | Write-Error; exit 4 }
+
+      - name: Upload derived metadata only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-symbol-xver-${{ github.run_id }}
+          path: out/pub-symbol-xver/public/**
+          if-no-files-found: warn
+          retention-days: 90
