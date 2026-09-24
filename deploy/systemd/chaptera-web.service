@@ -13,8 +13,8 @@ WorkingDirectory=/var/lib/chaptera
 
 # CLOUD-SERVER-RUNTIME-01 owns the exact CLI/config contract.
 # Keep this template on the already-frozen public operator verbs only.
-ExecStartPre=/opt/chaptera/current/chaptera doctor
-ExecStart=/opt/chaptera/current/chaptera serve
+ExecStartPre=/opt/chaptera/current/chaptera --config /etc/chaptera/chaptera.toml doctor
+ExecStart=/opt/chaptera/current/chaptera --config /etc/chaptera/chaptera.toml serve
 
 Restart=on-failure
 RestartSec=3s
@@ -25,6 +25,7 @@ StateDirectory=chaptera
 CacheDirectory=chaptera
 RuntimeDirectory=chaptera-web
 EnvironmentFile=-/etc/chaptera/chaptera.env
+LoadCredential=oidc_client_secret:/etc/chaptera/credentials/oidc_client_secret
 
 NoNewPrivileges=yes
 PrivateTmp=yes
