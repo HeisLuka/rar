@@ -1492,10 +1492,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::AlreadyExists);
 
-        let mut read = provider
-            .open_read(locator, "generation-1")
-            .await
-            .unwrap();
+        let mut read = provider.open_read(locator, "generation-1").await.unwrap();
         let mut bytes = Vec::new();
         read.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"one");
