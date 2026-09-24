@@ -1,0 +1,38 @@
+name: CI-EFFICIENCY-BASELINE-01 Actions cost census
+
+on:
+  pull_request:
+    paths:
+      - "tools/ci_efficiency_v1.py"
+      - "tools/test_ci_efficiency_v1.py"
+      - "tools/run_ci_efficiency_contract.py"
+      - "docs/ci-efficiency-v1.md"
+      - ".github/workflows/ci-efficiency-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  ci-efficiency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI_EFFICIENCY_RUN_LIMIT: "30"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit test CI census helpers
+        run: python tools/test_ci_efficiency_v1.py
+      - name: Measure recent Rar Actions metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/run_ci_efficiency_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-efficiency-v1-receipt
+          path: target/ci-efficiency-v1/receipt.json
+          if-no-files-found: error
