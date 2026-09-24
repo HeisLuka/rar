@@ -1,7 +1,7 @@
 import { traceHeadersV1 } from "./observability-v1.mjs";
 
 export class HttpEditorServiceV1 {
-  constructor(baseUrl, { observability = null } = {}) {
+  constructor(baseUrl, { observability = null, principalId = "synthetic-editor" } = {}) {
     if (typeof baseUrl !== "string" || !/^https?:\/\//.test(baseUrl)) {
       throw new TypeError("absolute HTTP(S) base URL is required");
     }
@@ -11,6 +11,10 @@ export class HttpEditorServiceV1 {
     this.lastRequest = null;
     this.lastHistoryRequest = null;
     this.observability = observability;
+    if (typeof principalId !== "string" || !/^[A-Za-z0-9_.:@/-]{1,192}$/.test(principalId)) {
+      throw new TypeError("valid principalId is required");
+    }
+    this.principalId = principalId;
     this.lastTraceContext = null;
     this.lastCommitTraceContext = null;
     this.lastHistoryTraceContext = null;
@@ -103,6 +107,7 @@ export class HttpEditorServiceV1 {
 
   async #json(path, options = {}, context = null, browserSpanName = null) {
     const headers = {
+      "x-chaptera-principal-id": this.principalId,
       ...(options.headers ?? {}),
       ...(context ? traceHeadersV1(context) : {}),
     };

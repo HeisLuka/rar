@@ -18,6 +18,13 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from revision_store import RevisionKernel
 from observability import TraceRecorder, trace_context_from_headers
+from security.authz_v1 import (
+    AuthzDenied,
+    AuthzKernel,
+    CAP_EXPORT,
+    CAP_VIEW,
+)
+from security.authorized_revision_gateway import AuthorizedRevisionGateway
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "packages" / "protocol" / "scene" / "v1" / "fixtures" / "simple-text.json"
@@ -41,6 +48,25 @@ class HarnessState:
         self.document_id = raw_scene["document_id"]
         self.source_hash = raw_scene["source_hash"]
         self.kernel = RevisionKernel()
+        self.tenant_id = "synthetic-tenant"
+        self.authz = AuthzKernel()
+        self.authz.set_role(
+            tenant_id=self.tenant_id,
+            document_id=self.document_id,
+            principal_id="synthetic-editor",
+            role="editor",
+        )
+        self.authz.set_role(
+            tenant_id=self.tenant_id,
+            document_id=self.document_id,
+            principal_id="synthetic-viewer",
+            role="viewer",
+        )
+        self.gateway = AuthorizedRevisionGateway(
+            kernel=self.kernel,
+            authz=self.authz,
+            tenant_id=self.tenant_id,
+        )
         baseline_project = {
             "schema_version": "pub-editor-v0.4",
             "source_hash": self.source_hash,
@@ -56,6 +82,7 @@ class HarnessState:
         self.baseline_scene = copy.deepcopy(raw_scene)
         self.scenes = {baseline.revision_id: copy.deepcopy(raw_scene)}
         self.commit_requests = 0
+        self.authz_denied_commit_requests = 0
         self.history_requests = 0
         self.executor_calls = 0
         self.history_executor_calls = 0
@@ -196,16 +223,30 @@ class HarnessState:
             "items": items,
         }
 
-    def commit(self, request: dict) -> dict:
-        self.commit_requests += 1
+    def commit(self, request: dict, principal_id: str) -> dict:
         protocol = request.get("protocol_version")
-        if protocol == "chaptera.commit-request.v1":
-            result = self.kernel.commit_move(request, self.executor)
-        elif protocol == "chaptera.history-transition-intent.v1":
+        try:
+            if protocol == "chaptera.commit-request.v1":
+                result = self.gateway.commit(
+                    request,
+                    principal_id=principal_id,
+                    executor=self.executor,
+                )
+            elif protocol == "chaptera.history-transition-intent.v1":
+                result = self.gateway.commit(
+                    request,
+                    principal_id=principal_id,
+                    history_executor=self.history_executor,
+                )
+            else:
+                raise ValueError("unsupported commit protocol")
+        except AuthzDenied:
+            self.authz_denied_commit_requests += 1
+            raise
+
+        self.commit_requests += 1
+        if protocol == "chaptera.history-transition-intent.v1":
             self.history_requests += 1
-            result = self.kernel.commit_history_transition(request, self.history_executor)
-        else:
-            raise ValueError("unsupported commit protocol")
 
         if result.get("protocol_version") in {
             "chaptera.commit-accepted.v1",
@@ -239,13 +280,28 @@ class Handler(BaseHTTPRequestHandler):
             "access-control-allow-headers",
             "content-type, x-chaptera-trace-version, x-chaptera-trace-id, "
             "x-chaptera-interaction-id, x-chaptera-session-incarnation, "
-            "x-chaptera-operation-class, x-chaptera-browser-family"
+            "x-chaptera-operation-class, x-chaptera-browser-family, "
+            "x-chaptera-principal-id"
         )
         self.end_headers()
 
     def _json(self, value, status: int = 200) -> None:
         self._headers(status)
         self.wfile.write(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+    def _principal_id(self) -> str:
+        value = self.headers.get("x-chaptera-principal-id")
+        if not value:
+            raise AuthzDenied("principal_missing")
+        return value
+
+    def _authorize(self, capability: str) -> None:
+        STATE.authz.authorize(
+            tenant_id=STATE.tenant_id,
+            document_id=STATE.document_id,
+            principal_id=self._principal_id(),
+            capability=capability,
+        )
 
     def do_OPTIONS(self):
         self._headers(204)
@@ -261,17 +317,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/v1/export/preview":
             target = query.get("target", [""])[0]
             try:
+                self._authorize(CAP_EXPORT)
                 with RECORDER.span("gateway.export_preview", trace_context):
                     preview = STATE.export_preview(target)
                 self._json(preview)
+            except AuthzDenied as exc:
+                self._json({"error": "forbidden", "code": exc.code}, 403)
             except ValueError as exc:
                 self._json({"error": "invalid_request", "detail": str(exc)}, 400)
             return
         if path == "/v1/scenes/current":
-            with RECORDER.span("gateway.scene_current", trace_context):
-                current = STATE.kernel.current_revision(STATE.document_id).revision_id
-                scene = STATE.scenes[current]
-            self._json(scene)
+            try:
+                self._authorize(CAP_VIEW)
+                with RECORDER.span("gateway.scene_current", trace_context):
+                    current = STATE.kernel.current_revision(STATE.document_id).revision_id
+                    scene = STATE.scenes[current]
+                self._json(scene)
+            except AuthzDenied as exc:
+                self._json({"error": "forbidden", "code": exc.code}, 403)
             return
         if path.startswith("/v1/observability/traces/"):
             trace_id = path.removeprefix("/v1/observability/traces/")
@@ -285,12 +348,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/v1/scenes/"):
             revision_id = path.removeprefix("/v1/scenes/")
-            with RECORDER.span("gateway.scene_revision", trace_context):
-                scene = STATE.scenes.get(revision_id)
-            if scene is None:
-                self._json({"error": "scene_not_found"}, 404)
-            else:
-                self._json(scene)
+            try:
+                self._authorize(CAP_VIEW)
+                with RECORDER.span("gateway.scene_revision", trace_context):
+                    scene = STATE.scenes.get(revision_id)
+                if scene is None:
+                    self._json({"error": "scene_not_found"}, 404)
+                else:
+                    self._json(scene)
+            except AuthzDenied as exc:
+                self._json({"error": "forbidden", "code": exc.code}, 403)
             return
         if path == "/v1/harness/state":
             current = STATE.kernel.current_revision(STATE.document_id).revision_id
@@ -302,9 +369,14 @@ class Handler(BaseHTTPRequestHandler):
                 "source_hash": STATE.source_hash,
                 "current_revision_id": current,
                 "commit_requests": STATE.commit_requests,
+                "authz_denied_commit_requests": STATE.authz_denied_commit_requests,
                 "history_requests": STATE.history_requests,
                 "executor_calls": STATE.executor_calls,
                 "history_executor_calls": STATE.history_executor_calls,
+                "authz_version": STATE.authz.authz_version(
+                    tenant_id=STATE.tenant_id,
+                    document_id=STATE.document_id,
+                ),
             })
             return
         self._json({"error": "not_found"}, 404)
@@ -324,8 +396,10 @@ class Handler(BaseHTTPRequestHandler):
                 trace_context = dict(trace_context)
                 trace_context["client_operation_id"] = request["client_operation_id"]
             with RECORDER.span("gateway.commit", trace_context):
-                result = STATE.commit(request)
+                result = STATE.commit(request, self._principal_id())
             self._json(result)
+        except AuthzDenied as exc:
+            self._json({"error": "forbidden", "code": exc.code}, 403)
         except (ValueError, KeyError, TypeError) as exc:
             self._json({"error": "invalid_request", "detail": str(exc)}, 400)
 

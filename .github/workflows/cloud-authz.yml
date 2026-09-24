@@ -1,0 +1,30 @@
+name: CLOUD-AUTHZ-01
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/security/authz_v1.py"
+      - "services/editor-api/security/authorized_revision_gateway.py"
+      - "services/editor-api/security/test_authz_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/web_shell_http_harness.py"
+      - "apps/web/editor-service-client-v1.mjs"
+      - "tools/run_web_editor_http_harness.mjs"
+      - "docs/cloud-authz-v1.md"
+      - ".github/workflows/cloud-authz.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test AuthZ and revision barrier
+        working-directory: services/editor-api/security
+        run: python -m unittest -v test_authz_v1.py
