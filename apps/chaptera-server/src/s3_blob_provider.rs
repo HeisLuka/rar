@@ -1,18 +1,12 @@
 use std::{
-    cmp,
-    io,
+    cmp, io,
     pin::Pin,
     sync::Mutex,
     task::{Context, Poll},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use aws_sdk_s3::{
-    Client,
-    error::SdkError,
-    presigning::PresigningConfig,
-    primitives::ByteStream,
-};
+use aws_sdk_s3::{Client, error::SdkError, presigning::PresigningConfig, primitives::ByteStream};
 use aws_smithy_types::body::SdkBody;
 use bytes::Bytes;
 use http_body::{Body, Frame, SizeHint};
@@ -273,7 +267,12 @@ fn provider_sdk_error<E>(error: &SdkError<E>, intent: ErrorIntent) -> ProviderEr
             ProviderErrorKind::UnknownOutcome
         }
         Some(412) if matches!(intent, ErrorIntent::Create) => ProviderErrorKind::AlreadyExists,
-        Some(412) if matches!(intent, ErrorIntent::Head | ErrorIntent::Read | ErrorIntent::Delete) => {
+        Some(412)
+            if matches!(
+                intent,
+                ErrorIntent::Head | ErrorIntent::Read | ErrorIntent::Delete
+            ) =>
+        {
             ProviderErrorKind::NotFound
         }
         Some(code)
@@ -281,9 +280,8 @@ fn provider_sdk_error<E>(error: &SdkError<E>, intent: ErrorIntent) -> ProviderEr
         {
             ProviderErrorKind::UnknownOutcome
         }
-        None
-            if transport_ambiguous
-                && matches!(intent, ErrorIntent::Create | ErrorIntent::Delete) =>
+        None if transport_ambiguous
+            && matches!(intent, ErrorIntent::Create | ErrorIntent::Delete) =>
         {
             ProviderErrorKind::UnknownOutcome
         }
@@ -301,10 +299,7 @@ fn provider_sdk_error<E>(error: &SdkError<E>, intent: ErrorIntent) -> ProviderEr
     ProviderError::new(kind, code)
 }
 
-fn metadata_from_etag(
-    etag: &str,
-    byte_len: u64,
-) -> Result<ProviderObjectMetadata, ProviderError> {
+fn metadata_from_etag(etag: &str, byte_len: u64) -> Result<ProviderObjectMetadata, ProviderError> {
     let token = encode_generation(etag)?;
     Ok(ProviderObjectMetadata {
         generation: token.clone(),
@@ -536,9 +531,11 @@ mod tests {
         let raw = "\"d41d8cd98f00b204e9800998ecf8427e\"";
         let encoded = encode_generation(raw).unwrap();
         assert!(encoded.starts_with("etag:"));
-        assert!(encoded
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b':'));
+        assert!(
+            encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b':')
+        );
         assert_eq!(decode_generation(&encoded).unwrap(), raw);
     }
 
@@ -560,18 +557,18 @@ mod tests {
         assert_eq!(bucket, "chaptera-private");
         assert_eq!(key, "canonical/tenant-a/blob-1");
 
-        assert!(
-            provider
-                .bucket_and_key("../tenant-a/blob-1")
-                .is_err()
-        );
+        assert!(provider.bucket_and_key("../tenant-a/blob-1").is_err());
     }
 
     #[test]
     fn s3_capabilities_force_direct_upload_size_fallback() {
-        let provider =
-            S3BlobProvider::new(test_client(), "chaptera-quarantine", "chaptera-private", None)
-                .unwrap();
+        let provider = S3BlobProvider::new(
+            test_client(),
+            "chaptera-quarantine",
+            "chaptera-private",
+            None,
+        )
+        .unwrap();
         let capabilities = provider.capabilities();
         assert!(capabilities.hard_create_only);
         assert!(!capabilities.hard_exact_or_max_upload_size);
