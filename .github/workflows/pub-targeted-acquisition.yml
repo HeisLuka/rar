@@ -30,25 +30,24 @@ jobs:
           7z x -y out/corel.exe -oout/outer > out/outer-extract.txt 2>&1
           overlay="$(find out/outer -maxdepth 1 -type f -name '[[]0]' | head -n1)"
           test -n "$overlay"
-          python3 - <<'PY'
+          python3 - <<'PY' | tee out/zip-python.txt
+          import zipfile
           from pathlib import Path
           src=Path("out/outer/[0]")
-          b=src.read_bytes()
-          sig=b"PK\x03\x04"
-          off=b.find(sig)
-          print("zip_offset", off)
-          if off < 0:
-              raise SystemExit("ZIP signature not found")
-          Path("out/zip-offset.txt").write_text(str(off)+"\n")
-          Path("out/payload.zip").write_bytes(b[off:])
+          with zipfile.ZipFile(src) as z:
+              names=z.namelist()
+              print("entries", len(names))
+              for n in names:
+                  if any(k in n.lower() for k in ["filters.msi","publisher","cdrpub"]):
+                      print("HIT", n)
+              matches=[n for n in names if n.lower().endswith("filters.msi")]
+              if not matches:
+                  raise SystemExit("Filters.msi not found in prefixed ZIP")
+              target=matches[0]
+              Path("out/Filters.msi").write_bytes(z.read(target))
+              Path("out/filters-zip-path.txt").write_text(target+"\n")
+              Path("out/zip-files.txt").write_text("\n".join(names)+"\n")
           PY
-          file out/payload.zip | tee out/payload-file.txt
-          7z l out/payload.zip | tee out/payload-list.txt
-          7z x -y out/payload.zip -oout/zip > out/payload-extract.txt
-          find out/zip -type f -printf '%s\t%p\n' | sort -nr > out/zip-files.txt
-          filters="$(find out/zip -type f -iname 'Filters.msi' | head -n1 || true)"
-          test -n "$filters"
-          cp "$filters" out/Filters.msi
           sha256sum out/Filters.msi | tee out/filters-sha256.txt
           sha1sum out/Filters.msi | tee out/filters-sha1.txt
           md5sum out/Filters.msi | tee out/filters-md5.txt
