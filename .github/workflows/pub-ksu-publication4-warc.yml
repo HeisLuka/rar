@@ -65,10 +65,24 @@ jobs:
           if http_end < 0:
               raise SystemExit("HTTP header terminator missing")
           http_header=payload[:http_end].decode("iso-8859-1","replace")
-          status=http_header.splitlines()[0] if http_header else ""
+          http_lines=http_header.splitlines()
+          status=http_lines[0] if http_lines else ""
           if " 200 " not in status:
               raise SystemExit(f"unexpected HTTP status: {status}")
-          body=payload[http_end+4:]
+          http_headers={}
+          for line in http_lines[1:]:
+              if ":" in line:
+                  k,v=line.split(":",1); http_headers[k.strip().lower()]=v.strip()
+          framed_body=payload[http_end+4:]
+          if "content-length" not in http_headers:
+              raise SystemExit("HTTP Content-Length missing; refuse ambiguous WARC entity framing")
+          entity_len=int(http_headers["content-length"])
+          if entity_len > len(framed_body):
+              raise SystemExit(f"HTTP entity truncated: need {entity_len}, have {len(framed_body)}")
+          body=framed_body[:entity_len]
+          record_trailer=framed_body[entity_len:]
+          if record_trailer not in {b"", b"\r\n", b"\r\n\r\n"}:
+              raise SystemExit(f"unexpected non-framing bytes after HTTP entity: {record_trailer[:32].hex()}")
           magic=bytes.fromhex("d0cf11e0a1b11ae1")
           if not body.startswith(magic):
               raise SystemExit(f"payload is not OLE/CFB: {body[:16].hex()}")
@@ -101,6 +115,8 @@ jobs:
               "warc_offset":int(os.environ["WARC_OFFSET"]),
               "warc_length":int(os.environ["WARC_LENGTH"]),
               "http_status":status,
+              "http_content_length":entity_len,
+              "warc_record_trailer_bytes":len(record_trailer),
               "common_crawl_index_digest_sha1_base32":expected_cc,
               "warc_payload_digest":warc_payload_digest,
               "raw_http_body_sha1_base32":body_sha1_b32,
