@@ -1,0 +1,178 @@
+name: CORPUS-VAC Internet Archive
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/internet_archive_pub_seed.py'
+      - 'tools/corpus/test_internet_archive_pub_seed.py'
+      - '.github/workflows/corpus-vac-internet-archive.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/internet_archive_pub_seed.py'
+      - 'tools/corpus/test_internet_archive_pub_seed.py'
+      - '.github/workflows/corpus-vac-internet-archive.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-vac-ia-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline validation
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/internet_archive_pub_seed.py tools/corpus/test_internet_archive_pub_seed.py
+          python tools/corpus/test_internet_archive_pub_seed.py
+
+  smoke:
+    if: github.event_name == 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Live metadata/search smoke
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/internet_archive_pub_seed.py \
+            --rows 5 --pages 1 --max-items 5 --delay 0.1 \
+            --out out/ia_seed.csv \
+            --containers out/ia_containers.csv \
+            --summary out/ia.summary.json
+          cat out/ia.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ia-smoke-${{ github.run_id }}
+          path: out/**
+          retention-days: 7
+
+  discover:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Vacuum public item inventories
+        run: |
+          set -euo pipefail
+          mkdir -p out/discovery
+          python tools/corpus/internet_archive_pub_seed.py \
+            --rows 50 --pages 8 --max-items 1000 --delay 0.2 \
+            --out out/discovery/ia_seed.csv \
+            --containers out/discovery/ia_containers.csv \
+            --summary out/discovery/ia.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ia-seed-${{ github.run_id }}
+          path: out/discovery/**
+          retention-days: 14
+
+  harvest:
+    if: github.event_name != 'pull_request'
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ia-seed-${{ github.run_id }}
+          path: seed
+      - name: Fetch direct PUB and ZIP candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed seed/ia_seed.csv \
+            --out out/harvest \
+            --max-files -1 --timeout 30 --max-bytes 104857600 \
+            --max-archive-total-bytes 314572800 --max-archive-members 200 \
+            --per-host-delay 0.1 \
+            --shard-index "${{ matrix.shard }}" --shard-count 4
+      - name: Keep public artifact manifest-only
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ia-manifest-${{ github.run_id }}-${{ matrix.shard }}
+          path: |
+            out/harvest/manifest.json
+            out/harvest/manifest.csv
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: github.event_name != 'pull_request' && always()
+    needs: harvest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ia-manifest-${{ github.run_id }}-*
+          path: combined
+      - uses: actions/download-artifact@v4
+        with:
+          name: ia-seed-${{ github.run_id }}
+          path: discovery
+      - name: Aggregate receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob,json
+          from collections import Counter
+          from pathlib import Path
+          rows=[]
+          for p in glob.glob("combined/**/manifest.json",recursive=True):
+              rows.extend(json.loads(Path(p).read_text(encoding="utf-8")))
+          summary={
+              "schema":"rar-ia-aggregate-v1",
+              "manifest_rows":len(rows),
+              "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+              "classification":dict(Counter(r.get("classification","") for r in rows)),
+              "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+              "ia_items":len({r.get("ia_identifier","") for r in rows if r.get("ia_identifier")}),
+          }
+          Path("aggregate").mkdir(exist_ok=True)
+          Path("aggregate/manifest.json").write_text(json.dumps(rows,indent=2,ensure_ascii=False),encoding="utf-8")
+          Path("aggregate/summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          # Carry non-ZIP container locators forward to CORPUS-VAC-CONTAINER-01.
+          src=Path("discovery/ia_containers.csv")
+          if src.exists():
+              Path("aggregate/ia_containers.csv").write_bytes(src.read_bytes())
+          print(json.dumps(summary,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ia-aggregate-${{ github.run_id }}
+          path: aggregate/**
+          retention-days: 30
