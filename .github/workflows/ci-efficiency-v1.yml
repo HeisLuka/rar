@@ -1,4 +1,5 @@
 name: CI-EFFICIENCY-BASELINE-01 Actions cost census
+# CI-PACKET-ADMISSION negative control: unrelated workflow-only diff.
 
 on:
   pull_request:
