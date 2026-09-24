@@ -1,0 +1,80 @@
+name: PUB OplPluo Refined Descriptor Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/pub-research/oplpluo_meta14_refined.py"
+      - ".github/workflows/pub-oplpluo-meta14-refined.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install static-analysis dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --break-system-packages pefile capstone
+      - name: Acquire exact Microsoft MSPUB14
+        run: |
+          set -euo pipefail
+          root=/tmp/oplpluo-refined
+          mkdir -p "$root/outer" "$root/msp" "$root/patch" "$root/report"
+          url="https://download.microsoft.com/download/0/5/e/05e96d4b-4837-4775-a9b8-7bd185d9d524/publisher2010-kb3114395-fullfile-x86-glb.exe"
+          pkg="$root/pkg.exe"
+          curl --fail --location --retry 5 --retry-all-errors --output "$pkg" "$url"
+          echo "9bf8c3771b133781b29ffe24a913d62fd9a009a8c5da46a80e192805759063d8  $pkg" | sha256sum --check -
+          7z x -y "$pkg" -o"$root/outer" >/dev/null
+          msp="$(find "$root/outer" -type f -iname 'publisher-x-none.msp' | head -n1)"
+          test -n "$msp"
+          7z x -y "$msp" -o"$root/msp" >/dev/null
+          cab="$(find "$root/msp" -type f -name PATCH_CAB | head -n1)"
+          test -n "$cab"
+          7z x -y "$cab" -o"$root/patch" >/dev/null
+          exe="$root/patch/MSPUB.EXE"
+          test -f "$exe"
+          echo "27c00f7f06957f24d392f9c61fbd3b40282f15dc595caf66785b561f559d7b97  $exe" | sha256sum --check -
+      - name: Run refined descriptor-row probe
+        run: |
+          set -euo pipefail
+          python3 tools/pub-research/oplpluo_meta14_refined.py             /tmp/oplpluo-refined/patch/MSPUB.EXE             --out /tmp/oplpluo-refined/report/report.json
+      - name: Evidence guards
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("/tmp/oplpluo-refined/report/summary.json").read_text())
+          assert d["meta14_rows"] == 43, d
+          assert d["shared_helper_direct_callsites"] == 584, d
+          print("refined calibration passed")
+          PY
+      - name: Publish summary
+        if: always()
+        run: |
+          if test -f /tmp/oplpluo-refined/report/summary.txt; then
+            {
+              echo '## PUB-T-451 refined descriptor-row pass'
+              echo
+              cat /tmp/oplpluo-refined/report/summary.txt
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Guard proprietary-byte boundary
+        if: always()
+        run: |
+          set -euo pipefail
+          bad="$(find /tmp/oplpluo-refined/report -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.pdb' -o -iname '*.cab' -o -iname '*.msp' -o -iname '*.msi' \) -print)"
+          test -z "$bad"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pub-oplpluo-meta14-refined-${{ github.run_id }}
+          path: /tmp/oplpluo-refined/report/**
+          if-no-files-found: error
+          retention-days: 90
