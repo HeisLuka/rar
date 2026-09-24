@@ -2,7 +2,6 @@
 members = [
   "crates/pub-model",
   "crates/pub-paint-bridge",
-  "crates/pub-text-caret-map",
 ]
 resolver = "2"
 
