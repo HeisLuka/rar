@@ -1,0 +1,10 @@
+[package]
+name = "pub-paint-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-model = { path = "../pub-model" }
+serde.workspace = true
