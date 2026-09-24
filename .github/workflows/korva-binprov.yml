@@ -1,0 +1,280 @@
+name: Korva 1.8.7 static provenance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/korva-binprov.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      VERSION: "1.8.7"
+      DEB: "Korva_1.8.7_amd64.deb"
+      EXPECTED_SHA256: "e0a2abde284c4c714262c07afab168659387a797f033a869d0db1b1f4bfa010c"
+      URL: "https://github.com/kai63001/korva-releases/releases/download/v1.8.7/Korva_1.8.7_amd64.deb"
+
+    steps:
+      - name: Prepare tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils file jq ripgrep unzip xz-utils
+          mkdir -p out/extracted out/reports
+          {
+            echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            uname -a
+            dpkg-deb --version | head -n1
+            readelf --version | head -n1
+            nm --version | head -n1
+            objdump --version | head -n1
+            strings --version | head -n1
+            file --version | head -n1
+          } | tee out/reports/tool-versions.txt
+
+      - name: Download exact Korva release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl --fail --location --retry 3 --output "$DEB" "$URL"
+          sha256sum "$DEB" | tee out/reports/deb-sha256.txt
+          actual="$(sha256sum "$DEB" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+
+      - name: Extract Debian package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          dpkg-deb -I "$DEB" | tee out/reports/deb-control.txt
+          dpkg-deb -c "$DEB" | tee out/reports/deb-files.txt
+          dpkg-deb -x "$DEB" out/extracted
+          find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/reports/extracted-files-by-size.txt
+
+          BIN="out/extracted/usr/bin/Korva"
+          if [ ! -f "$BIN" ]; then
+            BIN="$(find out/extracted -type f -exec file {} + | awk -F: '/ELF 64-bit/{print $1; exit}')"
+          fi
+          test -n "$BIN"
+          printf '%s\n' "$BIN" | tee out/reports/main-binary-path.txt
+          cp "$BIN" out/Korva.elf
+          sha256sum out/Korva.elf | tee out/reports/elf-sha256.txt
+          file out/Korva.elf | tee out/reports/elf-file.txt
+
+      - name: ELF structure and dependency surface
+        shell: bash
+        run: |
+          set -euxo pipefail
+          readelf -h out/Korva.elf > out/reports/readelf-header.txt
+          readelf -lW out/Korva.elf > out/reports/readelf-program-headers.txt
+          readelf -SW out/Korva.elf > out/reports/readelf-sections.txt
+          readelf -dW out/Korva.elf > out/reports/readelf-dynamic.txt
+          readelf -nW out/Korva.elf > out/reports/readelf-notes.txt
+          readelf -WsW out/Korva.elf > out/reports/readelf-symbols.txt || true
+          grep -E 'NEEDED|RPATH|RUNPATH|SONAME' out/reports/readelf-dynamic.txt > out/reports/elf-needed.txt || true
+
+      - name: Symbol inventories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          nm -a -n out/Korva.elf > out/reports/nm-raw.txt || true
+          nm -a -n -C out/Korva.elf > out/reports/nm-demangled.txt || true
+          nm -D -C out/Korva.elf > out/reports/nm-dynamic-demangled.txt || true
+
+          {
+            echo "raw_nm_lines=$(wc -l < out/reports/nm-raw.txt)"
+            echo "demangled_nm_lines=$(wc -l < out/reports/nm-demangled.txt)"
+            echo "defined_demangled_symbols=$(nm --defined-only -C out/Korva.elf 2>/dev/null | wc -l)"
+            echo "pagewell_core_hits=$(grep -c 'pagewell_core' out/reports/nm-demangled.txt || true)"
+            echo "korva_lib_hits=$(grep -c 'korva_lib' out/reports/nm-demangled.txt || true)"
+            echo "import_pub_hits=$(grep -c 'pagewell_core::import_pub' out/reports/nm-demangled.txt || true)"
+          } | tee out/reports/symbol-counts.txt
+
+          grep -F 'pagewell_core::import_pub' out/reports/nm-demangled.txt > out/reports/import-pub-symbols.txt || true
+          grep -E 'pagewell_core::(model|save|pdf|layout)|korva_lib' out/reports/nm-demangled.txt > out/reports/pagewell-korva-symbols.txt || true
+
+      - name: String and crate fingerprints
+        shell: bash
+        run: |
+          set -euxo pipefail
+          strings -a -t x out/Korva.elf > out/reports/strings-offsets.txt
+          strings -a out/Korva.elf > out/reports/strings.txt
+
+          cat > out/reports/needles.txt <<'EOF'
+libmspub
+librevenge
+writerperfect
+LibreOffice
+unfair-codec-pub
+Quill/QuillSub/CONTENTS
+Escher
+cfb-0.14.0
+cfb 0.14.0
+pagewell_core
+korva_lib
+import_pub_bytes
+extract_text
+extract_images
+probe_image
+sniff_image
+write_pub
+save_pub
+export_pub
+write_pwl_bytes
+save_pwl
+read_pwl_bytes
+pagewell-document
+manifest.json
+document.json
+.kva
+Tauri
+tauri
+rustc 1.98.1
+LLD 22.1.8
+EOF
+
+          : > out/reports/needle-hits.txt
+          while IFS= read -r needle; do
+            echo "===== $needle =====" >> out/reports/needle-hits.txt
+            grep -aF -n -m 50 -- "$needle" out/reports/strings.txt >> out/reports/needle-hits.txt || true
+          done < out/reports/needles.txt
+
+          grep -aE -i '(/|\\)(cfb|libmspub|librevenge|writerperfect|tauri|pagewell)[-_][0-9]+\.[0-9]+' out/reports/strings.txt             | sort -u > out/reports/crate-version-path-hits.txt || true
+
+      - name: Importer function disassembly
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+from pathlib import Path
+import re, subprocess
+
+nm = Path("out/reports/nm-demangled.txt").read_text(errors="replace").splitlines()
+matches = []
+for line in nm:
+    if "pagewell_core::import_pub::import_pub_bytes" not in line:
+        continue
+    m = re.match(r"^([0-9a-fA-F]+)\s+([A-Za-z?])\s+(.*)$", line)
+    if m:
+        matches.append((int(m.group(1), 16), m.group(3), line))
+
+out = Path("out/reports/import-pub-bytes-symbol-match.txt")
+out.write_text("\n".join(x[2] for x in matches) + ("\n" if matches else ""))
+
+if not matches:
+    Path("out/reports/import-pub-bytes-disassembly.txt").write_text("No demangled symbol match found.\n")
+    raise SystemExit(0)
+
+start = matches[0][0]
+# A bounded window. The full symbol table remains in artifacts for exact follow-up.
+stop = start + 0x20000
+cmd = [
+    "objdump", "-d", "-C",
+    f"--start-address=0x{start:x}",
+    f"--stop-address=0x{stop:x}",
+    "out/Korva.elf",
+]
+p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+Path("out/reports/import-pub-bytes-disassembly.txt").write_text(p.stdout)
+Path("out/reports/import-pub-bytes-range.txt").write_text(
+    f"start=0x{start:x}\nstop=0x{stop:x}\n"
+)
+PY
+
+      - name: Build claim-by-claim receipt
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+from pathlib import Path
+import re
+
+R = Path("out/reports")
+strings = (R/"strings.txt").read_text(errors="replace")
+nm = (R/"nm-demangled.txt").read_text(errors="replace")
+dyn = (R/"readelf-dynamic.txt").read_text(errors="replace")
+filetxt = (R/"elf-file.txt").read_text(errors="replace")
+
+def present(s, where):
+    return s in where
+
+checks = [
+    ("Exact .deb SHA-256", True, "verified by workflow hard assertion"),
+    ("ELF appears not stripped", "not stripped" in filetxt.lower(), filetxt.strip()),
+    ("pagewell_core symbols", present("pagewell_core", nm), "demangled symbol table"),
+    ("korva_lib symbols", present("korva_lib", nm), "demangled symbol table"),
+    ("pagewell_core::import_pub", present("pagewell_core::import_pub", nm), "demangled symbol table"),
+    ("import_pub_bytes", present("import_pub_bytes", nm) or present("import_pub_bytes", strings), "symbols/strings"),
+    ("extract_text", present("extract_text", nm) or present("extract_text", strings), "symbols/strings"),
+    ("extract_images", present("extract_images", nm) or present("extract_images", strings), "symbols/strings"),
+    ("probe_image", present("probe_image", nm) or present("probe_image", strings), "symbols/strings"),
+    ("sniff_image", present("sniff_image", nm) or present("sniff_image", strings), "symbols/strings"),
+    ("Quill/QuillSub/CONTENTS", present("Quill/QuillSub/CONTENTS", strings), "string evidence only until xref/data-flow review"),
+    ("Escher", present("Escher", strings), "string evidence only until xref/data-flow review"),
+    ("cfb 0.14.0 marker", bool(re.search(r"cfb[- /]0\.14\.0", strings, re.I)), "embedded string/path fingerprint"),
+    ("libmspub marker", present("libmspub", strings) or present("libmspub", dyn), "positive hit only; absence is not proof"),
+    ("librevenge marker", present("librevenge", strings) or present("librevenge", dyn), "positive hit only; absence is not proof"),
+    ("writerperfect marker", present("writerperfect", strings) or present("writerperfect", dyn), "positive hit only; absence is not proof"),
+    ("unfair-codec-pub marker", present("unfair-codec-pub", strings), "positive hit only; absence is not proof"),
+    ("write_pub symbol/string", present("write_pub", nm) or present("write_pub", strings), "absence does not prove no PUB writer"),
+    ("save_pub symbol/string", present("save_pub", nm) or present("save_pub", strings), "absence does not prove no PUB writer"),
+    ("export_pub symbol/string", present("export_pub", nm) or present("export_pub", strings), "absence does not prove no PUB writer"),
+    ("write_pwl_bytes", present("write_pwl_bytes", nm) or present("write_pwl_bytes", strings), "symbols/strings"),
+    ("save_pwl", present("save_pwl", nm) or present("save_pwl", strings), "symbols/strings"),
+    ("read_pwl_bytes", present("read_pwl_bytes", nm) or present("read_pwl_bytes", strings), "symbols/strings"),
+    ("pagewell-document", present("pagewell-document", strings), "string evidence"),
+    ("manifest.json", present("manifest.json", strings), "string evidence"),
+    ("document.json", present("document.json", strings), "string evidence"),
+]
+
+lines = [
+    "# Korva 1.8.7 static provenance receipt",
+    "",
+    "This report distinguishes positive artifact evidence from absence-based inference.",
+    "",
+    "| Claim/probe | Hit | Evidence note |",
+    "|---|---:|---|",
+]
+for name, hit, note in checks:
+    lines.append(f"| {name} | {'YES' if hit else 'NO'} | {note.replace('|','/')} |")
+
+lines += [
+    "",
+    "## Interpretation guardrails",
+    "",
+    "- A NO for a symbol/string probe is not proof that the capability is absent.",
+    "- Stream-name strings alone do not prove parsing depth; inspect bounded disassembly and xrefs.",
+    "- Direct in-process CFB parsing does not by itself establish independent parser genealogy.",
+    "- No fidelity benchmark is performed by this workflow.",
+]
+(R/"SUMMARY.md").write_text("\n".join(lines) + "\n")
+PY
+          cat out/reports/SUMMARY.md
+
+      - name: Archive reproducible evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp "$DEB" out/
+          tar -C out -czf korva-binprov-1.8.7.tar.gz reports Korva.elf "$DEB"
+          sha256sum korva-binprov-1.8.7.tar.gz | tee out/reports/archive-sha256.txt
+
+      - name: Upload analysis artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: korva-binprov-1.8.7
+          path: |
+            out/reports/
+            out/Korva.elf
+            out/Korva_1.8.7_amd64.deb
+            korva-binprov-1.8.7.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
