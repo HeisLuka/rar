@@ -53,10 +53,7 @@ pub enum UploadState {
 
 impl UploadState {
     pub fn terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Consumed | Self::Rejected | Self::Expired
-        )
+        matches!(self, Self::Consumed | Self::Rejected | Self::Expired)
     }
 }
 
@@ -98,13 +95,8 @@ impl UploadRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UploadTransport {
-    Direct {
-        grant: String,
-        expires_at_ms: u64,
-    },
-    Streamed {
-        path: String,
-    },
+    Direct { grant: String, expires_at_ms: u64 },
+    Streamed { path: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,10 +326,7 @@ impl SourceIngressService {
         let request_hash = issue_request_hash(&request)?;
         let upload_id = self.ids.next_upload_id()?;
         require_ident(&upload_id, "upload_id")?;
-        let physical_upload_ref = format!(
-            "quarantine/{}/{}",
-            request.tenant_id, upload_id
-        );
+        let physical_upload_ref = format!("quarantine/{}/{}", request.tenant_id, upload_id);
 
         let candidate = UploadRecord {
             upload_id,
@@ -402,10 +391,7 @@ impl SourceIngressService {
                 ));
             }
             Err(error) => {
-                return Err(IngressError::new(
-                    "upload_stream_failed",
-                    error.to_string(),
-                ));
+                return Err(IngressError::new("upload_stream_failed", error.to_string()));
             }
         }
         if bounded.bytes_read != upload.expected_byte_len {
@@ -447,12 +433,8 @@ impl SourceIngressService {
         }
 
         if now_ms >= upload.expires_at_ms {
-            let expired = self.transition_terminal(
-                upload,
-                UploadState::Expired,
-                "upload_expired",
-                now_ms,
-            )?;
+            let expired =
+                self.transition_terminal(upload, UploadState::Expired, "upload_expired", now_ms)?;
             return Ok(CompleteUploadResult {
                 upload: expired,
                 enqueue_validation: false,
@@ -485,11 +467,9 @@ impl SourceIngressService {
         next.observed_byte_len = Some(metadata.byte_len);
         next.completed_at_ms = Some(now_ms);
 
-        let upload = self.repo.compare_and_swap(
-            &upload.upload_id,
-            upload.upload_generation,
-            next,
-        )?;
+        let upload =
+            self.repo
+                .compare_and_swap(&upload.upload_id, upload.upload_generation, next)?;
         Ok(CompleteUploadResult {
             upload,
             enqueue_validation: true,
@@ -538,13 +518,19 @@ impl SourceIngressService {
         }
 
         let version = upload.object_version.as_deref().ok_or_else(|| {
-            IngressError::new("object_identity_missing", "validation object version missing")
+            IngressError::new(
+                "object_identity_missing",
+                "validation object version missing",
+            )
         })?;
         let etag = upload.object_etag.as_deref().ok_or_else(|| {
             IngressError::new("object_identity_missing", "validation object etag missing")
         })?;
         let observed_len = upload.observed_byte_len.ok_or_else(|| {
-            IngressError::new("object_identity_missing", "validation object length missing")
+            IngressError::new(
+                "object_identity_missing",
+                "validation object length missing",
+            )
         })?;
 
         let first = self
@@ -560,8 +546,7 @@ impl SourceIngressService {
         let second = self
             .quarantine
             .open_exact(&upload.physical_upload_ref, version, etag)?;
-        let mut promoted_reader =
-            HashingBoundedReader::new(second, upload.expected_byte_len);
+        let mut promoted_reader = HashingBoundedReader::new(second, upload.expected_byte_len);
         let binding = self.durable_sources.promote_immutable(
             &upload.tenant_id,
             &upload.upload_id,
@@ -592,11 +577,8 @@ impl SourceIngressService {
         next.completed_at_ms = Some(now_ms);
         next.terminal_code = None;
 
-        self.repo.compare_and_swap(
-            &upload.upload_id,
-            upload.upload_generation,
-            next,
-        )
+        self.repo
+            .compare_and_swap(&upload.upload_id, upload.upload_generation, next)
     }
 
     pub fn consume_into_project(
@@ -604,10 +586,7 @@ impl SourceIngressService {
         request: ConsumeUploadRequest,
     ) -> Result<ProjectCreateResult, IngressError> {
         require_ident(&request.tenant_id, "tenant_id")?;
-        require_ident(
-            &request.client_idempotency_id,
-            "client_idempotency_id",
-        )?;
+        require_ident(&request.client_idempotency_id, "client_idempotency_id")?;
         require_ident(&request.workspace_id, "workspace_id")?;
         if request.name.is_empty() || request.name.len() > 512 {
             return Err(IngressError::new(
@@ -617,10 +596,10 @@ impl SourceIngressService {
         }
 
         let request_hash = consumption_request_hash(&request)?;
-        if let Some(prior) = self.repo.find_consumption(
-            &request.tenant_id,
-            &request.client_idempotency_id,
-        )? {
+        if let Some(prior) = self
+            .repo
+            .find_consumption(&request.tenant_id, &request.client_idempotency_id)?
+        {
             if prior.request_hash != request_hash || prior.upload_id != request.upload_id {
                 return Err(IngressError::new(
                     "idempotency_conflict",
@@ -754,11 +733,8 @@ impl SourceIngressService {
         next.upload_generation = next.upload_generation.saturating_add(1);
         next.completed_at_ms = Some(now_ms);
         next.terminal_code = Some(code.to_owned());
-        self.repo.compare_and_swap(
-            &upload.upload_id,
-            upload.upload_generation,
-            next,
-        )
+        self.repo
+            .compare_and_swap(&upload.upload_id, upload.upload_generation, next)
     }
 }
 
@@ -817,9 +793,7 @@ fn issue_request_hash(request: &IssueUploadRequest) -> Result<String, IngressErr
     })
 }
 
-fn consumption_request_hash(
-    request: &ConsumeUploadRequest,
-) -> Result<String, IngressError> {
+fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, IngressError> {
     #[derive(Serialize)]
     struct Fingerprint<'a> {
         protocol: &'static str,
@@ -840,9 +814,8 @@ fn consumption_request_hash(
 }
 
 fn hash_serialized<T: Serialize>(value: &T) -> Result<String, IngressError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| {
-        IngressError::new("request_hash_failed", error.to_string())
-    })?;
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| IngressError::new("request_hash_failed", error.to_string()))?;
     Ok(sha256_hex(&bytes))
 }
 
@@ -973,8 +946,8 @@ mod tests {
         collections::BTreeMap,
         io::{Cursor, Read},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     };
 
@@ -988,10 +961,7 @@ mod tests {
     }
 
     impl UploadRepository for MemoryRepo {
-        fn issue_idempotent(
-            &self,
-            candidate: UploadRecord,
-        ) -> Result<UploadRecord, IngressError> {
+        fn issue_idempotent(&self, candidate: UploadRecord) -> Result<UploadRecord, IngressError> {
             let key = (
                 candidate.tenant_id.clone(),
                 candidate.idempotency_key.clone(),
@@ -1066,12 +1036,11 @@ mod tests {
             expected_generation: u64,
             receipt: ConsumptionReceipt,
         ) -> Result<ConsumptionReceipt, IngressError> {
-            let key = (
-                receipt.tenant_id.clone(),
-                receipt.idempotency_key.clone(),
-            );
+            let key = (receipt.tenant_id.clone(), receipt.idempotency_key.clone());
             if let Some(prior) = self.consumptions.lock().unwrap().get(&key).cloned() {
-                if prior.request_hash != receipt.request_hash || prior.upload_id != receipt.upload_id {
+                if prior.request_hash != receipt.request_hash
+                    || prior.upload_id != receipt.upload_id
+                {
                     return Err(IngressError::new(
                         "idempotency_conflict",
                         "consumption key reused with different request",
@@ -1114,10 +1083,7 @@ mod tests {
 
     impl UploadIdGenerator for SequenceIds {
         fn next_upload_id(&self) -> Result<String, IngressError> {
-            Ok(format!(
-                "upload-{}",
-                self.0.fetch_add(1, Ordering::SeqCst)
-            ))
+            Ok(format!("upload-{}", self.0.fetch_add(1, Ordering::SeqCst)))
         }
     }
 
@@ -1127,10 +1093,7 @@ mod tests {
     }
 
     impl QuarantineStore for MemoryQuarantine {
-        fn issue_transport(
-            &self,
-            upload: &UploadRecord,
-        ) -> Result<UploadTransport, IngressError> {
+        fn issue_transport(&self, upload: &UploadRecord) -> Result<UploadTransport, IngressError> {
             Ok(UploadTransport::Streamed {
                 path: format!("/v1/uploads/{}/content", upload.upload_id),
             })
@@ -1149,24 +1112,24 @@ mod tests {
                 ));
             }
             let mut bytes = Vec::new();
-            input.read_to_end(&mut bytes).map_err(|error| {
-                IngressError::new("quarantine_write_failed", error.to_string())
-            })?;
+            input
+                .read_to_end(&mut bytes)
+                .map_err(|error| IngressError::new("quarantine_write_failed", error.to_string()))?;
             objects.insert(physical_ref.to_owned(), bytes);
             Ok(())
         }
 
-        fn head(
-            &self,
-            physical_ref: &str,
-        ) -> Result<Option<ObjectMetadata>, IngressError> {
-            Ok(self.objects.lock().unwrap().get(physical_ref).map(|bytes| {
-                ObjectMetadata {
+        fn head(&self, physical_ref: &str) -> Result<Option<ObjectMetadata>, IngressError> {
+            Ok(self
+                .objects
+                .lock()
+                .unwrap()
+                .get(physical_ref)
+                .map(|bytes| ObjectMetadata {
                     version: "version-1".to_owned(),
                     etag: sha256_hex(bytes),
                     byte_len: bytes.len() as u64,
-                }
-            }))
+                }))
         }
 
         fn open_exact(
@@ -1187,9 +1150,7 @@ mod tests {
                 .unwrap()
                 .get(physical_ref)
                 .cloned()
-                .ok_or_else(|| {
-                    IngressError::new("quarantine_object_missing", "missing object")
-                })?;
+                .ok_or_else(|| IngressError::new("quarantine_object_missing", "missing object"))?;
             if sha256_hex(&bytes) != etag {
                 return Err(IngressError::new(
                     "object_etag_mismatch",
@@ -1239,9 +1200,9 @@ mod tests {
             input: &mut dyn Read,
         ) -> Result<DurableSourceBinding, IngressError> {
             let mut bytes = Vec::new();
-            input.read_to_end(&mut bytes).map_err(|error| {
-                IngressError::new("durable_write_failed", error.to_string())
-            })?;
+            input
+                .read_to_end(&mut bytes)
+                .map_err(|error| IngressError::new("durable_write_failed", error.to_string()))?;
             if sha256_hex(&bytes) != source_sha256 {
                 return Err(IngressError::new(
                     "durable_hash_mismatch",
@@ -1332,10 +1293,7 @@ mod tests {
             .unwrap()
     }
 
-    fn upload_and_complete(
-        service: &SourceIngressService,
-        bytes: &[u8],
-    ) -> UploadRecord {
+    fn upload_and_complete(service: &SourceIngressService, bytes: &[u8]) -> UploadRecord {
         let issued = issue(service, bytes.len());
         let mut cursor = Cursor::new(bytes.to_vec());
         service
@@ -1347,12 +1305,7 @@ mod tests {
             )
             .unwrap();
         service
-            .complete_upload(
-                "tenant-a",
-                "principal-a",
-                &issued.upload.upload_id,
-                200,
-            )
+            .complete_upload("tenant-a", "principal-a", &issued.upload.upload_id, 200)
             .unwrap()
             .upload
     }
@@ -1486,12 +1439,7 @@ mod tests {
             service_with_inspector(Arc::new(AcceptInspector));
         let completed = upload_and_complete(&service, b"abcd");
         let replay = service
-            .complete_upload(
-                "tenant-a",
-                "principal-a",
-                &completed.upload_id,
-                201,
-            )
+            .complete_upload("tenant-a", "principal-a", &completed.upload_id, 201)
             .unwrap();
         assert_eq!(replay.upload.state, UploadState::StoredUnverified);
         assert!(replay.enqueue_validation);
