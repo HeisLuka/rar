@@ -1,0 +1,210 @@
+name: CORPUS production sweep 01
+
+on:
+  push:
+    branches: [corpus-production-sweep-01]
+    paths:
+      - '.github/workflows/corpus-production-sweep-01.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  internet-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded IA candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/ia/discovery
+          python tools/corpus/internet_archive_pub_seed.py \
+            --rows 25 --pages 4 --max-items 250 --delay 0.15 \
+            --out out/ia/discovery/seed.csv \
+            --containers out/ia/discovery/containers.csv \
+            --summary out/ia/discovery/summary.json
+          cat out/ia/discovery/summary.json
+      - name: Harvest bounded IA candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/ia/discovery/seed.csv \
+            --out out/ia/harvest \
+            --max-files 200 --timeout 25 --max-bytes 104857600 \
+            --max-archive-total-bytes 314572800 --max-archive-members 200 \
+            --per-host-delay 0.1
+      - name: Summarize IA yield and remove raw payloads
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/ia/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "schema":"rar-production-sweep-01-ia",
+            "manifest_rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "source_hosts":len({r.get("source_host","") for r in rows if r.get("source_host")}),
+          }
+          Path("out/ia/yield.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/ia/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-sweep-01-ia
+          path: |
+            out/ia/discovery/**
+            out/ia/harvest/manifest.json
+            out/ia/harvest/manifest.csv
+            out/ia/yield.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  github-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded GitHub-history candidates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/github/discovery
+          python tools/corpus/github_history_pub_seed.py \
+            --repo-file tools/corpus/pub_history_repositories.txt \
+            --search-pages 1 --max-repos 10 --history-depth 1000 \
+            --max-paths-per-repo 100 --max-captures-per-path 2 --max-releases 20 \
+            --out out/github/discovery/seed.csv \
+            --summary out/github/discovery/summary.json
+          cat out/github/discovery/summary.json
+      - name: Harvest bounded GitHub-history candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/github/discovery/seed.csv \
+            --out out/github/harvest \
+            --max-files 200 --timeout 25 --max-bytes 104857600 --per-host-delay 0.05
+      - name: Summarize GitHub-history yield and remove raw payloads
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/github/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "schema":"rar-production-sweep-01-github-history",
+            "manifest_rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "source_hosts":len({r.get("source_host","") for r in rows if r.get("source_host")}),
+          }
+          Path("out/github/yield.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/github/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-sweep-01-github-history
+          path: |
+            out/github/discovery/**
+            out/github/harvest/manifest.json
+            out/github/harvest/manifest.csv
+            out/github/yield.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  forum-support:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded forum/support candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/forum
+          python tools/corpus/forum_pub_locator.py \
+            --registry tools/corpus/forum_sources.csv \
+            --max-pages 40 --delay 0.5 \
+            --out out/forum/seed.csv --summary out/forum/summary.json
+          cat out/forum/summary.json
+      - name: Harvest live forum/support candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/forum/seed.csv --out out/forum/live \
+            --max-files 150 --timeout 25 --max-bytes 104857600 --per-host-delay 0.5
+      - name: Expand bounded Wayback fallback
+        run: |
+          set -euo pipefail
+          python tools/corpus/wayback_pub_seed.py \
+            --seed out/forum/seed.csv --max-domains 10 --exact-limit 10 --domain-limit 100 --delay 0.75 \
+            --out out/forum/wayback_seed.csv --summary out/forum/wayback_summary.json
+          python tools/corpus/harvest_pub.py \
+            --seed out/forum/wayback_seed.csv --out out/forum/wayback \
+            --max-files 150 --timeout 25 --max-bytes 104857600 --per-host-delay 0.2
+      - name: Summarize forum/support yield and remove raw payloads
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          rows=[]
+          for name in ("live","wayback"):
+            p=Path(f"out/forum/{name}/manifest.json")
+            if p.exists():
+              rows.extend(json.loads(p.read_text()))
+          summary={
+            "schema":"rar-production-sweep-01-forum",
+            "manifest_rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+          }
+          Path("out/forum/yield.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/forum/live out/forum/wayback -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-sweep-01-forum
+          path: |
+            out/forum/seed.csv
+            out/forum/summary.json
+            out/forum/wayback_seed.csv
+            out/forum/wayback_summary.json
+            out/forum/live/manifest.json
+            out/forum/live/manifest.csv
+            out/forum/wayback/manifest.json
+            out/forum/wayback/manifest.csv
+            out/forum/yield.json
+          if-no-files-found: warn
+          retention-days: 30
