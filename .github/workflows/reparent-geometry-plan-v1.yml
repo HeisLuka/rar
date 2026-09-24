@@ -1,0 +1,29 @@
+name: Reparent Geometry Plan V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/authored_group_geometry_v1.py"
+      - "services/editor-api/group_transform_chain_v1.py"
+      - "services/editor-api/reparent_geometry_plan_v1.py"
+      - "services/editor-api/test_reparent_geometry_plan_v1.py"
+      - ".github/workflows/reparent-geometry-plan-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run exact Reparent geometry tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_reparent_geometry_plan_v1
+      - name: Re-run transform-chain primitive
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_transform_chain_v1
