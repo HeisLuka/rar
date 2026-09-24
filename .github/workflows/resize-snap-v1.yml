@@ -1,0 +1,25 @@
+name: Resize Snap V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/snap_index_v1.py"
+      - "services/editor-api/resize_snap_v1.py"
+      - "services/editor-api/test_resize_snap_v1.py"
+      - ".github/workflows/resize-snap-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run shared snap resolver and resize-edge tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_resize_snap_v1
