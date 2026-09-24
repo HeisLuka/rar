@@ -150,7 +150,7 @@ impl SqliteMigrationRuntime {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl MigrationRuntime for SqliteMigrationRuntime {
     async fn status(&self) -> Result<(), RuntimeError> {
         let report = self.status_report().await.map_err(runtime_error)?;
