@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -30,6 +31,7 @@ except ModuleNotFoundError:
     if _authored_stack_spec is None or _authored_stack_spec.loader is None:
         raise ImportError("cannot load authored_stack_v1 sibling module")
     _authored_stack_module = importlib.util.module_from_spec(_authored_stack_spec)
+    sys.modules[_authored_stack_spec.name] = _authored_stack_module
     _authored_stack_spec.loader.exec_module(_authored_stack_module)
     reorder_authored_lane = _authored_stack_module.reorder_authored_lane
     validate_authored_lane = _authored_stack_module.validate_authored_lane
@@ -51,6 +53,7 @@ except ModuleNotFoundError:
     if _story_range_spec is None or _story_range_spec.loader is None:
         raise ImportError("cannot load story_range_v1 sibling module")
     _story_range_module = importlib.util.module_from_spec(_story_range_spec)
+    sys.modules[_story_range_spec.name] = _story_range_module
     _story_range_spec.loader.exec_module(_story_range_module)
     validate_scalar_sequence_v1 = _story_range_module.validate_scalar_sequence_v1
     validate_story_range_operation_v1 = (
