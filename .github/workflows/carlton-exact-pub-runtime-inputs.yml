@@ -170,7 +170,7 @@ jobs:
           test "$(stat -c %s out/carlton/exact/December-2025.pub)" = "9988608"
           test "$(sha256sum out/carlton/exact/December-2025.pub | awk '{print $1}')" = "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e"
 
-      - name: Extract CFB stream inventory and exact Contents streams
+      - name: Extract root Contents and Quill Contents separately
         shell: bash
         run: |
           set -euo pipefail
@@ -195,21 +195,111 @@ jobs:
                       if parts[-1].lower() != "contents":
                           continue
                       data = ole.openstream(parts).read()
-                      out = root / f"{label}-Contents.bin"
+                      ole_path = "/".join(parts)
+                      if parts == ["Contents"]:
+                          artifact_name = f"{label}-Main-Contents.bin"
+                      else:
+                          safe = "-".join(parts).replace(" ", "_")
+                          artifact_name = f"{label}-{safe}.bin"
+                      out = root / artifact_name
                       out.write_bytes(data)
                       manifest["contents"].append({
-                          "ole_path": "/".join(parts),
+                          "ole_path": ole_path,
                           "size": len(data),
                           "sha256": hashlib.sha256(data).hexdigest(),
-                          "artifact_file": out.name,
+                          "artifact_file": artifact_name,
                       })
+                  if not any(x["ole_path"] == "Contents" for x in manifest["contents"]):
+                      raise SystemExit(f"{pub}: root Contents stream missing")
                   (root / f"{label}-cfb-manifest.json").write_text(
                       json.dumps(manifest, indent=2, sort_keys=True) + "\n",
                       encoding="utf-8",
                   )
-                  if not manifest["contents"]:
-                      raise SystemExit(f"{pub}: no Contents stream")
                   print(pub.name, manifest["contents"])
+          PY
+
+      - name: Locate exact PlcCmob wire in root Contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import struct
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          specs = [
+              ("March-2026", 9, 232),
+              ("December-2025", 21, 520),
+          ]
+
+          def validate(raw, n):
+              if len(raw) != 16 + 24 * n:
+                  return None
+              if raw[0:2] != b"\x01\x20":
+                  return None
+              if struct.unpack_from("<I", raw, 2)[0] != n:
+                  return None
+              if raw[6:8] != b"\x02\xA0":
+                  return None
+              if struct.unpack_from("<I", raw, 8)[0] != len(raw) - 8:
+                  return None
+              rows = []
+              for i in range(n):
+                  off = 16 + 24 * i
+                  if raw[off:off+2] != b"\x00\x88":
+                      return None
+                  if struct.unpack_from("<I", raw, off + 2)[0] != 22:
+                      return None
+                  if raw[off+6:off+8] != b"\x01\x20":
+                      return None
+                  if raw[off+12:off+14] != b"\x02\x20":
+                      return None
+                  if raw[off+18:off+20] != b"\x03\x68":
+                      return None
+                  rows.append({
+                      "source_order": i,
+                      "cmo_id": struct.unpack_from("<I", raw, off + 8)[0],
+                      "target_qsid": struct.unpack_from("<I", raw, off + 14)[0],
+                      "carrier_ohpo": struct.unpack_from("<I", raw, off + 20)[0],
+                  })
+              return rows
+
+          all_results = {}
+          for label, n, expected_size in specs:
+              data = (root / f"{label}-Main-Contents.bin").read_bytes()
+              prefix = b"\x01\x20" + struct.pack("<I", n) + b"\x02\xA0"
+              candidates = []
+              start = 0
+              while True:
+                  pos = data.find(prefix, start)
+                  if pos < 0:
+                      break
+                  raw = data[pos:pos + expected_size]
+                  rows = validate(raw, n)
+                  candidates.append({
+                      "offset": pos,
+                      "valid": rows is not None,
+                      "rows": rows,
+                      "sha256": hashlib.sha256(raw).hexdigest() if len(raw) == expected_size else None,
+                  })
+                  start = pos + 1
+              valid = [x for x in candidates if x["valid"]]
+              print(label, "prefix_candidates=", len(candidates), "valid=", len(valid))
+              for item in valid:
+                  print(label, "VALID", item)
+              all_results[label] = {"candidates": candidates}
+              if len(valid) == 1:
+                  pos = valid[0]["offset"]
+                  raw = data[pos:pos + expected_size]
+                  (root / f"{label}-PlcCmob.bin").write_bytes(raw)
+                  (root / f"{label}-PlcCmob.hex").write_text(raw.hex() + "\n", encoding="ascii")
+
+          (root / "plccmob-wire-scan.json").write_text(
+              json.dumps(all_results, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
           PY
 
       - name: Upload exact runtime inputs
