@@ -294,6 +294,7 @@ def build_receipt(value: Any) -> dict[str, Any]:
     host_height = input_value["host"]["height_emu"]
 
     used_height = 0
+    pending_text_height = 0
     visible_slots: list[dict[str, Any]] = []
     first_nonfitting_index: int | None = None
     first_nonfitting_kind: str | None = None
@@ -313,6 +314,11 @@ def build_receipt(value: Any) -> dict[str, Any]:
                 failure_reason = "height"
                 break
             used_height = next_height
+            pending_text_height = checked_add(
+                pending_text_height,
+                item["height_emu"],
+                "intervening shaped-line height",
+            )
             continue
 
         width_fits = item["intrinsic_width_emu"] <= host_width
@@ -352,6 +358,7 @@ def build_receipt(value: Any) -> dict[str, Any]:
                 "carrier_node_id": item["carrier_node_id"],
                 "carrier_story_id": item["carrier_story_id"],
                 "instance_id": instance_id,
+                "preceding_text_height_emu": pending_text_height,
                 "used_height_before_emu": used_height,
                 "used_height_after_emu": next_height,
                 "intrinsic_width_emu": item["intrinsic_width_emu"],
@@ -363,6 +370,7 @@ def build_receipt(value: Any) -> dict[str, Any]:
             }
         )
         used_height = next_height
+        pending_text_height = 0
 
     items = input_value["items"]
     if first_nonfitting_index is None:
