@@ -7,6 +7,7 @@ on:
       - "apps/chaptera-server/**"
       - "docs/cloud-server-runtime-v1.md"
       - "tools/run_cloud_server_runtime_receipt.py"
+      - "tools/run_cloud_migration_receipt.py"
       - ".github/workflows/cloud-server-runtime.yml"
   workflow_dispatch:
 
@@ -112,4 +113,18 @@ jobs:
         with:
           name: cloud-server-runtime-01-receipt
           path: target/cloud-server-runtime-01/receipt.json
+          if-no-files-found: error
+
+      - name: Exercise operator migration surface
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: >-
+          python tools/run_cloud_migration_receipt.py
+          --binary ./target/debug/chaptera
+          --out target/cloud-migration-01
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-migration-01-receipt
+          path: target/cloud-migration-01/
           if-no-files-found: error
