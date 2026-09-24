@@ -1,11 +1,13 @@
 use std::{
-    fmt,
-    io::{self, Read, Write},
+    fmt, io,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -141,7 +143,7 @@ pub trait BlobProvider: Send + Sync {
         &self,
         object_locator: &str,
         expected_byte_len: u64,
-        input: &mut (dyn Read + Send),
+        input: Box<dyn AsyncRead + Unpin + Send>,
     ) -> Result<ProviderObjectMetadata, ProviderError>;
 
     async fn head_exact(
@@ -153,7 +155,7 @@ pub trait BlobProvider: Send + Sync {
         &self,
         object_locator: &str,
         generation: &str,
-    ) -> Result<Box<dyn Read + Send>, ProviderError>;
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, ProviderError>;
 
     async fn delete_exact(
         &self,
@@ -293,7 +295,7 @@ impl BlobStoreService {
     pub async fn create_canonical_binding(
         &self,
         request: CreateBindingRequest,
-        input: &mut (dyn Read + Send),
+        input: &mut (dyn AsyncRead + Unpin + Send),
     ) -> Result<ResourceBinding, BlobStoreError> {
         validate_create_request(&request)?;
 
@@ -318,24 +320,41 @@ impl BlobStoreService {
         );
 
         let mut hashing = HashingBoundedReader::new(input, request.byte_len);
-        let create_result = self
-            .provider
-            .create_immutable(&object_locator, request.byte_len, &mut hashing)
-            .await;
+        let (mut upload_writer, upload_reader) = tokio::io::duplex(COPY_BUFFER_BYTES);
+        let create = self.provider.create_immutable(
+            &object_locator,
+            request.byte_len,
+            Box::new(upload_reader),
+        );
+        let pump = async {
+            tokio::io::copy(&mut hashing, &mut upload_writer)
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))?;
+            upload_writer
+                .shutdown()
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))
+        };
+        let (create_result, pump_result) = tokio::join!(create, pump);
 
         let metadata = match create_result {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => self
-                .provider
-                .head_exact(&object_locator)
-                .await
-                .map_err(provider_error)?
-                .ok_or_else(|| {
-                    BlobStoreError::new(
-                        "provider_unknown_unreconciled",
-                        "create outcome is unknown and exact object is absent",
-                    )
-                })?,
+            Ok(metadata) => {
+                pump_result?;
+                metadata
+            }
+            Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => {
+                pump_result?;
+                self.provider
+                    .head_exact(&object_locator)
+                    .await
+                    .map_err(provider_error)?
+                    .ok_or_else(|| {
+                        BlobStoreError::new(
+                            "provider_unknown_unreconciled",
+                            "create outcome is unknown and exact object is absent",
+                        )
+                    })?
+            }
             Err(error) if error.kind == ProviderErrorKind::AlreadyExists => {
                 return Err(BlobStoreError::new(
                     "physical_key_collision",
@@ -392,7 +411,7 @@ impl BlobStoreService {
         &self,
         tenant_id: &str,
         binding_id: &str,
-        output: &mut dyn Write,
+        output: &mut (dyn AsyncWrite + Unpin + Send),
     ) -> Result<u64, BlobStoreError> {
         require_ident(tenant_id, "tenant_id")?;
         require_ident(binding_id, "binding_id")?;
@@ -650,7 +669,7 @@ impl BlobStoreService {
                 "provider object length differs from durable metadata",
             ));
         }
-        let mut sink = io::sink();
+        let mut sink = tokio::io::sink();
         self.copy_and_verify(physical, &mut sink).await?;
         Ok(())
     }
@@ -658,7 +677,7 @@ impl BlobStoreService {
     async fn copy_and_verify(
         &self,
         physical: &PhysicalBlobRecord,
-        output: &mut dyn Write,
+        output: &mut (dyn AsyncWrite + Unpin + Send),
     ) -> Result<u64, BlobStoreError> {
         let reader = self
             .provider
@@ -670,12 +689,14 @@ impl BlobStoreService {
         loop {
             let count = reader
                 .read(&mut buffer)
+                .await
                 .map_err(|error| BlobStoreError::new("blob_read_failed", error.to_string()))?;
             if count == 0 {
                 break;
             }
             output
                 .write_all(&buffer[..count])
+                .await
                 .map_err(|error| BlobStoreError::new("blob_output_failed", error.to_string()))?;
         }
         reader.require_exact_eof(physical.byte_len)?;
@@ -804,7 +825,7 @@ fn provider_error(error: ProviderError) -> BlobStoreError {
 }
 
 struct HashingBoundedReader<'a> {
-    inner: &'a mut (dyn Read + Send),
+    inner: &'a mut (dyn AsyncRead + Unpin + Send),
     max_bytes: u64,
     bytes_read: u64,
     saw_eof: bool,
@@ -812,7 +833,7 @@ struct HashingBoundedReader<'a> {
 }
 
 impl<'a> HashingBoundedReader<'a> {
-    fn new(inner: &'a mut (dyn Read + Send), max_bytes: u64) -> Self {
+    fn new(inner: &'a mut (dyn AsyncRead + Unpin + Send), max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
@@ -837,40 +858,61 @@ impl<'a> HashingBoundedReader<'a> {
     }
 }
 
-impl Read for HashingBoundedReader<'_> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let remaining = self.max_bytes.saturating_sub(self.bytes_read);
+impl AsyncRead for HashingBoundedReader<'_> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if buffer.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let remaining = this.max_bytes.saturating_sub(this.bytes_read);
         let allowed = usize::try_from(remaining.saturating_add(1))
             .unwrap_or(usize::MAX)
-            .min(buffer.len());
+            .min(buffer.remaining());
         if allowed == 0 {
-            return Err(io::Error::new(
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "blob write exceeds expected length",
-            ));
+            )));
         }
-        let count = self.inner.read(&mut buffer[..allowed])?;
-        if count == 0 {
-            self.saw_eof = true;
-            return Ok(0);
-        }
-        self.bytes_read = self
-            .bytes_read
-            .checked_add(count as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
-        if self.bytes_read > self.max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "blob write exceeds expected length",
-            ));
-        }
-        self.hasher.update(&buffer[..count]);
-        Ok(count)
+
+        let count = {
+            let initialized = buffer.initialize_unfilled_to(allowed);
+            let mut limited = ReadBuf::new(initialized);
+            match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {
+                    let count = limited.filled().len();
+                    if count == 0 {
+                        this.saw_eof = true;
+                        return Poll::Ready(Ok(()));
+                    }
+                    this.bytes_read =
+                        this.bytes_read.checked_add(count as u64).ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
+                        })?;
+                    if this.bytes_read > this.max_bytes {
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "blob write exceeds expected length",
+                        )));
+                    }
+                    this.hasher.update(limited.filled());
+                    count
+                }
+            }
+        };
+        buffer.advance(count);
+        Poll::Ready(Ok(()))
     }
 }
 
 struct HashingOwnedReader {
-    inner: Box<dyn Read + Send>,
+    inner: Box<dyn AsyncRead + Unpin + Send>,
     max_bytes: u64,
     bytes_read: u64,
     saw_eof: bool,
@@ -878,7 +920,7 @@ struct HashingOwnedReader {
 }
 
 impl HashingOwnedReader {
-    fn new(inner: Box<dyn Read + Send>, max_bytes: u64) -> Self {
+    fn new(inner: Box<dyn AsyncRead + Unpin + Send>, max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
@@ -903,35 +945,56 @@ impl HashingOwnedReader {
     }
 }
 
-impl Read for HashingOwnedReader {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let remaining = self.max_bytes.saturating_sub(self.bytes_read);
+impl AsyncRead for HashingOwnedReader {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if buffer.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let remaining = this.max_bytes.saturating_sub(this.bytes_read);
         let allowed = usize::try_from(remaining.saturating_add(1))
             .unwrap_or(usize::MAX)
-            .min(buffer.len());
+            .min(buffer.remaining());
         if allowed == 0 {
-            return Err(io::Error::new(
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "blob read exceeds authorized length",
-            ));
+            )));
         }
-        let count = self.inner.read(&mut buffer[..allowed])?;
-        if count == 0 {
-            self.saw_eof = true;
-            return Ok(0);
-        }
-        self.bytes_read = self
-            .bytes_read
-            .checked_add(count as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
-        if self.bytes_read > self.max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "blob read exceeds authorized length",
-            ));
-        }
-        self.hasher.update(&buffer[..count]);
-        Ok(count)
+
+        let count = {
+            let initialized = buffer.initialize_unfilled_to(allowed);
+            let mut limited = ReadBuf::new(initialized);
+            match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {
+                    let count = limited.filled().len();
+                    if count == 0 {
+                        this.saw_eof = true;
+                        return Poll::Ready(Ok(()));
+                    }
+                    this.bytes_read =
+                        this.bytes_read.checked_add(count as u64).ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
+                        })?;
+                    if this.bytes_read > this.max_bytes {
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "blob read exceeds authorized length",
+                        )));
+                    }
+                    this.hasher.update(limited.filled());
+                    count
+                }
+            }
+        };
+        buffer.advance(count);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -950,7 +1013,7 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 mod tests {
     use std::{
         collections::BTreeMap,
-        io::{Cursor, Read},
+        io::Cursor,
         sync::{
             Mutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -1158,11 +1221,12 @@ mod tests {
             &self,
             object_locator: &str,
             expected_byte_len: u64,
-            input: &mut (dyn Read + Send),
+            mut input: Box<dyn AsyncRead + Unpin + Send>,
         ) -> Result<ProviderObjectMetadata, ProviderError> {
             let mut bytes = Vec::new();
             input
                 .read_to_end(&mut bytes)
+                .await
                 .map_err(|_| ProviderError::new(ProviderErrorKind::Other, "read_failed"))?;
             if bytes.len() as u64 != expected_byte_len {
                 return Err(ProviderError::new(
@@ -1222,7 +1286,7 @@ mod tests {
             &self,
             object_locator: &str,
             generation: &str,
-        ) -> Result<Box<dyn Read + Send>, ProviderError> {
+        ) -> Result<Box<dyn AsyncRead + Unpin + Send>, ProviderError> {
             let object = self
                 .objects
                 .lock()
@@ -1476,25 +1540,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn async_hashing_bounded_reader_rejects_one_byte_over_and_under() {
+        let mut over_source = Cursor::new(b"four".to_vec());
+        let mut over = HashingBoundedReader::new(&mut over_source, 3);
+        let mut over_bytes = Vec::new();
+        let error = over.read_to_end(&mut over_bytes).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let mut under_source = Cursor::new(b"two".to_vec());
+        let mut under = HashingBoundedReader::new(&mut under_source, 4);
+        let mut under_bytes = Vec::new();
+        under.read_to_end(&mut under_bytes).await.unwrap();
+        let error = under.require_exact_eof(4).unwrap_err();
+        assert_eq!(error.code, "blob_length_mismatch");
+    }
+
+    #[tokio::test]
+    async fn async_hashing_owned_reader_rejects_one_byte_over_and_under() {
+        let mut over = HashingOwnedReader::new(Box::new(Cursor::new(b"four".to_vec())), 3);
+        let mut over_bytes = Vec::new();
+        let error = over.read_to_end(&mut over_bytes).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let mut under = HashingOwnedReader::new(Box::new(Cursor::new(b"two".to_vec())), 4);
+        let mut under_bytes = Vec::new();
+        under.read_to_end(&mut under_bytes).await.unwrap();
+        let error = under.require_exact_eof(4).unwrap_err();
+        assert_eq!(error.code, "blob_length_mismatch");
+    }
+
+    #[tokio::test]
     async fn provider_create_only_rejects_same_key_overwrite() {
         let provider = FakeProvider::new(capabilities());
         let locator = "quarantine/tenant-a/upload-1";
-        let mut first = Cursor::new(b"one".to_vec());
+        let first = Cursor::new(b"one".to_vec());
         provider
-            .create_immutable(locator, 3, &mut first)
+            .create_immutable(locator, 3, Box::new(first))
             .await
             .unwrap();
 
-        let mut second = Cursor::new(b"two".to_vec());
+        let second = Cursor::new(b"two".to_vec());
         let error = provider
-            .create_immutable(locator, 3, &mut second)
+            .create_immutable(locator, 3, Box::new(second))
             .await
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::AlreadyExists);
 
         let mut read = provider.open_read(locator, "generation-1").await.unwrap();
         let mut bytes = Vec::new();
-        read.read_to_end(&mut bytes).unwrap();
+        read.read_to_end(&mut bytes).await.unwrap();
         assert_eq!(bytes, b"one");
     }
 }
