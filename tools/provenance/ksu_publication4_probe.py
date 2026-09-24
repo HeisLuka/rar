@@ -37,7 +37,7 @@ def wayback(pattern):
       "filter":"statuscode:200","collapse":"digest","limit":"2000"
     }
     u="https://web.archive.org/cdx/search/cdx?"+urllib.parse.urlencode(params)
-    r=get(u,60)
+    r=get(u,20)
     rows=[]
     if r["status"]==200:
         try:
