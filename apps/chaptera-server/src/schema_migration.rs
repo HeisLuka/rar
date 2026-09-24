@@ -9,7 +9,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{
     Connection, Row, SqliteConnection, raw_sql,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+    sqlite::{SqliteConnectOptions, SqliteSynchronous},
 };
 
 use crate::{db::MigrationRuntime, runtime_error::RuntimeError};
@@ -426,10 +426,15 @@ async fn connect(
     busy_timeout: Duration,
     create_if_missing: bool,
 ) -> Result<SqliteConnection, MigrationError> {
+    // Do not assert journal_mode on every migration connection.
+    // WAL is persistent once configured, and reasserting it is a lock-taking
+    // PRAGMA that can race another migrator before BEGIN IMMEDIATE gets a
+    // chance to serialize the writers. Migration correctness only requires
+    // the transaction lock below; runtime stores may configure WAL when they
+    // open the database after the operator migration step.
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(create_if_missing)
-        .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
         .foreign_keys(true)
         .busy_timeout(busy_timeout);
@@ -644,20 +649,46 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_migrate_up_has_one_serialized_history() {
-        let path = temp_db("concurrent");
-        let left = SqliteMigrationRuntime::new(&path, Duration::from_secs(5)).unwrap();
-        let right = left.clone();
+        for attempt in 0..16 {
+            let path = temp_db(&format!("concurrent-{attempt}"));
+            let left = SqliteMigrationRuntime::new(&path, Duration::from_secs(5)).unwrap();
+            let right = left.clone();
 
-        let (left, right) = tokio::join!(left.migrate_up(), right.migrate_up());
-        assert_eq!(left.unwrap().state, "current");
-        assert_eq!(right.unwrap().state, "current");
+            let (left, right) = tokio::join!(left.migrate_up(), right.migrate_up());
+            assert_eq!(left.unwrap().state, "current");
+            assert_eq!(right.unwrap().state, "current");
 
-        let final_report = SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
-            .unwrap()
-            .status_report()
+            let final_report = SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+                .unwrap()
+                .status_report()
+                .await
+                .unwrap();
+            assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5]);
+
+            cleanup(&path);
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_connection_preserves_existing_wal_mode() {
+        let path = temp_db("preserve-wal");
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(Duration::from_secs(2));
+        let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+        drop(connection);
+
+        let runtime = SqliteMigrationRuntime::new(&path, Duration::from_secs(2)).unwrap();
+        runtime.migrate_up().await.unwrap();
+
+        connection = connect(&path, Duration::from_secs(2), false).await.unwrap();
+        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&mut connection)
             .await
             .unwrap();
-        assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5]);
+        assert_eq!(mode.to_ascii_lowercase(), "wal");
 
         cleanup(&path);
     }
