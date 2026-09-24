@@ -134,6 +134,21 @@ def validate_rotate_node_quarter_intent_v1(command: object) -> None:
         raise RotateQuarterError("full-turn/no-op rotation is not a durable edit")
 
 
+def authored_bounds_center_v1(bounds: dict) -> dict[str, str]:
+    try:
+        validate_rect_emu_v1(bounds, "rotate target bounds")
+    except ValueError as exc:
+        raise RotateQuarterError(str(exc)) from exc
+    return {
+        "x": _format_exact_half(
+            Fraction(bounds["x"]) + Fraction(bounds["width"], 2)
+        ),
+        "y": _format_exact_half(
+            Fraction(bounds["y"]) + Fraction(bounds["height"], 2)
+        ),
+    }
+
+
 def _affine_fractions(value: dict[str, str]) -> tuple[Fraction, ...]:
     return tuple(Fraction(value[field]) for field in ("a", "b", "c", "d", "tx", "ty"))
 
@@ -212,10 +227,7 @@ def apply_rotate_node_quarter_v1(
         raise RotateQuarterError("source-backed rotate targets are unsupported")
 
     bounds = entity.get("bounds")
-    try:
-        validate_rect_emu_v1(bounds, "rotate target bounds")
-    except ValueError as exc:
-        raise RotateQuarterError(str(exc)) from exc
+    pivot = authored_bounds_center_v1(bounds)
 
     before = canonical_entity_affine_v1(entity.get("transform"))
     expected_before = validate_affine_v1(
@@ -225,8 +237,8 @@ def apply_rotate_node_quarter_v1(
     if before != expected_before:
         raise RotateQuarterError("rotate target transform changed since expected_before")
 
-    pivot_x = Fraction(bounds["x"]) + Fraction(bounds["width"], 2)
-    pivot_y = Fraction(bounds["y"]) + Fraction(bounds["height"], 2)
+    pivot_x = Fraction(pivot["x"])
+    pivot_y = Fraction(pivot["y"])
     canonical_turns = command["quarter_turns"] % 4
     turn = _quarter_turn_about_center(
         pivot_x=pivot_x,
@@ -247,10 +259,7 @@ def apply_rotate_node_quarter_v1(
         "before": before,
         "after": after,
         "pivot_policy": "authored_bounds_center",
-        "pivot": {
-            "x": _format_exact_half(pivot_x),
-            "y": _format_exact_half(pivot_y),
-        },
+        "pivot": pivot,
         "quarter_turns": canonical_turns,
     }
     resulting.setdefault("operations", []).append(copy.deepcopy(operation))
