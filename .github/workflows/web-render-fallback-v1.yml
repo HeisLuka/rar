@@ -1,0 +1,36 @@
+name: Web Render Fallback V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/render-fallback-v1.mjs"
+      - "apps/web/render-fallback-v1.test.mjs"
+      - "apps/web/render-v1.mjs"
+      - "apps/web/render-v1.test.mjs"
+      - "tools/run_web_render_fallback_receipt.mjs"
+      - ".github/workflows/web-render-fallback-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run fallback state-machine tests
+        run: node --test apps/web/render-fallback-v1.test.mjs
+      - name: Re-run renderer pure contract
+        run: node --test apps/web/render-v1.test.mjs
+      - name: Emit fallback receipt
+        run: node tools/run_web_render_fallback_receipt.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-render-fallback-${{ github.run_id }}
+          path: target/web-render-fallback/receipt.json
+          if-no-files-found: error
