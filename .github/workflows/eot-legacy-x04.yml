@@ -1,0 +1,97 @@
+name: EOT-LEGACY-01 X04 census
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/eot-legacy-x04.yml"
+      - "tools/eot-legacy/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eot-legacy-x04-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  x04-census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      X04_URL: https://archive.org/download/X04-91055/1999-07_X04-91055_X04-91055_O9PB.7z
+      X04_SHA256: 84a2fa2fd1e2b8e53854aeda69ad07bf3163f23e2f395f4c56afe28651e8f797
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded classifier dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full xxd mdf2iso
+          python -m pip install "olefile==0.47"
+
+      - name: Validate classifier
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/eot-legacy/classify_x04.py
+          python tools/eot-legacy/classify_x04.py --self-test
+          bash -n tools/eot-legacy/extract_candidate.sh
+
+      - name: Download exact public X04 transport
+        run: |
+          set -euo pipefail
+          mkdir -p target/eot-legacy/private target/eot-legacy/public
+          curl --fail --location --retry 5 --retry-all-errors             --connect-timeout 30 --max-time 2400             "$X04_URL" -o target/eot-legacy/private/x04.7z
+          actual="$(sha256sum target/eot-legacy/private/x04.7z | awk '{print $1}')"
+          test "$actual" = "$X04_SHA256"
+          size="$(stat -c %s target/eot-legacy/private/x04.7z)"
+          X04_ACTUAL="$actual" X04_SIZE="$size" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path("target/eot-legacy/public/source-receipt.json").write_text(
+              json.dumps({
+                  "schema": "pub-eot-x04-source.v1",
+                  "source": "Internet Archive X04-91055 / Publisher 2000 media transport",
+                  "transport_sha256": os.environ["X04_ACTUAL"],
+                  "transport_size": int(os.environ["X04_SIZE"]),
+                  "raw_payload_published": False,
+              }, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Recover PUB candidates
+        run: |
+          set -euo pipefail
+          bash tools/eot-legacy/extract_candidate.sh             target/eot-legacy/private/x04.7z             target/eot-legacy/private
+
+      - name: Run fail-soft 0x22 EOT census
+        run: |
+          set -euo pipefail
+          python tools/eot-legacy/classify_x04.py             --pub-root target/eot-legacy/private/pubs             --out target/eot-legacy/public/classification.json
+          cat target/eot-legacy/public/classification.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guard public evidence boundary
+        if: always()
+        run: |
+          set -euo pipefail
+          bad="$(find target/eot-legacy/public -type f \(             -iname '*.pub' -o -iname '*.puz' -o -iname '*.cab' -o             -iname '*.eot' -o -iname '*.ttf' -o -iname '*.otf' -o             -iname '*.exe' -o -iname '*.zip' -o -iname '*.7z' -o -iname '*.rar'           \) -print)"
+          if [[ -n "$bad" ]]; then
+            echo "$bad" >&2
+            echo "refusing raw publication/font/container upload" >&2
+            exit 4
+          fi
+
+      - name: Upload derived evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eot-legacy-x04-${{ github.run_id }}
+          path: target/eot-legacy/public/**
+          if-no-files-found: error
+          retention-days: 90
