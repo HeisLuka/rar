@@ -1,0 +1,135 @@
+{
+  "schema_version": "0.1",
+  "document": {
+    "schema_version": "0.1",
+    "source": {
+      "format": "pub",
+      "format_version": "0x2c",
+      "source_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "byte_len": 654321
+    },
+    "pages": [
+      {
+        "index": 1,
+        "id": "11000000-0000-4000-8000-000000000001",
+        "width_emu": 7772400,
+        "height_emu": 10058400
+      }
+    ],
+    "stories": [
+      {
+        "id": "31000000-0000-4000-8000-000000000001",
+        "text": "Bounded text overlay"
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "viewer.visual.geometry_only",
+        "severity": "fidelity_warning",
+        "message": "Only bounded source-neutral overlays are available."
+      }
+    ]
+  },
+  "scene": {
+    "environment": {
+      "engine_revision": "viewer-geometry-v0.1",
+      "font_set_fingerprint": "fonts:not-consumed:geometry-only",
+      "resource_fingerprint": "resources:bounded-overlay"
+    },
+    "surfaces": [
+      {
+        "origin": "11000000-0000-4000-8000-000000000001",
+        "size": {
+          "width": 7772400,
+          "height": 10058400
+        },
+        "bleed": null,
+        "margins": null
+      }
+    ],
+    "nodes": [
+      {
+        "origin": "21000000-0000-4000-8000-000000000001",
+        "parent_origin": "11000000-0000-4000-8000-000000000001",
+        "bounds": {
+          "x": 914400,
+          "y": 914400,
+          "width": 3600000,
+          "height": 900000
+        },
+        "transform": {
+          "a": "1",
+          "b": "0",
+          "c": "0",
+          "d": "1",
+          "tx": 0,
+          "ty": 0
+        }
+      },
+      {
+        "origin": "21000000-0000-4000-8000-000000000002",
+        "parent_origin": "11000000-0000-4000-8000-000000000001",
+        "bounds": {
+          "x": 914400,
+          "y": 2200000,
+          "width": 2800000,
+          "height": 2100000
+        },
+        "transform": {
+          "a": "1",
+          "b": "0",
+          "c": "0",
+          "d": "1",
+          "tx": 0,
+          "ty": 0
+        }
+      },
+      {
+        "origin": "21000000-0000-4000-8000-000000000003",
+        "parent_origin": "11000000-0000-4000-8000-000000000001",
+        "bounds": {
+          "x": 4300000,
+          "y": 2200000,
+          "width": 1200000,
+          "height": 800000
+        },
+        "transform": {
+          "a": "1",
+          "b": "0",
+          "c": "0",
+          "d": "1",
+          "tx": 0,
+          "ty": 0
+        }
+      }
+    ],
+    "origin_mapping": [],
+    "diagnostics": []
+  },
+  "story_frames": [
+    {
+      "story_id": "31000000-0000-4000-8000-000000000001",
+      "frame_id": "21000000-0000-4000-8000-000000000001",
+      "ordinal": 0
+    }
+  ],
+  "paints": [
+    {
+      "node_id": "21000000-0000-4000-8000-000000000003",
+      "solid_fill_rgb": [32, 96, 192],
+      "solid_line": {
+        "rgb": [0, 0, 0],
+        "width_emu": 12700
+      }
+    }
+  ],
+  "images": [
+    {
+      "resource_id": "41000000-0000-4000-8000-000000000001",
+      "mime": "image/png",
+      "node_ids": [
+        "21000000-0000-4000-8000-000000000002"
+      ]
+    }
+  ]
+}
