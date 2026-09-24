@@ -1,0 +1,38 @@
+name: Editor Project Asset Registry V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/editor_project_asset_registry_v1.py"
+      - "services/editor-api/test_editor_project_asset_registry_v1.py"
+      - "services/editor-api/run_editor_project_asset_registry_receipt.py"
+      - "services/editor-api/image_asset_intrinsic_v1.py"
+      - ".github/workflows/editor-project-asset-registry-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run generic EditorProject asset registry tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_editor_project_asset_registry_v1
+      - name: Re-run intrinsic metadata primitive
+        working-directory: services/editor-api
+        run: python -m unittest -v test_image_asset_intrinsic_v1
+      - name: Emit operation-reachability/replay receipt
+        working-directory: services/editor-api
+        run: mkdir -p ../../target/editor-project-assets && python run_editor_project_asset_registry_receipt.py | tee ../../target/editor-project-assets/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-project-assets-${{ github.run_id }}
+          path: target/editor-project-assets/receipt.json
+          if-no-files-found: error
