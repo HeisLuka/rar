@@ -7,10 +7,8 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
-import time
 import zipfile
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,13 +16,15 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+import olefile
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import harvest_pub  # type: ignore
 import govdocs1_remote_zip_pub as govdocs  # type: ignore
 
-SCHEMA = "rar-corpus-structural-novelty/v1"
-UA = "rar-corpus-structural-novelty/1.0"
+SCHEMA = "rar-corpus-cfb-structural-novelty/v1"
+UA = "rar-corpus-cfb-structural-novelty/1.0"
 SOURCE_PRIORITY = {
     "positive_domain": 0,
     "github_history": 1,
@@ -41,6 +41,14 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def hash_lines(lines) -> str:
+    h = hashlib.sha256()
+    for line in lines:
+        h.update(str(line).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 def download_artifact(repo: str, artifact_id: int, token: str, dest: Path) -> None:
     url = f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
     headers = {
@@ -54,7 +62,7 @@ def download_artifact(repo: str, artifact_id: int, token: str, dest: Path) -> No
     with urlopen(req, timeout=60) as resp:
         data = resp.read(64 * 1024 * 1024 + 1)
     if len(data) > 64 * 1024 * 1024:
-        raise ValueError(f"artifact {artifact_id} exceeds 64 MiB manifest-artifact cap")
+        raise ValueError(f"artifact {artifact_id} exceeds 64 MiB cap")
     dest.write_bytes(data)
 
 
@@ -81,7 +89,7 @@ def rows_from_json(path: Path) -> list[dict]:
 
 
 def complete_cfb_rows(root: Path) -> list[dict]:
-    rows: list[dict] = []
+    rows = []
     for p in root.rglob("*.json"):
         for row in rows_from_json(p):
             if row.get("classification") != "cfb_publisher_hint":
@@ -99,17 +107,16 @@ def load_ledger(config_path: Path, work: Path) -> tuple[dict[str, dict], dict]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     token = os.environ.get("GITHUB_TOKEN", "")
     repo = config["repository"]
+    source_cfg = {x["name"]: x for x in config["sources"]}
+    source_counts = {}
     by_sha: dict[str, dict] = {}
-    source_counts: dict[str, int] = {}
-    source_config = {x["name"]: x for x in config["sources"]}
 
     for source in config["sources"]:
         name = source["name"]
-        artifact_id = int(source["artifact_id"])
         source_dir = work / "artifacts" / name
         source_dir.mkdir(parents=True, exist_ok=True)
         archive = work / f"{name}.zip"
-        download_artifact(repo, artifact_id, token, archive)
+        download_artifact(repo, int(source["artifact_id"]), token, archive)
         safe_extract_zip(archive, source_dir)
         rows = complete_cfb_rows(source_dir)
         unique = {str(r["sha256"]).lower() for r in rows}
@@ -128,7 +135,6 @@ def load_ledger(config_path: Path, work: Path) -> tuple[dict[str, dict], dict]:
                     "sources": set(),
                     "filenames": set(),
                     "rows": [],
-                    "deferred": False,
                 },
             )
             item["sources"].add(name)
@@ -145,10 +151,9 @@ def load_ledger(config_path: Path, work: Path) -> tuple[dict[str, dict], dict]:
         item["filenames"] = sorted(item["filenames"])
         item["rows"].sort(key=lambda x: SOURCE_PRIORITY.get(x[0], 99))
         item["deferred"] = all(
-            bool(source_config[name].get("defer_rehydrate", False))
+            bool(source_cfg[name].get("defer_rehydrate", False))
             for name, _ in item["rows"]
         )
-
     return by_sha, {"source_counts": source_counts, "union_count": len(by_sha)}
 
 
@@ -162,16 +167,12 @@ def fetch_direct(row: dict, timeout: float, max_bytes: int) -> bytes:
     return data
 
 
-def fetch_zip_member(
-    row: dict, timeout: float, max_bytes: int, max_archive_bytes: int
-) -> bytes:
+def fetch_zip_member(row: dict, timeout: float, max_bytes: int, max_archive_bytes: int) -> bytes:
     url = str(row.get("parent_archive_url") or row.get("direct_url") or "").strip()
     member = str(row.get("archive_member") or "").strip()
     if not url or not member:
         raise ValueError("archive member coordinates missing")
-    archive, _ = harvest_pub.fetch_with_retries(
-        url, timeout, max_archive_bytes, retries=2
-    )
+    archive, _ = harvest_pub.fetch_with_retries(url, timeout, max_archive_bytes, retries=2)
     with zipfile.ZipFile(io.BytesIO(archive)) as zf:
         info = zf.getinfo(member)
         if info.file_size > max_bytes:
@@ -192,13 +193,7 @@ def fetch_govdocs(row: dict, timeout: float, max_bytes: int) -> bytes:
     return govdocs.fetch_member(url, matches[0], timeout, max_bytes)
 
 
-def rehydrate(
-    name: str,
-    row: dict,
-    timeout: float,
-    max_bytes: int,
-    max_archive_bytes: int,
-) -> bytes:
+def rehydrate(name: str, row: dict, timeout: float, max_bytes: int, max_archive_bytes: int) -> bytes:
     if name == "common_crawl":
         data, _ = harvest_pub.common_crawl_fetch(row, timeout, max_bytes)
         return data
@@ -211,40 +206,86 @@ def rehydrate(
     return fetch_direct(row, timeout, max_bytes)
 
 
-def normalize_error(text: str) -> str:
-    text = re.sub(r"/tmp/[^\s:]+", "<tmp>", text)
-    text = re.sub(r"/home/runner/work/[^\s:]+", "<runner>", text)
-    return text[:800]
+def safe_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return re.sub(r"\s+", " ", str(value)).strip()[:160]
 
 
-def run_probe(probe: Path, pub_path: Path) -> dict:
-    proc = subprocess.run(
-        [str(probe), str(pub_path)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=120,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(normalize_error(proc.stderr or proc.stdout))
-    return json.loads(proc.stdout)
+def size_bucket(n: int) -> int:
+    return 0 if n <= 0 else int(n).bit_length() - 1
 
 
-def scan_one(
-    item: dict,
-    probe: Path,
-    temp_root: Path,
-    timeout: float,
-    max_bytes: int,
-    max_archive_bytes: int,
-) -> dict:
-    sha = item["sha256"]
-    base = {
-        "sha256": sha,
-        "sources": item["sources"],
-        "filenames": item["filenames"],
+def cfb_probe(data: bytes) -> dict:
+    if sha256_bytes(data[:8]) == "":
+        raise AssertionError("unreachable")
+    with olefile.OleFileIO(io.BytesIO(data)) as ole:
+        stream_names = sorted("/" + "/".join(parts) for parts in ole.listdir(streams=True, storages=False))
+        storage_names = sorted("/" + "/".join(parts) for parts in ole.listdir(streams=False, storages=True))
+        streams = []
+        for name in stream_names:
+            parts = [p for p in name.split("/") if p]
+            payload = ole.openstream(parts).read()
+            streams.append(
+                {
+                    "path": name,
+                    "len": len(payload),
+                    "sha256": sha256_bytes(payload),
+                    "size_bucket_log2": size_bucket(len(payload)),
+                }
+            )
+        try:
+            meta = ole.get_metadata()
+            creating_application = safe_text(getattr(meta, "creating_application", ""))
+        except Exception:
+            creating_application = ""
+
+    paths = [x["path"] for x in streams]
+    path_set = set(paths)
+    carriers = {
+        "contents": "/Contents" in path_set,
+        "quill": "/Quill/QuillSub/CONTENTS" in path_set,
+        "escher": "/Escher/EscherStm" in path_set,
+        "escher_delay": "/Escher/EscherDelayStm" in path_set,
     }
+    carrier_count = sum(carriers.values())
+    family_hint = (
+        "publisher_metadata"
+        if "publisher" in creating_application.casefold()
+        else "publisher_stream_topology"
+        if carrier_count >= 2
+        else "cfb_other"
+    )
+
+    return {
+        "schema": SCHEMA,
+        "source_sha256": sha256_bytes(data),
+        "byte_len": len(data),
+        "stream_count": len(streams),
+        "storage_count": len(storage_names),
+        "streams": streams,
+        "carrier_flags": carriers,
+        "carrier_count": carrier_count,
+        "creating_application": creating_application,
+        "family_hint": family_hint,
+        "path_fingerprint_sha256": hash_lines(paths),
+        "topology_fingerprint_sha256": hash_lines(
+            f"{x['path']}\t{x['len']}" for x in streams
+        ),
+        "size_bucket_fingerprint_sha256": hash_lines(
+            f"{x['path']}\t{x['size_bucket_log2']}" for x in streams
+        ),
+        "content_topology_fingerprint_sha256": hash_lines(
+            f"{x['path']}\t{x['len']}\t{x['sha256']}" for x in streams
+        ),
+    }
+
+
+def scan_one(item: dict, timeout: float, max_bytes: int, max_archive_bytes: int) -> dict:
+    sha = item["sha256"]
+    base = {"sha256": sha, "sources": item["sources"], "filenames": item["filenames"]}
     if item["deferred"]:
         return {**base, "status": "deferred_container"}
 
@@ -263,120 +304,75 @@ def scan_one(
             used_source = name
             break
         except Exception as exc:
-            errors.append(
-                f"{name}:{type(exc).__name__}:{normalize_error(str(exc))}"
-            )
+            errors.append(f"{name}:{type(exc).__name__}:{safe_text(exc)}")
     if data is None:
         return {**base, "status": "rehydrate_failed", "errors": errors}
 
-    path = temp_root / f"{sha}.pub"
-    path.write_bytes(data)
     try:
-        first = run_probe(probe, path)
-        second = run_probe(probe, path)
+        first = cfb_probe(data)
+        second = cfb_probe(data)
         if first != second:
             raise RuntimeError("probe_nondeterministic")
-        if first.get("source_sha256") != sha:
+        if first["source_sha256"] != sha:
             raise RuntimeError("probe_source_sha_mismatch")
-        return {
-            **base,
-            "status": "ok",
-            "rehydrated_from": used_source,
-            "byte_len": first.get("byte_len"),
-            "family": first.get("family"),
-            "stream_count": first.get("stream_count"),
-            "topology_fingerprint_sha256": first.get(
-                "topology_fingerprint_sha256"
-            ),
-            "content_topology_fingerprint_sha256": first.get(
-                "content_topology_fingerprint_sha256"
-            ),
-            "structural_base_status": first.get("structural_base_status"),
-            "structural_base_error": first.get("structural_base_error"),
-            "streams": first.get("streams", []),
-            "mature": first.get("mature"),
-        }
+        return {**base, **first, "status": "ok", "rehydrated_from": used_source}
     except Exception as exc:
         return {
             **base,
             "status": "probe_failed",
             "rehydrated_from": used_source,
-            "errors": [normalize_error(str(exc))],
+            "errors": [f"{type(exc).__name__}:{safe_text(exc)}"],
         }
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def scan(args: argparse.Namespace) -> int:
-    out = args.out
-    out.mkdir(parents=True, exist_ok=True)
+    args.out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="rar-novelty-") as td:
-        root = Path(td)
-        ledger, meta = load_ledger(args.sources, root)
+        ledger, meta = load_ledger(args.sources, Path(td))
         items = [ledger[k] for k in sorted(ledger)]
+        deferred_count = sum(x["deferred"] for x in items)
         nondeferred = [x for x in items if not x["deferred"]]
         if args.only_source:
-            nondeferred = [
-                x for x in nondeferred if args.only_source in x["sources"]
-            ]
+            nondeferred = [x for x in nondeferred if args.only_source in x["sources"]]
         selected = [
-            item
-            for idx, item in enumerate(nondeferred)
+            item for idx, item in enumerate(nondeferred)
             if idx % args.shard_count == args.shard_index
         ]
         if args.limit > 0:
             selected = selected[: args.limit]
 
         results = []
-        temp_raw = root / "raw"
-        temp_raw.mkdir()
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = {
                 pool.submit(
-                    scan_one,
-                    item,
-                    args.probe,
-                    temp_raw,
-                    args.timeout,
-                    args.max_bytes,
-                    args.max_archive_bytes,
+                    scan_one, item, args.timeout, args.max_bytes, args.max_archive_bytes
                 ): item["sha256"]
                 for item in selected
             }
             for future in as_completed(futures):
                 result = future.result()
                 results.append(result)
-                print(
-                    f"{result['sha256'][:12]} {result['status']}",
-                    file=sys.stderr,
-                )
+                print(f"{result['sha256'][:12]} {result['status']}", file=sys.stderr)
         results.sort(key=lambda r: r["sha256"])
-
-        (out / "fingerprints.json").write_text(
-            json.dumps(results, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        (args.out / "fingerprints.json").write_text(
+            json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         summary = {
             "schema": SCHEMA,
             "shard_index": args.shard_index,
             "shard_count": args.shard_count,
             "source_union_count": meta["union_count"],
-            "deferred_container_union_count": sum(x["deferred"] for x in items),
-            "nondeferred_union_count": len(nondeferred),
+            "deferred_container_union_count": deferred_count,
+            "nondeferred_union_count": 950 - deferred_count,
             "selected": len(selected),
             "status": dict(Counter(r["status"] for r in results)),
-            "family": dict(
-                Counter(
-                    r.get("family", "")
-                    for r in results
-                    if r.get("family")
-                )
+            "family_hint": dict(
+                Counter(r.get("family_hint", "") for r in results if r.get("family_hint"))
             ),
             "source_counts": meta["source_counts"],
         }
-        (out / "summary.json").write_text(
-            json.dumps(summary, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        (args.out / "summary.json").write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         print(json.dumps(summary, indent=2))
     return 0
@@ -403,110 +399,78 @@ def aggregate(args: argparse.Namespace) -> int:
     by_sha = {r["sha256"]: r for r in rows}
     rows = [by_sha[k] for k in sorted(by_sha)]
 
-    clusters: dict[str, list[dict]] = defaultdict(list)
+    clusters = defaultdict(list)
     for row in rows:
         if row.get("status") != "ok":
             continue
-        mature = row.get("mature") or {}
-        key = mature.get("layout_fingerprint_sha256") or row.get(
-            "topology_fingerprint_sha256"
-        )
+        key = row.get("size_bucket_fingerprint_sha256")
         if key:
             clusters[key].append(row)
 
     cluster_rows = []
     pair_candidates = []
-    for key, members in sorted(
-        clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])
-    ):
+    for key, members in sorted(clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         cluster_rows.append(
             {
                 "fingerprint": key,
                 "size": len(members),
-                "families": dict(
-                    Counter(x.get("family", "") for x in members)
-                ),
-                "sources": sorted(
-                    {s for x in members for s in x.get("sources", [])}
-                ),
+                "family_hints": dict(Counter(x.get("family_hint", "") for x in members)),
+                "sources": sorted({s for x in members for s in x.get("sources", [])}),
                 "sha256": [x["sha256"] for x in members],
             }
         )
-        if 1 < len(members) <= 20:
+        if 1 < len(members) <= 30:
             for i, left in enumerate(members):
-                for right in members[i + 1 :]:
-                    a = normalized_stem(best_name(left))
-                    b = normalized_stem(best_name(right))
-                    similarity = (
-                        SequenceMatcher(None, a, b).ratio()
-                        if a and b
-                        else 0.0
-                    )
-                    if similarity >= 0.65:
+                for right in members[i + 1:]:
+                    a, b = normalized_stem(best_name(left)), normalized_stem(best_name(right))
+                    sim = SequenceMatcher(None, a, b).ratio() if a and b else 0.0
+                    if sim >= 0.65:
                         pair_candidates.append(
                             {
                                 "left_sha256": left["sha256"],
                                 "right_sha256": right["sha256"],
                                 "left_name": best_name(left),
                                 "right_name": best_name(right),
-                                "name_similarity": round(similarity, 4),
+                                "name_similarity": round(sim, 4),
                                 "structural_fingerprint": key,
-                                "sources": sorted(
-                                    set(left.get("sources", []))
-                                    | set(right.get("sources", []))
-                                ),
+                                "sources": sorted(set(left.get("sources", [])) | set(right.get("sources", []))),
                             }
                         )
 
-    status = Counter(r.get("status", "") for r in rows)
-    family = Counter(
-        r.get("family", "") for r in rows if r.get("family")
-    )
-    diagnostic_codes = Counter()
-    shape_types = Counter()
+    carrier_patterns = Counter()
+    applications = Counter()
     for row in rows:
-        mature = row.get("mature") or {}
-        diagnostic_codes.update(
-            mature.get("diagnostic_code_counts") or {}
-        )
-        shape_types.update(mature.get("shape_type_counts") or {})
+        if row.get("status") != "ok":
+            continue
+        flags = row.get("carrier_flags") or {}
+        carrier_patterns["|".join(k for k, v in sorted(flags.items()) if v) or "none"] += 1
+        app = row.get("creating_application") or ""
+        if app:
+            applications[app] += 1
 
     summary = {
         "schema": SCHEMA,
         "analyzed_rows": len(rows),
-        "status": dict(status),
-        "family": dict(family),
+        "status": dict(Counter(r.get("status", "") for r in rows)),
+        "family_hint": dict(Counter(r.get("family_hint", "") for r in rows if r.get("family_hint"))),
         "structural_cluster_count": len(clusters),
-        "singleton_cluster_count": sum(
-            len(v) == 1 for v in clusters.values()
-        ),
-        "multi_member_cluster_count": sum(
-            len(v) > 1 for v in clusters.values()
-        ),
-        "largest_cluster_size": max(
-            (len(v) for v in clusters.values()), default=0
-        ),
+        "singleton_cluster_count": sum(len(v) == 1 for v in clusters.values()),
+        "multi_member_cluster_count": sum(len(v) > 1 for v in clusters.values()),
+        "largest_cluster_size": max((len(v) for v in clusters.values()), default=0),
         "pair_candidate_count": len(pair_candidates),
-        "diagnostic_code_counts": dict(diagnostic_codes),
-        "shape_type_counts": dict(shape_types),
+        "carrier_patterns": dict(carrier_patterns),
+        "creating_application_counts": dict(applications),
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "fingerprints.json").write_text(
-        json.dumps(rows, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    (args.out / "clusters.json").write_text(
-        json.dumps(cluster_rows, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    (args.out / "pair_candidates.json").write_text(
-        json.dumps(pair_candidates, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    (args.out / "summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    for name, value in [
+        ("fingerprints.json", rows),
+        ("clusters.json", cluster_rows),
+        ("pair_candidates.json", pair_candidates),
+        ("summary.json", summary),
+    ]:
+        (args.out / name).write_text(
+            json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -515,29 +479,24 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    scan_p = sub.add_parser("scan")
-    scan_p.add_argument("--sources", type=Path, required=True)
-    scan_p.add_argument("--probe", type=Path, required=True)
-    scan_p.add_argument("--out", type=Path, required=True)
-    scan_p.add_argument("--shard-index", type=int, default=0)
-    scan_p.add_argument("--shard-count", type=int, default=1)
-    scan_p.add_argument("--workers", type=int, default=4)
-    scan_p.add_argument("--limit", type=int, default=0)
-    scan_p.add_argument("--only-source", default="")
-    scan_p.add_argument("--timeout", type=float, default=30.0)
-    scan_p.add_argument("--max-bytes", type=int, default=100 * 1024 * 1024)
-    scan_p.add_argument(
-        "--max-archive-bytes", type=int, default=120 * 1024 * 1024
-    )
+    s = sub.add_parser("scan")
+    s.add_argument("--sources", type=Path, required=True)
+    s.add_argument("--out", type=Path, required=True)
+    s.add_argument("--shard-index", type=int, default=0)
+    s.add_argument("--shard-count", type=int, default=1)
+    s.add_argument("--workers", type=int, default=4)
+    s.add_argument("--limit", type=int, default=0)
+    s.add_argument("--only-source", default="")
+    s.add_argument("--timeout", type=float, default=30.0)
+    s.add_argument("--max-bytes", type=int, default=100 * 1024 * 1024)
+    s.add_argument("--max-archive-bytes", type=int, default=120 * 1024 * 1024)
 
-    agg_p = sub.add_parser("aggregate")
-    agg_p.add_argument("--input", type=Path, required=True)
-    agg_p.add_argument("--out", type=Path, required=True)
+    a = sub.add_parser("aggregate")
+    a.add_argument("--input", type=Path, required=True)
+    a.add_argument("--out", type=Path, required=True)
 
     args = ap.parse_args()
-    if args.cmd == "scan":
-        return scan(args)
-    return aggregate(args)
+    return scan(args) if args.cmd == "scan" else aggregate(args)
 
 
 if __name__ == "__main__":
