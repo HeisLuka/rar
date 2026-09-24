@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::build_info::BUILD_IDENTITY;
@@ -10,6 +12,10 @@ use crate::build_info::BUILD_IDENTITY;
     disable_help_subcommand = true
 )]
 pub struct Cli {
+    /// Load one typed Chaptera TOML configuration file.
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -71,5 +77,22 @@ mod tests {
                 action: MigrateAction::Up
             }
         ));
+    }
+
+    #[test]
+    fn config_flag_is_global() {
+        let cli = Cli::try_parse_from([
+            "chaptera",
+            "serve",
+            "--config",
+            "/etc/chaptera/chaptera.toml",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.config.unwrap(),
+            PathBuf::from("/etc/chaptera/chaptera.toml")
+        );
+        assert!(matches!(cli.command, Command::Serve));
     }
 }
