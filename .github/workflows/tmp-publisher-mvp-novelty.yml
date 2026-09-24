@@ -1,0 +1,156 @@
+name: TEMP Publisher MVP novelty sweep
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/corpus/tmp_publisher_mvp_wayback.py'
+      - '.github/workflows/tmp-publisher-mvp-novelty.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Discover historical Publisher MVP files
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/tmp_publisher_mvp_wayback.py \
+            --out out/seed.csv \
+            --summary out/discovery.json
+          cat out/discovery.json
+
+      - name: Recover archived bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/seed.csv \
+            --out out/harvest \
+            --max-files -1 \
+            --timeout 35 \
+            --max-bytes 104857600 \
+            --per-host-delay 0.15
+
+      - name: Compare against exact current 950-SHA corpus
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import hashlib, io, json, os, shutil, zipfile
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          # Exact artifacts used to materialize the user's current 950-SHA Rar union.
+          artifact_ids = [
+              10808750049,  # direct-0 retry
+              10807797944,  # direct-1
+              10808390771,  # direct-2
+              10807882317,  # direct-3
+              10808417821,  # container-0
+              10807881478,  # container-1
+              10807597565,  # container-2
+          ]
+          token = os.environ['GITHUB_TOKEN']
+          known = set()
+          for aid in artifact_ids:
+              req = Request(
+                  f'https://api.github.com/repos/HeisLuka/rar/actions/artifacts/{aid}/zip',
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'User-Agent': 'rar-novelty-sweep/1.0',
+                  },
+              )
+              with urlopen(req, timeout=120) as r:
+                  payload = r.read()
+              with zipfile.ZipFile(io.BytesIO(payload)) as z:
+                  names = [n for n in z.namelist() if n.endswith('index.json')]
+                  if not names:
+                      raise RuntimeError(f'artifact {aid} has no index.json')
+                  rows = json.loads(z.read(names[0]))
+                  for row in rows:
+                      sha = str(row.get('sha256','')).lower()
+                      if len(sha) == 64:
+                          known.add(sha)
+          if len(known) != 950:
+              raise RuntimeError(f'known corpus reconstruction expected 950 SHA, got {len(known)}')
+
+          manifest = json.loads(Path('out/harvest/manifest.json').read_text(encoding='utf-8'))
+          novel_dir = Path('out/novel')
+          novel_dir.mkdir(parents=True, exist_ok=True)
+          novel = []
+          known_hits = []
+          non_pub = []
+          seen_novel = set()
+          for row in manifest:
+              sha = str(row.get('sha256') or '').lower()
+              status = row.get('fetch_status')
+              classification = row.get('classification')
+              if status != 'ok' or len(sha) != 64:
+                  continue
+              if classification != 'cfb_publisher_hint':
+                  non_pub.append(row)
+                  continue
+              if sha in known:
+                  known_hits.append(row)
+                  continue
+              if sha in seen_novel:
+                  continue
+              stored = str(row.get('stored_path') or '')
+              src = Path('out/harvest') / stored
+              if not src.is_file():
+                  raise RuntimeError(f'missing harvested payload for {sha}: {src}')
+              data = src.read_bytes()
+              actual = hashlib.sha256(data).hexdigest()
+              if actual != sha:
+                  raise RuntimeError(f'SHA mismatch for {src}: manifest={sha} actual={actual}')
+              if not data.startswith(bytes.fromhex('D0CF11E0A1B11AE1')):
+                  raise RuntimeError(f'non-CFB payload promoted as Publisher: {sha}')
+              name = Path(stored).name
+              dst = novel_dir / f'{sha}__{name}'
+              shutil.copyfile(src, dst)
+              rec = dict(row)
+              rec['exported_name'] = dst.name
+              novel.append(rec)
+              seen_novel.add(sha)
+
+          novel.sort(key=lambda r: r['sha256'])
+          known_hits.sort(key=lambda r: (r.get('sha256',''), r.get('candidate_filename','')))
+          Path('out/novel.json').write_text(json.dumps(novel, indent=2, ensure_ascii=False), encoding='utf-8')
+          Path('out/known_hits.json').write_text(json.dumps(known_hits, indent=2, ensure_ascii=False), encoding='utf-8')
+          summary = {
+              'known_corpus_sha': len(known),
+              'harvest_rows': len(manifest),
+              'publisher_rows': sum(1 for r in manifest if r.get('fetch_status') == 'ok' and r.get('classification') == 'cfb_publisher_hint'),
+              'known_sha_hits': len({r.get('sha256') for r in known_hits}),
+              'novel_unique_sha': len(novel),
+              'novel_sha256': [r['sha256'] for r in novel],
+              'novel_original_urls': [r.get('wayback_original_url') for r in novel],
+          }
+          Path('out/summary.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher-mvp-novelty-${{ github.run_id }}
+          path: |
+            out/discovery.json
+            out/seed.csv
+            out/summary.json
+            out/novel.json
+            out/known_hits.json
+            out/novel/**
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
