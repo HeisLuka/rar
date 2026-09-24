@@ -133,30 +133,38 @@ pub struct ProviderGrant {
     pub expires_at_ms: u64,
 }
 
+#[async_trait::async_trait]
 pub trait BlobProvider: Send + Sync {
     fn capabilities(&self) -> ProviderCapabilities;
 
-    fn create_immutable(
+    async fn create_immutable(
         &self,
         object_locator: &str,
         expected_byte_len: u64,
-        input: &mut dyn Read,
+        input: &mut (dyn Read + Send),
     ) -> Result<ProviderObjectMetadata, ProviderError>;
 
-    fn head_exact(
+    async fn head_exact(
         &self,
         object_locator: &str,
     ) -> Result<Option<ProviderObjectMetadata>, ProviderError>;
 
-    fn open_read(
+    async fn open_read(
         &self,
         object_locator: &str,
         generation: &str,
     ) -> Result<Box<dyn Read + Send>, ProviderError>;
 
-    fn delete_exact(&self, object_locator: &str, generation: &str) -> Result<(), ProviderError>;
+    async fn delete_exact(
+        &self,
+        object_locator: &str,
+        generation: &str,
+    ) -> Result<(), ProviderError>;
 
-    fn issue_grant(&self, request: &ProviderGrantRequest) -> Result<ProviderGrant, ProviderError>;
+    async fn issue_grant(
+        &self,
+        request: &ProviderGrantRequest,
+    ) -> Result<ProviderGrant, ProviderError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,10 +290,10 @@ impl BlobStoreService {
         self.provider.capabilities()
     }
 
-    pub fn create_canonical_binding(
+    pub async fn create_canonical_binding(
         &self,
         request: CreateBindingRequest,
-        input: &mut dyn Read,
+        input: &mut (dyn Read + Send),
     ) -> Result<ResourceBinding, BlobStoreError> {
         validate_create_request(&request)?;
 
@@ -294,7 +302,7 @@ impl BlobStoreService {
             &request.content_sha256,
             request.byte_len,
         )? {
-            self.verify_physical_exact(&existing)?;
+            self.verify_physical_exact(&existing).await?;
             return self.bind_existing(&request, &existing);
         }
 
@@ -310,15 +318,17 @@ impl BlobStoreService {
         );
 
         let mut hashing = HashingBoundedReader::new(input, request.byte_len);
-        let create_result =
-            self.provider
-                .create_immutable(&object_locator, request.byte_len, &mut hashing);
+        let create_result = self
+            .provider
+            .create_immutable(&object_locator, request.byte_len, &mut hashing)
+            .await;
 
         let metadata = match create_result {
             Ok(metadata) => metadata,
             Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => self
                 .provider
                 .head_exact(&object_locator)
+                .await
                 .map_err(provider_error)?
                 .ok_or_else(|| {
                     BlobStoreError::new(
@@ -358,7 +368,7 @@ impl BlobStoreService {
             delete_eligible_at_ms: None,
             deleted: false,
         };
-        self.verify_physical_exact(&physical)?;
+        self.verify_physical_exact(&physical).await?;
 
         let binding = ResourceBinding {
             binding_id,
@@ -378,7 +388,7 @@ impl BlobStoreService {
         self.repo.commit_physical_and_binding(physical, binding)
     }
 
-    pub fn stream_binding_verified(
+    pub async fn stream_binding_verified(
         &self,
         tenant_id: &str,
         binding_id: &str,
@@ -407,10 +417,10 @@ impl BlobStoreService {
             .get_physical(&binding.physical_blob_id)?
             .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
         assert_binding_matches_physical(&binding, &physical)?;
-        self.copy_and_verify(&physical, output)
+        self.copy_and_verify(&physical, output).await
     }
 
-    pub fn issue_download_grant(
+    pub async fn issue_download_grant(
         &self,
         tenant_id: &str,
         binding_id: &str,
@@ -438,7 +448,7 @@ impl BlobStoreService {
             .get_physical(&binding.physical_blob_id)?
             .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
         assert_binding_matches_physical(&binding, &physical)?;
-        self.verify_physical_exact(&physical)?;
+        self.verify_physical_exact(&physical).await?;
 
         let grant = self
             .provider
@@ -450,6 +460,7 @@ impl BlobStoreService {
                 required_content_type: physical.canonical_mime,
                 expires_at_ms,
             })
+            .await
             .map_err(provider_error)?;
         if grant.expires_at_ms != expires_at_ms {
             return Err(BlobStoreError::new(
@@ -466,7 +477,7 @@ impl BlobStoreService {
         })
     }
 
-    pub fn issue_quarantine_upload_grant(
+    pub async fn issue_quarantine_upload_grant(
         &self,
         tenant_id: &str,
         upload_id: &str,
@@ -516,6 +527,7 @@ impl BlobStoreService {
                 required_content_type: required_content_type.clone(),
                 expires_at_ms,
             })
+            .await
             .map_err(provider_error)?;
         if grant.expires_at_ms != expires_at_ms {
             return Err(BlobStoreError::new(
@@ -536,7 +548,7 @@ impl BlobStoreService {
         })
     }
 
-    pub fn delete_physical_if_eligible(
+    pub async fn delete_physical_if_eligible(
         &self,
         tenant_id: &str,
         physical_blob_id: &str,
@@ -571,6 +583,7 @@ impl BlobStoreService {
         match self
             .provider
             .delete_exact(&physical.object_locator, &physical.storage_generation)
+            .await
         {
             Ok(()) => {}
             Err(error) if error.kind == ProviderErrorKind::NotFound => {}
@@ -613,10 +626,14 @@ impl BlobStoreService {
         })
     }
 
-    fn verify_physical_exact(&self, physical: &PhysicalBlobRecord) -> Result<(), BlobStoreError> {
+    async fn verify_physical_exact(
+        &self,
+        physical: &PhysicalBlobRecord,
+    ) -> Result<(), BlobStoreError> {
         let metadata = self
             .provider
             .head_exact(&physical.object_locator)
+            .await
             .map_err(provider_error)?
             .ok_or_else(|| {
                 BlobStoreError::new("physical_blob_missing", "provider object missing")
@@ -634,11 +651,11 @@ impl BlobStoreService {
             ));
         }
         let mut sink = io::sink();
-        self.copy_and_verify(physical, &mut sink)?;
+        self.copy_and_verify(physical, &mut sink).await?;
         Ok(())
     }
 
-    fn copy_and_verify(
+    async fn copy_and_verify(
         &self,
         physical: &PhysicalBlobRecord,
         output: &mut dyn Write,
@@ -646,6 +663,7 @@ impl BlobStoreService {
         let reader = self
             .provider
             .open_read(&physical.object_locator, &physical.storage_generation)
+            .await
             .map_err(provider_error)?;
         let mut reader = HashingOwnedReader::new(reader, physical.byte_len);
         let mut buffer = [0_u8; COPY_BUFFER_BYTES];
@@ -786,7 +804,7 @@ fn provider_error(error: ProviderError) -> BlobStoreError {
 }
 
 struct HashingBoundedReader<'a> {
-    inner: &'a mut dyn Read,
+    inner: &'a mut (dyn Read + Send),
     max_bytes: u64,
     bytes_read: u64,
     saw_eof: bool,
@@ -794,7 +812,7 @@ struct HashingBoundedReader<'a> {
 }
 
 impl<'a> HashingBoundedReader<'a> {
-    fn new(inner: &'a mut dyn Read, max_bytes: u64) -> Self {
+    fn new(inner: &'a mut (dyn Read + Send), max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
@@ -1130,16 +1148,17 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl BlobProvider for FakeProvider {
         fn capabilities(&self) -> ProviderCapabilities {
             self.capabilities.clone()
         }
 
-        fn create_immutable(
+        async fn create_immutable(
             &self,
             object_locator: &str,
             expected_byte_len: u64,
-            input: &mut dyn Read,
+            input: &mut (dyn Read + Send),
         ) -> Result<ProviderObjectMetadata, ProviderError> {
             let mut bytes = Vec::new();
             input
@@ -1183,7 +1202,7 @@ mod tests {
             Ok(metadata)
         }
 
-        fn head_exact(
+        async fn head_exact(
             &self,
             object_locator: &str,
         ) -> Result<Option<ProviderObjectMetadata>, ProviderError> {
@@ -1199,7 +1218,7 @@ mod tests {
                 }))
         }
 
-        fn open_read(
+        async fn open_read(
             &self,
             object_locator: &str,
             generation: &str,
@@ -1220,7 +1239,7 @@ mod tests {
             Ok(Box::new(Cursor::new(object.bytes)))
         }
 
-        fn delete_exact(
+        async fn delete_exact(
             &self,
             object_locator: &str,
             generation: &str,
@@ -1239,7 +1258,7 @@ mod tests {
             Ok(())
         }
 
-        fn issue_grant(
+        async fn issue_grant(
             &self,
             request: &ProviderGrantRequest,
         ) -> Result<ProviderGrant, ProviderError> {
@@ -1284,30 +1303,33 @@ mod tests {
         }
     }
 
-    #[test]
-    fn create_and_verified_read_start_from_tenant_binding_not_hash() {
+    #[tokio::test]
+    async fn create_and_verified_read_start_from_tenant_binding_not_hash() {
         let provider = Arc::new(FakeProvider::new(capabilities()));
         let (service, _repo) = service(provider);
         let bytes = b"canonical-pub";
         let mut input = Cursor::new(bytes.to_vec());
         let binding = service
             .create_canonical_binding(create_request("tenant-a", bytes), &mut input)
+            .await
             .unwrap();
 
         let mut output = Vec::new();
         service
             .stream_binding_verified("tenant-a", &binding.binding_id, &mut output)
+            .await
             .unwrap();
         assert_eq!(output, bytes);
 
         let error = service
             .stream_binding_verified("tenant-b", &binding.binding_id, &mut Vec::new())
+            .await
             .unwrap_err();
         assert_eq!(error.code, "cross_tenant_binding");
     }
 
-    #[test]
-    fn tenant_local_dedupe_reuses_physical_blob_but_not_binding_identity() {
+    #[tokio::test]
+    async fn tenant_local_dedupe_reuses_physical_blob_but_not_binding_identity() {
         let provider = Arc::new(FakeProvider::new(capabilities()));
         let (service, repo) = service(provider);
         let bytes = b"same-content";
@@ -1315,10 +1337,12 @@ mod tests {
         let mut first_input = Cursor::new(bytes.to_vec());
         let first = service
             .create_canonical_binding(create_request("tenant-a", bytes), &mut first_input)
+            .await
             .unwrap();
         let mut second_input = Cursor::new(bytes.to_vec());
         let second = service
             .create_canonical_binding(create_request("tenant-a", bytes), &mut second_input)
+            .await
             .unwrap();
 
         assert_ne!(first.binding_id, second.binding_id);
@@ -1327,8 +1351,8 @@ mod tests {
         assert_eq!(repo.bindings.lock().unwrap().len(), 2);
     }
 
-    #[test]
-    fn cross_tenant_content_does_not_reuse_physical_blob() {
+    #[tokio::test]
+    async fn cross_tenant_content_does_not_reuse_physical_blob() {
         let provider = Arc::new(FakeProvider::new(capabilities()));
         let (service, _repo) = service(provider);
         let bytes = b"same-content";
@@ -1336,17 +1360,19 @@ mod tests {
         let mut first_input = Cursor::new(bytes.to_vec());
         let first = service
             .create_canonical_binding(create_request("tenant-a", bytes), &mut first_input)
+            .await
             .unwrap();
         let mut second_input = Cursor::new(bytes.to_vec());
         let second = service
             .create_canonical_binding(create_request("tenant-b", bytes), &mut second_input)
+            .await
             .unwrap();
 
         assert_ne!(first.physical_blob_id, second.physical_blob_id);
     }
 
-    #[test]
-    fn unknown_create_outcome_reconciles_by_exact_head_and_read() {
+    #[tokio::test]
+    async fn unknown_create_outcome_reconciles_by_exact_head_and_read() {
         let provider = Arc::new(FakeProvider::with_unknown_create(capabilities()));
         let (service, _repo) = service(provider);
         let bytes = b"unknown-outcome";
@@ -1354,17 +1380,19 @@ mod tests {
 
         let binding = service
             .create_canonical_binding(create_request("tenant-a", bytes), &mut input)
+            .await
             .unwrap();
 
         let mut output = Vec::new();
         service
             .stream_binding_verified("tenant-a", &binding.binding_id, &mut output)
+            .await
             .unwrap();
         assert_eq!(output, bytes);
     }
 
-    #[test]
-    fn direct_upload_requires_provider_hard_size_and_create_only_capabilities() {
+    #[tokio::test]
+    async fn direct_upload_requires_provider_hard_size_and_create_only_capabilities() {
         let mut weak = capabilities();
         weak.hard_exact_or_max_upload_size = false;
         let provider = Arc::new(FakeProvider::new(weak));
@@ -1379,12 +1407,13 @@ mod tests {
                 100,
                 200,
             )
+            .await
             .unwrap_err();
         assert_eq!(error.code, "direct_upload_size_fence_unproven");
     }
 
-    #[test]
-    fn signed_grant_is_exactly_scoped_and_expires() {
+    #[tokio::test]
+    async fn signed_grant_is_exactly_scoped_and_expires() {
         let provider = Arc::new(FakeProvider::new(capabilities()));
         let (service, _repo) = service(provider.clone());
         let grant = service
@@ -1396,6 +1425,7 @@ mod tests {
                 100,
                 200,
             )
+            .await
             .unwrap();
 
         let exact = ProviderGrantRequest {
@@ -1445,20 +1475,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn provider_create_only_rejects_same_key_overwrite() {
+    #[tokio::test]
+    async fn provider_create_only_rejects_same_key_overwrite() {
         let provider = FakeProvider::new(capabilities());
         let locator = "quarantine/tenant-a/upload-1";
         let mut first = Cursor::new(b"one".to_vec());
-        provider.create_immutable(locator, 3, &mut first).unwrap();
+        provider
+            .create_immutable(locator, 3, &mut first)
+            .await
+            .unwrap();
 
         let mut second = Cursor::new(b"two".to_vec());
         let error = provider
             .create_immutable(locator, 3, &mut second)
+            .await
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::AlreadyExists);
 
-        let mut read = provider.open_read(locator, "generation-1").unwrap();
+        let mut read = provider.open_read(locator, "generation-1").await.unwrap();
         let mut bytes = Vec::new();
         read.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"one");
