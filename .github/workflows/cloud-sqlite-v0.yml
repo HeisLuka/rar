@@ -27,4 +27,4 @@ jobs:
       - name: Run clippy
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run SQLite adapter tests
-        run: cargo test -p chaptera-server sqlite_store::
+        run: 'cargo test -p chaptera-server sqlite_store::'
