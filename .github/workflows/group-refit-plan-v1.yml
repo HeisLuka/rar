@@ -1,0 +1,25 @@
+name: Group Refit Plan V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/authored_group_geometry_v1.py"
+      - "services/editor-api/group_refit_plan_v1.py"
+      - "services/editor-api/test_group_refit_plan_v1.py"
+      - ".github/workflows/group-refit-plan-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run exact Group refit plan tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_refit_plan_v1
