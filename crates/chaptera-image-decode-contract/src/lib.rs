@@ -814,8 +814,10 @@ mod tests {
     #[test]
     fn hostile_limits_and_truncation_fail_closed() {
         let encoded = png_fixture(ColorType::Rgb, BitDepth::Eight, 2, 2, &[0; 12]);
-        let mut limits = DecodeLimitsV1::default();
-        limits.max_total_pixels = 3;
+        let limits = DecodeLimitsV1 {
+            max_total_pixels: 3,
+            ..DecodeLimitsV1::default()
+        };
         let err = decode_image_v1(
             &encoded,
             "image/png",
