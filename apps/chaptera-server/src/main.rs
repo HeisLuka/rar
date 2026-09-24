@@ -45,10 +45,6 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             serve::run(config.runtime_config(), state).await?;
         }
         Command::Worker => {
-            if let Some(config) = explicit_config.as_ref() {
-                let secrets = config.resolve_required_secrets(&SecretResolver::from_process())?;
-                drop(secrets);
-            }
             worker::run(&UnconfiguredWorkerRuntime)?;
         }
         Command::Migrate { action } => {
