@@ -1,0 +1,203 @@
+name: CORPUS-VAC container resume 35950494964
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/corpus-vac-container-resume-35950494964.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: corpus-vac-container-resume-35950494964
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable first-wave artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: container-vacuum-35950494964
+          path: base
+          github-token: ${{ github.token }}
+          run-id: 35950494964
+      - name: Slice only containers 101+ into four stable shards
+        run: |
+          set -euo pipefail
+          mkdir -p out/seeds
+          python - <<'PY'
+          import csv, json
+          from pathlib import Path
+
+          src = Path("base/ia_containers.csv")
+          with src.open("r", encoding="utf-8-sig", newline="") as fh:
+              reader = csv.DictReader(fh)
+              fields = reader.fieldnames or []
+              rows = list(reader)
+
+          already_attempted = min(100, len(rows))
+          remaining = rows[already_attempted:]
+          shard_count = 4
+          counts = []
+          for shard in range(shard_count):
+              part = [row for i, row in enumerate(remaining) if i % shard_count == shard]
+              path = Path(f"out/seeds/container-shard-{shard}.csv")
+              with path.open("w", encoding="utf-8", newline="") as fh:
+                  writer = csv.DictWriter(fh, fieldnames=fields)
+                  writer.writeheader()
+                  writer.writerows(part)
+              counts.append(len(part))
+
+          summary = {
+              "schema": "rar-container-resume-seed-v1",
+              "base_run_id": 35950494964,
+              "total_seed_rows": len(rows),
+              "already_attempted_rows": already_attempted,
+              "remaining_rows": len(remaining),
+              "shard_count": shard_count,
+              "shard_rows": counts,
+          }
+          Path("out/seeds/summary.json").write_text(
+              json.dumps(summary, indent=2), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-resume-seeds-${{ github.run_id }}
+          path: out/seeds/**
+          retention-days: 14
+
+  extract:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mature archive tool
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-resume-seeds-${{ github.run_id }}
+          path: seed
+      - name: Extract this remaining-inventory shard
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/pub_container_extract.py \
+            --seed "seed/container-shard-${{ matrix.shard }}.csv" \
+            --out out/container_manifest.json \
+            --max-containers 100 --max-depth 2 \
+            --max-container-bytes 314572800 \
+            --max-member-bytes 104857600 \
+            --max-total-expanded 524288000 \
+            --max-members 300
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-resume-manifest-${{ github.run_id }}-${{ matrix.shard }}
+          path: |
+            out/container_manifest.json
+            out/container_manifest.csv
+            out/container_manifest.summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: always()
+    needs: extract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download immutable first-wave artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: container-vacuum-35950494964
+          path: base
+          github-token: ${{ github.token }}
+          run-id: 35950494964
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: container-resume-manifest-${{ github.run_id }}-*
+          path: resumed
+      - name: Build provenance-preserving union and classify errors
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, json
+          from collections import Counter
+          from pathlib import Path
+
+          base = json.loads(Path("base/container_manifest.json").read_text(encoding="utf-8"))
+          resumed = []
+          for p in glob.glob("resumed/**/container_manifest.json", recursive=True):
+              resumed.extend(json.loads(Path(p).read_text(encoding="utf-8")))
+
+          rows = base + resumed
+
+          def error_class(row):
+              msg = str(row.get("error") or "")
+              low = msg.casefold()
+              if "container exceeds max bytes" in low or "exceeds total cap" in low or "extracted member exceeds max bytes" in low:
+                  return "size_depth_safety"
+              if "httperror" in low or "urlerror" in low or "timed out" in low:
+                  return "transport"
+              if "encrypted" in low:
+                  return "encrypted"
+              if "7z list failed" in low or "7z extract failed" in low:
+                  return "unsupported_or_corrupt_nested_archive"
+              if msg:
+                  return "other"
+              return ""
+
+          classified = []
+          for row in rows:
+              item = dict(row)
+              if str(item.get("row_kind", "")).endswith("error"):
+                  item["error_class"] = error_class(item)
+              classified.append(item)
+
+          errors = [r for r in classified if str(r.get("row_kind", "")).endswith("error")]
+          members = [r for r in classified if r.get("row_kind") == "container_member"]
+          summary = {
+              "schema": "rar-container-resume-union-v1",
+              "base_run_id": 35950494964,
+              "base_rows": len(base),
+              "resume_rows": len(resumed),
+              "union_rows": len(classified),
+              "publisher_member_rows": sum(r.get("classification") == "cfb_publisher_hint" for r in members),
+              "unique_member_sha256": len({r.get("sha256") for r in members if r.get("sha256")}),
+              "error_rows": len(errors),
+              "error_classes": dict(Counter(r.get("error_class", "") for r in errors)),
+              "encrypted_error_rows": sum(r.get("error_class") == "encrypted" for r in errors),
+              "note": "Encrypted members are skipped by the extractor before extraction; zero encrypted error rows does not assert zero encrypted members in source containers.",
+          }
+          out = Path("union")
+          out.mkdir(exist_ok=True)
+          (out / "manifest.json").write_text(
+              json.dumps(classified, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-resume-union-${{ github.run_id }}
+          path: union/**
+          retention-days: 30
