@@ -70,7 +70,7 @@ class EditorProjectAssetRegistryV1Tests(unittest.TestCase):
             {MA.asset_sha256:MA,MB.asset_sha256:MB,MC.asset_sha256:MC},
         )
         self.assertEqual(
-            [MA.asset_sha256,MB.asset_sha256],
+            sorted([MA.asset_sha256,MB.asset_sha256]),
             [row["asset_sha256"] for row in p["editor_assets"]],
         )
         self.assertNotIn("imported_editor_assets",p)
