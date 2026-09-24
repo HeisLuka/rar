@@ -1,0 +1,21 @@
+name: WEB-FRAME-PACING-01
+on:
+  pull_request:
+    paths: ["apps/web/frame-pacing-v1.mjs","apps/web/frame-pacing-v1.test.mjs","tools/run_web_frame_pacing_benchmark.mjs",".github/workflows/web-frame-pacing.yml"]
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  contract:
+    strategy: { fail-fast: false, matrix: { browser: [chromium, firefox] } }
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: node --test apps/web/frame-pacing-v1.test.mjs
+      - run: npm install --no-save playwright@1.55.0
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: node tools/run_web_frame_pacing_benchmark.mjs ${{ matrix.browser }}
+      - uses: actions/upload-artifact@v4
+        with: { name: web-frame-pacing-${{ matrix.browser }}, path: target/web-frame-pacing/*.json }
