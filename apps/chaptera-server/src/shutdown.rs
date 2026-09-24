@@ -3,7 +3,7 @@ pub async fn signal() {
     {
         use std::future::pending;
 
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let terminate = async {
             match signal(SignalKind::terminate()) {
