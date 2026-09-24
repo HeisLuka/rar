@@ -4,12 +4,19 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium, firefox } from "playwright";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = path.join(ROOT, "target", "web-editor-http");
 const API_PORT = 8765;
 const API_BASE = "http://127.0.0.1:" + API_PORT;
+const BROWSER_ENGINE = process.env.BROWSER_ENGINE ?? "chromium";
+const RUN_INDEX = process.env.RUN_INDEX ?? "0";
+const BROWSERS = { chromium, firefox };
+
+if (!(BROWSER_ENGINE in BROWSERS)) {
+  throw new Error("unsupported BROWSER_ENGINE: " + BROWSER_ENGINE);
+}
 
 function mimeFor(filePath) {
   if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
@@ -75,6 +82,47 @@ async function harnessState() {
   return response.json();
 }
 
+async function traceSummary(traceId) {
+  const response = await fetch(
+    API_BASE + "/v1/observability/traces/" + encodeURIComponent(traceId)
+  );
+  if (!response.ok) throw new Error("trace summary failed for " + traceId);
+  return response.json();
+}
+
+async function metricsSnapshot() {
+  const response = await fetch(API_BASE + "/v1/observability/metrics");
+  if (!response.ok) throw new Error("metrics snapshot failed");
+  return response.json();
+}
+
+function lastSpan(spans, name) {
+  const matches = spans.filter((span) => span.name === name);
+  if (matches.length === 0) throw new Error("missing browser span " + name);
+  return matches[matches.length - 1];
+}
+
+function serverSpan(trace, name) {
+  const span = trace.spans.find((item) => item.name === name);
+  if (!span) throw new Error("missing server span " + name + " in trace " + trace.trace_id);
+  return span;
+}
+
+function assertMetricLabelsBounded(snapshot) {
+  const forbidden = new Set([
+    "document_id", "principal_id", "user_id", "story_id", "revision_id",
+    "event_id", "client_operation_id", "interaction_id", "trace_id",
+    "source_hash", "content_hash", "file_name", "filename"
+  ]);
+  for (const metric of snapshot.metrics ?? []) {
+    for (const label of Object.keys(metric.labels ?? {})) {
+      if (forbidden.has(label)) {
+        throw new Error("high-cardinality metric label leaked: " + label);
+      }
+    }
+  }
+}
+
 async function main() {
   fs.mkdirSync(TARGET, { recursive: true });
   const api = spawn(
@@ -91,7 +139,8 @@ async function main() {
   let browser = null;
   try {
     await waitForApi(api);
-    browser = await chromium.launch({ headless: true });
+    browser = await BROWSERS[BROWSER_ENGINE].launch({ headless: true });
+    const browserVersion = browser.version();
     const page = await browser.newPage({ viewport: { width: 1280, height: 920 } });
     const pageErrors = [];
     const consoleErrors = [];
@@ -123,6 +172,7 @@ async function main() {
         source_hash: window.__shell.snapshot.source_hash,
         bounds: window.__shell.nodeScreenBounds(nodeId),
         host: { x: hostRect.x, y: hostRect.y },
+        spans: structuredClone(window.__observability.spans),
       };
     });
 
@@ -161,12 +211,38 @@ async function main() {
       last_request: structuredClone(window.__service.lastRequest),
       browser_commit_requests: window.__service.commitRequests,
       source_hash: window.__shell.snapshot.source_hash,
+      commit_trace: structuredClone(window.__service.lastCommitTraceContext),
+      spans: structuredClone(window.__observability.spans),
     }));
 
     if (browserFinal.browser_commit_requests !== 1) throw new Error("browser did not issue exactly one HTTP commit");
     if ("before" in browserFinal.last_request.command) throw new Error("browser sent canonical before-state");
     if (browserFinal.shell.selected_node_id !== initial.node_id) throw new Error("canonical NodeId changed");
     if (browserFinal.source_hash !== initial.source_hash) throw new Error("source identity changed");
+    if (!browserFinal.commit_trace?.trace_id) throw new Error("commit trace context missing");
+
+    const openBrowserSpan = lastSpan(initial.spans, "browser.scene_current");
+    const commitBrowserSpan = lastSpan(browserFinal.spans, "browser.commit_http");
+    const sceneBrowserSpan = lastSpan(browserFinal.spans, "browser.scene_revision");
+
+    const openTrace = await traceSummary(openBrowserSpan.trace_id);
+    const commitTrace = await traceSummary(commitBrowserSpan.trace_id);
+    const sceneTrace = await traceSummary(sceneBrowserSpan.trace_id);
+    const openServerSpan = serverSpan(openTrace, "gateway.scene_current");
+    const commitServerSpan = serverSpan(commitTrace, "gateway.commit");
+    const sceneServerSpan = serverSpan(sceneTrace, "gateway.scene_revision");
+
+    if (commitTrace.trace_id !== browserFinal.commit_trace.trace_id) {
+      throw new Error("browser/server commit trace identity diverged");
+    }
+    if (!commitTrace.spans.some(
+      (span) => span.client_operation_id === browserFinal.last_request.client_operation_id
+    )) {
+      throw new Error("server trace lost semantic client-operation correlation");
+    }
+
+    const metrics = await metricsSnapshot();
+    assertMetricLabelsBounded(metrics);
 
     const afterBrowser = await harnessState();
     if (afterBrowser.commit_requests !== 1 || afterBrowser.executor_calls !== 1) {
@@ -186,7 +262,7 @@ async function main() {
     }
 
     const staleRequest = structuredClone(browserFinal.last_request);
-    staleRequest.client_operation_id = "stale-probe-1";
+    staleRequest.client_operation_id = "stale-probe-" + RUN_INDEX;
     staleRequest.command.x_emu += 1000;
     const stale = await postCommit(staleRequest);
     if (stale.protocol_version !== "chaptera.commit-rejected.v1" || stale.code !== "stale_revision") {
@@ -197,13 +273,17 @@ async function main() {
       throw new Error("stale HTTP request mutated server state");
     }
 
-    await page.locator("#host").screenshot({
-      path: path.join(TARGET, "chromium-http-shell.png")
-    });
+    if (RUN_INDEX === "0") {
+      await page.locator("#host").screenshot({
+        path: path.join(TARGET, BROWSER_ENGINE + "-http-shell.png")
+      });
+    }
 
     const receipt = {
-      receipt_kind: "chaptera.synthetic-http-service-plumbing.v1",
-      browser_engine: "chromium",
+      receipt_kind: "chaptera.synthetic-http-service-observability.v1",
+      browser_engine: BROWSER_ENGINE,
+      browser_version: browserVersion,
+      run_index: Number.parseInt(RUN_INDEX, 10),
       real_pub: false,
       product_acceptance: false,
       api_process_boundary: true,
@@ -218,13 +298,32 @@ async function main() {
       browser_sent_before_state: "before" in browserFinal.last_request.command,
       node_id_stable: browserFinal.shell.selected_node_id === initial.node_id,
       source_hash_stable: browserFinal.source_hash === initial.source_hash,
-      note: "Synthetic Scene V1 plus public revision-kernel HTTP harness. This proves process/network plumbing and must not close WEB-ACCEPTANCE-01."
+      observability: {
+        trace_protocol_version: browserFinal.commit_trace.protocol_version,
+        same_trace_browser_and_server: commitTrace.trace_id === browserFinal.commit_trace.trace_id,
+        semantic_operation_correlated: commitTrace.spans.some(
+          (span) => span.client_operation_id === browserFinal.last_request.client_operation_id
+        ),
+        metric_series_count: metrics.metrics.length,
+        metrics_high_cardinality_labels_absent: true,
+        document_payload_logged: false,
+        timings_ms: {
+          browser_scene_current_http: openBrowserSpan.duration_ms,
+          gateway_scene_current: openServerSpan.duration_ms,
+          browser_commit_http: commitBrowserSpan.duration_ms,
+          gateway_commit: commitServerSpan.duration_ms,
+          browser_scene_revision_http: sceneBrowserSpan.duration_ms,
+          gateway_scene_revision: sceneServerSpan.duration_ms,
+        }
+      },
+      note: "Synthetic Scene V1 plus public revision-kernel HTTP harness. Timings are CI transport/observability baselines only and must not be used as real-PUB product SLOs."
     };
 
-    fs.writeFileSync(
-      path.join(TARGET, "chromium-http-receipt.json"),
-      JSON.stringify(receipt, null, 2) + "\n"
+    const outputPath = path.join(
+      TARGET,
+      BROWSER_ENGINE + "-http-receipt-" + RUN_INDEX.padStart(2, "0") + ".json"
     );
+    fs.writeFileSync(outputPath, JSON.stringify(receipt, null, 2) + "\n");
     process.stdout.write(JSON.stringify(receipt, null, 2) + "\n");
   } finally {
     if (browser) await browser.close();
