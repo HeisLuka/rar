@@ -348,6 +348,9 @@ class RevisionKernel:
         command = request.get("command")
         if not isinstance(command, dict) or command.get("kind") != "replace_story_range":
             raise ValueError("V1 Story range requires replace_story_range command")
+        allowed = {"kind", "story_id", "start_scalar", "end_scalar", "replacement_text"}
+        if set(command) != allowed:
+            raise ValueError("replace_story_range contains non-intent/authoritative fields")
         story_id = command.get("story_id")
         if not isinstance(story_id, str) or not story_id:
             raise ValueError("story_id is required")
