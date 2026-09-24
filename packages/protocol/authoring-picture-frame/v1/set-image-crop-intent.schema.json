@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/authoring-picture-frame/v1/set-image-crop-intent.schema.json",
+  "title": "Chaptera SetImageCrop Intent V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "source_hash",
+    "base_revision_id",
+    "client_operation_id",
+    "command"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.image-crop-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "client_operation_id": {"type": "string", "minLength": 8, "maxLength": 160},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "node_id", "expected_before", "after"],
+      "properties": {
+        "kind": {"const": "set_image_crop"},
+        "node_id": {"type": "string", "minLength": 1},
+        "expected_before": {"$ref": "#/$defs/crop"},
+        "after": {"$ref": "#/$defs/crop"}
+      }
+    }
+  },
+  "$defs": {
+    "crop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        "top": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        "right": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        "bottom": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}
+      }
+    }
+  }
+}
