@@ -399,8 +399,9 @@ def _round_signed_ratio_v1(
     denominator: int,
     label: str,
 ) -> int:
+    if not isinstance(numerator, int) or isinstance(numerator, bool):
+        _fail(f"{label}.numerator must be an integer")
     try:
-        numerator = _checked_int(numerator, f"{label}.numerator")
         sign = -1 if numerator < 0 else 1
         magnitude = _round_ratio_nearest_emu(abs(numerator), denominator)
         return _checked_int(sign * magnitude, label)
