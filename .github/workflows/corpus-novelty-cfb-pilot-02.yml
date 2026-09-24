@@ -1,0 +1,190 @@
+name: CORPUS novelty CFB pilot 02
+
+on:
+  push:
+    branches: [corpus-novelty-cfb-pilot-02]
+    paths:
+      - '.github/workflows/corpus-novelty-cfb-pilot-02.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  fingerprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install source-safe CFB reader
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Discover immutable Git-history locators
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/novelty
+          python tools/corpus/github_history_pub_seed.py \
+            --repo-file tools/corpus/pub_history_repositories.txt \
+            --no-search --max-repos 4 --history-depth 1000 \
+            --max-paths-per-repo 100 --max-captures-per-path 2 --max-releases 20 \
+            --out out/novelty/seed.csv \
+            --summary out/novelty/discovery.json
+      - name: Rehydrate exact bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/novelty/seed.csv --out out/novelty/harvest \
+            --max-files -1 --timeout 25 --max-bytes 104857600 --per-host-delay 0.05
+      - name: Fingerprint twice and cluster exact CFB topology
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          import olefile
+
+          root=Path("out/novelty/harvest")
+          rows=json.loads((root/"manifest.json").read_text())
+
+          def one_pass():
+              out=[]
+              for row in sorted(rows,key=lambda r:(str(r.get("sha256","")),str(r.get("candidate_filename","")))):
+                  if row.get("fetch_status")!="ok" or row.get("classification")!="cfb_publisher_hint":
+                      continue
+                  path=root/str(row["stored_path"])
+                  raw=path.read_bytes()
+                  sha=hashlib.sha256(raw).hexdigest()
+                  if sha != str(row.get("sha256","")).lower():
+                      raise RuntimeError(f"sha mismatch for {path}")
+
+                  streams=[]
+                  storages=[]
+                  parse_error=None
+                  try:
+                      ole=olefile.OleFileIO(str(path), raise_defects=olefile.DEFECT_INCORRECT)
+                      for parts in ole.listdir(streams=True,storages=False):
+                          name="/"+"/".join(parts)
+                          data=ole.openstream(parts).read()
+                          streams.append({
+                              "path":name,
+                              "len":len(data),
+                              "sha256":hashlib.sha256(data).hexdigest(),
+                          })
+                      for parts in ole.listdir(streams=False,storages=True):
+                          storages.append("/"+"/".join(parts))
+                      ole.close()
+                  except Exception as e:
+                      parse_error=f"{type(e).__name__}:{e}"
+
+                  streams.sort(key=lambda x:x["path"])
+                  storages=sorted(set(storages))
+                  topology_material={
+                      "streams":[{"path":s["path"],"len":s["len"]} for s in streams],
+                      "storages":storages,
+                  }
+                  topology_sha=hashlib.sha256(
+                      json.dumps(topology_material,sort_keys=True,separators=(",",":")).encode()
+                  ).hexdigest()
+                  content_sha=hashlib.sha256(
+                      json.dumps(streams,sort_keys=True,separators=(",",":")).encode()
+                  ).hexdigest()
+                  paths={s["path"].casefold() for s in streams}
+                  out.append({
+                      "sha256":sha,
+                      "candidate_filename":row.get("candidate_filename"),
+                      "source_class":row.get("source_class"),
+                      "github_repository":row.get("github_repository"),
+                      "github_commit":row.get("github_commit"),
+                      "github_path":row.get("github_path"),
+                      "size_bytes":len(raw),
+                      "parse_ok":parse_error is None,
+                      "parse_error":parse_error,
+                      "stream_count":len(streams),
+                      "storage_count":len(storages),
+                      "total_stream_bytes":sum(s["len"] for s in streams),
+                      "cfb_topology_sha256":topology_sha,
+                      "cfb_stream_digest_sha256":content_sha,
+                      "signals":{
+                          "has_contents":"/contents" in paths,
+                          "has_quill_contents":"/quill/quillsub/contents" in paths,
+                          "has_escher_stream":"/escher/escherstm" in paths,
+                          "has_escher_delay_stream":"/escher/escherdelaystm" in paths,
+                      },
+                      "streams":streams,
+                      "storages":storages,
+                  })
+              return out
+
+          a=one_pass()
+          b=one_pass()
+          ca=json.dumps(a,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+          cb=json.dumps(b,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+          if ca!=cb:
+              raise RuntimeError("non-deterministic fingerprint output")
+
+          clusters=defaultdict(list)
+          content_clusters=defaultdict(list)
+          for r in a:
+              clusters[r["cfb_topology_sha256"]].append(r["sha256"])
+              content_clusters[r["cfb_stream_digest_sha256"]].append(r["sha256"])
+
+          stream_counts=Counter(r["stream_count"] for r in a if r["parse_ok"])
+          rare_stream_counts=sorted(k for k,v in stream_counts.items() if v==1)
+          summary={
+              "schema":"rar-corpus-cfb-novelty-pilot-v1",
+              "lane":"github_history",
+              "attempted_sha256":len(a),
+              "parse_ok":sum(r["parse_ok"] for r in a),
+              "parse_failed":sum(not r["parse_ok"] for r in a),
+              "exact_topology_clusters":len(clusters),
+              "duplicate_topology_clusters":sum(len(v)>1 for v in clusters.values()),
+              "exact_stream_digest_clusters":len(content_clusters),
+              "duplicate_stream_digest_clusters":sum(len(v)>1 for v in content_clusters.values()),
+              "stream_count_histogram":{str(k):v for k,v in sorted(stream_counts.items())},
+              "rare_singleton_stream_counts":rare_stream_counts,
+              "all_have_contents":all(r["signals"]["has_contents"] for r in a if r["parse_ok"]),
+              "quill_count":sum(r["signals"]["has_quill_contents"] for r in a),
+              "escher_count":sum(r["signals"]["has_escher_stream"] for r in a),
+              "deterministic_two_pass":True,
+              "fingerprint_sha256":hashlib.sha256(ca.encode()).hexdigest(),
+              "guardrail":"Generic CFB topology/digest novelty only. No Publisher semantic or exact-version inference; mature-0x2C structural-base enrichment remains required."
+          }
+
+          outdir=Path("out/novelty/fingerprints")
+          outdir.mkdir(parents=True,exist_ok=True)
+          (outdir/"per_sha.json").write_text(json.dumps(a,indent=2,ensure_ascii=False))
+          (outdir/"topology_clusters.json").write_text(json.dumps(
+              {k:sorted(v) for k,v in sorted(clusters.items())},indent=2))
+          (outdir/"stream_digest_clusters.json").write_text(json.dumps(
+              {k:sorted(v) for k,v in sorted(content_clusters.items())},indent=2))
+          (outdir/"summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Delete raw PUB bytes and prove public artifact boundary
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/novelty/harvest -type f \
+            ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+          if find out/novelty -type f \( -iname '*.pub' -o -iname '*.PUB' \) | grep -q .; then
+            echo "raw PUB remains" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-novelty-cfb-pilot-02-${{ github.run_id }}
+          path: |
+            out/novelty/discovery.json
+            out/novelty/harvest/manifest.json
+            out/novelty/harvest/manifest.csv
+            out/novelty/fingerprints/**
+          if-no-files-found: warn
+          retention-days: 30
