@@ -1,0 +1,61 @@
+{
+  "producer": {
+    "implementation": "rar-fixed-flow-adapter",
+    "commit_or_build": "synthetic-ci",
+    "core_integration": true
+  },
+  "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "font_size_emu": 1000,
+  "line_height_emu": 1200,
+  "story_overset": true,
+  "lines": [
+    {
+      "line_index": 0,
+      "frame_line_index": 0,
+      "frame_node_id": "10000000-0000-4000-8000-000000000001",
+      "story_id": "20000000-0000-4000-8000-000000000001",
+      "scalar_start": 0,
+      "scalar_end": 1,
+      "units_per_em": 1000,
+      "measured_width": 500,
+      "glyphs": [
+        {
+          "glyph_id": 10,
+          "cluster": 0,
+          "x_advance": 500,
+          "y_advance": 0,
+          "x_offset": 0,
+          "y_offset": 0
+        }
+      ]
+    },
+    {
+      "line_index": 1,
+      "frame_line_index": 1,
+      "frame_node_id": "10000000-0000-4000-8000-000000000001",
+      "story_id": "20000000-0000-4000-8000-000000000001",
+      "scalar_start": 2,
+      "scalar_end": 4,
+      "units_per_em": 1000,
+      "measured_width": 1000,
+      "glyphs": [
+        {
+          "glyph_id": 20,
+          "cluster": 2,
+          "x_advance": 500,
+          "y_advance": 0,
+          "x_offset": 0,
+          "y_offset": 0
+        },
+        {
+          "glyph_id": 21,
+          "cluster": 3,
+          "x_advance": 500,
+          "y_advance": 0,
+          "x_offset": 0,
+          "y_offset": 0
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@ name: Fixed PDF shaped-flow receipt V1
 on:
   pull_request:
     paths:
+      - "Cargo.toml"
+      - "crates/pub-fixed-flow-adapter/**"
       - "packages/protocol/fixed-output/**"
       - "tools/validate_fixed_pdf_shaped_flow_receipt.py"
       - "tools/test_fixed_pdf_shaped_flow_receipt.py"
@@ -13,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  validate-contract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,3 +26,28 @@ jobs:
         run: python -m pip install "jsonschema==4.23.0"
       - name: Run shaped-flow to fixed-PDF contract tests
         run: python tools/test_fixed_pdf_shaped_flow_receipt.py -v
+
+  rust-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install receipt validator dependency
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test shaped-flow adapter
+        run: cargo test -p pub-fixed-flow-adapter
+      - name: Produce sanitized adapter receipt
+        run: cargo run -q -p pub-fixed-flow-adapter --bin fixed-flow-producer -- packages/protocol/fixed-output/v1/shaped-flow-synthetic-input.json > /tmp/shaped-flow-receipt.json
+      - name: Validate Rust-produced receipt with independent V1 validator
+        run: python tools/validate_fixed_pdf_shaped_flow_receipt.py /tmp/shaped-flow-receipt.json
