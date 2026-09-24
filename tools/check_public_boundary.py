@@ -29,6 +29,11 @@ def frozen_hits(path):
                 hits.add(frozen)
     return sorted(hits)
 
+assert frozen_hits("scratch/carlton-yab/Cargo.toml") == ["yab"]
+assert frozen_hits("scratch/miy-copy/file.txt") == ["miy"]
+assert frozen_hits("tmp/pub-rs-mirror/file.txt") == ["pub-rs"]
+assert frozen_hits("tools/corpus/public_safe.py") == []
+
 bad = []
 for path in changed_paths():
     hits = frozen_hits(path)
