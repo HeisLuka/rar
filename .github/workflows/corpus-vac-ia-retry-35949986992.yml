@@ -1,0 +1,243 @@
+name: CORPUS-VAC IA retry 35949986992
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/corpus-vac-ia-retry-35949986992.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: corpus-vac-ia-retry-35949986992
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download immutable IA seed and aggregate from base run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'ia-*-35949986992'
+          path: base
+          github-token: ${{ github.token }}
+          run-id: 35949986992
+          merge-multiple: false
+
+      - name: Retry only item-metadata errors and build delta seeds
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import csv, json, sys, time
+          from pathlib import Path
+          from urllib.parse import quote
+
+          sys.path.insert(0, str(Path("tools/corpus").resolve()))
+          import internet_archive_pub_seed as ia
+
+          summary_path = next(Path("base").rglob("ia.summary.json"))
+          base_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+          errors = base_summary.get("errors") or []
+          identifiers = []
+          seen = set()
+          for row in errors:
+              ident = str(row.get("identifier") or "").strip()
+              if ident and ident not in seen:
+                  seen.add(ident)
+                  identifiers.append(ident)
+
+          retry_seeds = []
+          retry_containers = []
+          terminal = []
+          for ident in identifiers:
+              last = ""
+              for attempt in range(4):
+                  try:
+                      meta = ia.get_json(ia.META + quote(ident, safe=""), 60)
+                      item_meta = meta.get("metadata") or {}
+                      item = {
+                          "identifier": ident,
+                          "title": item_meta.get("title") or "",
+                          "date": item_meta.get("date") or "",
+                          "mediatype": item_meta.get("mediatype") or "",
+                      }
+                      for f in meta.get("files", []) or []:
+                          if ia.is_pub_or_zip_seed(f):
+                              retry_seeds.append(ia.seed_row(ident, item, f))
+                          elif ia.is_nonzip_container_seed(item, f):
+                              retry_containers.append(ia.seed_row(ident, item, f))
+                      terminal.append({
+                          "identifier": ident,
+                          "status": "success",
+                          "attempts": attempt + 1,
+                          "pub_or_zip_rows": sum(r["ia_identifier"] == ident for r in retry_seeds),
+                          "container_rows": sum(r["ia_identifier"] == ident for r in retry_containers),
+                      })
+                      break
+                  except Exception as exc:
+                      last = f"{type(exc).__name__}: {exc}"
+                      if attempt < 3:
+                          time.sleep(2.0 * (attempt + 1))
+                          continue
+                      terminal.append({
+                          "identifier": ident,
+                          "status": "terminal_error",
+                          "attempts": attempt + 1,
+                          "error": last,
+                      })
+
+          def dedup(rows):
+              out = {}
+              for row in rows:
+                  out.setdefault((row["ia_identifier"], row["ia_member_path"]), row)
+              return sorted(out.values(), key=lambda r: (r["ia_identifier"], r["ia_member_path"]))
+
+          retry_seeds = dedup(retry_seeds)
+          retry_containers = dedup(retry_containers)
+          ia.write_csv(retry_seeds, Path("out/retry_seed.csv"))
+          ia.write_csv(retry_containers, Path("out/retry_containers.csv"))
+
+          result = {
+              "schema": "rar-ia-metadata-retry-v1",
+              "base_run_id": 35949986992,
+              "base_error_rows": len(errors),
+              "unique_error_identifiers": identifiers,
+              "retry_pub_or_zip_rows": len(retry_seeds),
+              "retry_container_rows": len(retry_containers),
+              "terminal": terminal,
+              "remaining_terminal_errors": sum(r["status"] != "success" for r in terminal),
+          }
+          Path("out/retry.summary.json").write_text(
+              json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(result, indent=2, ensure_ascii=False))
+          PY
+
+      - name: Harvest only newly recovered PUB/ZIP seed rows
+        run: |
+          set -euo pipefail
+          mkdir -p out/retry_harvest
+          rows="$(wc -l < out/retry_seed.csv 2>/dev/null || echo 0)"
+          if [ "${rows:-0}" -gt 1 ]; then
+            python tools/corpus/harvest_pub.py \
+              --seed out/retry_seed.csv \
+              --out out/retry_harvest \
+              --max-files -1 --timeout 30 --max-bytes 104857600 \
+              --max-archive-total-bytes 314572800 --max-archive-members 200 \
+              --per-host-delay 0.1
+          else
+            printf '[]\n' > out/retry_harvest/manifest.json
+          fi
+
+      - name: Remove retry payload bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/retry_harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+
+      - name: Build seed, container, and manifest unions
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, json
+          from pathlib import Path
+
+          seed_dir = next(p for p in Path("base").iterdir() if p.name.startswith("ia-seed-"))
+          agg_dir = next(p for p in Path("base").iterdir() if p.name.startswith("ia-aggregate-"))
+
+          def read_csv(path):
+              if not path.exists():
+                  return []
+              with path.open("r", encoding="utf-8-sig", newline="") as fh:
+                  return list(csv.DictReader(fh))
+
+          def write_csv(rows, path):
+              keys=[]; seen=set()
+              for row in rows:
+                  for key in row:
+                      if key not in seen:
+                          seen.add(key); keys.append(key)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              with path.open("w", encoding="utf-8", newline="") as fh:
+                  w=csv.DictWriter(fh, fieldnames=keys)
+                  w.writeheader(); w.writerows(rows)
+
+          def union_seed(base_rows, retry_rows):
+              out={}
+              for row in base_rows + retry_rows:
+                  key=(row.get("ia_identifier",""), row.get("ia_member_path",""))
+                  if key != ("",""):
+                      out.setdefault(key,row)
+              return sorted(out.values(),key=lambda r:(r.get("ia_identifier",""),r.get("ia_member_path","")))
+
+          base_seed=read_csv(seed_dir/"ia_seed.csv")
+          retry_seed=read_csv(Path("out/retry_seed.csv"))
+          base_cont=read_csv(seed_dir/"ia_containers.csv")
+          retry_cont=read_csv(Path("out/retry_containers.csv"))
+          seed_union=union_seed(base_seed,retry_seed)
+          cont_union=union_seed(base_cont,retry_cont)
+
+          base_manifest=json.loads((agg_dir/"manifest.json").read_text(encoding="utf-8"))
+          retry_manifest_path=Path("out/retry_harvest/manifest.json")
+          retry_manifest=json.loads(retry_manifest_path.read_text(encoding="utf-8")) if retry_manifest_path.exists() else []
+
+          manifest={}
+          for row in base_manifest + retry_manifest:
+              sha=row.get("sha256")
+              key=("sha",sha) if sha else ("locator",row.get("direct_url",""),row.get("candidate_filename",""))
+              manifest.setdefault(key,row)
+          manifest_rows=list(manifest.values())
+
+          retry_summary=json.loads(Path("out/retry.summary.json").read_text(encoding="utf-8"))
+          summary={
+              "schema":"rar-ia-retry-union-v1",
+              "base_run_id":35949986992,
+              "base_seed_rows":len(base_seed),
+              "retry_seed_rows":len(retry_seed),
+              "union_seed_rows":len(seed_union),
+              "base_container_rows":len(base_cont),
+              "retry_container_rows":len(retry_cont),
+              "union_container_rows":len(cont_union),
+              "base_manifest_rows":len(base_manifest),
+              "retry_manifest_rows":len(retry_manifest),
+              "union_manifest_rows":len(manifest_rows),
+              "union_unique_sha256":len({r.get("sha256") for r in manifest_rows if r.get("sha256")}),
+              "remaining_terminal_metadata_errors":retry_summary.get("remaining_terminal_errors"),
+              "metadata_terminal":retry_summary.get("terminal"),
+          }
+
+          out=Path("out/union")
+          out.mkdir(parents=True,exist_ok=True)
+          write_csv(seed_union,out/"ia_seed.csv")
+          write_csv(cont_union,out/"ia_containers.csv")
+          (out/"manifest.json").write_text(json.dumps(manifest_rows,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+
+      - name: Upload bounded retry/union receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ia-retry-union-${{ github.run_id }}
+          path: |
+            out/retry.summary.json
+            out/retry_seed.csv
+            out/retry_containers.csv
+            out/retry_harvest/manifest.json
+            out/retry_harvest/manifest.csv
+            out/union/**
+          if-no-files-found: warn
+          retention-days: 30
