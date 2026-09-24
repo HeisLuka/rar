@@ -1,0 +1,73 @@
+name: TEMP CORPUS lineage rank execution
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-rank-exec.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tmp-corpus-lineage-rank-exec-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download exact source-free aggregate receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs
+          fetch_artifact() {
+            id="$1"
+            expected="$2"
+            name="$3"
+            gh api               -H "Accept: application/vnd.github+json"               "/repos/${{ github.repository }}/actions/artifacts/$id/zip"               > "inputs/$name.zip"
+            actual="$(sha256sum "inputs/$name.zip" | awk '{print $1}')"
+            test "$actual" = "$expected"
+            mkdir -p "inputs/$name"
+            unzip -q "inputs/$name.zip" -d "inputs/$name"
+          }
+          fetch_artifact 10804158328 d288527c13dcd145690fa570e4b593eb34e53c653cd5a12034e2ac7d91a52490 phase1
+          fetch_artifact 10825119604 8d10092a18afb758a96cd7d7638485ace82137291831ce4869418013c57eb8f6 container425
+          fetch_artifact 10826764921 d71304fa493560f81139188c8cf95961589d1e98ac499928e55a10638d6d1996 container407
+          fetch_artifact 10827046442 5fa31e2ff01f57671b93b4888da364776931464bbd68a349562fc1dc91534f83 crossarm129
+      - name: Rank canonical and expanded-only cross-cohort candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/corpus_lineage_rank.py rank             --cohort phase1=inputs/phase1/fingerprints.json             --cohort container425=inputs/container425/fingerprints.json             --cohort container407=inputs/container407/fingerprints.json             --cohort crossarm129=inputs/crossarm129/fingerprints.json             --out out
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s = json.loads(Path("out/summary.json").read_text())
+          assert s["input_sha_rows"] == 1486, s
+          assert s["ok_sha_rows"] == 1471, s
+          assert s["canonical_pair_candidates"] == 293, s
+          assert s["canonical_family_components"] == 128, s
+          assert s["canonical_exact_name_pairs"] == 246, s
+          assert s["canonical_cohort_pair_counts"] == {
+              "container407__container425": 290,
+              "container407__phase1": 2,
+              "container425__phase1": 1,
+          }, s
+          assert s["expanded_only_pairs"] == 133, s
+          assert s["expanded_only_structural_fingerprints"] == 1, s
+          print(json.dumps(s, sort_keys=True))
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-rank-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
