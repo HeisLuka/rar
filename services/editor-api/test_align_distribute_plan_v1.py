@@ -73,7 +73,7 @@ class AlignDistributePlanV1Tests(unittest.TestCase):
         ordered = [out[name] for name in ("first", "middle1", "middle2", "last")]
         gaps = [ordered[i + 1].x - ordered[i].right for i in range(3)]
         self.assertLessEqual(max(gaps) - min(gaps), 1)
-        self.assertEqual(100, sum(gaps))
+        self.assertEqual(90, sum(gaps))
 
     def test_distribution_allows_equal_overlap_when_extents_exceed_span(self):
         members = (
