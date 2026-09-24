@@ -251,6 +251,25 @@ except ModuleNotFoundError:
     )
 
 
+try:
+    from duplicate_rectangle_v1 import (
+        execute_duplicate_rectangle_v1,
+        validate_duplicate_rectangle_operation_v1,
+        validate_duplicate_rectangle_request_v1,
+    )
+except ModuleNotFoundError:
+    import pathlib
+
+    _duplicate_rectangle_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _duplicate_rectangle_dir not in sys.path:
+        sys.path.insert(0, _duplicate_rectangle_dir)
+    from duplicate_rectangle_v1 import (
+        execute_duplicate_rectangle_v1,
+        validate_duplicate_rectangle_operation_v1,
+        validate_duplicate_rectangle_request_v1,
+    )
+
+
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
 
@@ -568,6 +587,19 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_paste_fragment_request_shape,
             canonical_validator=self._validate_canonical_paste_fragment,
+        )
+
+    def commit_duplicate_rectangle(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_duplicate_rectangle_v1,
+    ) -> dict:
+        """Compose Duplicate intent into one canonical PasteFragment revision."""
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=validate_duplicate_rectangle_request_v1,
+            canonical_validator=validate_duplicate_rectangle_operation_v1,
         )
 
     def commit_shape_fill(
