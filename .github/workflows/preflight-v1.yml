@@ -1,0 +1,32 @@
+name: PREFLIGHT-01 diagnostics engine
+
+on:
+  pull_request:
+    paths:
+      - "tools/preflight_v1.py"
+      - "tools/test_preflight_v1.py"
+      - "tools/run_preflight_contract.py"
+      - "docs/preflight-v1.md"
+      - ".github/workflows/preflight-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test deterministic diagnostics
+        run: python -m unittest -v tools/test_preflight_v1.py
+      - name: Produce preflight receipt
+        run: python tools/run_preflight_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preflight-v1-receipt
+          path: target/preflight-v1/receipt.json
+          if-no-files-found: error
