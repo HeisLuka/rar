@@ -27,6 +27,7 @@ export class BrowserEditorShellV1 {
     rendererKind = "svg",
     view = DEFAULT_VIEW,
     operationIdFactory = null,
+    historyOperationIdFactory = null,
     onState = null,
   }) {
     if (!host) throw new TypeError("host is required");
@@ -38,6 +39,9 @@ export class BrowserEditorShellV1 {
     this.rendererKind = rendererKind;
     this.view = normalizeView(view);
     this.operationIdFactory = operationIdFactory ?? ((index) => "browser-op-" + index);
+    this.historyOperationIdFactory =
+      historyOperationIdFactory ??
+      ((kind, index) => "browser-history-" + kind + "-" + index);
     this.onState = onState;
     this.selection = new TransientSelectionV1();
     this.snapshot = null;
@@ -45,9 +49,12 @@ export class BrowserEditorShellV1 {
     this.gesture = null;
     this.gesturePageId = null;
     this.operationCounter = 0;
+    this.historyOperationCounter = 0;
     this.commitRequests = 0;
+    this.historyRequests = 0;
     this.pointerMoveCount = 0;
     this.lastCommitResult = null;
+    this.lastHistoryResult = null;
     this._bound = false;
     this._handlers = null;
   }
@@ -161,13 +168,7 @@ export class BrowserEditorShellV1 {
     const reconciliation = reconcileMoveCommit(this.snapshot, gesture, result);
 
     if (reconciliation.kind === "accepted_waiting_for_scene") {
-      const next = await this.service.sceneForRevision(result.revision_id);
-      if (!next || next.protocol_version !== "chaptera.scene.v1") {
-        throw new Error("service did not return BrowserSceneSnapshotV1");
-      }
-      if (next.document_id !== this.snapshot.document_id) throw new Error("scene document identity changed");
-      if (next.source_hash !== this.snapshot.source_hash) throw new Error("scene source identity changed");
-      if (next.revision_id !== result.revision_id) throw new Error("scene revision does not match accepted commit");
+      const next = await this._sceneForAcceptedRevision(result.revision_id);
       this.gesture = null;
       this.gesturePageId = null;
       this.loadSnapshot(next, { preserveSelection: false });
@@ -182,6 +183,59 @@ export class BrowserEditorShellV1 {
     this._renderOverlay();
     this._emitState("commit_rejected");
     return { request, result, reconciliation, scene: clone(this.snapshot) };
+  }
+
+  async historyTransition(kind) {
+    this._requireScene();
+    if (this.gesture) throw new Error("history transition is unavailable during active gesture");
+    if (kind !== "undo" && kind !== "redo") {
+      throw new TypeError("history transition must be undo or redo");
+    }
+    if (typeof this.service.historyTransition !== "function") {
+      throw new TypeError("service must implement historyTransition() for undo/redo");
+    }
+
+    const request = {
+      protocol_version: "chaptera.history-transition-intent.v1",
+      document_id: this.snapshot.document_id,
+      source_hash: this.snapshot.source_hash,
+      base_revision_id: this.snapshot.revision_id,
+      client_operation_id: this.historyOperationIdFactory(
+        kind,
+        ++this.historyOperationCounter,
+      ),
+      command: { kind },
+    };
+
+    this.historyRequests += 1;
+    this._emitState("history_sent");
+    const result = await this.service.historyTransition(clone(request));
+    this.lastHistoryResult = clone(result);
+
+    if (result?.protocol_version === "chaptera.history-transition-accepted.v1") {
+      if (result.transition_kind !== kind) {
+        throw new Error("history service returned different transition kind");
+      }
+      const next = await this._sceneForAcceptedRevision(result.revision_id);
+      this.loadSnapshot(next, { preserveSelection: true });
+      this._emitState("history_reconciled");
+      return { request, result, scene: clone(next) };
+    }
+
+    if (result?.protocol_version === "chaptera.commit-rejected.v1") {
+      this._emitState("history_rejected");
+      return { request, result, scene: clone(this.snapshot) };
+    }
+
+    throw new Error("service returned unsupported history result");
+  }
+
+  async undo() {
+    return this.historyTransition("undo");
+  }
+
+  async redo() {
+    return this.historyTransition("redo");
   }
 
   cancelGesture() {
@@ -210,7 +264,10 @@ export class BrowserEditorShellV1 {
       selected_node_id: this.selection.nodeId,
       pointer_move_count: this.pointerMoveCount,
       commit_request_count: this.commitRequests,
+      history_request_count: this.historyRequests,
       last_commit_protocol: this.lastCommitResult?.protocol_version ?? null,
+      last_history_protocol: this.lastHistoryResult?.protocol_version ?? null,
+      last_history_kind: this.lastHistoryResult?.transition_kind ?? null,
       renderer: this.rendererKind,
       browser_scene_is_durable_authority: false,
     };
@@ -222,6 +279,23 @@ export class BrowserEditorShellV1 {
     this.renderer = null;
     this.snapshot = null;
     this.gesture = null;
+  }
+
+  async _sceneForAcceptedRevision(revisionId) {
+    const next = await this.service.sceneForRevision(revisionId);
+    if (!next || next.protocol_version !== "chaptera.scene.v1") {
+      throw new Error("service did not return BrowserSceneSnapshotV1");
+    }
+    if (next.document_id !== this.snapshot.document_id) {
+      throw new Error("scene document identity changed");
+    }
+    if (next.source_hash !== this.snapshot.source_hash) {
+      throw new Error("scene source identity changed");
+    }
+    if (next.revision_id !== revisionId) {
+      throw new Error("scene revision does not match accepted transition");
+    }
+    return next;
   }
 
   _pageAt(xCss, yCss) {
