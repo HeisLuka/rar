@@ -188,6 +188,30 @@ class RevisionKernel:
             canonical_validator=self._validate_canonical_move,
         )
 
+    def commit_move_nodes(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        normalized = copy.deepcopy(request)
+        command = normalized.get("command")
+        if isinstance(command, dict) and isinstance(command.get("entries"), list):
+            command["entries"] = sorted(
+                command["entries"],
+                key=lambda entry: entry.get("node_id", "")
+                if isinstance(entry, dict)
+                else "",
+            )
+        return self._commit_command(
+            normalized,
+            executor,
+            request_validator=self._validate_move_nodes_request_shape,
+            canonical_validator=self._validate_canonical_move_nodes,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_resize(
         self,
         request: dict,
@@ -583,6 +607,85 @@ class RevisionKernel:
             if (not isinstance(value, int) or isinstance(value, bool)
                     or value < MIN_SAFE_EMU or value > MAX_SAFE_EMU):
                 raise ValueError("browser EMU must be a JavaScript-safe integer")
+
+    @staticmethod
+    def _validate_move_nodes_rect(rect: dict, label: str) -> None:
+        if not isinstance(rect, dict) or set(rect) != {"x", "y", "width", "height"}:
+            raise ValueError(f"{label} must contain exact x/y/width/height")
+        for field in ("x", "y"):
+            value = rect[field]
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < MIN_SAFE_EMU
+                or value > MAX_SAFE_EMU
+            ):
+                raise ValueError(f"{label}.{field} is outside the V1 JavaScript-safe EMU range")
+        for field in ("width", "height"):
+            value = rect[field]
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+                or value > MAX_SAFE_EMU
+            ):
+                raise ValueError(f"{label}.{field} must be a positive JavaScript-safe EMU integer")
+        if (
+            rect["x"] + rect["width"] > MAX_SAFE_EMU
+            or rect["x"] + rect["width"] < MIN_SAFE_EMU
+            or rect["y"] + rect["height"] > MAX_SAFE_EMU
+            or rect["y"] + rect["height"] < MIN_SAFE_EMU
+        ):
+            raise ValueError(f"{label} overflows the V1 JavaScript-safe EMU range")
+
+    @staticmethod
+    def _validate_move_nodes_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.move-nodes-intent.v1":
+            raise ValueError("V1 MoveNodes protocol_version is required")
+        command = request.get("command")
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "move_nodes"
+            or set(command) != {"kind", "page_id", "entries"}
+        ):
+            raise ValueError("MoveNodesV1 contains non-intent fields")
+        page_id = command.get("page_id")
+        if not isinstance(page_id, str) or not page_id:
+            raise ValueError("MoveNodesV1 page_id is required")
+        entries = command.get("entries")
+        if not isinstance(entries, list) or not entries or len(entries) > 1024:
+            raise ValueError("MoveNodesV1 entries must be a non-empty bounded list")
+
+        node_ids = []
+        for index, entry in enumerate(entries):
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"node_id", "expected_before", "after"}
+            ):
+                raise ValueError(f"MoveNodesV1 entry[{index}] is malformed")
+            node_id = entry.get("node_id")
+            if not isinstance(node_id, str) or not node_id:
+                raise ValueError(f"MoveNodesV1 entry[{index}].node_id is required")
+            node_ids.append(node_id)
+            RevisionKernel._validate_move_nodes_rect(
+                entry.get("expected_before"),
+                f"MoveNodesV1 entry[{index}].expected_before",
+            )
+            RevisionKernel._validate_move_nodes_rect(
+                entry.get("after"),
+                f"MoveNodesV1 entry[{index}].after",
+            )
+            before = entry["expected_before"]
+            after = entry["after"]
+            if before["width"] != after["width"] or before["height"] != after["height"]:
+                raise ValueError("MoveNodesV1 entries must encode translation only")
+            if before == after:
+                raise ValueError("MoveNodesV1 entries must not be no-ops")
+
+        if len(set(node_ids)) != len(node_ids):
+            raise ValueError("MoveNodesV1 NodeIds must be unique")
+        if node_ids != sorted(node_ids):
+            raise ValueError("MoveNodesV1 entries must be normalized by NodeId")
 
     @staticmethod
     def _validate_resize_request_shape(request: dict) -> None:
@@ -1013,6 +1116,54 @@ class RevisionKernel:
                 or after.get("width", 0) <= 0 or after.get("height", 0) <= 0:
             raise ValueError("canonical MoveNode rectangles must have positive width/height")
 
+
+    @staticmethod
+    def _validate_canonical_move_nodes(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or operation.get("kind") != "move_nodes"
+            or set(operation) != {"kind", "page_id", "entries"}
+        ):
+            raise ValueError("authoritative executor returned malformed MoveNodes operation")
+        if operation.get("page_id") != command.get("page_id"):
+            raise ValueError("canonical MoveNodes page differs from accepted intent")
+        entries = operation.get("entries")
+        requested = command.get("entries")
+        if not isinstance(entries, list) or len(entries) != len(requested):
+            raise ValueError("canonical MoveNodes entry count differs from accepted intent")
+
+        canonical_ids = []
+        for index, (expected, actual) in enumerate(zip(requested, entries)):
+            if (
+                not isinstance(actual, dict)
+                or set(actual) != {"node_id", "before", "after"}
+            ):
+                raise ValueError(f"canonical MoveNodes entry[{index}] is malformed")
+            if actual.get("node_id") != expected.get("node_id"):
+                raise ValueError("canonical MoveNodes NodeId order differs from normalized intent")
+            canonical_ids.append(actual["node_id"])
+            RevisionKernel._validate_move_nodes_rect(
+                actual.get("before"),
+                f"canonical MoveNodes entry[{index}].before",
+            )
+            RevisionKernel._validate_move_nodes_rect(
+                actual.get("after"),
+                f"canonical MoveNodes entry[{index}].after",
+            )
+            if actual["before"] != expected["expected_before"]:
+                raise ValueError("canonical MoveNodes before-state differs from expected precondition")
+            if actual["after"] != expected["after"]:
+                raise ValueError("canonical MoveNodes after-state differs from accepted intent")
+            if (
+                actual["before"]["width"] != actual["after"]["width"]
+                or actual["before"]["height"] != actual["after"]["height"]
+            ):
+                raise ValueError("canonical MoveNodes entries must encode translation only")
+            if actual["before"] == actual["after"]:
+                raise ValueError("canonical MoveNodes entries must not be no-ops")
+
+        if canonical_ids != sorted(canonical_ids) or len(set(canonical_ids)) != len(canonical_ids):
+            raise ValueError("canonical MoveNodes entries are not uniquely normalized by NodeId")
 
     @staticmethod
     def _validate_canonical_resize(command: dict, operation: dict) -> None:
