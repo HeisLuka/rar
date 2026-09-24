@@ -242,6 +242,21 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_paragraph_alignment(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_paragraph_alignment_request_shape,
+            canonical_validator=self._validate_canonical_paragraph_alignment,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_story_range(
         self,
         request: dict,
@@ -602,6 +617,110 @@ class RevisionKernel:
         depends = request.get("depends_on_client_operation_id")
         if depends is not None and (not isinstance(depends, str) or len(depends) < 8):
             raise ValueError("depends_on_client_operation_id is invalid")
+
+    @staticmethod
+    def _validate_paragraph_alignment_state(state: dict, label: str) -> None:
+        if not isinstance(state, dict) or set(state) != {"base_alignment", "override"}:
+            raise ValueError(f"{label} must contain exactly base_alignment/override")
+        if state.get("base_alignment") not in {
+            "left",
+            "center",
+            "right",
+            "interword",
+            "distribute",
+            "ambiguous",
+        }:
+            raise ValueError(f"{label}.base_alignment is unsupported")
+        override = state.get("override")
+        if override is not None and override not in {"left", "center", "right"}:
+            raise ValueError(f"{label}.override is unsupported")
+
+    @staticmethod
+    def _validate_paragraph_alignment_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.paragraph-alignment-intent.v1":
+            raise ValueError("V1 paragraph alignment protocol_version is required")
+        command = request.get("command")
+        if not isinstance(command, dict):
+            raise ValueError("paragraph alignment command is required")
+        kind = command.get("kind")
+        if kind == "set_paragraph_alignment_override":
+            allowed = {"kind", "paragraph_ids", "expected_state_ids", "value"}
+            if set(command) != allowed:
+                raise ValueError("SetParagraphAlignmentOverride contains non-intent fields")
+            if command.get("value") not in {"left", "center", "right"}:
+                raise ValueError("paragraph alignment value must be left/center/right")
+        elif kind == "clear_paragraph_alignment_override":
+            allowed = {"kind", "paragraph_ids", "expected_state_ids"}
+            if set(command) != allowed:
+                raise ValueError("ClearParagraphAlignmentOverride contains non-intent fields")
+        else:
+            raise ValueError("unsupported V1 paragraph alignment command")
+
+        paragraph_ids = command.get("paragraph_ids")
+        if (
+            not isinstance(paragraph_ids, list)
+            or not paragraph_ids
+            or len(paragraph_ids) > 1024
+            or any(not isinstance(value, str) or not value for value in paragraph_ids)
+            or len(set(paragraph_ids)) != len(paragraph_ids)
+        ):
+            raise ValueError("paragraph_ids must be a non-empty unique string list")
+
+        expected = command.get("expected_state_ids")
+        if not isinstance(expected, dict) or set(expected) != set(paragraph_ids):
+            raise ValueError("expected_state_ids must exactly cover paragraph_ids")
+        for paragraph_id, state_hash in expected.items():
+            if (
+                not isinstance(state_hash, str)
+                or not state_hash.startswith("sha256:")
+                or len(state_hash) != 71
+                or any(ch not in "0123456789abcdef" for ch in state_hash[7:])
+            ):
+                raise ValueError(f"invalid expected state hash for {paragraph_id}")
+
+    @staticmethod
+    def _validate_canonical_paragraph_alignment(command: dict, operation: dict) -> None:
+        if operation.get("kind") != command.get("kind"):
+            raise ValueError("canonical paragraph alignment operation kind mismatch")
+        changes = operation.get("changes")
+        paragraph_ids = command.get("paragraph_ids")
+        if (
+            not isinstance(changes, list)
+            or [change.get("paragraph_id") for change in changes] != paragraph_ids
+        ):
+            raise ValueError("canonical paragraph changes must match requested ParagraphIds exactly")
+
+        requested_value = command.get("value")
+        for change in changes:
+            paragraph_id = change.get("paragraph_id")
+            before = change.get("before")
+            after = change.get("after")
+            RevisionKernel._validate_paragraph_alignment_state(
+                before, "canonical before paragraph alignment"
+            )
+            RevisionKernel._validate_paragraph_alignment_state(
+                after, "canonical after paragraph alignment"
+            )
+            before_state_id = hash_id(before)
+            if before_state_id != command["expected_state_ids"][paragraph_id]:
+                raise ValueError(
+                    "canonical paragraph before-state differs from expected precondition"
+                )
+            if change.get("before_state_id") != before_state_id:
+                raise ValueError("canonical paragraph before_state_id is not bound to before state")
+            if after["base_alignment"] != before["base_alignment"]:
+                raise ValueError("paragraph alignment operation cannot rewrite base alignment")
+
+            if command["kind"] == "clear_paragraph_alignment_override":
+                expected_override = None
+            elif before["base_alignment"] == requested_value:
+                expected_override = None
+            else:
+                expected_override = requested_value
+            if after["override"] != expected_override:
+                raise ValueError("canonical paragraph override normalization mismatch")
+            if after == before:
+                raise ValueError("canonical paragraph alignment operation contains a no-op target")
 
     @staticmethod
     def _validate_delete_node_request_shape(request: dict) -> None:
