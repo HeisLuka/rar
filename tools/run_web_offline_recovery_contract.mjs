@@ -70,6 +70,15 @@ async function main() {
       pageA.goto(origin, {waitUntil: "networkidle"}),
       pageB.goto(origin, {waitUntil: "networkidle"}),
     ]);
+    await Promise.all([
+      pageA.waitForFunction(() =>
+        typeof window.recoveryCapabilities === "function" &&
+        typeof window.recoveryReset === "function" &&
+        typeof window.recoveryPrepare === "function" &&
+        typeof window.recoveryPlan === "function"),
+      pageB.waitForFunction(() =>
+        typeof window.recoveryList === "function"),
+    ]);
     const capabilities = await pageA.evaluate(() => window.recoveryCapabilities());
     await pageA.evaluate(() => window.recoveryReset());
 
@@ -98,6 +107,9 @@ async function main() {
     context = await openPersistent(browserType, profile);
     pageA = context.pages()[0] ?? await context.newPage();
     await pageA.goto(origin, {waitUntil: "networkidle"});
+    await pageA.waitForFunction(() =>
+      typeof window.recoveryList === "function" &&
+      typeof window.recoveryPlan === "function");
     const afterRestart = await pageA.evaluate(() => window.recoveryList("tab:restart"));
     if (afterRestart.length !== 1 || afterRestart[0].state !== "sent_unknown") {
       throw new Error("IndexedDB pending state did not survive restart");
