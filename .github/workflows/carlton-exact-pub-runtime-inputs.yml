@@ -12,7 +12,7 @@ permissions:
 jobs:
   acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
 
@@ -65,7 +65,7 @@ jobs:
 
           session = requests.Session()
           session.headers.update({
-              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/1.0)",
+              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/1.1)",
               "Accept": "*/*",
           })
 
@@ -73,17 +73,23 @@ jobs:
           page.raise_for_status()
           raw_html = page.text
           (DISC / "latest-letters.html").write_text(raw_html, encoding="utf-8")
-          decoded = html.unescape(raw_html).replace("\\/", "/")
-          decoded = unquote(decoded)
+          decoded = unquote(html.unescape(raw_html).replace("\\/", "/"))
 
-          # PR #51 proved these public March endpoints existed; retain them as exact seeds.
+          for needle in ("March 2026.pub", "December 2025.pub"):
+              pos = decoded.find(needle)
+              if pos >= 0:
+                  lo = max(0, pos - 1200)
+                  hi = min(len(decoded), pos + 1200)
+                  print(f"CONTEXT {needle}:")
+                  print(decoded[lo:hi].replace("\n", " ")[:2400])
+
           candidates: set[str] = {
+              # Proven in historical PR #51.
               "https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/5a/5a939344-76a6-4a6a-b30b-7237edac8bfa",
               "https://docs-cdn.schooljotter3.com/1fd359a4-cb4e-412d-81a1-79f36166cafc/5a939344-76a6-4a6a-b30b-7237edac8bfa/5a939344-76a6-4a6a-b30b-7237edac8bfa.pub",
               "https://docs-cdn.schooljotter3.com/1fd359a4-cb4e-412d-81a1-79f36166cafc/5a939344-76a6-4a6a-b30b-7237edac8bfa/March%202026.pub",
           }
 
-          # Keep any public URL embedded in the page/JSON if it plausibly points at School Jotter media.
           for match in re.findall(r"https?://[^\s\"'<>]+", decoded):
               clean = match.rstrip("),]}.;")
               if (
@@ -106,18 +112,6 @@ jobs:
               candidates.add(f"https://docs-cdn.schooljotter3.com/{known_site}/{u}/March%202026.pub")
               candidates.add(f"https://docs-cdn.schooljotter3.com/{known_site}/{u}/December%202025.pub")
 
-          # Some School Jotter pages expose a site/folder UUID distinct from the file UUID.
-          # Try bounded parent-child combinations only for UUIDs actually present in this page.
-          for parent in uuids[:24]:
-              p = parent.lower()
-              for child in uuids[:24]:
-                  c = child.lower()
-                  if p == c:
-                      continue
-                  candidates.add(f"https://docs-cdn.schooljotter3.com/{p}/{c}/{c}.pub")
-                  candidates.add(f"https://docs-cdn.schooljotter3.com/{p}/{c}/March%202026.pub")
-                  candidates.add(f"https://docs-cdn.schooljotter3.com/{p}/{c}/December%202025.pub")
-
           candidate_list = sorted(candidates)
           (DISC / "candidate-urls.json").write_text(
               json.dumps(candidate_list, indent=2) + "\n", encoding="utf-8"
@@ -126,10 +120,11 @@ jobs:
               json.dumps(uuids, indent=2) + "\n", encoding="utf-8"
           )
           print(f"page_status={page.status_code} uuids={len(uuids)} candidates={len(candidate_list)}")
+          print("UUIDS", json.dumps(uuids))
 
           def fetch(url: str):
               try:
-                  with session.get(url, timeout=(10, 45), stream=True, allow_redirects=True) as resp:
+                  with session.get(url, timeout=(8, 25), stream=True, allow_redirects=True) as resp:
                       if resp.status_code != 200:
                           return {"url": url, "status": resp.status_code}
                       length = resp.headers.get("content-length")
@@ -151,7 +146,6 @@ jobs:
                                   continue
                               size += len(chunk)
                               if size > 12_500_000:
-                                  fh.close()
                                   tmp.unlink(missing_ok=True)
                                   return {"url": url, "status": 200, "skip": "too-large"}
                               h.update(chunk)
@@ -169,38 +163,35 @@ jobs:
 
           found: dict[str, dict] = {}
           observations: list[dict] = []
-          with ThreadPoolExecutor(max_workers=16) as pool:
+          with ThreadPoolExecutor(max_workers=24) as pool:
               futures = {pool.submit(fetch, url): url for url in candidate_list}
               for future in as_completed(futures):
                   result = future.result()
                   observations.append({k: v for k, v in result.items() if k != "tmp"})
                   sha = result.get("sha256")
                   size = result.get("size")
-                  if not sha:
-                      continue
-                  for key, spec in expected.items():
-                      if key in found:
-                          continue
-                      if sha == spec["sha256"] and size == spec["size"]:
-                          dest = EXACT / spec["filename"]
-                          shutil.move(result["tmp"], dest)
-                          found[key] = {
-                              "source_url": result.get("final_url") or result["url"],
-                              "requested_url": result["url"],
-                              "sha256": sha,
-                              "size": size,
-                              "path": str(dest),
-                          }
-                          print(f"FOUND {key}: size={size} sha={sha} url={found[key]['source_url']}")
-                          break
-                  else:
+                  matched = False
+                  if sha:
+                      for key, spec in expected.items():
+                          if key in found:
+                              continue
+                          if sha == spec["sha256"] and size == spec["size"]:
+                              dest = EXACT / spec["filename"]
+                              shutil.move(result["tmp"], dest)
+                              found[key] = {
+                                  "source_url": result.get("final_url") or result["url"],
+                                  "requested_url": result["url"],
+                                  "sha256": sha,
+                                  "size": size,
+                                  "path": str(dest),
+                              }
+                              print(f"FOUND {key}: size={size} sha={sha} url={found[key]['source_url']}")
+                              matched = True
+                              break
+                  if not matched:
                       tmp = result.get("tmp")
                       if tmp:
                           Path(tmp).unlink(missing_ok=True)
-
-          # Clean any unused successful candidate temp files.
-          for obs in observations:
-              pass
 
           (DISC / "observations.json").write_text(
               json.dumps(observations, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -241,7 +232,6 @@ jobs:
           import hashlib
           import json
           from pathlib import Path
-
           import olefile
 
           root = Path("out/carlton/exact")
@@ -249,11 +239,7 @@ jobs:
               label = pub.stem
               with olefile.OleFileIO(str(pub)) as ole:
                   streams = ["/".join(parts) for parts in ole.listdir(streams=True, storages=False)]
-                  manifest = {
-                      "source_file": pub.name,
-                      "streams": streams,
-                      "contents": [],
-                  }
+                  manifest = {"source_file": pub.name, "streams": streams, "contents": []}
                   for parts in ole.listdir(streams=True, storages=False):
                       if parts[-1].lower() != "contents":
                           continue
@@ -267,8 +253,7 @@ jobs:
                           "artifact_file": out.name,
                       })
                   (root / f"{label}-cfb-manifest.json").write_text(
-                      json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-                      encoding="utf-8",
+                      json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
                   )
                   if not manifest["contents"]:
                       raise SystemExit(f"{pub}: no Contents stream")
