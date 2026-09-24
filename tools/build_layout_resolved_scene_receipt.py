@@ -28,6 +28,13 @@ REDO_OPERATION_ID = "layout-redo-00000001"
 
 
 def load_revision_store():
+    # revision_store.py has source-neutral sibling modules (for example
+    # story_range_v1.py). Direct importlib loading must preserve that package-local
+    # import boundary instead of forcing revision_store's fallback loaders.
+    editor_api_dir = str(REVISION_STORE.parent)
+    if editor_api_dir not in sys.path:
+        sys.path.insert(0, editor_api_dir)
+
     spec = importlib.util.spec_from_file_location("chaptera_revision_store", REVISION_STORE)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load RevisionKernel")
