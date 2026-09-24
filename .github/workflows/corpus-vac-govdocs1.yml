@@ -3,12 +3,14 @@ name: CORPUS-VAC GovDocs1 quarantine
 on:
   pull_request:
     paths:
-      - 'tools/corpus/govdocs1_pub_seed.py'
+      - 'tools/corpus/govdocs1_remote_zip_pub.py'
+      - 'tools/corpus/test_govdocs1_remote_zip_pub.py'
       - '.github/workflows/corpus-vac-govdocs1.yml'
   push:
     branches: [main]
     paths:
-      - 'tools/corpus/govdocs1_pub_seed.py'
+      - 'tools/corpus/govdocs1_remote_zip_pub.py'
+      - 'tools/corpus/test_govdocs1_remote_zip_pub.py'
       - '.github/workflows/corpus-vac-govdocs1.yml'
   workflow_dispatch:
 
@@ -22,135 +24,80 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Compile and bounded listing smoke
+      - name: Offline tests
         run: |
           set -euo pipefail
-          python -m py_compile tools/corpus/govdocs1_pub_seed.py
+          python -m py_compile \
+            tools/corpus/govdocs1_remote_zip_pub.py \
+            tools/corpus/test_govdocs1_remote_zip_pub.py
+          python tools/corpus/test_govdocs1_remote_zip_pub.py
+      - name: Live remote-ZIP range smoke
+        run: |
+          set -euo pipefail
           mkdir -p out
-          python tools/corpus/govdocs1_pub_seed.py \
-            --out out/govdocs_seed.csv \
-            --summary out/govdocs.summary.json \
-            --start-dir 0 --end-dir 3 --workers 2 --max-candidates 100
+          python tools/corpus/govdocs1_remote_zip_pub.py \
+            --start-dir 0 --end-dir 1 --workers 2 --timeout 30 \
+            --out out/govdocs_manifest.json \
+            --summary out/govdocs.summary.json
           python - <<'PY'
-          import csv,json
+          import json
           from pathlib import Path
-          rows=list(csv.DictReader(Path("out/govdocs_seed.csv").open(encoding="utf-8")))
-          assert all(r.get("quarantine")=="yes" for r in rows)
           s=json.loads(Path("out/govdocs.summary.json").read_text())
-          assert s["directory_range"]==[0,3]
+          assert s["zip_archives_requested"] == 2, s
+          assert s["zip_archives_ok"] >= 1, s
+          assert s["archive_entries_seen"] > 0, s
           PY
+          cat out/govdocs.summary.json
       - uses: actions/upload-artifact@v4
         with:
-          name: govdocs-smoke-${{ github.run_id }}
-          path: out/**
+          name: govdocs-zip-smoke-${{ github.run_id }}
+          path: |
+            out/govdocs.summary.json
+            out/govdocs_manifest.json
+            out/govdocs_manifest.csv
           retention-days: 7
 
-  discover:
+  production:
     if: github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Enumerate all 000-999 directories
+      - name: Index all 1000 official GovDocs1 ZIPs and fetch PUB members only
         run: |
           set -euo pipefail
-          mkdir -p out/discovery
-          python tools/corpus/govdocs1_pub_seed.py \
-            --out out/discovery/govdocs_seed.csv \
-            --summary out/discovery/govdocs.summary.json \
-            --start-dir 0 --end-dir 999 --workers 16 --max-candidates 10000
-      - uses: actions/upload-artifact@v4
-        with:
-          name: govdocs-seed-${{ github.run_id }}
-          path: out/discovery/**
-          retention-days: 14
-
-  harvest:
-    if: github.event_name != 'pull_request'
-    needs: discover
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0,1,2,3]
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: actions/download-artifact@v4
-        with:
-          name: govdocs-seed-${{ github.run_id }}
-          path: seed
-      - name: Fetch quarantined bytes for static classification only
-        run: |
-          set -euo pipefail
-          python tools/corpus/harvest_pub.py \
-            --seed seed/govdocs_seed.csv --out out/harvest \
-            --max-files -1 --timeout 25 --max-bytes 104857600 --per-host-delay 0.05 \
-            --include-quarantine \
-            --shard-index "${{ matrix.shard }}" --shard-count 4
-      - name: Delete all raw quarantine bytes before public artifact upload
-        if: always()
-        run: |
-          set -euo pipefail
-          find out/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: govdocs-manifest-${{ github.run_id }}-${{ matrix.shard }}
-          path: |
-            out/harvest/manifest.json
-            out/harvest/manifest.csv
-          if-no-files-found: error
-          retention-days: 30
-
-  aggregate:
-    if: github.event_name != 'pull_request' && always()
-    needs: harvest
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: govdocs-manifest-${{ github.run_id }}-*
-          path: combined
-      - name: Aggregate quarantine receipts
+          mkdir -p out
+          python tools/corpus/govdocs1_remote_zip_pub.py \
+            --start-dir 0 --end-dir 999 --workers 16 --timeout 30 \
+            --max-member-bytes 104857600 \
+            --out out/govdocs_manifest.json \
+            --summary out/govdocs.summary.json
+          cat out/govdocs.summary.json
+      - name: Assert quarantine boundary
         run: |
           set -euo pipefail
           python - <<'PY'
-          import glob,json
-          from collections import Counter
+          import json
           from pathlib import Path
-          rows=[]
-          for p in glob.glob("combined/**/manifest.json",recursive=True):
-              rows.extend(json.loads(Path(p).read_text(encoding="utf-8")))
-          summary={
-              "schema":"rar-govdocs1-quarantine-v1",
-              "manifest_rows":len(rows),
-              "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
-              "classification":dict(Counter(r.get("classification","") for r in rows)),
-              "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
-              "all_rows_quarantine":all((r.get("quarantine") or "").casefold() in {"yes","true","1"} for r in rows),
-          }
-          Path("aggregate").mkdir(exist_ok=True)
-          Path("aggregate/manifest.json").write_text(json.dumps(rows,indent=2,ensure_ascii=False),encoding="utf-8")
-          Path("aggregate/summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
-          print(json.dumps(summary,indent=2))
+          rows=json.loads(Path("out/govdocs_manifest.json").read_text())
+          assert all((r.get("quarantine") or "").casefold() == "yes" for r in rows), "non-quarantine row"
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: govdocs-aggregate-${{ github.run_id }}
-          path: aggregate/**
+          name: govdocs-remote-zip-receipt-${{ github.run_id }}
+          path: |
+            out/govdocs.summary.json
+            out/govdocs_manifest.json
+            out/govdocs_manifest.csv
+          if-no-files-found: error
           retention-days: 30
