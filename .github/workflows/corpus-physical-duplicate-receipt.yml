@@ -1,0 +1,55 @@
+name: CORPUS physical duplicate receipt
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json'
+      - 'tools/corpus/generate_logical_duplicate_receipt.py'
+      - 'tools/corpus/validate_logical_duplicate_receipt.py'
+      - '.github/workflows/corpus-physical-duplicate-receipt.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json'
+      - 'tools/corpus/validate_logical_duplicate_receipt.py'
+      - '.github/workflows/corpus-physical-duplicate-receipt.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize exact plaintext receipt when absent
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/corpus/generate_logical_duplicate_receipt.py
+      - name: Validate exact duplicate locator receipt
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/validate_logical_duplicate_receipt.py
+          python tools/corpus/validate_logical_duplicate_receipt.py
+      - name: Commit regenerated plaintext receipt
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json)" ]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json
+          git commit -m "corpus: materialize logical duplicate locator receipt"
+          git push origin HEAD:"${{ github.event.pull_request.head.ref }}"
