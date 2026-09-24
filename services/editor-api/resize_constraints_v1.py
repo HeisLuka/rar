@@ -367,7 +367,11 @@ def plan_resize_constraint_v1(
         positive_handle="e" in handle,
         active=active_x,
         centered=modifiers.centered,
-        center2=_center2_x(base_rect),
+        center2=(
+            _center2_x(base_rect)
+            if modifiers.centered and active_x
+            else 0
+        ),
         label="x_axis",
     )
     top, bottom = _axis_edges(
@@ -378,7 +382,11 @@ def plan_resize_constraint_v1(
         positive_handle="s" in handle,
         active=active_y,
         centered=modifiers.centered,
-        center2=_center2_y(base_rect),
+        center2=(
+            _center2_y(base_rect)
+            if modifiers.centered and active_y
+            else 0
+        ),
         label="y_axis",
     )
 
