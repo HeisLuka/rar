@@ -7,6 +7,7 @@ from resize_nodes_v1 import (
     apply_resize_nodes_operation_state_v1,
     execute_resize_nodes_v1,
     normalize_resize_nodes_request_v1,
+    validate_resize_nodes_request_v1,
 )
 from revision_store import RevisionKernel
 
@@ -98,7 +99,7 @@ class ResizeNodesV1Tests(unittest.TestCase):
             before=row["expected_before"]
             row["after"]=rect(before["x"]+10,before["y"]+20,before["width"],before["height"])
         with self.assertRaisesRegex(ResizeNodesV1Error,"MoveNodes"):
-            request("r","op:move",rows)
+            validate_resize_nodes_request_v1(request("r","op:move",rows))
 
     def test_invalid_target_rejects_whole_batch(self):
         p=project()
@@ -118,12 +119,12 @@ class ResizeNodesV1Tests(unittest.TestCase):
         rows=entries()
         rows[1]["node_id"]="b"
         with self.assertRaisesRegex(ResizeNodesV1Error,"unique"):
-            request("r","op:dup",rows)
+            validate_resize_nodes_request_v1(request("r","op:dup",rows))
 
         rows=entries()
         rows[1]["after"]["x"]=9_007_199_254_740_991
         with self.assertRaises(ResizeNodesV1Error):
-            request("r","op:overflow",rows)
+            validate_resize_nodes_request_v1(request("r","op:overflow",rows))
 
     def test_undo_redo_replay_restore_exact_sets(self):
         p=project()
