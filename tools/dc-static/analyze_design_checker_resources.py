@@ -426,6 +426,9 @@ def classify_pe_dword(pe: pefile.PE, value: int) -> dict:
             "section": section,
         }
 
+    if value <= 0xFFFF:
+        return {"value": f"0x{value:08X}", "kind": "small_immediate", "decimal": value}
+
     if 0 < value < image_size:
         try:
             offset = int(pe.get_offset_from_rva(value))
@@ -440,9 +443,6 @@ def classify_pe_dword(pe: pefile.PE, value: int) -> dict:
             "offset": offset,
             "section": section,
         }
-
-    if value <= 0xFFFF:
-        return {"value": f"0x{value:08X}", "kind": "small_immediate", "decimal": value}
 
     return {"value": f"0x{value:08X}", "kind": "scalar_or_external"}
 
@@ -534,16 +534,143 @@ def import_iat_map(pe: pefile.PE, wanted: set[str]) -> dict[int, str]:
     return out
 
 
-def imported_call_sites(pe: pefile.PE, instructions: list, iat_map: dict[int, str]) -> list[dict]:
+def import_thunk_map(pe: pefile.PE, instructions: list, iat_map: dict[int, str]) -> dict[int, str]:
+    """Resolve simple x86 import thunks: JMP [IAT] -> imported API name."""
+    out: dict[int, str] = {}
+    for insn in instructions:
+        if insn.mnemonic != "jmp":
+            continue
+        for op in insn.operands:
+            if op.type == X86_OP_MEM and int(op.mem.disp) in iat_map:
+                out[int(insn.address)] = iat_map[int(op.mem.disp)]
+                break
+    return out
+
+
+def pointer_occurrence_instructions(
+    pe: pefile.PE, instructions: list, pointer_rows: list[dict]
+) -> list[dict]:
+    """Bind raw DWORD pointer occurrences in executable sections to containing instructions."""
     image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for row in pointer_rows:
+        if row.get("section") != ".text" or not row.get("rva"):
+            continue
+        occurrence_va = image_base + int(row["rva"], 16)
+        containing = None
+        for insn in instructions:
+            if int(insn.address) <= occurrence_va < int(insn.address) + int(insn.size):
+                containing = {
+                    "instruction_va": f"0x{insn.address:08X}",
+                    "instruction_rva": f"0x{insn.address - image_base:08X}",
+                    "instruction_size": int(insn.size),
+                    "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                    "byte_offset_within_instruction": occurrence_va - int(insn.address),
+                }
+                break
+        out.append({**row, "containing_instruction": containing})
+    return out
+
+
+def code_refs_to_pointer_slots(
+    pe: pefile.PE, instructions: list, pointer_rows: list[dict]
+) -> list[dict]:
+    """Find code operands that reference second-order data pointer slots exactly."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    slots = {
+        int(row["va"], 16): row
+        for row in pointer_rows
+        if row.get("va") and row.get("section") != ".text"
+    }
+    out: list[dict] = []
+    for insn in instructions:
+        for op in insn.operands:
+            if op.type == X86_OP_IMM:
+                value = int(op.imm)
+                kind = "imm"
+            elif op.type == X86_OP_MEM:
+                value = int(op.mem.disp)
+                kind = "mem_disp"
+            else:
+                continue
+            if value in slots:
+                row = slots[value]
+                out.append(
+                    {
+                        "slot_va": row["va"],
+                        "slot_rva": row["rva"],
+                        "cluster_index": row["cluster_index"],
+                        "va": f"0x{insn.address:08X}",
+                        "rva": f"0x{insn.address - image_base:08X}",
+                        "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                        "operand_kind": kind,
+                    }
+                )
+    return out
+
+
+def shared_record_target_headers(pe: pefile.PE, path: Path, record_arrays: list[dict]) -> list[dict]:
+    """Decode small shared targets referenced by a fixed record field, without assigning semantics."""
+    data = path.read_bytes()
+    seen: set[int] = set()
+    out: list[dict] = []
+    for array in record_arrays:
+        for record in array.get("records", []):
+            for field in record.get("fields", [])[1:]:
+                if field.get("kind") != "va" or field.get("offset") is None:
+                    continue
+                target_offset = int(field["offset"])
+                if target_offset in seen:
+                    continue
+                seen.add(target_offset)
+                start = max(0, target_offset - 16)
+                end = min(len(data), target_offset + 32)
+                window = data[start:end]
+                dwords = []
+                for pos in range(0, len(window) - 3, 4):
+                    value = struct.unpack_from("<I", window, pos)[0]
+                    dwords.append(
+                        {
+                            "relative_offset": start + pos - target_offset,
+                            **classify_pe_dword(pe, value),
+                        }
+                    )
+                out.append(
+                    {
+                        "target_va": field["value"],
+                        "target_rva": field.get("rva"),
+                        "target_offset": target_offset,
+                        "target_section": field.get("section"),
+                        "window_start_offset": start,
+                        "window_end_offset": end,
+                        "dwords": dwords,
+                    }
+                )
+    return out
+
+
+def imported_call_sites(
+    pe: pefile.PE,
+    instructions: list,
+    iat_map: dict[int, str],
+    thunk_map: dict[int, str] | None = None,
+) -> list[dict]:
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    thunk_map = thunk_map or {}
     out: list[dict] = []
     for idx, insn in enumerate(instructions):
         if insn.mnemonic != "call":
             continue
         target = None
+        resolution = None
         for op in insn.operands:
             if op.type == X86_OP_MEM and int(op.mem.disp) in iat_map:
                 target = iat_map[int(op.mem.disp)]
+                resolution = "direct_iat"
+                break
+            if op.type == X86_OP_IMM and int(op.imm) in thunk_map:
+                target = thunk_map[int(op.imm)]
+                resolution = "import_thunk"
                 break
         if target:
             out.append(
@@ -552,6 +679,7 @@ def imported_call_sites(pe: pefile.PE, instructions: list, iat_map: dict[int, st
                     "va": f"0x{insn.address:08X}",
                     "rva": f"0x{insn.address - image_base:08X}",
                     "target": target,
+                    "resolution": resolution,
                     "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
                 }
             )
@@ -932,8 +1060,17 @@ def main() -> int:
     checker_fixed_records = decode_checker_fixed_records(
         pe, pe_path, checker_pointer_tables
     )
+    checker_shared_target_headers = shared_record_target_headers(
+        pe, pe_path, checker_fixed_records
+    )
     checker_cluster_base_pointers = cluster_base_pointer_rows(
         pe, pe_path, checker_pointer_tables
+    )
+    checker_cluster_base_occurrence_instructions = pointer_occurrence_instructions(
+        pe, instructions, checker_cluster_base_pointers
+    )
+    checker_cluster_base_slot_code_refs = code_refs_to_pointer_slots(
+        pe, instructions, checker_cluster_base_pointers
     )
     loader_iat = import_iat_map(
         pe,
@@ -946,7 +1083,8 @@ def main() -> int:
             "FreeLibrary",
         },
     )
-    loader_calls = imported_call_sites(pe, instructions, loader_iat)
+    loader_thunks = import_thunk_map(pe, instructions, loader_iat)
+    loader_calls = imported_call_sites(pe, instructions, loader_iat, loader_thunks)
     loader_checker_proximity = loader_proximity(
         pe,
         instructions,
@@ -995,10 +1133,17 @@ def main() -> int:
             "checker_pointer_clusters": checker_pointer_tables,
             "checker_pointer_cluster_code_refs": checker_pointer_table_refs,
             "checker_fixed_stride_records": checker_fixed_records,
+            "checker_shared_record_target_headers": checker_shared_target_headers,
             "checker_cluster_base_pointers": checker_cluster_base_pointers,
+            "checker_cluster_base_occurrence_instructions": checker_cluster_base_occurrence_instructions,
+            "checker_cluster_base_slot_code_refs": checker_cluster_base_slot_code_refs,
             "loader_import_iat": [
                 {"iat_va": f"0x{va:08X}", "name": name}
                 for va, name in sorted(loader_iat.items())
+            ],
+            "loader_import_thunks": [
+                {"thunk_va": f"0x{va:08X}", "target": name}
+                for va, name in sorted(loader_thunks.items())
             ],
             "loader_call_sites": loader_calls,
             "loader_checker_proximity": loader_checker_proximity,
@@ -1055,8 +1200,12 @@ def main() -> int:
         f"- checker pointer clusters with code refs: {sum(1 for row in checker_pointer_table_refs if row['refs'])}",
         f"- fixed 16-byte checker record arrays: {len(checker_fixed_records)}",
         f"- executable pointer fields after name: {sum(row['executable_pointer_fields_after_name'] for row in checker_fixed_records)}",
+        f"- shared fixed-record VA targets decoded: {len(checker_shared_target_headers)}",
         f"- second-order pointers to checker array bases: {len(checker_cluster_base_pointers)}",
+        f"- second-order .text occurrences bound to instructions: {sum(1 for row in checker_cluster_base_occurrence_instructions if row['containing_instruction'])}",
+        f"- code refs to second-order data slots: {len(checker_cluster_base_slot_code_refs)}",
         f"- loader API imports: {len(loader_iat)}",
+        f"- loader import thunks: {len(loader_thunks)}",
         f"- loader API call sites: {len(loader_calls)}",
         f"- loader calls with nearby checker hits: {sum(1 for row in loader_checker_proximity if row['nearby_checker_hits'])}",
         f"- STRINGTABLE IDs matched: {len(matched_string_ids)}",
@@ -1103,8 +1252,15 @@ def main() -> int:
                     row["executable_pointer_fields_after_name"]
                     for row in checker_fixed_records
                 ),
+                "checker_shared_record_targets": len(checker_shared_target_headers),
                 "checker_cluster_base_pointers": len(checker_cluster_base_pointers),
+                "checker_cluster_base_text_occurrences_bound_to_instructions": sum(
+                    1 for row in checker_cluster_base_occurrence_instructions
+                    if row["containing_instruction"]
+                ),
+                "checker_cluster_base_slot_code_refs": len(checker_cluster_base_slot_code_refs),
                 "loader_imports": len(loader_iat),
+                "loader_import_thunks": len(loader_thunks),
                 "loader_call_sites": len(loader_calls),
                 "loader_calls_with_checker_proximity": sum(
                     1 for row in loader_checker_proximity
