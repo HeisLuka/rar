@@ -155,16 +155,9 @@ pub trait BlobProvider: Send + Sync {
         generation: &str,
     ) -> Result<Box<dyn Read + Send>, ProviderError>;
 
-    fn delete_exact(
-        &self,
-        object_locator: &str,
-        generation: &str,
-    ) -> Result<(), ProviderError>;
+    fn delete_exact(&self, object_locator: &str, generation: &str) -> Result<(), ProviderError>;
 
-    fn issue_grant(
-        &self,
-        request: &ProviderGrantRequest,
-    ) -> Result<ProviderGrant, ProviderError>;
+    fn issue_grant(&self, request: &ProviderGrantRequest) -> Result<ProviderGrant, ProviderError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,10 +209,7 @@ pub trait BlobBindingRepository: Send + Sync {
         physical_blob_id: &str,
     ) -> Result<Option<PhysicalBlobRecord>, BlobStoreError>;
 
-    fn get_binding(
-        &self,
-        binding_id: &str,
-    ) -> Result<Option<ResourceBinding>, BlobStoreError>;
+    fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError>;
 
     fn commit_physical_and_binding(
         &self,
@@ -227,10 +217,7 @@ pub trait BlobBindingRepository: Send + Sync {
         binding: ResourceBinding,
     ) -> Result<ResourceBinding, BlobStoreError>;
 
-    fn commit_binding(
-        &self,
-        binding: ResourceBinding,
-    ) -> Result<ResourceBinding, BlobStoreError>;
+    fn commit_binding(&self, binding: ResourceBinding) -> Result<ResourceBinding, BlobStoreError>;
 
     fn mark_physical_deleted(
         &self,
@@ -324,9 +311,9 @@ impl BlobStoreService {
         );
 
         let mut hashing = HashingBoundedReader::new(input, request.byte_len);
-        let create_result = self
-            .provider
-            .create_immutable(&object_locator, request.byte_len, &mut hashing);
+        let create_result =
+            self.provider
+                .create_immutable(&object_locator, request.byte_len, &mut hashing);
 
         let metadata = match create_result {
             Ok(metadata) => metadata,
@@ -400,10 +387,9 @@ impl BlobStoreService {
     ) -> Result<u64, BlobStoreError> {
         require_ident(tenant_id, "tenant_id")?;
         require_ident(binding_id, "binding_id")?;
-        let binding = self
-            .repo
-            .get_binding(binding_id)?
-            .ok_or_else(|| BlobStoreError::new("binding_not_found", "resource binding not found"))?;
+        let binding = self.repo.get_binding(binding_id)?.ok_or_else(|| {
+            BlobStoreError::new("binding_not_found", "resource binding not found")
+        })?;
         if binding.tenant_id != tenant_id {
             return Err(BlobStoreError::new(
                 "cross_tenant_binding",
@@ -433,10 +419,9 @@ impl BlobStoreService {
         expires_at_ms: u64,
     ) -> Result<DownloadGrant, BlobStoreError> {
         validate_expiry(now_ms, expires_at_ms)?;
-        let binding = self
-            .repo
-            .get_binding(binding_id)?
-            .ok_or_else(|| BlobStoreError::new("binding_not_found", "resource binding not found"))?;
+        let binding = self.repo.get_binding(binding_id)?.ok_or_else(|| {
+            BlobStoreError::new("binding_not_found", "resource binding not found")
+        })?;
         if binding.tenant_id != tenant_id {
             return Err(BlobStoreError::new(
                 "cross_tenant_binding",
@@ -521,8 +506,7 @@ impl BlobStoreService {
             ));
         }
 
-        let object_locator =
-            object_locator(BlobNamespace::Quarantine, tenant_id, upload_id);
+        let object_locator = object_locator(BlobNamespace::Quarantine, tenant_id, upload_id);
         let grant = self
             .provider
             .issue_grant(&ProviderGrantRequest {
@@ -585,10 +569,10 @@ impl BlobStoreService {
             ));
         }
 
-        match self.provider.delete_exact(
-            &physical.object_locator,
-            &physical.storage_generation,
-        ) {
+        match self
+            .provider
+            .delete_exact(&physical.object_locator, &physical.storage_generation)
+        {
             Ok(()) => {}
             Err(error) if error.kind == ProviderErrorKind::NotFound => {}
             Err(error) => return Err(provider_error(error)),
@@ -630,15 +614,14 @@ impl BlobStoreService {
         })
     }
 
-    fn verify_physical_exact(
-        &self,
-        physical: &PhysicalBlobRecord,
-    ) -> Result<(), BlobStoreError> {
+    fn verify_physical_exact(&self, physical: &PhysicalBlobRecord) -> Result<(), BlobStoreError> {
         let metadata = self
             .provider
             .head_exact(&physical.object_locator)
             .map_err(provider_error)?
-            .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "provider object missing"))?;
+            .ok_or_else(|| {
+                BlobStoreError::new("physical_blob_missing", "provider object missing")
+            })?;
         if metadata.generation != physical.storage_generation {
             return Err(BlobStoreError::new(
                 "storage_generation_mismatch",
@@ -668,15 +651,15 @@ impl BlobStoreService {
         let mut reader = HashingOwnedReader::new(reader, physical.byte_len);
         let mut buffer = [0_u8; COPY_BUFFER_BYTES];
         loop {
-            let count = reader.read(&mut buffer).map_err(|error| {
-                BlobStoreError::new("blob_read_failed", error.to_string())
-            })?;
+            let count = reader
+                .read(&mut buffer)
+                .map_err(|error| BlobStoreError::new("blob_read_failed", error.to_string()))?;
             if count == 0 {
                 break;
             }
-            output.write_all(&buffer[..count]).map_err(|error| {
-                BlobStoreError::new("blob_output_failed", error.to_string())
-            })?;
+            output
+                .write_all(&buffer[..count])
+                .map_err(|error| BlobStoreError::new("blob_output_failed", error.to_string()))?;
         }
         reader.require_exact_eof(physical.byte_len)?;
         if reader.sha256_hex() != physical.content_sha256 {
@@ -760,12 +743,7 @@ fn validate_expiry(now_ms: u64, expires_at_ms: u64) -> Result<(), BlobStoreError
 }
 
 fn object_locator(namespace: BlobNamespace, tenant_id: &str, opaque_id: &str) -> String {
-    format!(
-        "{}/{}/{}",
-        namespace.path_segment(),
-        tenant_id,
-        opaque_id
-    )
+    format!("{}/{}/{}", namespace.path_segment(), tenant_id, opaque_id)
 }
 
 fn require_ident(value: &str, label: &'static str) -> Result<(), BlobStoreError> {
@@ -953,8 +931,8 @@ mod tests {
     use std::{
         io::{Cursor, Read},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
@@ -1013,18 +991,10 @@ mod tests {
             &self,
             physical_blob_id: &str,
         ) -> Result<Option<PhysicalBlobRecord>, BlobStoreError> {
-            Ok(self
-                .physical
-                .lock()
-                .unwrap()
-                .get(physical_blob_id)
-                .cloned())
+            Ok(self.physical.lock().unwrap().get(physical_blob_id).cloned())
         }
 
-        fn get_binding(
-            &self,
-            binding_id: &str,
-        ) -> Result<Option<ResourceBinding>, BlobStoreError> {
+        fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError> {
             Ok(self.bindings.lock().unwrap().get(binding_id).cloned())
         }
 
@@ -1290,15 +1260,10 @@ mod tests {
         hex_digest(Sha256::digest(bytes))
     }
 
-    fn service(
-        provider: Arc<FakeProvider>,
-    ) -> (BlobStoreService, Arc<MemoryRepo>) {
+    fn service(provider: Arc<FakeProvider>) -> (BlobStoreService, Arc<MemoryRepo>) {
         let repo = Arc::new(MemoryRepo::default());
-        let service = BlobStoreService::new(
-            provider,
-            repo.clone(),
-            Arc::new(SequenceIds::default()),
-        );
+        let service =
+            BlobStoreService::new(provider, repo.clone(), Arc::new(SequenceIds::default()));
         (service, repo)
     }
 
@@ -1323,10 +1288,7 @@ mod tests {
         let bytes = b"canonical-pub";
         let mut input = Cursor::new(bytes.to_vec());
         let binding = service
-            .create_canonical_binding(
-                create_request("tenant-a", bytes),
-                &mut input,
-            )
+            .create_canonical_binding(create_request("tenant-a", bytes), &mut input)
             .unwrap();
 
         let mut output = Vec::new();
@@ -1349,17 +1311,11 @@ mod tests {
 
         let mut first_input = Cursor::new(bytes.to_vec());
         let first = service
-            .create_canonical_binding(
-                create_request("tenant-a", bytes),
-                &mut first_input,
-            )
+            .create_canonical_binding(create_request("tenant-a", bytes), &mut first_input)
             .unwrap();
         let mut second_input = Cursor::new(bytes.to_vec());
         let second = service
-            .create_canonical_binding(
-                create_request("tenant-a", bytes),
-                &mut second_input,
-            )
+            .create_canonical_binding(create_request("tenant-a", bytes), &mut second_input)
             .unwrap();
 
         assert_ne!(first.binding_id, second.binding_id);
@@ -1376,17 +1332,11 @@ mod tests {
 
         let mut first_input = Cursor::new(bytes.to_vec());
         let first = service
-            .create_canonical_binding(
-                create_request("tenant-a", bytes),
-                &mut first_input,
-            )
+            .create_canonical_binding(create_request("tenant-a", bytes), &mut first_input)
             .unwrap();
         let mut second_input = Cursor::new(bytes.to_vec());
         let second = service
-            .create_canonical_binding(
-                create_request("tenant-b", bytes),
-                &mut second_input,
-            )
+            .create_canonical_binding(create_request("tenant-b", bytes), &mut second_input)
             .unwrap();
 
         assert_ne!(first.physical_blob_id, second.physical_blob_id);
@@ -1400,10 +1350,7 @@ mod tests {
         let mut input = Cursor::new(bytes.to_vec());
 
         let binding = service
-            .create_canonical_binding(
-                create_request("tenant-a", bytes),
-                &mut input,
-            )
+            .create_canonical_binding(create_request("tenant-a", bytes), &mut input)
             .unwrap();
 
         let mut output = Vec::new();
@@ -1469,26 +1416,30 @@ mod tests {
 
         let mut substituted = exact.clone();
         substituted.object_locator = "quarantine/tenant-a/upload-2".into();
-        assert!(provider
-            .exercise_grant(
-                &ProviderGrant {
-                    opaque_url: grant.opaque_url.clone(),
-                    expires_at_ms: grant.expires_at_ms,
-                },
-                &substituted,
-                150,
-            )
-            .is_err());
-        assert!(provider
-            .exercise_grant(
-                &ProviderGrant {
-                    opaque_url: grant.opaque_url,
-                    expires_at_ms: grant.expires_at_ms,
-                },
-                &exact,
-                200,
-            )
-            .is_err());
+        assert!(
+            provider
+                .exercise_grant(
+                    &ProviderGrant {
+                        opaque_url: grant.opaque_url.clone(),
+                        expires_at_ms: grant.expires_at_ms,
+                    },
+                    &substituted,
+                    150,
+                )
+                .is_err()
+        );
+        assert!(
+            provider
+                .exercise_grant(
+                    &ProviderGrant {
+                        opaque_url: grant.opaque_url,
+                        expires_at_ms: grant.expires_at_ms,
+                    },
+                    &exact,
+                    200,
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -1496,9 +1447,7 @@ mod tests {
         let provider = FakeProvider::new(capabilities());
         let locator = "quarantine/tenant-a/upload-1";
         let mut first = Cursor::new(b"one".to_vec());
-        provider
-            .create_immutable(locator, 3, &mut first)
-            .unwrap();
+        provider.create_immutable(locator, 3, &mut first).unwrap();
 
         let mut second = Cursor::new(b"two".to_vec());
         let error = provider
@@ -1506,9 +1455,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::AlreadyExists);
 
-        let mut read = provider
-            .open_read(locator, "generation-1")
-            .unwrap();
+        let mut read = provider.open_read(locator, "generation-1").unwrap();
         let mut bytes = Vec::new();
         read.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"one");
