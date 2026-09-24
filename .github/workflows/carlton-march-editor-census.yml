@@ -1,0 +1,65 @@
+name: Carlton March exact Editor census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/carlton-march-editor-census.yml'
+      - 'scratch/carlton-yab/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Acquire exact Carlton March PUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton
+          cat > out/carlton/seed.csv <<'CSV'
+          source_page,direct_url,candidate_filename,quarantine,source_class,expected_sha256,expected_size
+          https://www.carltonji.org.uk/parents/latest-letters,,March 2026.pub,no,carlton_march_census,bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3,9580032
+          CSV
+          python scratch/carlton-yab/harvest_pub.py --seed out/carlton/seed.csv --out out/carlton/acquired --max-files -1 --max-bytes 20971520 --timeout 25
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path("out/carlton/acquired")
+          rows=json.loads((root/"manifest.json").read_text())
+          row=next(r for r in rows if r.get("candidate_filename")=="March 2026.pub")
+          print(json.dumps(row,indent=2))
+          assert row.get("fetch_status")=="ok", row
+          assert row.get("sha256")=="bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3", row
+          assert row.get("size_bytes")==9580032, row
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              f.write(f'CARLTON_PUB={root / row["stored_path"]}\n')
+          PY
+      - name: Run current Chaptera Editor census
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path scratch/carlton-yab/Cargo.toml -q -p carlton-census-runner -- "$CARLTON_PUB" > out/carlton/census.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("out/carlton/census.json").read_text())
+          keys=["schema","source_sha256","source_bytes","viewer_page_count","viewer_story_count","editor_document_page_count","editor_page_registry_count","node_count","story_count","non_empty_story_count","framed_story_count","editable_story_count","editable_non_empty_framed_story_count","story_rejection_reasons","page_node_counts","movable_node_count","image_slot_node_count","replaceable_image_node_count","table_node_count","simple_table_node_count","editable_table_cell_count","smoke"]
+          s={k:d[k] for k in keys}
+          Path("out/carlton/summary.json").write_text(json.dumps(s,indent=2,sort_keys=True)+"\n")
+          print(json.dumps(s,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: carlton-march-editor-census
+          path: |
+            out/carlton/census.json
+            out/carlton/summary.json
+            out/carlton/acquired/manifest.json
+          if-no-files-found: warn
+          retention-days: 30
