@@ -14,6 +14,8 @@ export class HttpEditorServiceV1 {
     this.lastTraceContext = null;
     this.lastCommitTraceContext = null;
     this.lastHistoryTraceContext = null;
+    this.lastExportPreview = null;
+    this.lastExportPreviewTraceContext = null;
   }
 
   async currentScene() {
@@ -43,6 +45,22 @@ export class HttpEditorServiceV1 {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(request),
     }, context, "browser.history_http");
+  }
+
+  async exportPreview(target = "idml") {
+    if (!["idml", "odg"].includes(target)) {
+      throw new TypeError("export preview target must be idml or odg");
+    }
+    const context = this.#context("export");
+    this.lastExportPreviewTraceContext = context;
+    const preview = await this.#json(
+      "/v1/export/preview?target=" + encodeURIComponent(target),
+      {},
+      context,
+      "browser.export_preview_http",
+    );
+    this.lastExportPreview = structuredClone(preview);
+    return preview;
   }
 
   async sceneForRevision(revisionId) {
