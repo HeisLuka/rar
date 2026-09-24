@@ -89,10 +89,14 @@ def normalize_request_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme.casefold() not in {"http", "https"}:
         return url
-    path = quote(parsed.path, safe="/%:@!def request_bytes(
+    path = quote(parsed.path, safe="/%:@!$&'()*+,;=-._~")
+    query = quote(parsed.query, safe="=&;%:+,/?@!$'()*[]-._~")
+    return parsed._replace(path=path, query=query).geturl()
+
+
+def request_bytes(
     url: str,
-'()*+,;=-._~")
-    query = quote(parsed.query, safe="=&;%:+,/?@!    timeout: float,
+    timeout: float,
     max_bytes: int | None = None,
     extra_headers: dict[str, str] | None = None,
 ) -> tuple[bytes, dict]:
