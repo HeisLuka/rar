@@ -61,6 +61,30 @@ except ModuleNotFoundError:
     )
 
 
+try:
+    from story_edit_transaction_v1 import (
+        StoryEditTransactionError,
+        execute_story_edit_transaction_v1,
+        validate_story_edit_transaction_operation_v1,
+        validate_story_edit_transaction_request_v1,
+    )
+except ModuleNotFoundError:
+    # Direct file loaders used by bounded receipt builders do not always put
+    # services/editor-api on sys.path. The transaction module composes sibling
+    # source-neutral laws, so make that sibling directory importable explicitly.
+    import pathlib
+
+    _story_edit_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _story_edit_dir not in sys.path:
+        sys.path.insert(0, _story_edit_dir)
+    from story_edit_transaction_v1 import (
+        StoryEditTransactionError,
+        execute_story_edit_transaction_v1,
+        validate_story_edit_transaction_operation_v1,
+        validate_story_edit_transaction_request_v1,
+    )
+
+
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
 
@@ -384,6 +408,90 @@ class RevisionKernel:
             request_validator=self._validate_story_range_request_shape,
             canonical_validator=self._validate_canonical_story_range,
         )
+
+    def commit_story_edit_transaction(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_story_edit_transaction_v1,
+    ) -> dict:
+        """Commit one fully preflighted Story candidate as one revision.
+
+        Participant-level semantic rejection is converted to the normal
+        commit-rejected receipt and cached under the same ClientOperationId.
+        Unexpected executor/validator failures still raise, and _commit_command
+        has not moved the revision pointer at that point.
+        """
+
+        def bound_executor(base_project: dict, command: dict):
+            operation, resulting_project, consequences = executor(
+                base_project,
+                command,
+            )
+            story_id = command["story_id"]
+            story_models = resulting_project.get("story_models")
+            if (
+                not isinstance(story_models, dict)
+                or story_models.get(story_id) != operation.get("after_state")
+            ):
+                raise ValueError(
+                    "StoryEditTransactionV1 resulting project is not bound "
+                    "to canonical after_state"
+                )
+            stories = resulting_project.get("stories")
+            after_state = operation.get("after_state")
+            after_paragraph = (
+                after_state.get("paragraph_state")
+                if isinstance(after_state, dict)
+                else None
+            )
+            after_text = (
+                after_paragraph.get("story_text")
+                if isinstance(after_paragraph, dict)
+                else None
+            )
+            if (
+                not isinstance(stories, dict)
+                or stories.get(story_id) != after_text
+            ):
+                raise ValueError(
+                    "StoryEditTransactionV1 Story text mirror differs "
+                    "from canonical after_state"
+                )
+            return operation, resulting_project, consequences
+
+        try:
+            return self._commit_command(
+                request,
+                bound_executor,
+                request_validator=validate_story_edit_transaction_request_v1,
+                canonical_validator=validate_story_edit_transaction_operation_v1,
+            )
+        except StoryEditTransactionError as exc:
+            # Request-shape errors remain ValueError and never reach here.
+            document_id = request["document_id"]
+            client_operation_id = request["client_operation_id"]
+            request_digest = hash_id(request)
+            idem_key = (document_id, client_operation_id)
+
+            # _commit_command handles an existing idempotency record before
+            # invoking the executor, so this path only records a first semantic
+            # rejection.
+            current = (
+                self._documents[document_id].current_revision_id
+                if document_id in self._documents
+                else None
+            )
+            result = self._rejected(
+                request,
+                code=exc.code,
+                current_revision_id=current,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (
+                request_digest,
+                copy.deepcopy(result),
+            )
+            return result
 
     def commit_history_transition(
         self,
