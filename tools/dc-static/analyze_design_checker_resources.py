@@ -282,6 +282,127 @@ def checker_identifier_clusters(rows: list[dict], max_gap: int = 1024) -> list[d
     ]
 
 
+def checker_pointer_rows(pe: pefile.PE, path: Path, checker_rows: list[dict]) -> list[dict]:
+    """Find exact little-endian RVA/VA pointers to checker identifier strings."""
+    data = path.read_bytes()
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    rows: list[dict] = []
+    for checker in checker_rows:
+        if not checker.get("rva") or not checker.get("va"):
+            continue
+        target_rva = int(checker["rva"], 16)
+        target_va = int(checker["va"], 16)
+        for encoding, value in (("va32", target_va), ("rva32", target_rva)):
+            needle = struct.pack("<I", value & 0xFFFFFFFF)
+            start = 0
+            while True:
+                offset = data.find(needle, start)
+                if offset < 0:
+                    break
+                start = offset + 1
+                try:
+                    slot_rva = int(pe.get_rva_from_offset(offset))
+                except Exception:
+                    slot_rva = None
+                slot_va = image_base + slot_rva if slot_rva is not None else None
+                rows.append(
+                    {
+                        "identifier": checker["text"],
+                        "target_rva": checker["rva"],
+                        "target_va": checker["va"],
+                        "pointer_encoding": encoding,
+                        "pointer_offset": offset,
+                        "pointer_section": section_for_offset(pe, offset),
+                        "pointer_rva": f"0x{slot_rva:08X}" if slot_rva is not None else None,
+                        "pointer_va": f"0x{slot_va:08X}" if slot_va is not None else None,
+                    }
+                )
+    rows.sort(key=lambda row: (row["pointer_offset"], row["identifier"], row["pointer_encoding"]))
+    return rows
+
+
+def checker_pointer_clusters(rows: list[dict], max_gap: int = 32) -> list[dict]:
+    """Cluster nearby pointer slots; keep only clusters spanning >=2 distinct identifiers."""
+    if not rows:
+        return []
+    groups: list[list[dict]] = [[rows[0]]]
+    for row in rows[1:]:
+        if row["pointer_offset"] - groups[-1][-1]["pointer_offset"] <= max_gap:
+            groups[-1].append(row)
+        else:
+            groups.append([row])
+
+    clusters: list[dict] = []
+    for group in groups:
+        identifiers = sorted({row["identifier"] for row in group})
+        if len(identifiers) < 2:
+            continue
+        valid_rvas = [int(row["pointer_rva"], 16) for row in group if row.get("pointer_rva")]
+        valid_vas = [int(row["pointer_va"], 16) for row in group if row.get("pointer_va")]
+        clusters.append(
+            {
+                "start_offset": group[0]["pointer_offset"],
+                "end_offset": group[-1]["pointer_offset"],
+                "pointer_count": len(group),
+                "distinct_identifier_count": len(identifiers),
+                "identifiers": identifiers,
+                "sections": sorted({row["pointer_section"] for row in group if row.get("pointer_section")}),
+                "start_rva": f"0x{min(valid_rvas):08X}" if valid_rvas else None,
+                "end_rva": f"0x{max(valid_rvas):08X}" if valid_rvas else None,
+                "start_va": f"0x{min(valid_vas):08X}" if valid_vas else None,
+                "end_va": f"0x{max(valid_vas):08X}" if valid_vas else None,
+                "items": group,
+            }
+        )
+    clusters.sort(key=lambda row: (-row["distinct_identifier_count"], row["start_offset"]))
+    return clusters
+
+
+def checker_pointer_cluster_code_refs(pe: pefile.PE, instructions: list, clusters: list[dict]) -> list[dict]:
+    """Find code operands that point into or at a candidate checker pointer cluster."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for cluster in clusters:
+        if not cluster.get("start_va") or not cluster.get("end_va"):
+            continue
+        lo = int(cluster["start_va"], 16)
+        hi = int(cluster["end_va"], 16) + 4
+        refs: list[dict] = []
+        for insn in instructions:
+            hit_kind = None
+            hit_value = None
+            for op in insn.operands:
+                if op.type == X86_OP_IMM and lo <= int(op.imm) <= hi:
+                    hit_kind = "imm"
+                    hit_value = int(op.imm)
+                elif op.type == X86_OP_MEM and lo <= int(op.mem.disp) <= hi:
+                    hit_kind = "mem_disp"
+                    hit_value = int(op.mem.disp)
+            if hit_kind:
+                refs.append(
+                    {
+                        "va": f"0x{insn.address:08X}",
+                        "rva": f"0x{insn.address - image_base:08X}",
+                        "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                        "hit_kind": hit_kind,
+                        "hit_value": f"0x{hit_value:08X}",
+                    }
+                )
+                if len(refs) >= 128:
+                    break
+        out.append(
+            {
+                "start_offset": cluster["start_offset"],
+                "end_offset": cluster["end_offset"],
+                "distinct_identifier_count": cluster["distinct_identifier_count"],
+                "identifiers": cluster["identifiers"],
+                "refs": refs,
+            }
+        )
+    out.sort(key=lambda row: (-len(row["refs"]), -row["distinct_identifier_count"], row["start_offset"]))
+    return out
+
+
 def raw_string_matches(path: Path, anchors: list[str]) -> tuple[list[dict], list[dict]]:
     data = path.read_bytes()
     strings = extract_printable_strings(data)
@@ -531,6 +652,11 @@ def main() -> int:
     )
     checker_ids = checker_identifier_rows(pe, pe_path, instructions)
     checker_id_clusters = checker_identifier_clusters(checker_ids)
+    checker_pointer_hits = checker_pointer_rows(pe, pe_path, checker_ids)
+    checker_pointer_tables = checker_pointer_clusters(checker_pointer_hits)
+    checker_pointer_table_refs = checker_pointer_cluster_code_refs(
+        pe, instructions, checker_pointer_tables
+    )
 
     companion_modules: list[dict] = []
     if args.scan_root:
@@ -567,6 +693,9 @@ def main() -> int:
             "checker_exports": checker_export_rows(pe),
             "checker_identifier_strings": checker_ids,
             "checker_identifier_clusters": checker_id_clusters,
+            "checker_pointer_hits": checker_pointer_hits,
+            "checker_pointer_clusters": checker_pointer_tables,
+            "checker_pointer_cluster_code_refs": checker_pointer_table_refs,
         },
         "anchors_total": len(anchors),
         "resource_anchors_matched": len(matched_anchor_names),
@@ -615,6 +744,9 @@ def main() -> int:
         f"- MSPUB checker identifier strings: {len(checker_ids)}",
         f"- checker identifiers with code refs: {sum(1 for row in checker_ids if row['code_refs'])}",
         f"- checker identifier clusters: {len(checker_id_clusters)}",
+        f"- checker pointer hits (exact RVA/VA dwords): {len(checker_pointer_hits)}",
+        f"- checker pointer clusters (>=2 identifiers): {len(checker_pointer_tables)}",
+        f"- checker pointer clusters with code refs: {sum(1 for row in checker_pointer_table_refs if row['refs'])}",
         f"- STRINGTABLE IDs matched: {len(matched_string_ids)}",
         f"- direct code immediates to matched IDs: {len(direct_refs)}",
         f"- LoadString call sites: {len(load_string_refs)}",
@@ -649,6 +781,11 @@ def main() -> int:
                 "checker_identifiers": len(checker_ids),
                 "checker_identifiers_with_refs": sum(1 for row in checker_ids if row["code_refs"]),
                 "checker_identifier_clusters": len(checker_id_clusters),
+                "checker_pointer_hits": len(checker_pointer_hits),
+                "checker_pointer_clusters": len(checker_pointer_tables),
+                "checker_pointer_clusters_with_code_refs": sum(
+                    1 for row in checker_pointer_table_refs if row["refs"]
+                ),
                 "string_ids": len(matched_string_ids),
                 "direct_refs": len(direct_refs),
                 "clusters": len(clusters),
