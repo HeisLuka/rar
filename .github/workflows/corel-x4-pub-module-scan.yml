@@ -37,6 +37,23 @@ jobs:
           find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
           grep -Ei 'pub|publisher|cdrpub' out/extracted-files.txt > out/name-hits.txt || true
 
+          iepub="$(find out/extracted -type f -iname 'IEPUB.flt' | head -n1 || true)"
+          if [ -n "$iepub" ]; then
+            {
+              echo "path=$iepub"
+              stat -c 'size=%s' "$iepub"
+              sha256sum "$iepub"
+              sha1sum "$iepub"
+              md5sum "$iepub"
+              file "$iepub"
+              echo "--- imports ---"
+              objdump -p "$iepub" 2>/dev/null | grep -E 'DLL Name:|ImageBase|Time/Date|Subsystem' || true
+              echo "--- publisher/version strings ---"
+              strings -a -n 5 "$iepub" | grep -Ei 'Publisher|\.pub([^A-Za-z]|$)|Corel|FileVersion|ProductVersion|IEPUB' | head -n 300 || true
+              strings -el "$iepub" | grep -Ei 'Publisher|Corel|FileDescription|FileVersion|ProductName|ProductVersion|Copyright|IEPUB' | head -n 300 || true
+            } | tee out/iepub-fingerprint.txt
+          fi
+
           : > out/string-hits.txt
           : > out/candidates.txt
           while IFS= read -r f; do
@@ -89,5 +106,6 @@ jobs:
             out/candidates.txt
             out/string-hits.txt
             out/candidate-fingerprints.txt
+            out/iepub-fingerprint.txt
           if-no-files-found: warn
           retention-days: 30
