@@ -5,6 +5,8 @@ on:
     paths:
       - "tools/optimization_receipt_v1.py"
       - "tools/test_optimization_receipt_v1.py"
+      - "tools/copy_ledger_v1.py"
+      - "tools/test_copy_ledger_v1.py"
       - "tools/run_optimization_spine_contract.py"
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/optimization-regression-spine-v1.yml"
