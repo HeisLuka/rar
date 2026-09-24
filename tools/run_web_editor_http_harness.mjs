@@ -36,13 +36,17 @@ function startStaticServer() {
           return;
         }
         const body = fs.readFileSync(filePath);
-        response.writeHead(200, { "content-type": mimeFor(filePath), "cache-control": "no-store" });
+        response.writeHead(200, {
+          "content-type": mimeFor(filePath),
+          "cache-control": "no-store"
+        });
         response.end(body);
       } catch {
         response.writeHead(404).end("not found");
       }
     });
-    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
+    server.listen(0, "127.0.0.1", () =>
+      resolve({ server, port: server.address().port }));
   });
 }
 
@@ -123,6 +127,14 @@ function assertMetricLabelsBounded(snapshot) {
   }
 }
 
+function sameBounds(a, b) {
+  return a && b &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.width === b.width &&
+    a.height === b.height;
+}
+
 async function main() {
   fs.mkdirSync(TARGET, { recursive: true });
   const api = spawn(
@@ -141,7 +153,7 @@ async function main() {
     await waitForApi(api);
     browser = await BROWSERS[BROWSER_ENGINE].launch({ headless: true });
     const browserVersion = browser.version();
-    const page = await browser.newPage({ viewport: { width: 1280, height: 920 } });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 960 } });
     const pageErrors = [];
     const consoleErrors = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -195,8 +207,12 @@ async function main() {
       browser_commit_requests: window.__service.commitRequests,
       preview: window.__shell.gesture?.previewBounds() ?? null,
     }));
-    if (during.revision_id !== initial.revision_id) throw new Error("pointermove mutated browser base revision");
-    if (during.browser_commit_requests !== 0) throw new Error("pointermove crossed HTTP commit boundary");
+    if (during.revision_id !== initial.revision_id) {
+      throw new Error("pointermove mutated browser base revision");
+    }
+    if (during.browser_commit_requests !== 0) {
+      throw new Error("pointermove crossed HTTP commit boundary");
+    }
     if (!during.preview) throw new Error("pointermove did not create transient preview");
 
     await page.mouse.up();
@@ -206,72 +222,202 @@ async function main() {
       { timeout: 5000 }
     );
 
-    const browserFinal = await page.evaluate(() => ({
+    const accepted = await page.evaluate((nodeId) => ({
       shell: window.__shell.stateReceipt(),
       last_request: structuredClone(window.__service.lastRequest),
       browser_commit_requests: window.__service.commitRequests,
       source_hash: window.__shell.snapshot.source_hash,
+      bounds: window.__shell.nodeScreenBounds(nodeId),
       commit_trace: structuredClone(window.__service.lastCommitTraceContext),
       spans: structuredClone(window.__observability.spans),
-    }));
+    }), initial.node_id);
 
-    if (browserFinal.browser_commit_requests !== 1) throw new Error("browser did not issue exactly one HTTP commit");
-    if ("before" in browserFinal.last_request.command) throw new Error("browser sent canonical before-state");
-    if (browserFinal.shell.selected_node_id !== initial.node_id) throw new Error("canonical NodeId changed");
-    if (browserFinal.source_hash !== initial.source_hash) throw new Error("source identity changed");
-    if (!browserFinal.commit_trace?.trace_id) throw new Error("commit trace context missing");
+    if (accepted.browser_commit_requests !== 1) {
+      throw new Error("browser did not issue exactly one HTTP commit");
+    }
+    if ("before" in accepted.last_request.command) {
+      throw new Error("browser sent canonical before-state");
+    }
+    if (accepted.shell.selected_node_id !== initial.node_id) {
+      throw new Error("canonical NodeId changed");
+    }
+    if (accepted.source_hash !== initial.source_hash) {
+      throw new Error("source identity changed");
+    }
+    if (!accepted.commit_trace?.trace_id) {
+      throw new Error("commit trace context missing");
+    }
+    if (sameBounds(accepted.bounds, initial.bounds)) {
+      throw new Error("accepted move did not change rendered bounds");
+    }
 
     const openBrowserSpan = lastSpan(initial.spans, "browser.scene_current");
-    const commitBrowserSpan = lastSpan(browserFinal.spans, "browser.commit_http");
-    const sceneBrowserSpan = lastSpan(browserFinal.spans, "browser.scene_revision");
+    const commitBrowserSpan = lastSpan(accepted.spans, "browser.commit_http");
+    const commitSceneBrowserSpan = lastSpan(accepted.spans, "browser.scene_revision");
 
     const openTrace = await traceSummary(openBrowserSpan.trace_id);
     const commitTrace = await traceSummary(commitBrowserSpan.trace_id);
-    const sceneTrace = await traceSummary(sceneBrowserSpan.trace_id);
+    const commitSceneTrace = await traceSummary(commitSceneBrowserSpan.trace_id);
     const openServerSpan = serverSpan(openTrace, "gateway.scene_current");
     const commitServerSpan = serverSpan(commitTrace, "gateway.commit");
-    const sceneServerSpan = serverSpan(sceneTrace, "gateway.scene_revision");
+    const commitSceneServerSpan = serverSpan(commitSceneTrace, "gateway.scene_revision");
 
-    if (commitTrace.trace_id !== browserFinal.commit_trace.trace_id) {
+    if (commitTrace.trace_id !== accepted.commit_trace.trace_id) {
       throw new Error("browser/server commit trace identity diverged");
     }
     if (!commitTrace.spans.some(
-      (span) => span.client_operation_id === browserFinal.last_request.client_operation_id
+      (span) => span.client_operation_id === accepted.last_request.client_operation_id
     )) {
       throw new Error("server trace lost semantic client-operation correlation");
     }
 
-    const metrics = await metricsSnapshot();
-    assertMetricLabelsBounded(metrics);
-
-    const afterBrowser = await harnessState();
-    if (afterBrowser.commit_requests !== 1 || afterBrowser.executor_calls !== 1) {
+    let state = await harnessState();
+    if (state.commit_requests !== 1 || state.executor_calls !== 1) {
       throw new Error("server did not execute exactly one semantic commit");
     }
-    if (afterBrowser.current_revision_id !== browserFinal.shell.revision_id) {
+    if (state.current_revision_id !== accepted.shell.revision_id) {
       throw new Error("browser/server revision identity diverged");
     }
 
-    const exactRetry = await postCommit(browserFinal.last_request);
-    if (exactRetry.revision_id !== browserFinal.shell.revision_id) {
+    const exactRetry = await postCommit(accepted.last_request);
+    if (exactRetry.revision_id !== accepted.shell.revision_id) {
       throw new Error("exact HTTP retry did not return same accepted revision");
     }
-    const afterRetry = await harnessState();
-    if (afterRetry.commit_requests !== 2 || afterRetry.executor_calls !== 1) {
+    state = await harnessState();
+    if (state.commit_requests !== 2 || state.executor_calls !== 1) {
       throw new Error("idempotent HTTP retry re-executed semantic mutation");
     }
 
-    const staleRequest = structuredClone(browserFinal.last_request);
+    const staleRequest = structuredClone(accepted.last_request);
     staleRequest.client_operation_id = "stale-probe-" + RUN_INDEX;
     staleRequest.command.x_emu += 1000;
     const stale = await postCommit(staleRequest);
-    if (stale.protocol_version !== "chaptera.commit-rejected.v1" || stale.code !== "stale_revision") {
+    if (
+      stale.protocol_version !== "chaptera.commit-rejected.v1" ||
+      stale.code !== "stale_revision"
+    ) {
       throw new Error("stale HTTP request was not explicitly rejected");
     }
-    const afterStale = await harnessState();
-    if (afterStale.current_revision_id !== browserFinal.shell.revision_id || afterStale.executor_calls !== 1) {
+    state = await harnessState();
+    if (
+      state.current_revision_id !== accepted.shell.revision_id ||
+      state.executor_calls !== 1
+    ) {
       throw new Error("stale HTTP request mutated server state");
     }
+
+    const acceptedRevision = accepted.shell.revision_id;
+
+    await page.locator("#undo").click();
+    await page.waitForFunction(
+      (prior) =>
+        window.__historyError === null &&
+        window.__shell.snapshot.revision_id !== prior &&
+        window.__historyActions.length >= 1,
+      acceptedRevision,
+      { timeout: 5000 }
+    );
+    const undo = await page.evaluate((nodeId) => ({
+      shell: window.__shell.stateReceipt(),
+      bounds: window.__shell.nodeScreenBounds(nodeId),
+      action: structuredClone(window.__historyActions.at(-1)),
+      history_requests: window.__service.historyRequests,
+      history_trace: structuredClone(window.__service.lastHistoryTraceContext),
+      spans: structuredClone(window.__observability.spans),
+      error: window.__historyError,
+    }), initial.node_id);
+    if (undo.error) throw new Error("undo UI failed: " + undo.error);
+    if (undo.action.kind !== "undo") throw new Error("Undo button routed wrong history kind");
+    if (undo.action.request.command.kind !== "undo") throw new Error("Undo request kind mismatch");
+    if (Object.keys(undo.action.request.command).length !== 1) {
+      throw new Error("browser Undo request carried authoritative target state");
+    }
+    if (undo.action.result.protocol_version !== "chaptera.history-transition-accepted.v1") {
+      throw new Error("Undo was not accepted as history transition");
+    }
+    if (undo.action.result.transition_kind !== "undo") {
+      throw new Error("Undo result transition kind mismatch");
+    }
+    if (undo.shell.revision_id === acceptedRevision || undo.shell.revision_id === initial.revision_id) {
+      throw new Error("Undo did not create a fresh immutable revision");
+    }
+    if (!sameBounds(undo.bounds, initial.bounds)) {
+      throw new Error("Undo scene did not restore baseline geometry");
+    }
+
+    const undoRevision = undo.shell.revision_id;
+    await page.locator("#redo").click();
+    await page.waitForFunction(
+      (prior) =>
+        window.__historyError === null &&
+        window.__shell.snapshot.revision_id !== prior &&
+        window.__historyActions.length >= 2,
+      undoRevision,
+      { timeout: 5000 }
+    );
+    const redo = await page.evaluate((nodeId) => ({
+      shell: window.__shell.stateReceipt(),
+      bounds: window.__shell.nodeScreenBounds(nodeId),
+      action: structuredClone(window.__historyActions.at(-1)),
+      history_requests: window.__service.historyRequests,
+      history_trace: structuredClone(window.__service.lastHistoryTraceContext),
+      spans: structuredClone(window.__observability.spans),
+      error: window.__historyError,
+    }), initial.node_id);
+    if (redo.error) throw new Error("redo UI failed: " + redo.error);
+    if (redo.action.kind !== "redo") throw new Error("Redo button routed wrong history kind");
+    if (redo.action.request.command.kind !== "redo") throw new Error("Redo request kind mismatch");
+    if (Object.keys(redo.action.request.command).length !== 1) {
+      throw new Error("browser Redo request carried authoritative target state");
+    }
+    if (redo.action.result.protocol_version !== "chaptera.history-transition-accepted.v1") {
+      throw new Error("Redo was not accepted as history transition");
+    }
+    if (redo.action.result.transition_kind !== "redo") {
+      throw new Error("Redo result transition kind mismatch");
+    }
+    if (
+      redo.shell.revision_id === acceptedRevision ||
+      redo.shell.revision_id === undoRevision ||
+      redo.shell.revision_id === initial.revision_id
+    ) {
+      throw new Error("Redo did not create a fresh immutable revision");
+    }
+    if (!sameBounds(redo.bounds, accepted.bounds)) {
+      throw new Error("Redo scene did not restore accepted geometry");
+    }
+    if (redo.shell.selected_node_id !== initial.node_id) {
+      throw new Error("history reconciliation lost canonical selection identity");
+    }
+
+    const undoBrowserSpan = lastSpan(undo.spans, "browser.history_http");
+    const redoBrowserSpan = lastSpan(redo.spans, "browser.history_http");
+    const undoTrace = await traceSummary(undoBrowserSpan.trace_id);
+    const redoTrace = await traceSummary(redoBrowserSpan.trace_id);
+    const undoServerSpan = serverSpan(undoTrace, "gateway.history");
+    const redoServerSpan = serverSpan(redoTrace, "gateway.history");
+
+    if (!undoTrace.spans.some(
+      (span) => span.client_operation_id === undo.action.request.client_operation_id
+    )) {
+      throw new Error("Undo trace lost client-operation correlation");
+    }
+    if (!redoTrace.spans.some(
+      (span) => span.client_operation_id === redo.action.request.client_operation_id
+    )) {
+      throw new Error("Redo trace lost client-operation correlation");
+    }
+
+    const afterHistory = await harnessState();
+    if (afterHistory.history_requests !== 2 || afterHistory.history_executor_calls !== 2) {
+      throw new Error("browser Undo/Redo did not execute exactly two authoritative history transitions");
+    }
+    if (afterHistory.current_revision_id !== redo.shell.revision_id) {
+      throw new Error("browser/server revision identity diverged after Redo");
+    }
+
+    const metrics = await metricsSnapshot();
+    assertMetricLabelsBounded(metrics);
 
     if (RUN_INDEX === "0") {
       await page.locator("#host").screenshot({
@@ -280,7 +426,7 @@ async function main() {
     }
 
     const receipt = {
-      receipt_kind: "chaptera.synthetic-http-service-observability.v1",
+      receipt_kind: "chaptera.synthetic-http-service-observability.v2",
       browser_engine: BROWSER_ENGINE,
       browser_version: browserVersion,
       run_index: Number.parseInt(RUN_INDEX, 10),
@@ -289,21 +435,44 @@ async function main() {
       api_process_boundary: true,
       server_kernel: "public RevisionKernel harness",
       initial_revision_id: initial.revision_id,
-      accepted_revision_id: browserFinal.shell.revision_id,
-      browser_commit_requests: browserFinal.browser_commit_requests,
-      server_commit_requests_after_probes: afterStale.commit_requests,
-      semantic_executor_calls: afterStale.executor_calls,
-      exact_retry_same_revision: exactRetry.revision_id === browserFinal.shell.revision_id,
+      accepted_revision_id: acceptedRevision,
+      undo_revision_id: undoRevision,
+      redo_revision_id: redo.shell.revision_id,
+      browser_commit_requests: accepted.browser_commit_requests,
+      browser_history_requests: redo.history_requests,
+      server_commit_requests_after_probes: afterHistory.commit_requests,
+      semantic_executor_calls: afterHistory.executor_calls,
+      server_history_requests: afterHistory.history_requests,
+      history_executor_calls: afterHistory.history_executor_calls,
+      exact_retry_same_revision: exactRetry.revision_id === acceptedRevision,
       stale_base_rejected: stale.code === "stale_revision",
-      browser_sent_before_state: "before" in browserFinal.last_request.command,
-      node_id_stable: browserFinal.shell.selected_node_id === initial.node_id,
-      source_hash_stable: browserFinal.source_hash === initial.source_hash,
+      browser_sent_before_state: "before" in accepted.last_request.command,
+      browser_history_sent_authoritative_target:
+        Object.keys(undo.action.request.command).length !== 1 ||
+        Object.keys(redo.action.request.command).length !== 1,
+      node_id_stable: redo.shell.selected_node_id === initial.node_id,
+      source_hash_stable: redo.shell.document_id === initial.node_id ? false : accepted.source_hash === initial.source_hash,
+      undo_restored_baseline_geometry: sameBounds(undo.bounds, initial.bounds),
+      redo_restored_accepted_geometry: sameBounds(redo.bounds, accepted.bounds),
+      undo_created_fresh_revision:
+        undoRevision !== initial.revision_id && undoRevision !== acceptedRevision,
+      redo_created_fresh_revision:
+        redo.shell.revision_id !== initial.revision_id &&
+        redo.shell.revision_id !== acceptedRevision &&
+        redo.shell.revision_id !== undoRevision,
       observability: {
-        trace_protocol_version: browserFinal.commit_trace.protocol_version,
-        same_trace_browser_and_server: commitTrace.trace_id === browserFinal.commit_trace.trace_id,
+        trace_protocol_version: accepted.commit_trace.protocol_version,
+        same_trace_browser_and_server: commitTrace.trace_id === accepted.commit_trace.trace_id,
         semantic_operation_correlated: commitTrace.spans.some(
-          (span) => span.client_operation_id === browserFinal.last_request.client_operation_id
+          (span) => span.client_operation_id === accepted.last_request.client_operation_id
         ),
+        history_operations_correlated:
+          undoTrace.spans.some(
+            (span) => span.client_operation_id === undo.action.request.client_operation_id
+          ) &&
+          redoTrace.spans.some(
+            (span) => span.client_operation_id === redo.action.request.client_operation_id
+          ),
         metric_series_count: metrics.metrics.length,
         metrics_high_cardinality_labels_absent: true,
         document_payload_logged: false,
@@ -312,12 +481,24 @@ async function main() {
           gateway_scene_current: openServerSpan.duration_ms,
           browser_commit_http: commitBrowserSpan.duration_ms,
           gateway_commit: commitServerSpan.duration_ms,
-          browser_scene_revision_http: sceneBrowserSpan.duration_ms,
-          gateway_scene_revision: sceneServerSpan.duration_ms,
+          browser_scene_revision_http: commitSceneBrowserSpan.duration_ms,
+          gateway_scene_revision: commitSceneServerSpan.duration_ms,
+          browser_undo_http: undoBrowserSpan.duration_ms,
+          gateway_undo: undoServerSpan.duration_ms,
+          browser_redo_http: redoBrowserSpan.duration_ms,
+          gateway_redo: redoServerSpan.duration_ms,
         }
       },
-      note: "Synthetic Scene V1 plus public revision-kernel HTTP harness. Timings are CI transport/observability baselines only and must not be used as real-PUB product SLOs."
+      note:
+        "Synthetic Scene V1 plus public revision-kernel HTTP harness. Move and browser-visible Undo/Redo transport are proven, but authoritative history executor remains synthetic. Timings are CI plumbing baselines only and must not be used as real-PUB product SLOs."
     };
+
+    if (receipt.browser_history_sent_authoritative_target) {
+      throw new Error("browser history request leaked authoritative target state");
+    }
+    if (!receipt.source_hash_stable) {
+      throw new Error("source identity changed across history loop");
+    }
 
     const outputPath = path.join(
       TARGET,
