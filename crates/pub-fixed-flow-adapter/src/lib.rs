@@ -509,24 +509,24 @@ mod tests {
         // The adapter sees resolved glyph IDs/clusters only. A glyph originating
         // from a supported non-ASCII scalar is indistinguishable here from ASCII,
         // which is the required boundary.
-        let mut input = input();
-        input.lines = vec![line(0, 0, 0, 1, vec![glyph(0x410, 0)])];
-        assert!(materialize_fixed_runs_v1(&input).is_ok());
+        let mut fixture = input();
+        fixture.lines = vec![line(0, 0, 0, 1, vec![glyph(0x410, 0)])];
+        assert!(materialize_fixed_runs_v1(&fixture).is_ok());
     }
 
     #[test]
     fn noncanonical_order_and_invalid_baseline_inputs_fail_closed() {
-        let mut input = input();
-        input.lines[1].line_index = 9;
+        let mut bad_order = input();
+        bad_order.lines[1].line_index = 9;
         assert!(matches!(
-            materialize_fixed_runs_v1(&input),
+            materialize_fixed_runs_v1(&bad_order),
             Err(FixedFlowError::NonCanonicalLineIndex { .. })
         ));
 
-        let mut input = input();
-        input.line_height_emu = 0;
+        let mut bad_baseline = input();
+        bad_baseline.line_height_emu = 0;
         assert_eq!(
-            materialize_fixed_runs_v1(&input),
+            materialize_fixed_runs_v1(&bad_baseline),
             Err(FixedFlowError::InvalidLineHeight)
         );
     }
