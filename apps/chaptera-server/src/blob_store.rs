@@ -141,7 +141,7 @@ pub trait BlobProvider: Send + Sync {
         &self,
         object_locator: &str,
         expected_byte_len: u64,
-        input: &mut dyn Read,
+        input: &mut (dyn Read + Send),
     ) -> Result<ProviderObjectMetadata, ProviderError>;
 
     async fn head_exact(
@@ -286,7 +286,7 @@ impl BlobStoreService {
     pub async fn create_canonical_binding(
         &self,
         request: CreateBindingRequest,
-        input: &mut dyn Read,
+        input: &mut (dyn Read + Send),
     ) -> Result<ResourceBinding, BlobStoreError> {
         validate_create_request(&request)?;
 
@@ -1148,7 +1148,7 @@ mod tests {
             &self,
             object_locator: &str,
             expected_byte_len: u64,
-            input: &mut dyn Read,
+            input: &mut (dyn Read + Send),
         ) -> Result<ProviderObjectMetadata, ProviderError> {
             let mut bytes = Vec::new();
             input
