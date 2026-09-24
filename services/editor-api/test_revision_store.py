@@ -324,6 +324,194 @@ class StoryRangeCommitTests(unittest.TestCase):
 
 
 
+class FakeResizeExecutor:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, base_project, command):
+        self.calls += 1
+        node_id = command["node_id"]
+        before = copy.deepcopy(base_project["nodes"][node_id]["bounds"])
+        after = {
+            "x": command["x_emu"],
+            "y": command["y_emu"],
+            "width": command["width_emu"],
+            "height": command["height_emu"],
+        }
+        operation = {
+            "kind": "resize_node",
+            "node_id": node_id,
+            "before": before,
+            "after": copy.deepcopy(after),
+        }
+        project = copy.deepcopy(base_project)
+        project["schema_version"] = "pub-editor-v0.5"
+        project["operations"] = list(project["operations"]) + [copy.deepcopy(operation)]
+        project["nodes"] = copy.deepcopy(project["nodes"])
+        project["nodes"][node_id]["bounds"] = copy.deepcopy(after)
+        return operation, project, [
+            {"key": "node.geometry.bounds", "state": "supported", "note": None}
+        ]
+
+
+class ResizeCommitTests(unittest.TestCase):
+    NODE_ID = "resize:1"
+    BEFORE = {"x": -12700, "y": 25400, "width": 1828800, "height": 914400}
+    AFTER = {"x": -25400, "y": 0, "width": 1900000, "height": 1000000}
+
+    def setUp(self):
+        self.kernel = RevisionKernel()
+        self.project = {
+            "schema_version": "pub-editor-v0.4",
+            "source_hash": SOURCE_HASH,
+            "operations": [],
+            "nodes": {
+                self.NODE_ID: {
+                    "bounds": copy.deepcopy(self.BEFORE),
+                    "direct_page_owned": True,
+                    "identity_transform": True,
+                }
+            },
+        }
+        self.baseline = self.kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=self.project,
+        )
+        self.executor = FakeResizeExecutor()
+
+    def resize_request(self, op_id, *, after=None, base=None):
+        bounds = copy.deepcopy(after or self.AFTER)
+        return {
+            "protocol_version": "chaptera.resize-node-intent.v1",
+            "document_id": DOCUMENT_ID,
+            "source_hash": SOURCE_HASH,
+            "base_revision_id": base or self.baseline.revision_id,
+            "client_operation_id": op_id,
+            "command": {
+                "kind": "resize_node_to",
+                "node_id": self.NODE_ID,
+                "x_emu": bounds["x"],
+                "y_emu": bounds["y"],
+                "width_emu": bounds["width"],
+                "height_emu": bounds["height"],
+            },
+        }
+
+    def test_resize_commit_records_server_before_and_v0_5_project(self):
+        result = self.kernel.commit_resize(
+            self.resize_request("resize-op-00000001"),
+            self.executor,
+        )
+        self.assertEqual("chaptera.commit-accepted.v1", result["protocol_version"])
+        self.assertEqual("resize_node", result["canonical_operation"]["kind"])
+        self.assertEqual(self.BEFORE, result["canonical_operation"]["before"])
+        self.assertEqual(self.AFTER, result["canonical_operation"]["after"])
+        self.assertEqual("pub-editor-v0.5", result["project_schema_version"])
+        self.assertEqual(
+            self.AFTER,
+            self.kernel.current_revision(DOCUMENT_ID).project["nodes"][self.NODE_ID]["bounds"],
+        )
+        self.assertEqual(1, self.executor.calls)
+
+    def test_resize_exact_retry_is_idempotent(self):
+        req = self.resize_request("resize-op-00000002")
+        first = self.kernel.commit_resize(copy.deepcopy(req), self.executor)
+        second = self.kernel.commit_resize(copy.deepcopy(req), self.executor)
+        self.assertEqual(first, second)
+        self.assertEqual(1, self.executor.calls)
+
+    def test_resize_stale_base_rejected_before_executor(self):
+        first = self.kernel.commit_resize(
+            self.resize_request("resize-op-00000003"),
+            self.executor,
+        )
+        calls = self.executor.calls
+        stale = self.kernel.commit_resize(
+            self.resize_request(
+                "resize-op-00000004",
+                after={"x": -30000, "y": 0, "width": 2000000, "height": 1100000},
+            ),
+            self.executor,
+        )
+        self.assertEqual("stale_revision", stale["code"])
+        self.assertEqual(first["revision_id"], stale["current_revision_id"])
+        self.assertEqual(calls, self.executor.calls)
+
+    def test_resize_rejects_pure_move_transactionally(self):
+        pure_move = {
+            "x": self.BEFORE["x"] + 100,
+            "y": self.BEFORE["y"] + 200,
+            "width": self.BEFORE["width"],
+            "height": self.BEFORE["height"],
+        }
+        with self.assertRaisesRegex(ValueError, "pure move"):
+            self.kernel.commit_resize(
+                self.resize_request("resize-op-00000005", after=pure_move),
+                self.executor,
+            )
+        self.assertEqual(self.baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_resize_rejects_noop_transactionally(self):
+        with self.assertRaisesRegex(ValueError, "no-op"):
+            self.kernel.commit_resize(
+                self.resize_request("resize-op-00000006", after=self.BEFORE),
+                self.executor,
+            )
+        self.assertEqual(self.baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_resize_rejects_non_positive_size_before_executor(self):
+        invalid = copy.deepcopy(self.AFTER)
+        invalid["width"] = 0
+        with self.assertRaisesRegex(ValueError, "positive"):
+            self.kernel.commit_resize(
+                self.resize_request("resize-op-00000007", after=invalid),
+                self.executor,
+            )
+        self.assertEqual(0, self.executor.calls)
+
+    def test_resize_rejects_bounds_overflow_before_executor(self):
+        invalid = {"x": 9007199254740991, "y": 0, "width": 1, "height": 1}
+        with self.assertRaisesRegex(ValueError, "overflow"):
+            self.kernel.commit_resize(
+                self.resize_request("resize-op-00000008", after=invalid),
+                self.executor,
+            )
+        self.assertEqual(0, self.executor.calls)
+
+    def test_resize_target_gate_can_fail_before_executor(self):
+        def reject_target(_command):
+            raise ValueError("unsupported_resize_target")
+
+        with self.assertRaisesRegex(ValueError, "unsupported_resize_target"):
+            self.kernel.commit_resize(
+                self.resize_request("resize-op-00000009"),
+                self.executor,
+                pre_execute_validator=reject_target,
+            )
+        self.assertEqual(0, self.executor.calls)
+
+    def test_browser_cannot_supply_resize_before_state(self):
+        req = self.resize_request("resize-op-00000010")
+        req["command"]["before"] = copy.deepcopy(self.BEFORE)
+        with self.assertRaisesRegex(ValueError, "non-intent"):
+            self.kernel.commit_resize(req, self.executor)
+        self.assertEqual(0, self.executor.calls)
+
+    def test_resize_executor_cannot_change_after_bounds(self):
+        def bad_executor(base_project, command):
+            operation, project, consequences = self.executor(base_project, command)
+            operation["after"]["width"] += 1
+            return operation, project, consequences
+
+        with self.assertRaisesRegex(ValueError, "after-bounds"):
+            self.kernel.commit_resize(
+                self.resize_request("resize-op-00000011"),
+                bad_executor,
+            )
+        self.assertEqual(self.baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+
 class FakeImageCropExecutor:
     def __init__(self):
         self.calls = 0
