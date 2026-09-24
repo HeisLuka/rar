@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full msitools binutils file
+          sudo apt-get install -y p7zip-full msitools unshield binutils file
 
       - name: Download exact acquired Corel X4 artifact
         uses: actions/download-artifact@v4
@@ -59,15 +59,35 @@ jobs:
         run: |
           set -euo pipefail
           installer="$(cat out/installer-path.txt)"
-          mkdir -p extracted
+          mkdir -p extracted inner unshield-tree
           7z x -y -oextracted "$installer" > out/7z-extract.log 2>&1 || {
             rc=$?
             tail -n 200 out/7z-extract.log
             exit "$rc"
           }
-          find extracted -type f -printf '%P\t%s\n' | sort > out/extracted-files.tsv
-          find extracted -type f -iname '*.msi' -printf '%p\n' | sort > out/msi-paths.txt
-          test -s out/msi-paths.txt
+
+          overlay="$(find extracted -maxdepth 1 -type f -name '[[]0]' -print -quit || true)"
+          if [ -n "$overlay" ]; then
+            file "$overlay" > out/overlay-file.txt || true
+            7z l "$overlay" > out/overlay-7z-list.txt 2>&1 || true
+            7z x -y -oinner "$overlay" > out/overlay-7z-extract.txt 2>&1 || true
+          fi
+
+          while IFS= read -r cab; do
+            [ -n "$cab" ] || continue
+            if unshield l "$cab" > /tmp/unshield-list.txt 2>/dev/null; then
+              key="$(printf '%s' "$cab" | sha256sum | cut -c1-16)"
+              dest="unshield-tree/$key"
+              mkdir -p "$dest"
+              unshield x -d "$dest" "$cab" > "out/unshield-$key.log" 2>&1 || true
+            fi
+          done < <(find extracted inner -type f -iname 'data*.cab' | sort)
+
+          find extracted inner unshield-tree -type f -printf '%P\t%s\n' | sort > out/extracted-files.tsv
+          find extracted inner unshield-tree -type f -iname '*.msi' -printf '%p\n' | sort > out/msi-paths.txt
+          if [ ! -s out/msi-paths.txt ]; then
+            echo "No MSI exposed after first-level, overlay and InstallShield CAB extraction." > out/no-msi-after-nested-extraction.txt
+          fi
 
       - name: Identify Filters MSI by exact ProductCode
         shell: bash
