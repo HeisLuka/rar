@@ -46,6 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           objdump -d -Mintel --start-address=0x345309ce --stop-address=0x34530a23 out/PUBCONV.DLL > out/sub-345309ce.txt
+          objdump -d -Mintel --start-address=0x3450d190 --stop-address=0x3450d250 out/PUBCONV.DLL > out/caller-3450d1f2.txt
           objdump -d -Mintel --start-address=0x34530a23 --stop-address=0x34530af3 out/PUBCONV.DLL > out/caller-34530a23.txt
           objdump -d -Mintel --start-address=0x34530af3 --stop-address=0x34530b80 out/PUBCONV.DLL > out/caller-34530af3.txt
           grep -n -E 'call[[:space:]]+0x345309ce' out/disasm.txt > out/direct-call-sites.txt
@@ -57,7 +58,8 @@ jobs:
 
           dll=Path("out/PUBCONV.DLL").read_bytes()
           body=Path("out/sub-345309ce.txt").read_text(errors="replace")
-          callers=(Path("out/caller-34530a23.txt").read_text(errors="replace")+
+          callers=(Path("out/caller-3450d1f2.txt").read_text(errors="replace")+
+                   "\n"+Path("out/caller-34530a23.txt").read_text(errors="replace")+
                    "\n"+Path("out/caller-34530af3.txt").read_text(errors="replace"))
           all_dis=Path("out/disasm.txt").read_text(errors="replace")
 
@@ -81,7 +83,7 @@ jobs:
                   if m:
                       call_addrs.append("0x"+m.group(1).lower())
 
-          expected=["0x34530a81","0x34530a99","0x34530b3f","0x34530b5e"]
+          expected=["0x3450d1f2","0x34530a81","0x34530a99","0x34530b3f","0x34530b5e"]
           if call_addrs != expected:
               raise SystemExit(f"direct call-site set changed: {call_addrs}")
 
@@ -136,6 +138,7 @@ jobs:
             out/sections.txt
             out/headers.txt
             out/sub-345309ce.txt
+            out/caller-3450d1f2.txt
             out/caller-34530a23.txt
             out/caller-34530af3.txt
             out/direct-call-sites.txt
