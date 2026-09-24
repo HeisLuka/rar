@@ -1,0 +1,33 @@
+name: WEB-REVISION-01 history contract
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_revision_store.py"
+      - "tools/run_web_revision_history_contract.py"
+      - "docs/web-revision-history-v1.md"
+      - ".github/workflows/web-revision-history.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  history-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run revision kernel tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store.py
+      - name: Produce history transition receipt
+        run: python tools/run_web_revision_history_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-revision-history-v1
+          path: target/web-revision-history-v1/receipt.json
+          if-no-files-found: error
