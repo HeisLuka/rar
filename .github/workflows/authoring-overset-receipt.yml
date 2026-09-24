@@ -6,6 +6,8 @@ on:
       - "packages/protocol/authoring-overset/**"
       - "tools/validate_authoring_overset_receipt.py"
       - "tools/test_authoring_overset_receipt.py"
+      - "tools/build_authoring_overset_receipt.py"
+      - "tools/test_build_authoring_overset_receipt.py"
       - ".github/workflows/authoring-overset-receipt.yml"
   workflow_dispatch:
 
@@ -24,3 +26,5 @@ jobs:
         run: python -m pip install "jsonschema==4.23.0"
       - name: Run one-frame overset contract tests
         run: python tools/test_authoring_overset_receipt.py -v
+      - name: Run local authoritative-producer orchestration tests
+        run: python tools/test_build_authoring_overset_receipt.py -v
