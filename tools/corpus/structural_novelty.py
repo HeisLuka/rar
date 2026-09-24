@@ -26,6 +26,39 @@ import govdocs1_remote_zip_pub as govdocs  # type: ignore
 
 SCHEMA = "rar-corpus-cfb-structural-novelty/v1"
 UA = "rar-corpus-cfb-structural-novelty/1.0"
+CONTENTS_0X22_MAGIC = bytes([0xE8, 0xAC, 0x22, 0x00])
+CONTENTS_0X2C_MAGIC = bytes([0xE8, 0xAC, 0x2C, 0x00])
+
+
+def contents_family_projection(payload: bytes) -> dict:
+    """Bounded /Contents family projection.
+
+    This classifies only the binary Contents family. It MUST NOT be interpreted
+    as an exact Microsoft Publisher marketing-version label.
+    """
+    if len(payload) < 4:
+        return {
+            "contents_family": "too_short",
+            "contents_serialization_revision": None,
+        }
+    magic = payload[:4]
+    if magic == CONTENTS_0X22_MAGIC:
+        family = "0x22"
+    elif magic == CONTENTS_0X2C_MAGIC:
+        family = "0x2c"
+    else:
+        family = "unknown"
+    revision = (
+        int.from_bytes(payload[12:14], "little")
+        if len(payload) >= 14 and family in {"0x22", "0x2c"}
+        else None
+    )
+    return {
+        "contents_family": family,
+        "contents_serialization_revision": revision,
+    }
+
+
 SOURCE_PRIORITY = {
     "positive_domain": 0,
     "github_history": 1,
@@ -242,9 +275,12 @@ def cfb_probe(data: bytes) -> dict:
         stream_names = sorted("/" + "/".join(parts) for parts in ole.listdir(streams=True, storages=False))
         storage_names = sorted("/" + "/".join(parts) for parts in ole.listdir(streams=False, storages=True))
         streams = []
+        contents_projection = {"contents_family": "missing", "contents_serialization_revision": None}
         for name in stream_names:
             parts = [p for p in name.split("/") if p]
             payload = ole.openstream(parts).read()
+            if name == "/Contents":
+                contents_projection = contents_family_projection(payload)
             streams.append(
                 {
                     "path": name,
@@ -287,6 +323,7 @@ def cfb_probe(data: bytes) -> dict:
         "carrier_count": carrier_count,
         "creating_application": creating_application,
         "family_hint": family_hint,
+        **contents_projection,
         "path_fingerprint_sha256": hash_lines(paths),
         "topology_fingerprint_sha256": hash_lines(
             f"{x['path']}\t{x['len']}" for x in streams
