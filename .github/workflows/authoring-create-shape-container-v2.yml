@@ -1,0 +1,32 @@
+name: Authoring CreateShape Container V2
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/create_shape_container_v2.py"
+      - "services/editor-api/test_create_shape_container_v2.py"
+      - "services/editor-api/revision_store.py"
+      - "packages/protocol/authoring-create-shape/v2/create-shape-intent.schema.json"
+      - "crates/pub-model/src/create_shape.rs"
+      - ".github/workflows/authoring-create-shape-container-v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run CreateShape V2 transaction tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_create_shape_container_v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust format
+        run: cargo fmt --check
+      - name: Rust tests
+        run: cargo test --workspace
