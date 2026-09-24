@@ -1,0 +1,134 @@
+{
+  "accepted": {
+    "base_revision_id": "sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c",
+    "canonical_operation": {
+      "after": {
+        "height": 587274,
+        "width": 4436165,
+        "x": 653710,
+        "y": 1445292
+      },
+      "before": {
+        "height": 587274,
+        "width": 4436165,
+        "x": 526710,
+        "y": 1191292
+      },
+      "kind": "move_node",
+      "node_id": "007d9898-568b-5125-b519-8d88243aabfb"
+    },
+    "client_operation_id": "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b002",
+    "consequences": [
+      {
+        "key": "node.geometry.position",
+        "note": null,
+        "state": "supported"
+      }
+    ],
+    "document_id": "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001",
+    "project_schema_version": "pub-editor-v0.4",
+    "protocol_version": "chaptera.commit-accepted.v1",
+    "revision_id": "sha256:4fe3c77a6a5a24ecef059f788cd0f556a62c6355c98f505b9492bac61638a3e7",
+    "scene_refresh": "full_snapshot",
+    "source_hash": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+    "state_id": "sha256:41ebca73bfd45a2c144e4aac9d3cb0f12cc335560e8586af150effe5b43fd6a4"
+  },
+  "baseline": {
+    "project": {
+      "operations": [],
+      "schema_version": "pub-editor-v0.2",
+      "source_hash": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+    },
+    "project_hash": "sha256:575fbcb664f2a6b672a05861a4d2aff6aca339204a50e3401d04e1920d946348",
+    "revision_id": "sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c",
+    "state_id": "sha256:ce6753aab36f31db5508763601d078d2d5a2766541ef6d3377eaab9ed02be191"
+  },
+  "document_id": "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001",
+  "probes": {
+    "exact_retry": {
+      "executor_calls_total": 1,
+      "same_result": true
+    },
+    "idempotency_conflict": {
+      "after_revision_id": "sha256:4fe3c77a6a5a24ecef059f788cd0f556a62c6355c98f505b9492bac61638a3e7",
+      "before_revision_id": "sha256:4fe3c77a6a5a24ecef059f788cd0f556a62c6355c98f505b9492bac61638a3e7",
+      "code": "idempotency_conflict",
+      "executor_calls_delta": 0
+    },
+    "source_identity": {
+      "after": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+      "before": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+      "replay": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+    },
+    "stale_base": {
+      "after_revision_id": "sha256:4fe3c77a6a5a24ecef059f788cd0f556a62c6355c98f505b9492bac61638a3e7",
+      "before_revision_id": "sha256:4fe3c77a6a5a24ecef059f788cd0f556a62c6355c98f505b9492bac61638a3e7",
+      "code": "stale_revision",
+      "executor_calls_delta": 0
+    }
+  },
+  "producer": {
+    "commit_or_build": "adf75840a0972a2f09ee7225b705681156642bc7",
+    "core_integration": true,
+    "implementation": "chaptera-rar-samplenewsletter-move-slice"
+  },
+  "receipt_version": "chaptera.revision-producer-receipt.v1",
+  "replayed_project": {
+    "operations": [
+      {
+        "after": {
+          "height": 587274,
+          "width": 4436165,
+          "x": 653710,
+          "y": 1445292
+        },
+        "before": {
+          "height": 587274,
+          "width": 4436165,
+          "x": 526710,
+          "y": 1191292
+        },
+        "kind": "move_node",
+        "node_id": "007d9898-568b-5125-b519-8d88243aabfb"
+      }
+    ],
+    "schema_version": "pub-editor-v0.4",
+    "source_hash": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+  },
+  "request": {
+    "base_revision_id": "sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c",
+    "client_operation_id": "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b002",
+    "command": {
+      "kind": "move_node_to",
+      "node_id": "007d9898-568b-5125-b519-8d88243aabfb",
+      "x_emu": 653710,
+      "y_emu": 1445292
+    },
+    "document_id": "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001",
+    "protocol_version": "chaptera.commit-request.v1",
+    "source_hash": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+  },
+  "resulting_project": {
+    "operations": [
+      {
+        "after": {
+          "height": 587274,
+          "width": 4436165,
+          "x": 653710,
+          "y": 1445292
+        },
+        "before": {
+          "height": 587274,
+          "width": 4436165,
+          "x": 526710,
+          "y": 1191292
+        },
+        "kind": "move_node",
+        "node_id": "007d9898-568b-5125-b519-8d88243aabfb"
+      }
+    ],
+    "schema_version": "pub-editor-v0.4",
+    "source_hash": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+  },
+  "source_hash": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+}
