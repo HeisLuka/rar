@@ -1,0 +1,193 @@
+name: PUB targeted acquisition
+
+on:
+  push:
+    branches:
+      - research/pub-acquisition-targeted
+    paths:
+      - ".github/workflows/pub-targeted-acquisition.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  corel-filters-carve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Carve Corel X4 embedded ZIP and extract Filters.msi
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools binutils file
+          mkdir -p out/outer out/zip
+          url="https://web.archive.org/web/20130509032142id_/http://www.corel.com/akdlm/6763/downloads/trials/GraphicsSuiteX4/CorelDRAWGraphicsSuiteX4Installer_EN.exe"
+          curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/corel.exe
+          test "$(sha1sum out/corel.exe | awk '{print $1}')" = "9b1232bb63cf1257c447146da8e059297fcffa35"
+          7z x -y out/corel.exe -oout/outer > out/outer-extract.txt 2>&1
+          overlay="$(find out/outer -maxdepth 1 -type f -name '[[]0]' | head -n1)"
+          test -n "$overlay"
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path("out/outer/[0]")
+          b=src.read_bytes()
+          sig=b"PK\x03\x04"
+          off=b.find(sig)
+          print("zip_offset", off)
+          if off < 0:
+              raise SystemExit("ZIP signature not found")
+          Path("out/zip-offset.txt").write_text(str(off)+"\n")
+          Path("out/payload.zip").write_bytes(b[off:])
+          PY
+          file out/payload.zip | tee out/payload-file.txt
+          7z l out/payload.zip | tee out/payload-list.txt
+          7z x -y out/payload.zip -oout/zip > out/payload-extract.txt
+          find out/zip -type f -printf '%s\t%p\n' | sort -nr > out/zip-files.txt
+          filters="$(find out/zip -type f -iname 'Filters.msi' | head -n1 || true)"
+          test -n "$filters"
+          cp "$filters" out/Filters.msi
+          sha256sum out/Filters.msi | tee out/filters-sha256.txt
+          sha1sum out/Filters.msi | tee out/filters-sha1.txt
+          md5sum out/Filters.msi | tee out/filters-md5.txt
+          stat -c 'size_bytes=%s' out/Filters.msi | tee out/filters-size.txt
+          file out/Filters.msi | tee out/filters-file.txt
+          msiinfo export out/Filters.msi Property > out/filters-Property.txt
+          msiinfo export out/Filters.msi File > out/filters-File.txt || true
+          msiinfo export out/Filters.msi Component > out/filters-Component.txt || true
+          grep -Ei 'ProductCode|ProductName|ProductVersion|Manufacturer' out/filters-Property.txt | tee out/filters-property-summary.txt
+          grep -Ei 'pub|publisher|cdrpub' out/filters-File.txt | tee out/filters-pub-hits.txt || true
+          grep -Ei '7F05E704-30A6-421A-97A7-8EEB1C7FF017' out/filters-Property.txt | tee out/filters-productcode-hit.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corel-x4-filters-${{ github.run_id }}
+          path: |
+            out/zip-offset.txt
+            out/payload-file.txt
+            out/payload-list.txt
+            out/zip-files.txt
+            out/Filters.msi
+            out/filters-*.txt
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  p2002-msi-help-map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Map Publisher 2002 MSI File table to VBAPB10 help payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools
+          mkdir -p out/container out/disc out/msi
+          url="https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z"
+          curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/p2002.7z
+          test "$(sha1sum out/p2002.7z | awk '{print $1}')" = "1ebbf5a8c188794e14a5ad2556bb751797034d0c"
+          7z x -y out/p2002.7z -oout/container > /dev/null
+          media="$(find out/container -type f -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+          test -n "$media"
+          7z x -y "$media" -oout/disc > out/media-extract.txt 2>&1
+          find out/disc -type f -iname '*.msi' -printf '%s\t%p\n' | sort -nr > out/msi-list.txt
+          : > out/vbapb10-msi-hits.txt
+          while IFS= read -r msi; do
+            safe="$(basename "$msi")"
+            msiinfo export "$msi" File > "out/msi/$safe.File.txt" 2>/dev/null || continue
+            msiinfo export "$msi" Media > "out/msi/$safe.Media.txt" 2>/dev/null || true
+            msiinfo export "$msi" Component > "out/msi/$safe.Component.txt" 2>/dev/null || true
+            if grep -Ei 'VBAPB10|vbapb10|Publisher.*\.chm|\.chm' "out/msi/$safe.File.txt" > "out/msi/$safe.HelpHits.txt"; then
+              echo "MSI=$msi" >> out/vbapb10-msi-hits.txt
+              cat "out/msi/$safe.HelpHits.txt" >> out/vbapb10-msi-hits.txt
+              echo "--- MEDIA ---" >> out/vbapb10-msi-hits.txt
+              cat "out/msi/$safe.Media.txt" >> out/vbapb10-msi-hits.txt
+            fi
+          done < <(find out/disc -type f -iname '*.msi' | sort)
+          cat out/vbapb10-msi-hits.txt
+          grep -RaiE 'VBAPB10|VBAPB|VBA.*CHM' out/disc > out/raw-vbapb10-hits.txt || true
+          head -n 300 out/raw-vbapb10-hits.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p2002-msi-help-map-${{ github.run_id }}
+          path: |
+            out/msi-list.txt
+            out/vbapb10-msi-hits.txt
+            out/raw-vbapb10-hits.txt
+            out/msi/*.HelpHits.txt
+            out/msi/*.Media.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  p2003-english-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Search IA exact English Publisher 2003 media identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 - <<'PY'
+          import json, subprocess, urllib.parse
+          from pathlib import Path
+          queries = {
+            "trial_part": '"X10-13869"',
+            "trial_sku": '"099-91827"',
+            "mvl": '"164-02924"',
+            "retail": '"164-03341"',
+            "trial_full": '"Microsoft Office Publisher 2003" AND "30-Day Trial"',
+          }
+          all_docs={}
+          for name,q in queries.items():
+              url="https://archive.org/advancedsearch.php?"+urllib.parse.urlencode([
+                  ("q",q),("fl[]","identifier"),("fl[]","title"),("fl[]","description"),
+                  ("rows","100"),("page","1"),("output","json")
+              ])
+              p=subprocess.run(["curl","-fsSL","--retry","3","--max-time","120",url],capture_output=True)
+              Path(f"out/{name}.url.txt").write_text(url+"\n")
+              Path(f"out/{name}.json").write_bytes(p.stdout)
+              if p.returncode:
+                  continue
+              d=json.loads(p.stdout)
+              docs=d.get("response",{}).get("docs",[])
+              all_docs[name]={"numFound":d.get("response",{}).get("numFound"),"docs":docs}
+          Path("out/summary.json").write_text(json.dumps(all_docs,indent=2,ensure_ascii=False))
+          ids=[]
+          for v in all_docs.values():
+              for d in v["docs"]:
+                  i=d.get("identifier")
+                  if i and i not in ids: ids.append(i)
+          Path("out/identifiers.txt").write_text("\n".join(ids)+"\n")
+          print(json.dumps(all_docs,indent=2,ensure_ascii=False))
+          PY
+          : > out/candidates.txt
+          while IFS= read -r ident; do
+            [ -n "$ident" ] || continue
+            curl -fsSL --retry 3 --max-time 120 "https://archive.org/metadata/$ident" -o "out/meta-$ident.json" || continue
+            python3 - "$ident" "out/meta-$ident.json" <<'PY' >> out/candidates.txt
+          import json,sys
+          ident,path=sys.argv[1:]
+          d=json.load(open(path))
+          md=d.get("metadata",{})
+          print("IDENT",ident)
+          print("TITLE",md.get("title",""))
+          for f in d.get("files",[]):
+              n=f.get("name",""); sz=int(f.get("size") or 0)
+              if f.get("source")=="original" and sz>50_000_000 and n.lower().endswith((".iso",".7z",".zip",".img",".mdf",".bin")):
+                  print("FILE",sz,n,f.get("sha1",""),f.get("md5",""))
+          print()
+          PY
+          done < out/identifiers.txt
+          cat out/candidates.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p2003-english-discovery-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: warn
+          retention-days: 30
