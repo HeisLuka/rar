@@ -1,0 +1,32 @@
+name: CLOUD-COMMENTS-01 contract
+
+on:
+  pull_request:
+    paths:
+      - "services/cloud-comments/**"
+      - "tools/run_cloud_comments_contract.py"
+      - "docs/cloud-comments-v1.md"
+      - ".github/workflows/cloud-comments.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comments-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run comments service contract tests
+        working-directory: services/cloud-comments
+        run: python -m unittest -v test_comment_service_v1.py
+      - name: Produce machine-readable comments receipt
+        run: python tools/run_cloud_comments_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-comments-v1-contract
+          path: target/cloud-comments-v1/receipt.json
+          if-no-files-found: error
