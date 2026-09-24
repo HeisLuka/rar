@@ -142,6 +142,26 @@ except ModuleNotFoundError:
 
 
 try:
+    from multi_story_text_transaction_v1 import (
+        MultiStoryTextTransactionError,
+        execute_multi_story_text_transaction_v1,
+        validate_multi_story_text_transaction_operation_v1,
+        validate_multi_story_text_transaction_request_v1,
+    )
+except ModuleNotFoundError:
+    import pathlib
+
+    _multi_story_text_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _multi_story_text_dir not in sys.path:
+        sys.path.insert(0, _multi_story_text_dir)
+    from multi_story_text_transaction_v1 import (
+        MultiStoryTextTransactionError,
+        execute_multi_story_text_transaction_v1,
+        validate_multi_story_text_transaction_operation_v1,
+        validate_multi_story_text_transaction_request_v1,
+    )
+
+try:
     from story_find_replace_v1 import (
         StoryFindReplaceError,
         execute_story_find_replace_v1,
@@ -663,6 +683,53 @@ class RevisionKernel:
                 retryable=False,
             )
             self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
+
+    def commit_multi_story_text_transaction(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_multi_story_text_transaction_v1,
+    ) -> dict:
+        """Commit a normalized set of Story-local candidates as one revision."""
+        normalized = copy.deepcopy(request)
+        command = normalized.get("command")
+        if isinstance(command, dict) and isinstance(command.get("entries"), list):
+            command["entries"] = sorted(
+                command["entries"],
+                key=lambda entry: (
+                    entry.get("story_id", "")
+                    if isinstance(entry, dict)
+                    else ""
+                ),
+            )
+
+        try:
+            return self._commit_command(
+                normalized,
+                executor,
+                request_validator=validate_multi_story_text_transaction_request_v1,
+                canonical_validator=validate_multi_story_text_transaction_operation_v1,
+            )
+        except MultiStoryTextTransactionError as exc:
+            document_id = normalized["document_id"]
+            client_operation_id = normalized["client_operation_id"]
+            request_digest = hash_id(normalized)
+            idem_key = (document_id, client_operation_id)
+            current = (
+                self._documents[document_id].current_revision_id
+                if document_id in self._documents
+                else None
+            )
+            result = self._rejected(
+                normalized,
+                code=exc.code,
+                current_revision_id=current,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (
+                request_digest,
+                copy.deepcopy(result),
+            )
             return result
 
     def commit_history_transition(
