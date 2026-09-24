@@ -4,24 +4,60 @@ from render_scene_v1 import hash_id
 
 PRIMITIVE_KINDS = ("rects","images","glyph_runs")
 
-def _atoms_for_node(scene, node_id):
-    out={k:[] for k in PRIMITIVE_KINDS}
+def _empty_atom_buckets():
+    return {kind:[] for kind in PRIMITIVE_KINDS}
+
+def build_node_atom_index(scene, metrics=None):
+    """Build one deterministic NodeId -> primitive ownership index.
+
+    Atom lists preserve the compiler's existing primitive-table order. The index
+    holds references only; changed target atoms are deep-copied when emitted into
+    a patch.
+    """
+    index={row["node_id"]:_empty_atom_buckets() for row in scene["atom_map"]}
+    primitive_visits=0
+    owned_atoms=0
     for kind in PRIMITIVE_KINDS:
         for atom in scene["primitives"][kind]:
-            if atom.get("node_id")==node_id:
-                out[kind].append(copy.deepcopy(atom))
-    return out
+            primitive_visits+=1
+            node_id=atom.get("node_id")
+            if node_id is None:
+                raise ValueError(f"{kind} atom missing node_id")
+            bucket=index.get(node_id)
+            if bucket is None:
+                raise ValueError(f"{kind} atom references node absent from atom_map: {node_id}")
+            bucket[kind].append(atom)
+            owned_atoms+=1
 
-def diff_render_scenes(base, target):
+    if metrics is not None:
+        metrics.update({
+            "node_buckets":len(index),
+            "primitive_visits":primitive_visits,
+            "owned_atoms":owned_atoms,
+        })
+    return index
+
+def diff_render_scenes(base, target, metrics=None):
     base_nodes={x["node_id"]:x for x in base["atom_map"]}
     target_nodes={x["node_id"]:x for x in target["atom_map"]}
+
+    base_index_metrics={}
+    target_index_metrics={}
+    base_atoms_by_node=build_node_atom_index(base,base_index_metrics)
+    target_atoms_by_node=build_node_atom_index(target,target_index_metrics)
+
     removed=sorted(set(base_nodes)-set(target_nodes))
     upserts=[]
+    node_comparisons=0
     for node_id in sorted(target_nodes):
-        base_atoms=_atoms_for_node(base,node_id) if node_id in base_nodes else None
-        target_atoms=_atoms_for_node(target,node_id)
+        node_comparisons+=1
+        base_atoms=base_atoms_by_node.get(node_id)
+        target_atoms=target_atoms_by_node[node_id]
         if base_atoms!=target_atoms:
-            upserts.append({"node_id":node_id,"primitives":target_atoms})
+            upserts.append({
+                "node_id":node_id,
+                "primitives":copy.deepcopy(target_atoms),
+            })
 
     patch={
         "patch_version":"chaptera.scene-patch.v1",
@@ -40,6 +76,28 @@ def diff_render_scenes(base, target):
         "diagnostics": None if base["diagnostics"]==target["diagnostics"] else copy.deepcopy(target["diagnostics"]),
     }
     patch["patch_id"]=hash_id(patch)
+
+    if metrics is not None:
+        base_primitive_count=base_index_metrics["primitive_visits"]
+        target_primitive_count=target_index_metrics["primitive_visits"]
+        existing_target_nodes=len(set(base_nodes)&set(target_nodes))
+        legacy_repeated_scan_visits=(
+            len(target_nodes)*target_primitive_count
+            + existing_target_nodes*base_primitive_count
+        )
+        metrics.update({
+            "index_strategy":"single_pass_node_ownership",
+            "base_node_count":len(base_nodes),
+            "target_node_count":len(target_nodes),
+            "node_comparisons":node_comparisons,
+            "base_primitive_visits":base_primitive_count,
+            "target_primitive_visits":target_primitive_count,
+            "primitive_visits_total":base_primitive_count+target_primitive_count,
+            "legacy_repeated_scan_primitive_visits":legacy_repeated_scan_visits,
+            "changed_node_count":len(upserts),
+            "removed_node_count":len(removed),
+        })
+
     return patch
 
 def apply_patch(base, patch):
