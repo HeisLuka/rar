@@ -232,7 +232,7 @@ async fn migrate_to(
         ));
     }
 
-    let mut tx = (&mut connection)
+    let mut tx = connection
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(sqlite_error)?;
@@ -251,7 +251,7 @@ async fn migrate_to(
     .await
     .map_err(sqlite_error)?;
 
-    let applied = load_and_validate_applied(&mut *tx).await?;
+    let applied = load_and_validate_applied(&mut tx).await?;
     let current = applied.last().map(|row| row.version).unwrap_or(0);
 
     if current > target_version {
