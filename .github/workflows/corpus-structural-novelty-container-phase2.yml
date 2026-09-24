@@ -38,7 +38,9 @@ jobs:
       - name: Offline fail-closed validation
         run: |
           set -euo pipefail
-          python -m py_compile             tools/corpus/structural_novelty.py             tools/corpus/structural_novelty_container_phase2.py             tools/corpus/pub_container_extract.py
+          python -m py_compile tools/corpus/structural_novelty.py
+          python -m py_compile tools/corpus/structural_novelty_container_phase2.py
+          python -m py_compile tools/corpus/pub_container_extract.py
           python tools/corpus/structural_novelty_container_phase2.py self-test
 
   scan:
@@ -104,7 +106,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          s=json.loads(Path("aggregate/summary.json").read_text())
+          s = json.loads(Path("aggregate/summary.json").read_text())
           assert s["container_unique_sha"] == 425, s
           assert s["analyzed_rows"] == 425, s
           PY
