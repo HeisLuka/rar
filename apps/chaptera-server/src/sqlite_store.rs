@@ -7,8 +7,8 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     Row, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
 const MIGRATION_VERSION: i64 = 1;
@@ -126,18 +126,13 @@ impl SqliteRevisionStore {
     }
 
     pub async fn schema_version(&self) -> Result<i64, SqliteStoreError> {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(sqlite_read_error)
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_read_error)
     }
 
-    pub async fn append_edge(
-        &self,
-        edge: RevisionEdge,
-    ) -> Result<AppendOutcome, SqliteStoreError> {
+    pub async fn append_edge(&self, edge: RevisionEdge) -> Result<AppendOutcome, SqliteStoreError> {
         validate_edge(&edge)?;
 
         let result = sqlx::query(
@@ -417,16 +412,13 @@ pub fn decode_canonical_event(encoded: &[u8]) -> Result<Vec<u8>, SqliteStoreErro
 
     let length_start = EVENT_MAGIC.len();
     let length_end = length_start + 4;
-    let payload_len = u32::from_be_bytes(
-        encoded[length_start..length_end]
-            .try_into()
-            .map_err(|_| {
-                SqliteStoreError::new(
-                    "canonical_event_corrupt",
-                    "canonical event length field is malformed",
-                )
-            })?,
-    ) as usize;
+    let payload_len =
+        u32::from_be_bytes(encoded[length_start..length_end].try_into().map_err(|_| {
+            SqliteStoreError::new(
+                "canonical_event_corrupt",
+                "canonical event length field is malformed",
+            )
+        })?) as usize;
     if payload_len == 0 || payload_len > MAX_CANONICAL_EVENT_BYTES {
         return Err(SqliteStoreError::new(
             "canonical_event_corrupt",
@@ -436,14 +428,12 @@ pub fn decode_canonical_event(encoded: &[u8]) -> Result<Vec<u8>, SqliteStoreErro
 
     let hash_start = length_end;
     let hash_end = hash_start + EVENT_HASH_BYTES;
-    let expected_total = EVENT_HEADER_BYTES
-        .checked_add(payload_len)
-        .ok_or_else(|| {
-            SqliteStoreError::new(
-                "canonical_event_corrupt",
-                "canonical event length overflows V2 envelope",
-            )
-        })?;
+    let expected_total = EVENT_HEADER_BYTES.checked_add(payload_len).ok_or_else(|| {
+        SqliteStoreError::new(
+            "canonical_event_corrupt",
+            "canonical event length overflows V2 envelope",
+        )
+    })?;
     if encoded.len() != expected_total {
         return Err(SqliteStoreError::new(
             "canonical_event_corrupt",
@@ -521,7 +511,9 @@ fn decode_edge_row(row: sqlx::sqlite::SqliteRow) -> Result<RevisionEdge, SqliteS
         parent_cursor: row.try_get("parent_cursor").map_err(sqlite_decode_error)?,
         operation_id: blob_text(&row, "operation_id")?,
         request_hash: blob_text(&row, "request_hash")?,
-        canonical_event: row.try_get("canonical_event").map_err(sqlite_decode_error)?,
+        canonical_event: row
+            .try_get("canonical_event")
+            .map_err(sqlite_decode_error)?,
         child_revision: blob_text(&row, "child_revision")?,
         child_cursor: row.try_get("child_cursor").map_err(sqlite_decode_error)?,
         resulting_state_hash: blob_text(&row, "resulting_state_hash")?,
@@ -529,7 +521,9 @@ fn decode_edge_row(row: sqlx::sqlite::SqliteRow) -> Result<RevisionEdge, SqliteS
         semantic_schema_version: row
             .try_get("semantic_schema_version")
             .map_err(sqlite_decode_error)?,
-        committed_at_ms: row.try_get("committed_at_ms").map_err(sqlite_decode_error)?,
+        committed_at_ms: row
+            .try_get("committed_at_ms")
+            .map_err(sqlite_decode_error)?,
     };
     validate_edge(&edge)?;
     Ok(edge)
@@ -549,14 +543,9 @@ fn optional_blob_text(
     let bytes: Option<Vec<u8>> = row.try_get(column).map_err(sqlite_decode_error)?;
     bytes
         .map(|value| {
-            str::from_utf8(&value)
-                .map(str::to_owned)
-                .map_err(|_| {
-                    SqliteStoreError::new(
-                        "sqlite_row_corrupt",
-                        format!("{column} is not UTF-8"),
-                    )
-                })
+            str::from_utf8(&value).map(str::to_owned).map_err(|_| {
+                SqliteStoreError::new("sqlite_row_corrupt", format!("{column} is not UTF-8"))
+            })
         })
         .transpose()
 }
@@ -616,8 +605,8 @@ mod tests {
     use std::{
         fs,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc,
+            atomic::{AtomicU64, Ordering},
         },
     };
 
@@ -777,7 +766,10 @@ mod tests {
             .count();
         assert_eq!(committed, 1);
         assert_eq!(conflicts, 1);
-        assert_eq!(store.load_document_edges("doc-race").await.unwrap().len(), 1);
+        assert_eq!(
+            store.load_document_edges("doc-race").await.unwrap().len(),
+            1
+        );
 
         store.close().await;
         cleanup(&path);
@@ -844,10 +836,7 @@ mod tests {
         .await
         .unwrap();
 
-        let error = store
-            .load_document_edges("doc-corrupt")
-            .await
-            .unwrap_err();
+        let error = store.load_document_edges("doc-corrupt").await.unwrap_err();
         assert_eq!(error.code, "canonical_event_corrupt");
 
         store.close().await;
