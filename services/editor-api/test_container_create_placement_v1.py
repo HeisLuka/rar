@@ -104,6 +104,30 @@ class ContainerCreatePlacementV1Tests(unittest.TestCase):
         self.assertEqual(RectEmu(190, 20, 20, 10), plan.destination_local_rect)
         self.assertEqual(desired, plan.desired_effective_page_rect)
 
+    def test_nested_group_chain_roundtrips_exactly(self):
+        ancestry = (
+            edge(
+                "outer",
+                bounds=RectEmu(100, 100, 400, 400),
+                local=RectEmu(0, 0, 200, 200),
+                children=("inner",),
+            ),
+            edge(
+                "inner",
+                parent="outer",
+                bounds=RectEmu(50, 50, 100, 100),
+                local=RectEmu(0, 0, 100, 100),
+            ),
+        )
+        desired = RectEmu(220, 220, 20, 20)
+        plan = plan_container_create_placement_v1(
+            desired_effective_page_rect=desired,
+            destination=GroupDestinationV1("page:1", "inner", ancestry),
+        )
+        self.assertEqual("contained", plan.status)
+        self.assertEqual(RectEmu(10, 10, 10, 10), plan.destination_local_rect)
+        self.assertEqual(desired, plan.desired_effective_page_rect)
+
     def test_invalid_rect_fails_closed(self):
         with self.assertRaises(ContainerCreatePlacementError):
             plan_container_create_placement_v1(
