@@ -53,7 +53,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install pinned DuckDB
-        run: python -m pip install --disable-pip-version-check duckdb==1.4.1
+        run: python -m pip install --disable-pip-version-check duckdb==1.4.1 pytz==2025.2
       - name: Live global-index smoke
         run: |
           set -euo pipefail
@@ -85,7 +85,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install pinned DuckDB
-        run: python -m pip install --disable-pip-version-check duckdb==1.4.1
+        run: python -m pip install --disable-pip-version-check duckdb==1.4.1 pytz==2025.2
       - name: Discover globally across six crawl eras
         run: |
           set -euo pipefail
