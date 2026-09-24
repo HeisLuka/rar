@@ -10,6 +10,5 @@ mod shape_paint;
 pub use shape_paint::{
     AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, ShapePaintV1,
     ShapePaintValidationError, SolidFillV1, SolidStrokeV1, SourceRefV1, SourceRoleV1, Srgb8,
-    author_created_shape_paint_v1, canonical_shape_paint_hash_v1,
-    validate_shape_paint_v1,
+    author_created_shape_paint_v1, canonical_shape_paint_hash_v1, validate_shape_paint_v1,
 };
