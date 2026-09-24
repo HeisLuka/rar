@@ -20,6 +20,7 @@ import harvest_pub  # type: ignore
 import structural_novelty as novelty  # type: ignore
 import structural_novelty_container_phase2 as phase2  # type: ignore
 import version_identity_matrix as vim  # type: ignore
+import wayback_pub_seed as wb  # type: ignore
 
 SECTOR = 2048
 UA = "rar-version-identity-finalize/1.0"
@@ -204,29 +205,44 @@ def load_fingerprint_rows(root: Path) -> dict[str, dict]:
     return out
 
 
-def curl_direct(spec: dict, target: Path) -> bytes:
-    with tempfile.TemporaryDirectory(prefix="rar-curl-cookie-") as td:
-        cookie = Path(td) / "cookies.txt"
-        subprocess.run([
-            "curl", "--fail", "--location", "--silent", "--show-error",
-            "--retry", "4", "--retry-all-errors", "--retry-delay", "2",
-            "--connect-timeout", "20", "--max-time", "90",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-            "--cookie-jar", str(cookie),
-            spec["referer"],
-            "--output", str(Path(td) / "landing.html"),
-        ], check=True)
-        subprocess.run([
-            "curl", "--fail", "--location", "--silent", "--show-error",
-            "--retry", "8", "--retry-all-errors", "--retry-delay", "3",
-            "--connect-timeout", "20", "--max-time", "180",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-            "--referer", spec["referer"],
-            "--cookie", str(cookie),
-            spec["url"],
-            "--output", str(target),
-        ], check=True)
-    return target.read_bytes()
+def wayback_exact_sha(original_url: str, expected_sha: str) -> bytes:
+    rows = wb.exact_query(original_url, limit=100, timeout=60, retries=4)
+    if not rows:
+        raise ValueError(f"Wayback has no 200 captures for {original_url}")
+    errors = []
+    for row in rows:
+        ts = str(row.get("timestamp") or "").strip()
+        original = str(row.get("original") or "").strip()
+        if not ts or not original:
+            continue
+        replay = wb.replay_url(ts, original)
+        try:
+            req = urllib.request.Request(
+                replay,
+                headers={
+                    "User-Agent": UA,
+                    "Accept": "*/*",
+                    "Accept-Encoding": "identity",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=90) as response:
+                data = response.read(100 * 1024 * 1024 + 1)
+            if len(data) > 100 * 1024 * 1024:
+                raise ValueError("Wayback payload exceeds bounded size")
+            actual = hashlib.sha256(data).hexdigest()
+            if actual == expected_sha:
+                print(
+                    f"Wayback exact-SHA repair selected {ts} {original_url}",
+                    file=sys.stderr,
+                )
+                return data
+            errors.append(f"{ts}:sha={actual}")
+        except Exception as exc:
+            errors.append(f"{ts}:{type(exc).__name__}:{exc}")
+    raise ValueError(
+        f"no Wayback capture matched exact SHA {expected_sha} for {original_url}; "
+        f"attempts={errors[:8]}"
+    )
 
 
 def repair_phase1(inputs: Path, out: Path) -> dict:
@@ -243,8 +259,7 @@ def repair_phase1(inputs: Path, out: Path) -> dict:
             continue
 
         if spec["kind"] == "direct":
-            with tempfile.TemporaryDirectory(prefix="rar-direct-repair-") as td:
-                data = curl_direct(spec, Path(td) / "payload.pub")
+            data = wayback_exact_sha(spec["url"], sha)
         else:
             last = None
             for attempt in range(8):
