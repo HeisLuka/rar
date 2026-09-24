@@ -18,8 +18,7 @@ use crate::{
     runtime_error::RuntimeError,
 };
 
-pub type JobFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<JobSuccess, JobFailure>> + Send + 'a>>;
+pub type JobFuture<'a> = Pin<Box<dyn Future<Output = Result<JobSuccess, JobFailure>> + Send + 'a>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSuccess {
@@ -33,8 +32,7 @@ pub struct JobFailure {
 }
 
 pub trait JobExecutor: Send + Sync {
-    fn execute<'a>(&'a self, job: &'a JobRecord, cancellation: CancellationFlag)
-        -> JobFuture<'a>;
+    fn execute<'a>(&'a self, job: &'a JobRecord, cancellation: CancellationFlag) -> JobFuture<'a>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,9 +132,7 @@ impl WorkerLoopConfig {
                 "lease duration must be >0 and <=300 seconds",
             ));
         }
-        if self.heartbeat_interval.is_zero()
-            || self.heartbeat_interval >= self.lease_duration
-        {
+        if self.heartbeat_interval.is_zero() || self.heartbeat_interval >= self.lease_duration {
             return Err(RuntimeError::new(
                 "invalid_worker_heartbeat",
                 "heartbeat interval must be >0 and shorter than the lease",
@@ -359,9 +355,7 @@ impl WorkerLoop {
                     Ok(PublishOutcome::AlreadyPublished(_)) => Ok(ExecutionCompletion::Succeeded {
                         already_published: true,
                     }),
-                    Err(error) if error.code == "stale_lease" => {
-                        Ok(ExecutionCompletion::LeaseLost)
-                    }
+                    Err(error) if error.code == "stale_lease" => Ok(ExecutionCompletion::LeaseLost),
                     Err(error) if error.code == "cancel_requested" => {
                         match self
                             .queue
@@ -380,12 +374,7 @@ impl WorkerLoop {
             Err(failure) => {
                 match self
                     .queue
-                    .fail(
-                        lease,
-                        now_ms,
-                        failure.retryable,
-                        failure.terminal_code,
-                    )
+                    .fail(lease, now_ms, failure.retryable, failure.terminal_code)
                     .await
                     .map_err(queue_error)?
                 {
@@ -417,9 +406,9 @@ fn duration_ms(duration: Duration, label: &str) -> Result<i64, RuntimeError> {
 }
 
 fn unix_now_ms() -> Result<i64, RuntimeError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| RuntimeError::new("clock_before_epoch", "system clock is before UNIX epoch"))?;
+    let duration = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| {
+        RuntimeError::new("clock_before_epoch", "system clock is before UNIX epoch")
+    })?;
     duration_ms(duration, "system clock")
 }
 
