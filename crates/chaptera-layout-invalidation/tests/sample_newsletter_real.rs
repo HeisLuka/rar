@@ -573,10 +573,9 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
     let clean_full_frame_count = clean_full_recomputed_frame_ids.len();
     let incremental_recomputed_frame_count = incremental_recomputed_frame_ids.len();
     let reused_frame_count = clean_full_frame_count - incremental_recomputed_frame_count;
-    let frame_resolve_work_reduction_permille = u32::try_from(
-        reused_frame_count * 1000 / clean_full_frame_count
-    )
-    .expect("bounded frame work ratio");
+    let frame_resolve_work_reduction_permille =
+        u32::try_from(reused_frame_count * 1000 / clean_full_frame_count)
+            .expect("bounded frame work ratio");
 
     let incremental_scene_shard =
         linked_scene_shard_output_fingerprint_v1("sample-newsletter-page", &incremental.flow);
