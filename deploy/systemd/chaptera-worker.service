@@ -1,0 +1,50 @@
+[Unit]
+Description=Chaptera Cloud durable worker
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/chaptera /var/spool/chaptera
+
+[Service]
+Type=simple
+User=chaptera
+Group=chaptera
+Slice=chaptera.slice
+WorkingDirectory=/var/lib/chaptera
+
+# CLOUD-ASYNC-RUNTIME-01 owns exact worker CLI/config semantics.
+ExecStartPre=/opt/chaptera/current/chaptera doctor
+ExecStart=/opt/chaptera/current/chaptera worker
+
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+
+StateDirectory=chaptera
+CacheDirectory=chaptera-worker
+RuntimeDirectory=chaptera-worker
+EnvironmentFile=-/etc/chaptera/chaptera.env
+ReadWritePaths=/var/spool/chaptera
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+MemoryHigh=384M
+MemoryMax=640M
+TasksMax=128
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
