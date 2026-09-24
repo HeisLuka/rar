@@ -1,0 +1,39 @@
+name: WEB-ACCESSIBILITY renderer surface probe
+
+on:
+  pull_request:
+    paths:
+      - "tools/run_web_accessibility_renderer_probe.mjs"
+      - ".github/workflows/web-accessibility-renderer-probe.yml"
+      - "apps/web/render-benchmark.html"
+      - "apps/web/render-v1.mjs"
+      - "packages/protocol/scene/v1/fixtures/group-table.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run renderer accessibility surface probe
+        run: node tools/run_web_accessibility_renderer_probe.mjs ${{ matrix.browser }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-accessibility-renderer-${{ matrix.browser }}
+          path: target/web-accessibility-renderer/${{ matrix.browser }}-receipt.json
+          if-no-files-found: error
