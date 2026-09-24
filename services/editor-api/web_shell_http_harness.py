@@ -14,7 +14,7 @@ import hashlib
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from revision_store import RevisionKernel
 from observability import TraceRecorder, trace_context_from_headers
@@ -118,6 +118,84 @@ class HarnessState:
         project["operations"] = operations
         return project, []
 
+    def export_preview(self, target: str) -> dict:
+        if target not in {"idml", "odg"}:
+            raise ValueError("export preview target must be idml or odg")
+
+        current = self.kernel.current_revision(self.document_id)
+        scene = self.scenes[current.revision_id]
+        story_frame_nodes = {frame["node_id"] for frame in scene.get("story_frames", [])}
+        items = []
+
+        for page in scene.get("pages", []):
+            items.append({
+                "feature": "page.geometry",
+                "origin": page["page_id"],
+                "property_path": "page.size",
+                "disposition": "preserved",
+            })
+
+        for story in scene.get("stories", []):
+            items.append({
+                "feature": "story.text",
+                "origin": story["story_id"],
+                "property_path": "story.text",
+                "disposition": "preserved",
+            })
+
+        for node in scene.get("nodes", []):
+            if node["node_id"] in story_frame_nodes:
+                items.append({
+                    "feature": "story.linked_frames",
+                    "origin": node["node_id"],
+                    "property_path": "node.story_frame",
+                    "disposition": "preserved",
+                })
+            else:
+                items.append({
+                    "feature": "node.unsupported",
+                    "origin": node["node_id"],
+                    "property_path": "node",
+                    "disposition": "unsupported",
+                    "loss_kind": "unsupported",
+                    "severity": "semantic",
+                    "reversible": False,
+                    "code": "export.unsupported.node.unsupported",
+                })
+
+        counts = {
+            "preserved": 0,
+            "approximated": 0,
+            "flattened": 0,
+            "rasterized": 0,
+            "unsupported": 0,
+            "blocking": 0,
+        }
+        for item in items:
+            counts[item["disposition"]] += 1
+            if item.get("severity") == "blocking":
+                counts["blocking"] += 1
+
+        return {
+            "protocol_version": "chaptera.export-preview.v1",
+            "report_schema_version": "0.1",
+            "document_id": self.document_id,
+            "source_hash": self.source_hash,
+            "revision_id": current.revision_id,
+            "target": {
+                "format": target,
+                "adapter_version": "idml-v0.1" if target == "idml" else "odg-v0.1",
+                "profile": "bounded-editable",
+                "schema_fence": (
+                    "legacy-spec-8.02/dom-7.0" if target == "idml" else "odf-1.4"
+                ),
+            },
+            "conversion_fence_sha256": None,
+            "can_serialize": counts["blocking"] == 0,
+            "counts": counts,
+            "items": items,
+        }
+
     def commit(self, request: dict) -> dict:
         self.commit_requests += 1
         protocol = request.get("protocol_version")
@@ -173,10 +251,21 @@ class Handler(BaseHTTPRequestHandler):
         self._headers(204)
 
     def do_GET(self):
-        path = unquote(self.path.split("?", 1)[0])
+        parsed = urlsplit(self.path)
+        path = unquote(parsed.path)
+        query = parse_qs(parsed.query)
         trace_context = trace_context_from_headers(self.headers)
         if path == "/health":
             self._json({"ok": True, "receipt_class": "synthetic_http_service_plumbing"})
+            return
+        if path == "/v1/export/preview":
+            target = query.get("target", [""])[0]
+            try:
+                with RECORDER.span("gateway.export_preview", trace_context):
+                    preview = STATE.export_preview(target)
+                self._json(preview)
+            except ValueError as exc:
+                self._json({"error": "invalid_request", "detail": str(exc)}, 400)
             return
         if path == "/v1/scenes/current":
             with RECORDER.span("gateway.scene_current", trace_context):
