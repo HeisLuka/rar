@@ -5,8 +5,8 @@
 //! consumers receive canonical pub-model paint, never a competing paint truth.
 
 use pub_model::{
-    ShapePaintProvenanceV1, ShapePaintV1, ShapePaintValidationError, SolidFillV1,
-    SolidStrokeV1, SourceRefV1, Srgb8, validate_shape_paint_v1,
+    ShapePaintProvenanceV1, ShapePaintV1, ShapePaintValidationError, SolidFillV1, SolidStrokeV1,
+    SourceRefV1, Srgb8, validate_shape_paint_v1,
 };
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +66,11 @@ pub fn promote_explicit_source_paint_v1(
     source: &PubExplicitShapePaintSourceV1,
     source_ref: SourceRefV1,
 ) -> Result<Option<ShapePaintV1>, ShapePaintValidationError> {
-    let fill = match (source.fill.solid, source.fill.color_rgb, source.fill.visible) {
+    let fill = match (
+        source.fill.solid,
+        source.fill.color_rgb,
+        source.fill.visible,
+    ) {
         (true, Some(rgb), Some(visible)) => Some(SolidFillV1 {
             visible,
             color: Srgb8::from(rgb),
@@ -104,9 +108,7 @@ pub fn promote_explicit_source_paint_v1(
     Ok(Some(paint))
 }
 
-pub fn project_viewer_node_paint_v1(
-    paint: &ShapePaintV1,
-) -> Option<ViewerNodePaintV1> {
+pub fn project_viewer_node_paint_v1(paint: &ShapePaintV1) -> Option<ViewerNodePaintV1> {
     let solid_fill_rgb = paint
         .fill
         .as_ref()
@@ -132,18 +134,14 @@ pub fn project_viewer_node_paint_v1(
     }
 }
 
-pub fn project_layout_shape_paint_v1(
-    paint: &ShapePaintV1,
-) -> LayoutShapePaintV1 {
+pub fn project_layout_shape_paint_v1(paint: &ShapePaintV1) -> LayoutShapePaintV1 {
     LayoutShapePaintV1 {
         fill: paint.fill.clone(),
         stroke: paint.stroke.clone(),
     }
 }
 
-pub fn project_editable_export_shape_paint_v1(
-    paint: &ShapePaintV1,
-) -> EditableExportShapePaintV1 {
+pub fn project_editable_export_shape_paint_v1(paint: &ShapePaintV1) -> EditableExportShapePaintV1 {
     EditableExportShapePaintV1 {
         fill: paint.fill.clone(),
         stroke: paint.stroke.clone(),
@@ -154,8 +152,8 @@ pub fn project_editable_export_shape_paint_v1(
 mod tests {
     use super::*;
     use pub_model::{
-        AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1,
-        SourceRoleV1, author_created_shape_paint_v1,
+        AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, SourceRoleV1,
+        author_created_shape_paint_v1,
     };
 
     fn source_ref() -> SourceRefV1 {
