@@ -1,6 +1,11 @@
 name: Fetch Korva 1.8.7
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fetch-korva-1.8.7.yml
   workflow_dispatch:
 
 permissions:
