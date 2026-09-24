@@ -1,0 +1,59 @@
+name: R&D fault-injection batch
+
+on:
+  pull_request:
+    paths:
+      - "tools/run_revisionstream_v2_fault_injection.py"
+      - "tools/run_story_delta_scale_experiment.py"
+      - "tools/run_lifecycle_dr_fault_injection.py"
+      - ".github/workflows/rd-fault-injection-batch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revisionstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: RevisionStream V2 rebase/WAL fault injection
+        run: python tools/run_revisionstream_v2_fault_injection.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rd-revisionstream-v2
+          path: target/rd-fault-injection/revisionstream.json
+          if-no-files-found: error
+
+  story-delta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Whole-Story vs range-delta scale experiment
+        run: python tools/run_story_delta_scale_experiment.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rd-story-delta
+          path: target/rd-fault-injection/text-delta.json
+          if-no-files-found: error
+
+  lifecycle-dr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Lifecycle rollback and DR no-resurrection fault injection
+        run: python tools/run_lifecycle_dr_fault_injection.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rd-lifecycle-dr
+          path: target/rd-fault-injection/lifecycle-dr.json
+          if-no-files-found: error
