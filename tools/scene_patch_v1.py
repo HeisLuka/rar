@@ -58,7 +58,6 @@ def apply_patch(base, patch):
         ]
         for upsert in patch["upsert_nodes"]:
             out["primitives"][kind].extend(copy.deepcopy(upsert["primitives"][kind]))
-        out["primitives"][kind].sort(key=lambda a:a["atom_id"])
 
     out["atom_map"]=[
         x for x in out["atom_map"] if x["node_id"] not in affected
@@ -79,6 +78,15 @@ def apply_patch(base, patch):
         out["paint_seq"]=copy.deepcopy(patch["order_deltas"]["paint_seq"])
     if patch["diagnostics"] is not None:
         out["diagnostics"]=copy.deepcopy(patch["diagnostics"])
+
+    # Primitive table order is canonical RenderScene state, not an implementation
+    # detail. Reconstruct each table from the target paint sequence rather than
+    # sorting by atom_id, which diverges on interleaved multi-page NodeIds.
+    paint_rank={atom_id:index for index,atom_id in enumerate(out["paint_seq"])}
+    for kind in PRIMITIVE_KINDS:
+        out["primitives"][kind].sort(
+            key=lambda atom:(paint_rank.get(atom["atom_id"], 2**63-1), atom["atom_id"])
+        )
 
     out["scene_revision"]=patch["target_revision"]
     out.pop("render_scene_id",None)

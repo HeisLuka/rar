@@ -1,0 +1,32 @@
+name: RENDER-BENCH-01 RenderScene benchmark
+
+on:
+  pull_request:
+    paths:
+      - "tools/render_bench_v1.py"
+      - "tools/run_render_bench_contract.py"
+      - "tools/render_scene_v1.py"
+      - "tools/scene_patch_v1.py"
+      - "docs/render-bench-v1.md"
+      - ".github/workflows/render-bench-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run RenderScene and ScenePatch benchmark matrix
+        run: python tools/run_render_bench_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-bench-v1-receipt
+          path: target/render-bench-v1/receipt.json
+          if-no-files-found: error
