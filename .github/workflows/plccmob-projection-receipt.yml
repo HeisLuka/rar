@@ -26,4 +26,4 @@ jobs:
         run: python -m pip install "jsonschema==4.23.0"
 
       - name: Run PlcCmob source-free contract tests
-        run: python -m unittest -v tools/test_plccmob_projection_receipt.py
+        run: python tools/test_plccmob_projection_receipt.py -v
