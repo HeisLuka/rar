@@ -73,16 +73,29 @@ pub struct ParagraphLinePlacementSceneV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinePlacementError {
     EmptyContextField(&'static str),
-    NonCanonicalLineIndex { expected: usize, actual: usize },
-    InvalidScalarRange { line_index: usize },
-    NonPositiveContentWidth { line_index: usize, width_emu: i64 },
-    NegativeMeasuredWidth { line_index: usize, width_emu: i64 },
+    NonCanonicalLineIndex {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidScalarRange {
+        line_index: usize,
+    },
+    NonPositiveContentWidth {
+        line_index: usize,
+        width_emu: i64,
+    },
+    NegativeMeasuredWidth {
+        line_index: usize,
+        width_emu: i64,
+    },
     LineWiderThanContent {
         line_index: usize,
         measured_width_emu: i64,
         content_width_emu: i64,
     },
-    OriginOverflow { line_index: usize },
+    OriginOverflow {
+        line_index: usize,
+    },
     Serialization,
 }
 
@@ -191,12 +204,11 @@ pub fn resolve_paragraph_line_placement_v1(
             ParagraphAlignmentV1::Center => remaining / 2,
             ParagraphAlignmentV1::Right => remaining,
         };
-        let line_origin_x_emu = line
-            .content_leading_x_emu
-            .checked_add(offset)
-            .ok_or(LinePlacementError::OriginOverflow {
+        let line_origin_x_emu = line.content_leading_x_emu.checked_add(offset).ok_or(
+            LinePlacementError::OriginOverflow {
                 line_index: line.line_index,
-            })?;
+            },
+        )?;
 
         lines.push(ResolvedLinePlacementV1 {
             line_index: line.line_index,
@@ -334,7 +346,10 @@ mod tests {
             vec![300, 150, 1000]
         );
         assert_eq!(scene.lines[2].frame_node_id, "frame-b");
-        assert_eq!((scene.lines[2].scalar_start, scene.lines[2].scalar_end), (9, 13));
+        assert_eq!(
+            (scene.lines[2].scalar_start, scene.lines[2].scalar_end),
+            (9, 13)
+        );
     }
 
     #[test]
