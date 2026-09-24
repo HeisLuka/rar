@@ -1,0 +1,78 @@
+{
+  "schema": "rar-pub-corpus-authority-lower-bound-v1",
+  "date": "2026-09-24",
+  "historical_complete_authority_count": 339,
+  "historical_exact_identities_rematerialized": 316,
+  "historical_unrematerialized_complete_identities": 23,
+  "historical_unrematerialized_scope": {
+    "Geo_Core_v3": {"TH": 11, "TR": 7, "ID": 1, "JP": 3, "TW": 1}
+  },
+  "baseline_known_sha_list": {
+    "count": 316,
+    "sha256": "544e7bc095881227669650173996f710e4ccc545070db6a31fb71cddba4ccf89"
+  },
+  "rar_exact_union_sha_list": {
+    "count": 950,
+    "sha256": "992d2123c900cf6a89a226c972f083f2a372be111e44f16d77a68a9473ba4646"
+  },
+  "rar_overlap_with_rematerialized_baseline": 50,
+  "rar_definitely_outside_rematerialized_baseline": 900,
+  "current_complete_cfb_union": {
+    "lower_bound": 1216,
+    "upper_bound": 1239,
+    "proof": "339 + 950 - 50 - x, where 0 <= x <= 23 is overlap between Rar union and the 23 unre-materialized historical Geo SHA; minimum at x=23 = 1216."
+  },
+  "milestone": {
+    "target_unique_complete_publisher_cfb": 1000,
+    "status": "proven_by_lower_bound"
+  },
+  "source_sets": {
+    "common_crawl": {
+      "count": 370,
+      "artifact_id": 10801347100,
+      "artifact_digest": "sha256:de7d1fbcf15547abf1e581b64c1d503aa85b184930811324ba7f17f4305e7add"
+    },
+    "wayback": {
+      "count": 70,
+      "artifact_id": 10801683740,
+      "artifact_digest": "sha256:b331e81c30a182d1e769e307281f6155f987198f25de8a4df772ff499b1253dd"
+    },
+    "internet_archive": {
+      "count": 39,
+      "artifact_id": 10801684167,
+      "artifact_digest": "sha256:8e3b9fd5388b38e696d97e3ec5fd713c5bf8bd3273dc9e8f1f1bfefe8c58ad8d"
+    },
+    "container_first_wave": {
+      "count": 425,
+      "artifact_id": 10789500808,
+      "artifact_digest": "sha256:4f959cf3ff0337ea9e009951cde3faa15b3bbdca303aace47ce8a9c4daa3a80a"
+    },
+    "govdocs1": {
+      "count": 1,
+      "artifact_id": 10788840886,
+      "artifact_digest": "sha256:0624ad8b9d6f50d3b868ef3b4a8602585f0c8fc13fc4e82b5819c2bbfb6cf54f"
+    },
+    "forum_support": {
+      "count": 2,
+      "artifact_id": 10801453513,
+      "artifact_digest": "sha256:ef0ef0f9f46023b4d79f82b580958704faa8094b8d9a8ed934571fab4b4e8b60"
+    },
+    "github_history": {
+      "count": 29,
+      "run_id": 35950418177,
+      "artifact_id": 10799384286,
+      "artifact_digest": "sha256:666368c90d37390c9e8802d03c249e19de7b2b19399b1e268a24a38b0628f371"
+    },
+    "positive_domain_probe": {
+      "count": 21,
+      "artifact_id": 10800300307,
+      "artifact_digest": "sha256:dc2055e6d81f15c5c18d43e6e3ff4aae6bc2ca881c78c6ae09c4ea398ce6de1e"
+    }
+  },
+  "guardrails": [
+    "cfb_publisher_hint only",
+    "WARC-truncated captures excluded from complete authority",
+    "source-local counts are not additive; exact SHA union used",
+    "raw PUB bytes are not part of this receipt"
+  ]
+}
