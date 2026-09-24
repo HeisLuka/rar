@@ -1,0 +1,180 @@
+name: TEMP corpus cross-arm union
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/tmp-corpus-cross-arm-union.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  union:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download source aggregate artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs baseline-artifacts receipt
+          gh api -H 'Accept: application/vnd.github+json'             /repos/HeisLuka/rar/actions/artifacts/10811670607/zip             > inputs/class.zip
+          gh api -H 'Accept: application/vnd.github+json'             /repos/HeisLuka/rar/actions/artifacts/10811710784/zip             > inputs/training.zip
+          gh api -H 'Accept: application/vnd.github+json'             /repos/HeisLuka/rar/actions/artifacts/10811134424/zip             > inputs/mvp-matrix.zip
+          for aid in 10808750049 10807797944 10808390771 10807882317 10808417821 10807881478 10807597565; do
+            gh api -H 'Accept: application/vnd.github+json'               "/repos/HeisLuka/rar/actions/artifacts/${aid}/zip"               > "baseline-artifacts/${aid}.zip"
+          done
+
+      - name: Build exact provenance union
+        run: |
+          python - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+
+          lanes = {
+              "class_templates": Path("inputs/class.zip"),
+              "training": Path("inputs/training.zip"),
+              "mvp_matrix": Path("inputs/mvp-matrix.zip"),
+          }
+          expected = {"class_templates": 52, "training": 15, "mvp_matrix": 62}
+
+          baseline = set()
+          for path in sorted(Path("baseline-artifacts").glob("*.zip")):
+              with zipfile.ZipFile(path) as z:
+                  names = [n for n in z.namelist() if n.endswith("index.json")]
+                  if not names:
+                      raise RuntimeError(f"no index.json in {path}")
+                  for name in names:
+                      for row in json.loads(z.read(name)):
+                          sha = str(row.get("sha256", "")).lower()
+                          if len(sha) == 64:
+                              baseline.add(sha)
+          if len(baseline) != 950:
+              raise RuntimeError(f"expected exact baseline 950 SHA, got {len(baseline)}")
+
+          def load_novel(path):
+              with zipfile.ZipFile(path) as z:
+                  candidates = [n for n in z.namelist() if n.endswith("novel.json")]
+                  if not candidates:
+                      raise RuntimeError(f"no novel.json in {path}")
+                  # Prefer the shortest/root-level novelty manifest if more than one exists.
+                  name = sorted(candidates, key=lambda n: (n.count("/"), len(n), n))[0]
+                  data = json.loads(z.read(name))
+                  if not isinstance(data, list):
+                      raise RuntimeError(f"{name} is not a list")
+                  return data, name
+
+          union = {}
+          lane_counts = {}
+          lane_manifest_names = {}
+          for lane, path in lanes.items():
+              rows, manifest_name = load_novel(path)
+              lane_manifest_names[lane] = manifest_name
+              lane_sha = set()
+              for row in rows:
+                  sha = str(row.get("sha256", "")).lower()
+                  if len(sha) != 64:
+                      continue
+                  lane_sha.add(sha)
+                  if sha in baseline:
+                      raise RuntimeError(f"{lane} unexpectedly overlaps baseline: {sha}")
+                  provenance = {
+                      k: row.get(k)
+                      for k in (
+                          "candidate_filename",
+                          "source_page",
+                          "wayback_original_url",
+                          "wayback_timestamp",
+                          "archive_member",
+                          "training_scope",
+                          "mvp_scope",
+                          "scope",
+                          "url",
+                      )
+                      if row.get(k) not in (None, "")
+                  }
+                  item = union.setdefault(sha, {"sha256": sha, "lanes": [], "provenance": []})
+                  if lane not in item["lanes"]:
+                      item["lanes"].append(lane)
+                  record = {"lane": lane, **provenance}
+                  if record not in item["provenance"]:
+                      item["provenance"].append(record)
+              lane_counts[lane] = len(lane_sha)
+
+          if lane_counts != expected:
+              raise RuntimeError(f"unexpected lane counts: {lane_counts} != {expected}")
+
+          rows = [union[sha] for sha in sorted(union)]
+          for row in rows:
+              row["lanes"].sort()
+              row["provenance"].sort(key=lambda x: json.dumps(x, sort_keys=True))
+
+          if len(rows) != 129:
+              raise RuntimeError(f"expected cross-arm delta 129, got {len(rows)}")
+
+          overlap_matrix = {}
+          names = list(lanes)
+          lane_sets = {
+              lane: {r["sha256"] for r in rows if lane in r["lanes"]}
+              for lane in names
+          }
+          for i, left in enumerate(names):
+              for right in names[i+1:]:
+                  overlap_matrix[f"{left}__{right}"] = len(lane_sets[left] & lane_sets[right])
+
+          if any(overlap_matrix.values()):
+              raise RuntimeError(f"unexpected cross-lane overlap: {overlap_matrix}")
+
+          manifest = {
+              "schema": "chaptera.corpus-cross-arm-union.v1",
+              "baseline_sha_count": 950,
+              "delta_sha_count": 129,
+              "union_sha_count": 1079,
+              "lane_counts": lane_counts,
+              "cross_lane_overlap_counts": overlap_matrix,
+              "source_artifacts": {
+                  "class_templates": {
+                      "artifact_id": 10811670607,
+                      "digest": "sha256:c47b2590cc00cfa2006ef20bb083b7c81e300a06153f276357a722be32e08693",
+                      "manifest": lane_manifest_names["class_templates"],
+                  },
+                  "training": {
+                      "artifact_id": 10811710784,
+                      "digest": "sha256:39be5c9315670df8b8aa3b8ec72cbd97aa31bf1a7690ccdb952feee54f473b1d",
+                      "manifest": lane_manifest_names["training"],
+                  },
+                  "mvp_matrix": {
+                      "artifact_id": 10811134424,
+                      "digest": "sha256:0cc259e6f4e5f23f98f48b1870125e0a1af0645b4613696e4648616d873d4b47",
+                      "manifest": lane_manifest_names["mvp_matrix"],
+                  },
+              },
+              "rows": rows,
+          }
+          Path("receipt/cross-arm-union.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          summary = {k: v for k, v in manifest.items() if k != "rows"}
+          Path("receipt/summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-cross-arm-union-v1
+          path: receipt/
+          if-no-files-found: error
+          retention-days: 90
