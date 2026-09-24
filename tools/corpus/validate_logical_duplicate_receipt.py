@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import re
@@ -9,19 +8,17 @@ from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-RECEIPT = HERE / "receipts" / "logical-stream-duplicate-locators-2026-09-24.json.gz"
-EXPECTED_INNER_SHA256 = "233bdffb79d7389148b1ae7f89318ada6553abc981c0fc488b975d71ca1c92f3"
+RECEIPT = HERE / "receipts" / "logical-stream-duplicate-locators-2026-09-24.json"
+EXPECTED_SHA256 = "9f50a03751b1d4e86df414101d9edfec4177d1d4a845eceac441f347e6416cde"
 PUB40_URL = "https://archive.org/download/PUB40CD/PUB_40_CD.ISO"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
-
 def load() -> dict:
-    raw = gzip.decompress(RECEIPT.read_bytes())
+    raw = RECEIPT.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != EXPECTED_INNER_SHA256:
-        raise ValueError(f"inner receipt SHA drift: {digest}")
+    if digest != EXPECTED_SHA256:
+        raise ValueError(f"receipt SHA drift: {digest}")
     return json.loads(raw)
-
 
 def main() -> int:
     d = load()
@@ -31,10 +28,8 @@ def main() -> int:
         raise ValueError("group count drift")
     if d.get("comparison_count") != 160:
         raise ValueError("comparison count drift")
-    if d.get("successful_sha_population") != 1471:
-        raise ValueError("successful population drift")
-    if d.get("logical_identity_count") != 1311:
-        raise ValueError("logical identity count drift")
+    if d.get("successful_sha_population") != 1471 or d.get("logical_identity_count") != 1311:
+        raise ValueError("population drift")
     if d.get("collapsed_physical_sha") != 160:
         raise ValueError("collapsed physical count drift")
     roots = d.get("roots", {})
@@ -49,61 +44,42 @@ def main() -> int:
             raise ValueError(f"bad root SHA: {rid}")
         if not str(spec.get("url", "")).startswith("https://archive.org/"):
             raise ValueError(f"unexpected root URL: {rid}")
-
-    seen_identities: set[str] = set()
-    seen_sha: set[str] = set()
-    media = Counter()
-    copy_count = 0
-    group_sizes = Counter()
+    seen_identities=set(); seen_sha=set(); media=Counter(); group_sizes=Counter(); copies=0
     for group in d["groups"]:
-        identity = str(group.get("logical_identity", ""))
-        if not HEX64.fullmatch(identity) or identity in seen_identities:
+        ident=str(group.get("logical_identity",""))
+        if not HEX64.fullmatch(ident) or ident in seen_identities:
             raise ValueError("bad/duplicate logical identity")
-        seen_identities.add(identity)
-        anchor = group.get("anchor", {})
+        seen_identities.add(ident)
+        anchor=group["anchor"]
         if anchor.get("root") != pub40_id:
             raise ValueError("non-PUB40 anchor")
-        members = [anchor, *group.get("copies", [])]
-        if len(members) not in (2, 3):
+        members=[anchor,*group.get("copies",[])]
+        if len(members) not in (2,3):
             raise ValueError("unexpected group size")
         group_sizes[len(members)] += 1
-        anchor_size = anchor.get("size")
-        anchor_name = str(anchor.get("filename", "")).casefold()
-        for index, member in enumerate(members):
-            sha = str(member.get("sha256", ""))
+        anchor_size=anchor.get("size")
+        anchor_name=str(anchor.get("filename","")).casefold()
+        for i,m in enumerate(members):
+            sha=str(m.get("sha256",""))
             if not HEX64.fullmatch(sha) or sha in seen_sha:
                 raise ValueError("bad/duplicate physical SHA")
             seen_sha.add(sha)
-            if member.get("root") not in roots:
-                raise ValueError("unknown root")
-            if not member.get("member"):
-                raise ValueError("missing archive member")
-            if member.get("size") != anchor_size or int(anchor_size or 0) <= 0:
+            if m.get("root") not in roots or not m.get("member"):
+                raise ValueError("bad locator")
+            if m.get("size") != anchor_size or int(anchor_size or 0) <= 0:
                 raise ValueError("file-size identity drift")
-            if str(member.get("filename", "")).casefold() != anchor_name:
+            if str(m.get("filename","")).casefold() != anchor_name:
                 raise ValueError("filename casefold identity drift")
-            if index:
-                media[member["root"]] += 1
-                copy_count += 1
-
-    if group_sizes != Counter({2: 70, 3: 45}):
-        raise ValueError(f"group-size distribution drift: {dict(group_sizes)}")
-    if copy_count != 160 or len(seen_sha) != 275:
+            if i:
+                media[m["root"]] += 1; copies += 1
+    if group_sizes != Counter({2:70,3:45}):
+        raise ValueError(f"group-size drift: {dict(group_sizes)}")
+    if copies != 160 or len(seen_sha) != 275:
         raise ValueError("physical comparison population drift")
-    if sorted(media.values()) != [13, 45, 102]:
+    if media != Counter({"thai":102,"en":45,"deluxe":13}):
         raise ValueError(f"target-media distribution drift: {dict(media)}")
-
-    print(json.dumps({
-        "schema": d["schema"],
-        "groups": len(d["groups"]),
-        "comparisons": copy_count,
-        "physical_sha": len(seen_sha),
-        "group_sizes": dict(sorted(group_sizes.items())),
-        "target_media_counts": dict(sorted(media.items())),
-        "inner_sha256": EXPECTED_INNER_SHA256,
-    }, sort_keys=True))
+    print(json.dumps({"groups":115,"comparisons":160,"physical_sha":275,"sha256":EXPECTED_SHA256}, sort_keys=True))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
