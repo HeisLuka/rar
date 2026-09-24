@@ -224,6 +224,29 @@ except ModuleNotFoundError:
     )
 
 
+try:
+    from fit_group_contents_v1 import (
+        FitGroupContentsError,
+        FitGroupContentsNoOp,
+        execute_fit_group_to_contents_v1,
+        validate_fit_group_operation_v1,
+        validate_fit_group_request_v1,
+    )
+except ModuleNotFoundError:
+    import pathlib
+
+    _fit_group_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _fit_group_dir not in sys.path:
+        sys.path.insert(0, _fit_group_dir)
+    from fit_group_contents_v1 import (
+        FitGroupContentsError,
+        FitGroupContentsNoOp,
+        execute_fit_group_to_contents_v1,
+        validate_fit_group_operation_v1,
+        validate_fit_group_request_v1,
+    )
+
+
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
 
@@ -415,6 +438,62 @@ class RevisionKernel:
             canonical_validator=self._validate_canonical_resize,
             pre_execute_validator=pre_execute_validator,
         )
+
+    def commit_fit_group_contents(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_fit_group_to_contents_v1,
+    ) -> dict:
+        """Tight-fit one authored Group; exact visual no-op may create no revision."""
+        try:
+            return self._commit_command(
+                request,
+                executor,
+                request_validator=validate_fit_group_request_v1,
+                canonical_validator=validate_fit_group_operation_v1,
+            )
+        except FitGroupContentsNoOp as exc:
+            document_id = request["document_id"]
+            client_operation_id = request["client_operation_id"]
+            request_digest = hash_id(request)
+            idem_key = (document_id, client_operation_id)
+            current = self._documents[document_id].current_revision_id
+            record = self._revisions[current]
+            result = {
+                "protocol_version": "chaptera.fit-group-contents-noop.v1",
+                "document_id": document_id,
+                "source_hash": self._documents[document_id].source_hash,
+                "base_revision_id": request["base_revision_id"],
+                "revision_id": current,
+                "state_id": record.state_id,
+                "client_operation_id": client_operation_id,
+                "group_id": exc.group_id,
+                "reason": "already_tight",
+                "state_changed": False,
+                "scene_refresh": "none",
+            }
+            self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
+        except FitGroupContentsError as exc:
+            document_id = request.get("document_id")
+            client_operation_id = request.get("client_operation_id")
+            if not isinstance(document_id, str) or not isinstance(client_operation_id, str):
+                raise
+            request_digest = hash_id(request)
+            idem_key = (document_id, client_operation_id)
+            current = (
+                self._documents[document_id].current_revision_id
+                if document_id in self._documents
+                else None
+            )
+            result = self._rejected(
+                request,
+                code=exc.code,
+                current_revision_id=current,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
 
     def commit_replace_image(
         self,
