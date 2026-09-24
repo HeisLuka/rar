@@ -10,6 +10,7 @@ on:
       - "apps/chaptera-server/src/migrate.rs"
       - "apps/chaptera-server/src/schema_migration.rs"
       - "docs/cloud-schema-migration-v0.md"
+      - "tools/run_cloud_migration_receipt.py"
       - ".github/workflows/cloud-migration-v0.yml"
   workflow_dispatch:
 
@@ -45,86 +46,12 @@ jobs:
         run: cargo build -p chaptera-server
 
       - name: Exercise operator migration surface
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          binary="./target/debug/chaptera"
-          db="$RUNNER_TEMP/chaptera-migration.sqlite"
-          export CHAPTERA_SQLITE_PATH="$db"
-
-          mkdir -p target/cloud-migration-01
-
-          "$binary" migrate status > target/cloud-migration-01/status-before.json
-          test ! -e "$db"
-
-          "$binary" migrate up > target/cloud-migration-01/up.json
-          "$binary" migrate status > target/cloud-migration-01/status-current.json
-
-          python - <<'PY'
-          import json
-          import os
-          import pathlib
-          import sqlite3
-
-          root = pathlib.Path("target/cloud-migration-01")
-          before = json.loads((root / "status-before.json").read_text())
-          up = json.loads((root / "up.json").read_text())
-          current = json.loads((root / "status-current.json").read_text())
-
-          assert before["state"] == "pending"
-          assert before["current_version"] == 0
-          assert before["pending_versions"] == [1, 2, 3, 4, 5]
-
-          assert up["state"] == "current"
-          assert up["current_version"] == 5
-          assert up["applied_versions"] == [1, 2, 3, 4, 5]
-
-          assert current == up
-
-          db = os.environ["CHAPTERA_SQLITE_PATH"]
-          with sqlite3.connect(db) as conn:
-              conn.execute(
-                  "UPDATE chaptera_schema_migrations "
-                  "SET checksum_sha256='tampered' WHERE version=2"
-              )
-              conn.commit()
-          PY
-
-          set +e
-          "$binary" migrate status             > target/cloud-migration-01/status-tampered.out             2> target/cloud-migration-01/status-tampered.err
-          tampered_rc=$?
-          set -e
-          test "$tampered_rc" -ne 0
-
-          TAMPERED_RC="$tampered_rc" GITHUB_SHA="${{ github.sha }}" python - <<'PY'
-          import json
-          import os
-          import pathlib
-
-          root = pathlib.Path("target/cloud-migration-01")
-          receipt = {
-              "schema": "chaptera.cloud-migration-01.receipt.v1",
-              "task": "CLOUD-MIGRATION-01",
-              "git_sha": os.environ["GITHUB_SHA"],
-              "public_safe": True,
-              "operator_surface": [
-                  "chaptera migrate status",
-                  "chaptera migrate up",
-              ],
-              "before": json.loads((root / "status-before.json").read_text()),
-              "after": json.loads((root / "status-current.json").read_text()),
-              "checksum_tamper_rejected": int(os.environ["TAMPERED_RC"]) != 0,
-              "automatic_startup_migration": False,
-              "single_owner_lock": "BEGIN IMMEDIATE",
-              "rollback_policy": "restore compatible DB unless a cross-schema binary window is explicitly declared",
-          }
-          (root / "receipt.json").write_text(
-              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          print(json.dumps(receipt, indent=2, sort_keys=True))
-          PY
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: >-
+          python tools/run_cloud_migration_receipt.py
+          --binary ./target/debug/chaptera
+          --out target/cloud-migration-01
 
       - uses: actions/upload-artifact@v4
         with:
