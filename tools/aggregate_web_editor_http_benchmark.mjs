@@ -63,6 +63,14 @@ for (const receipt of receipts) {
   if (!receipt.stale_base_rejected || !receipt.exact_retry_same_revision) {
     throw new Error("revision semantics regression");
   }
+  if (
+    !receipt.capability_state_visible ||
+    !receipt.fidelity_state_visible ||
+    !receipt.loss_state_visible ||
+    !receipt.export_preview_bound_to_final_revision
+  ) {
+    throw new Error("browser capability/fidelity/loss disclosure regression");
+  }
 }
 
 const timings = {};
@@ -86,6 +94,13 @@ const summary = {
   ),
   revision_semantics_all: receipts.every(
     (r) => r.stale_base_rejected && r.exact_retry_same_revision && r.semantic_executor_calls === 1
+  ),
+  product_disclosure_all: receipts.every(
+    (r) =>
+      r.capability_state_visible &&
+      r.fidelity_state_visible &&
+      r.loss_state_visible &&
+      r.export_preview_bound_to_final_revision
   ),
   timings_ms: timings,
   interpretation:

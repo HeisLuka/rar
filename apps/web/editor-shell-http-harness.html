@@ -3,10 +3,19 @@
 <title>Chaptera Browser Editor HTTP Harness</title>
 <style>
   html, body { margin: 0; font-family: system-ui, sans-serif; background: #e9e9e9; }
-  #status { box-sizing: border-box; min-height: 64px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ccc; font-size: 12px; }
+  #status { box-sizing: border-box; min-height: 96px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ccc; font-size: 12px; }
+  #disclosure { display: flex; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
+  #disclosure > div { padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; }
   #host { width: 1200px; height: 800px; position: relative; overflow: hidden; touch-action: none; }
 </style>
-<div id="status"></div>
+<div id="status">
+  <div id="runtime-status"></div>
+  <div id="disclosure" aria-label="capability and export state">
+    <div id="fidelity-state" data-testid="fidelity-state"></div>
+    <div id="capability-state" data-testid="capability-state"></div>
+    <div id="loss-state" data-testid="loss-state"></div>
+  </div>
+</div>
 <div id="host" aria-label="editor canvas"></div>
 <script type="module">
   import { BrowserEditorShellV1 } from "./editor-shell-v1.mjs";
@@ -17,7 +26,10 @@
   const api = params.get("api");
   if (!api) throw new Error("api query parameter is required");
 
-  const status = document.getElementById("status");
+  const runtimeStatus = document.getElementById("runtime-status");
+  const fidelityState = document.getElementById("fidelity-state");
+  const capabilityState = document.getElementById("capability-state");
+  const lossState = document.getElementById("loss-state");
   const host = document.getElementById("host");
   let idCounter = 0;
   const observability = new BrowserObservabilityV1({
@@ -36,7 +48,7 @@
     rendererKind: "svg",
     onState: (state) => {
       states.push(state);
-      status.textContent = JSON.stringify({
+      runtimeStatus.textContent = JSON.stringify({
         claim: "synthetic_http_service_plumbing_not_product_acceptance",
         revision_id: state.revision_id,
         selected_node_id: state.selected_node_id,
@@ -47,9 +59,56 @@
   shell.loadSnapshot(snapshot, { preserveSelection: false });
   shell.bindPointerEvents();
 
+  function renderDisclosure(scene, preview) {
+    for (const field of ["document_id", "source_hash", "revision_id"]) {
+      if (preview[field] !== scene[field]) {
+        throw new Error("export preview " + field + " does not match visible Scene");
+      }
+    }
+
+    const capabilities = Array.isArray(scene.capabilities) ? scene.capabilities : [];
+    const losses = Array.isArray(preview.items)
+      ? preview.items.filter((item) => item.disposition !== "preserved")
+      : [];
+
+    fidelityState.textContent =
+      "Fidelity: " + scene.fidelity.state +
+      (scene.fidelity.reasons.length ? " — " + scene.fidelity.reasons.join(", ") : "");
+
+    capabilityState.textContent =
+      "Capabilities: " +
+      (capabilities.length
+        ? capabilities.map((item) => item.key + "=" + item.state).join("; ")
+        : "none declared");
+
+    lossState.textContent =
+      "Export " + preview.target.format.toUpperCase() + ": " +
+      (preview.can_serialize ? "ready" : "blocked") +
+      "; blocking=" + preview.counts.blocking +
+      "; losses=" + losses.length +
+      (losses.length
+        ? " — " + losses.map((item) => item.feature + "=" + item.disposition).join("; ")
+        : " — no declared losses");
+
+    fidelityState.dataset.visibleState = "true";
+    capabilityState.dataset.visibleState = "true";
+    lossState.dataset.visibleState = "true";
+  }
+
+  async function refreshDisclosure() {
+    if (!shell.snapshot) throw new Error("Scene is required before product disclosure");
+    const preview = await service.exportPreview("idml");
+    renderDisclosure(shell.snapshot, preview);
+    window.__lastExportPreview = structuredClone(preview);
+    return structuredClone(preview);
+  }
+
+  await refreshDisclosure();
+
   window.__shell = shell;
   window.__service = service;
   window.__states = states;
   window.__observability = observability;
+  window.__refreshDisclosure = refreshDisclosure;
   window.__shellReady = true;
 </script>
