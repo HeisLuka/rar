@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/job_queue.rs"
+      - "apps/chaptera-server/src/job_worker.rs"
       - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/migrations/0003_jobs.sql"
       - ".github/workflows/cloud-async-runtime-v0.yml"
@@ -25,5 +26,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run clippy
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
-      - name: Run durable queue tests
-        run: cargo test -p chaptera-server job_queue::
+      - name: Run durable queue and worker tests
+        run: |
+          cargo test -p chaptera-server job_queue::
+          cargo test -p chaptera-server job_worker::
