@@ -652,7 +652,7 @@ impl BlobStoreService {
                 "provider object length differs from durable metadata",
             ));
         }
-        let mut sink = io::sink();
+        let mut sink = tokio::io::sink();
         self.copy_and_verify(physical, &mut sink).await?;
         Ok(())
     }
@@ -848,6 +848,9 @@ impl AsyncRead for HashingBoundedReader<'_> {
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        if buffer.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
         let remaining = this.max_bytes.saturating_sub(this.bytes_read);
         let allowed = usize::try_from(remaining.saturating_add(1))
             .unwrap_or(usize::MAX)
@@ -929,6 +932,9 @@ impl AsyncRead for HashingOwnedReader {
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        if buffer.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
         let remaining = this.max_bytes.saturating_sub(this.bytes_read);
         let allowed = usize::try_from(remaining.saturating_add(1))
             .unwrap_or(usize::MAX)
@@ -1508,6 +1514,36 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn async_hashing_bounded_reader_rejects_one_byte_over_and_under() {
+        let mut over_source = Cursor::new(b"four".to_vec());
+        let mut over = HashingBoundedReader::new(&mut over_source, 3);
+        let mut over_bytes = Vec::new();
+        let error = over.read_to_end(&mut over_bytes).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let mut under_source = Cursor::new(b"two".to_vec());
+        let mut under = HashingBoundedReader::new(&mut under_source, 4);
+        let mut under_bytes = Vec::new();
+        under.read_to_end(&mut under_bytes).await.unwrap();
+        let error = under.require_exact_eof(4).unwrap_err();
+        assert_eq!(error.code, "blob_length_mismatch");
+    }
+
+    #[tokio::test]
+    async fn async_hashing_owned_reader_rejects_one_byte_over_and_under() {
+        let mut over = HashingOwnedReader::new(Box::new(Cursor::new(b"four".to_vec())), 3);
+        let mut over_bytes = Vec::new();
+        let error = over.read_to_end(&mut over_bytes).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let mut under = HashingOwnedReader::new(Box::new(Cursor::new(b"two".to_vec())), 4);
+        let mut under_bytes = Vec::new();
+        under.read_to_end(&mut under_bytes).await.unwrap();
+        let error = under.require_exact_eof(4).unwrap_err();
+        assert_eq!(error.code, "blob_length_mismatch");
     }
 
     #[tokio::test]
