@@ -249,22 +249,19 @@ mod tests {
         index: usize,
         frame: &str,
         row: u32,
-        start: u32,
-        end: u32,
-        leading: i64,
-        content: i64,
-        measured: i64,
+        scalar_range: (u32, u32),
+        geometry: (i64, i64, i64),
     ) -> ResolvedLineInputV1 {
         ResolvedLineInputV1 {
             line_index: index,
             story_id: "story-1".to_owned(),
             frame_node_id: frame.to_owned(),
             frame_line_index: row,
-            scalar_start: start,
-            scalar_end: end,
-            content_leading_x_emu: leading,
-            content_width_emu: content,
-            measured_width_emu: measured,
+            scalar_start: scalar_range.0,
+            scalar_end: scalar_range.1,
+            content_leading_x_emu: geometry.0,
+            content_width_emu: geometry.1,
+            measured_width_emu: geometry.2,
         }
     }
 
@@ -287,7 +284,7 @@ mod tests {
     fn left_preserves_leading_origin_and_exact_fit_is_zero_offset() {
         let scene = resolve_paragraph_line_placement_v1(&input(
             ParagraphAlignmentV1::Left,
-            vec![line(0, "frame-a", 0, 0, 4, 100, 1000, 1000)],
+            vec![line(0, "frame-a", 0, (0, 4), (100, 1000, 1000))],
         ))
         .unwrap();
 
@@ -301,12 +298,12 @@ mod tests {
     fn center_uses_explicit_floor_toward_leading_edge_for_odd_and_even_space() {
         let odd = resolve_paragraph_line_placement_v1(&input(
             ParagraphAlignmentV1::Center,
-            vec![line(0, "frame-a", 0, 0, 4, 10, 101, 100)],
+            vec![line(0, "frame-a", 0, (0, 4), (10, 101, 100))],
         ))
         .unwrap();
         let even = resolve_paragraph_line_placement_v1(&input(
             ParagraphAlignmentV1::Center,
-            vec![line(0, "frame-a", 0, 0, 4, 10, 102, 100)],
+            vec![line(0, "frame-a", 0, (0, 4), (10, 102, 100))],
         ))
         .unwrap();
 
@@ -318,7 +315,7 @@ mod tests {
     fn right_consumes_exact_remaining_width() {
         let scene = resolve_paragraph_line_placement_v1(&input(
             ParagraphAlignmentV1::Right,
-            vec![line(0, "frame-a", 0, 0, 4, -20, 150, 100)],
+            vec![line(0, "frame-a", 0, (0, 4), (-20, 150, 100))],
         ))
         .unwrap();
 
@@ -330,9 +327,9 @@ mod tests {
         let scene = resolve_paragraph_line_placement_v1(&input(
             ParagraphAlignmentV1::Right,
             vec![
-                line(0, "frame-a", 0, 0, 5, 100, 500, 300),
-                line(1, "frame-a", 1, 5, 9, 100, 500, 450),
-                line(2, "frame-b", 0, 9, 13, 800, 700, 500),
+                line(0, "frame-a", 0, (0, 5), (100, 500, 300)),
+                line(1, "frame-a", 1, (5, 9), (100, 500, 450)),
+                line(2, "frame-b", 0, (9, 13), (800, 700, 500)),
             ],
         ))
         .unwrap();
@@ -357,8 +354,8 @@ mod tests {
         let mut fixture = input(
             ParagraphAlignmentV1::Center,
             vec![
-                line(0, "frame-a", 0, 0, 5, 0, 500, 300),
-                line(1, "frame-b", 0, 5, 9, 0, 500, 400),
+                line(0, "frame-a", 0, (0, 5), (0, 500, 300)),
+                line(1, "frame-b", 0, (5, 9), (0, 500, 400)),
             ],
         );
         fixture.story_overset = true;
@@ -380,7 +377,7 @@ mod tests {
     fn same_revision_environment_and_input_produce_same_scene_hash() {
         let fixture = input(
             ParagraphAlignmentV1::Center,
-            vec![line(0, "frame-a", 0, 0, 4, 20, 1000, 501)],
+            vec![line(0, "frame-a", 0, (0, 4), (20, 1000, 501))],
         );
 
         let left = resolve_paragraph_line_placement_v1(&fixture).unwrap();
@@ -397,7 +394,7 @@ mod tests {
     fn wider_than_content_fails_closed_instead_of_changing_line_breaks() {
         let err = resolve_paragraph_line_placement_v1(&input(
             ParagraphAlignmentV1::Center,
-            vec![line(0, "frame-a", 0, 0, 4, 0, 100, 101)],
+            vec![line(0, "frame-a", 0, (0, 4), (0, 100, 101))],
         ))
         .unwrap_err();
 
