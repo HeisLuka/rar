@@ -42,22 +42,30 @@ jobs:
             --max-archive-total-bytes 314572800 \
             --max-archive-members 500 \
             --per-host-delay 0.08
-      - name: Filter against exact 950-SHA baseline
+      - name: Download exact current-corpus indexes
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/known-artifacts
+          for aid in 10808750049 10807797944 10808390771 10807882317 10808417821 10807881478 10807597565; do
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/HeisLuka/rar/actions/artifacts/${aid}/zip" \
+              > "out/known-artifacts/${aid}.zip"
+            test -s "out/known-artifacts/${aid}.zip"
+          done
+      - name: Filter against exact 950-SHA baseline
         run: |
           python - <<'PY'
-          import hashlib, io, json, os, shutil, zipfile
+          import hashlib, json, shutil, zipfile
           from pathlib import Path
-          from urllib.request import Request, urlopen
 
           artifact_ids=[10808750049,10807797944,10808390771,10807882317,10808417821,10807881478,10807597565]
-          token=os.environ['GITHUB_TOKEN']; known=set()
+          known=set()
           for aid in artifact_ids:
-              req=Request(f'https://api.github.com/repos/HeisLuka/rar/actions/artifacts/{aid}/zip',headers={
-                'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json','User-Agent':'rar-class-templates-novelty/1.0'})
-              with urlopen(req,timeout=120) as r: payload=r.read()
-              with zipfile.ZipFile(io.BytesIO(payload)) as z:
+              payload=Path(f'out/known-artifacts/{aid}.zip')
+              with zipfile.ZipFile(payload) as z:
                   names=[n for n in z.namelist() if n.endswith('index.json')]
                   if not names: raise RuntimeError(f'no index.json in artifact {aid}')
                   for row in json.loads(z.read(names[0])):
