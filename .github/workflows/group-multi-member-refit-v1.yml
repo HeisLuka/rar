@@ -1,0 +1,30 @@
+name: Group Multi Member Refit V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/authored_group_geometry_v1.py"
+      - "services/editor-api/group_refit_plan_v1.py"
+      - "services/editor-api/group_transform_chain_v1.py"
+      - "services/editor-api/group_multi_member_refit_v1.py"
+      - "services/editor-api/test_group_multi_member_refit_v1.py"
+      - ".github/workflows/group-multi-member-refit-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run deterministic multi-member Group refit tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_multi_member_refit_v1
+      - name: Re-run one-member refit primitive
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_refit_plan_v1
