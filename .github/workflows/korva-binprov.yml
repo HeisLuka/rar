@@ -40,11 +40,36 @@ jobs:
             file --version | head -n1
           } | tee out/reports/tool-versions.txt
 
-      - name: Download exact Korva release
+      - name: Resolve latest successful Korva fetch run
+        id: korva_fetch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euxo pipefail
+          run_id="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/$GH_REPO/actions/workflows/fetch-korva-1.8.7.yml/runs?status=success&per_page=20" \
+            --jq '.workflow_runs[0].id')"
+          test -n "$run_id"
+          echo "run_id=$run_id" | tee -a "$GITHUB_OUTPUT"
+          echo "Using fetch workflow run $run_id"
+
+      - name: Download Korva artifact from previous workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: Korva_1.8.7_amd64
+          path: .
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.korva_fetch.outputs.run_id }}
+
+      - name: Verify exact Korva artifact
         shell: bash
         run: |
           set -euxo pipefail
-          curl --fail --location --retry 3 --output "$DEB" "$URL"
+          test -f "$DEB"
           sha256sum "$DEB" | tee out/reports/deb-sha256.txt
           actual="$(sha256sum "$DEB" | awk '{print $1}')"
           test "$actual" = "$EXPECTED_SHA256"
