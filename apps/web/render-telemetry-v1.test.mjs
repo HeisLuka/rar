@@ -27,7 +27,7 @@ test("high cardinality identities are forbidden metric labels", () => {
 test("cache worker upload and memory facts are bounded", () => {
   const t = new RendererTelemetryV1({observability:makeObs(),mode:"counters"});
   t.recordCache("texture","lookup",3); t.recordCache("texture","hit",2); t.recordCache("texture","miss",1);
-  t.recordWorker({cloneBytes:100,transferableBytes:900,staleResults:2,restarts:1}); t.recordUpload({logicalBytes:1000,physicalBytes:1250}); t.recordMemory({residentBytes=4096,pinnedBytes:1024,reclaimedBytes:512,churnBytes:256});
+  t.recordWorker({cloneBytes:100,transferableBytes:900,staleResults:2,restarts:1}); t.recordUpload({logicalBytes:1000,physicalBytes:1250}); t.recordMemory({residentBytes:4096,pinnedBytes:1024,reclaimedBytes:512,churnBytes:256});
   const r=t.receipt(ctx.trace_id); assert.equal(r.cache_counters["texture.hit"],2); assert.equal(r.upload.amplification_ratio,1.25); assert.equal(r.worker.transferable_bytes,900); assert.equal(r.memory.resident_bytes,4096);
 });
 
