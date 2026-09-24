@@ -1,0 +1,143 @@
+name: TextZone +0x04 PUBCONV static slice
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pub-textzone-index04-static.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exact PUBCONV 12.0.4518.1014 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pubconv-4518-35983938022
+          path: acquired
+          github-token: ${{ github.token }}
+          run-id: 35983938022
+
+      - name: Locate and verify exact binary
+        shell: bash
+        env:
+          EXPECTED_SHA256: "124f5b115979f4e4c0aab882851c399228174482bb124b8309860567a5980dbc"
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          dll="$(find acquired -type f -iname 'PUBCONV.DLL' -print -quit)"
+          test -n "$dll"
+          test "$(sha256sum "$dll" | awk '{print $1}')" = "$EXPECTED_SHA256"
+          cp "$dll" out/PUBCONV.DLL
+          sha256sum out/PUBCONV.DLL > out/pubconv-sha256.txt
+          objdump -h out/PUBCONV.DLL > out/sections.txt
+          objdump -p out/PUBCONV.DLL > out/headers.txt
+          objdump -d -Mintel out/PUBCONV.DLL > out/disasm.txt
+
+      - name: Extract binary-search primitive and direct callers
+        run: |
+          set -euo pipefail
+          objdump -d -Mintel --start-address=0x345309ce --stop-address=0x345309fd out/PUBCONV.DLL > out/sub-345309ce.txt
+          objdump -d -Mintel --start-address=0x34530a23 --stop-address=0x34530af3 out/PUBCONV.DLL > out/caller-34530a23.txt
+          objdump -d -Mintel --start-address=0x34530af3 --stop-address=0x34530b80 out/PUBCONV.DLL > out/caller-34530af3.txt
+          grep -n -E 'call[[:space:]]+0x345309ce' out/disasm.txt > out/direct-call-sites.txt
+          grep -n -E 'imul.*0x1e' out/disasm.txt > out/stride-1e-sites.txt || true
+
+          python3 - <<'PY'
+          import hashlib, json, re
+          from pathlib import Path
+
+          dll=Path("out/PUBCONV.DLL").read_bytes()
+          body=Path("out/sub-345309ce.txt").read_text(errors="replace")
+          callers=(Path("out/caller-34530a23.txt").read_text(errors="replace")+
+                   "\n"+Path("out/caller-34530af3.txt").read_text(errors="replace"))
+          all_dis=Path("out/disasm.txt").read_text(errors="replace")
+
+          required = [
+              "mov    edx,DWORD PTR [ebp+0xc]",
+              "mov    esi,DWORD PTR [esi+ecx*4]",
+              "cmp    esi,DWORD PTR [ebp+0x10]",
+              "mov    eax,ecx",
+              "mov    edx,ecx",
+              "ret    0xc",
+          ]
+          for token in required:
+              if token not in body:
+                  raise SystemExit(f"expected binary-search opcode pattern absent: {token}")
+
+          call_addrs=[]
+          for line in all_dis.splitlines():
+              if "call" in line and "345309ce" in line:
+                  m=re.match(r"\s*([0-9a-f]+):", line)
+                  if m:
+                      call_addrs.append("0x"+m.group(1).lower())
+
+          expected=["0x34530a81","0x34530a99","0x34530b3f","0x34530b5e"]
+          if call_addrs != expected:
+              raise SystemExit(f"direct call-site set changed: {call_addrs}")
+
+          caller_facts = {
+              "first_caller_writes_search_result_to_word_at_struct_plus_0x0c":
+                  "mov    WORD PTR [esi+0xc],ax" in callers,
+              "search_array_base_plus_0x12_visible":
+                  "[esi+0x12]" in callers,
+              "structure_base_offset_plus_0x08_visible":
+                  "[esi+0x8]" in callers,
+              "count_or_partition_word_plus_0x06_visible":
+                  "[esi+0x6]" in callers,
+          }
+
+          stride_lines=[x for x in Path("out/stride-1e-sites.txt").read_text(errors="replace").splitlines() if x.strip()]
+          receipt={
+              "schema":"rar-textzone-index04-static-slice-v1",
+              "pubconv_sha256":hashlib.sha256(dll).hexdigest(),
+              "pubconv_file_version":"12.0.4518.1014",
+              "image_base":"0x344e0000",
+              "target_va":"0x345309ce",
+              "target_rva":"0x509ce",
+              "direct_call_sites":call_addrs,
+              "primitive_classification":{
+                  "kind":"upper-bound/floor-index binary search over sorted 32-bit integer array",
+                  "input_1":"DWORD array base",
+                  "input_2":"last-index/count-derived bound",
+                  "input_3":"integer key",
+                  "return":"largest index whose array[index] <= key under the observed caller contract",
+                  "confidence":"high from exact machine code"
+              },
+              "caller_structure_facts":caller_facts,
+              "stride_0x1e_instruction_sites":stride_lines,
+              "semantic_fence":{
+                  "record_plus_0x04_join_proven":False,
+                  "textzone_namespace_name_proven":False,
+                  "reason":"The exact search primitive and nearby caller structure are localized, but this slice does not yet bind the searched DWORD array or returned index to the persisted 30-byte TextZone record +0x04 field."
+              },
+              "next_discriminator":"Trace the producer of the DWORD array at the +0x12 caller structure and locate an exact store/load join between the returned floor index (or a derived value) and persisted TextZone record +0x04. Do not infer a namespace from numeric correlation alone."
+          }
+          Path("out/receipt.json").write_text(json.dumps(receipt,indent=2),encoding="utf-8")
+          print(json.dumps(receipt,indent=2))
+          PY
+
+      - name: Upload source-free static receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: textzone-index04-static-${{ github.run_id }}
+          path: |
+            out/receipt.json
+            out/pubconv-sha256.txt
+            out/sections.txt
+            out/headers.txt
+            out/sub-345309ce.txt
+            out/caller-34530a23.txt
+            out/caller-34530af3.txt
+            out/direct-call-sites.txt
+            out/stride-1e-sites.txt
+          if-no-files-found: error
+          retention-days: 30
