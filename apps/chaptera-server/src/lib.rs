@@ -1,3 +1,4 @@
+pub mod blob_store;
 pub mod build_info;
 pub mod cli;
 pub mod config;
