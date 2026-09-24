@@ -68,6 +68,7 @@ pub enum AuthoringFragmentError {
     EmptyDestinationPageId,
     UnsafeTranslation,
     InvalidDestinationNodeId,
+    DestinationReusesSourceIdentity,
     InvalidMaterializedShape(CreateShapeError),
 }
 
@@ -125,6 +126,15 @@ pub fn materialize_paste_fragment_v1(
     }
     validate_uuid_v7_v1(&paste.identity_map.destination_node_id)
         .map_err(|_| AuthoringFragmentError::InvalidDestinationNodeId)?;
+    if paste
+        .fragment
+        .rectangle
+        .source_provenance
+        .as_ref()
+        .is_some_and(|source| source.source_node_id == paste.identity_map.destination_node_id)
+    {
+        return Err(AuthoringFragmentError::DestinationReusesSourceIdentity);
+    }
 
     let bounds = translated_bounds_v1(paste.fragment.rectangle.bounds, paste.placement)?;
     let paint = author_created_shape_paint_v1(
@@ -288,8 +298,17 @@ mod tests {
     }
 
     #[test]
-    fn source_identity_never_becomes_destination_identity_implicitly() {
-        let mut operation = paste(SOURCE_ID);
+    fn source_identity_never_becomes_destination_identity() {
+        let operation = paste(SOURCE_ID);
+        assert_eq!(
+            materialize_paste_fragment_v1(&operation),
+            Err(AuthoringFragmentError::DestinationReusesSourceIdentity)
+        );
+    }
+
+    #[test]
+    fn identity_map_must_target_the_fragment_local_entity() {
+        let mut operation = paste(PASTE_ID);
         operation.identity_map.fragment_entity_id = "entity:forged".to_owned();
         assert_eq!(
             materialize_paste_fragment_v1(&operation),
