@@ -1,0 +1,70 @@
+{
+  "schema": "rar-pub-corpus-current-authority-v2",
+  "date": "2026-09-24",
+  "historical_authority": {
+    "complete_count": 339,
+    "exact_identities_rematerialized": 316,
+    "unrematerialized_complete_identities": 23,
+    "known_overlap_with_current_rar_minimum": 50,
+    "possible_overlap_with_current_rar_maximum": 339
+  },
+  "rar_exact_union": {
+    "count": 1486,
+    "canonical_sorted_sha_lines_digest": "sha256:885eb9dad74f72617f00d7f9c113c8d9f44c295bc14e5e53c525d0e01e91c683",
+    "tranches": {
+      "baseline950": {
+        "count": 950,
+        "canonical_sorted_sha_lines_digest": "sha256:992d2123c900cf6a89a226c972f083f2a372be111e44f16d77a68a9473ba4646"
+      },
+      "post_m1_delta129": {
+        "count": 129,
+        "canonical_sorted_sha_lines_digest": "sha256:b65347a84a36d8399e5318f7e99dbe32eaac717d7a9aa0e061c5a80e220ab3cd"
+      },
+      "container_net407": {
+        "count": 407,
+        "canonical_sorted_sha_lines_digest": "sha256:c5ff6fc9aec8e5e55876089bec6d9e51e6caa96646a461bbec88c2a1303ae04b",
+        "retained_parts": [
+          "tools/corpus/receipts/container-net-new-407-part-01.sha256.txt",
+          "tools/corpus/receipts/container-net-new-407-part-02.sha256.txt",
+          "tools/corpus/receipts/container-net-new-407-part-03.sha256.txt",
+          "tools/corpus/receipts/container-net-new-407-part-04.sha256.txt",
+          "tools/corpus/receipts/container-net-new-407-part-05.sha256.txt"
+        ]
+      }
+    },
+    "pairwise_overlap": {
+      "baseline950__post_m1_delta129": 0,
+      "baseline950__container_net407": 0,
+      "post_m1_delta129__container_net407": 0
+    }
+  },
+  "global_complete_cfb_union": {
+    "lower_bound": 1486,
+    "upper_bound": 1775,
+    "proof": "Let H be the historical complete authority (339) and R the exact current Rar union (1486). R is itself a complete-file subset, so |H union R| >= 1486. The previous exact reconciliation proves at least 50 historical identities already occur in the Rar baseline, so |H union R| <= 339 + 1486 - 50 = 1775. Exact intersection of the new 536 Rar SHA against historical identities remains open."
+  },
+  "source_evidence": {
+    "baseline950_receipt": "tools/corpus/receipts/corpus-authority-lower-bound-2026-09-24.json",
+    "post_m1_delta": {
+      "pull_request": 150,
+      "merge_commit": "fc37400de33099daaad1f2360303d6c14245222f",
+      "artifact_id": 10812415542,
+      "artifact_digest": "sha256:e773f22e0ee2efa1851485b16fd954d76bce970eccb20cc41733403d1f03301b"
+    },
+    "container_reconciliation": {
+      "pull_request": 159,
+      "merge_commit": "3a70d88079f87b68035443d9fb6678c6c9d19837",
+      "run_id": 36027979945,
+      "container_union_artifact_id": 10805973231,
+      "container_union_artifact_digest": "sha256:1959aad2c1d1e274a1823c3261f7c04c9c3ffa4be10674fb166d89329705f26d",
+      "reconciliation_artifact_id": 10820397138,
+      "reconciliation_artifact_digest": "sha256:27a6be306ca32efd9967b01597392e14a3d2096f8271d4b975fe0267cd7d490e"
+    }
+  },
+  "guardrails": [
+    "1486 is an exact Rar complete-Publisher-CFB set, not a global point estimate",
+    "1486..1775 supersedes 1216..1239 only as the current global bound; the older bound remains historical provenance for the Rar-950 checkpoint",
+    "do not tighten the global bound without exact historical intersection evidence",
+    "unknown_binary and cfb_candidate container rows are excluded from complete Publisher-CFB authority"
+  ]
+}
