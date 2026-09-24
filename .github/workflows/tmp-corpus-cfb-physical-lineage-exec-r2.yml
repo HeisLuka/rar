@@ -1,0 +1,181 @@
+name: TEMP CORPUS CFB physical lineage execution r2
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-cfb-physical-lineage-exec-r2.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-corpus-cfb-physical-lineage-exec-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  physical-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB/archive tools
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Rehydrate exact 13 pairs and classify physical deltas
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, sys, tempfile
+          from collections import Counter
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("tools/corpus").resolve()))
+          import pub_container_extract as containers
+          import cfb_physical_diff as physical
+
+          receipt = json.loads(Path(
+              "tools/corpus/receipts/cfb-physical-lineage-pairs-2026-09-24.json"
+          ).read_text())
+          assert receipt["pair_count"] == 13 == len(receipt["pairs"])
+          out = Path("out")
+          out.mkdir(parents=True, exist_ok=True)
+
+          results = []
+          root_receipts = {}
+          with tempfile.TemporaryDirectory(prefix="cfb-physical-lineage-") as raw:
+              td = Path(raw)
+              archives = {}
+              for root_id, spec in sorted(receipt["roots"].items()):
+                  path = td / f"{root_id}.iso"
+                  meta = containers.fetch(spec["url"], path, 90, 220 * 1024 * 1024)
+                  assert meta["sha256"] == spec["sha256"], (root_id, meta)
+                  archives[root_id] = path
+                  root_receipts[root_id] = {
+                      "url": spec["url"],
+                      "sha256": meta["sha256"],
+                      "size": meta["size"],
+                  }
+
+              def member_bytes(pair_name, side_name, side):
+                  target = td / f"{pair_name}-{side_name}.pub"
+                  try:
+                      actual_size = containers.extract_member(
+                          archives[side["root"]],
+                          side["member"],
+                          target,
+                          90,
+                          2 * 1024 * 1024,
+                      )
+                      data = target.read_bytes()
+                  finally:
+                      target.unlink(missing_ok=True)
+                  assert actual_size == side["size"], (pair_name, side_name, actual_size)
+                  actual_sha = hashlib.sha256(data).hexdigest()
+                  assert actual_sha == side["sha256"], (pair_name, side_name, actual_sha)
+                  return data
+
+              for index, pair in enumerate(receipt["pairs"]):
+                  left = member_bytes(pair["name"], "left", pair["left"])
+                  right = member_bytes(pair["name"], "right", pair["right"])
+                  result = physical.compare(left, right, pair["name"])
+                  assert result["left_sha256"] == pair["left"]["sha256"]
+                  assert result["right_sha256"] == pair["right"]["sha256"]
+                  assert result["byte_len"] == pair["left"]["size"] == pair["right"]["size"]
+                  assert result["logical_streams_identical"] is True
+                  result["left_root"] = pair["left"]["root"]
+                  result["right_root"] = pair["right"]["root"]
+                  result["left_member"] = pair["left"]["member"]
+                  result["right_member"] = pair["right"]["member"]
+                  results.append(result)
+
+          broad = Counter()
+          exact = Counter()
+          directory_fields = Counter()
+          signatures = Counter()
+          for result in results:
+              broad.update(result["broad_category_counts"])
+              exact.update(result["exact_category_counts"])
+              for row in result["directory_metadata_diffs"]:
+                  directory_fields.update(row["changed_fields"])
+              signature = json.dumps({
+                  "broad_categories": sorted(result["broad_category_counts"]),
+                  "fat_table_changed": bool(result["fat_table_diff_entries"]),
+                  "minifat_table_changed": bool(result["minifat_table_diff_entries"]),
+                  "stream_chain_changed": bool(result["stream_chain_diffs"]),
+                  "directory_fields": sorted({
+                      field
+                      for row in result["directory_metadata_diffs"]
+                      for field in row["changed_fields"]
+                  }),
+              }, sort_keys=True)
+              result["physical_signature"] = hashlib.sha256(
+                  signature.encode("utf-8")
+              ).hexdigest()
+              signatures[result["physical_signature"]] += 1
+
+          results.sort(key=lambda x: (x["name"].casefold(), x["name"]))
+          summary = {
+              "schema": "chaptera.cfb-physical-lineage-execution.v1",
+              "pair_count": len(results),
+              "logical_streams_identical_pairs": sum(
+                  r["logical_streams_identical"] for r in results
+              ),
+              "fully_classified_pairs": sum(
+                  r["unclassified_byte_count"] == 0 for r in results
+              ),
+              "pairs_with_unclassified_bytes": sum(
+                  r["unclassified_byte_count"] != 0 for r in results
+              ),
+              "total_different_bytes": sum(
+                  r["different_byte_count"] for r in results
+              ),
+              "broad_category_counts": dict(sorted(broad.items())),
+              "directory_changed_fields": dict(sorted(directory_fields.items())),
+              "physical_signature_count": len(signatures),
+              "physical_signature_sizes": dict(sorted(signatures.items())),
+              "pairs_with_fat_table_diff": sum(
+                  bool(r["fat_table_diff_entries"]) for r in results
+              ),
+              "pairs_with_minifat_table_diff": sum(
+                  bool(r["minifat_table_diff_entries"]) for r in results
+              ),
+              "pairs_with_stream_chain_diff": sum(
+                  bool(r["stream_chain_diffs"]) for r in results
+              ),
+              "roots": root_receipts,
+          }
+          (out / "pairs.json").write_text(
+              json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Prove source-safe retained output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["pair_count"] == 13, s
+          assert s["logical_streams_identical_pairs"] == 13, s
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cfb-physical-lineage-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
