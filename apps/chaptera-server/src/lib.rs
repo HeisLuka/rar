@@ -4,6 +4,7 @@ pub mod cli;
 pub mod config;
 pub mod db;
 pub mod doctor;
+pub mod job_queue;
 pub mod jobs;
 pub mod migrate;
 pub mod runtime_error;
