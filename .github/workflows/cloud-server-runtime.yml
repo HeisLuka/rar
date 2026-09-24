@@ -1,0 +1,115 @@
+name: CLOUD-SERVER-RUNTIME-01 Rust runtime shell
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "apps/chaptera-server/**"
+      - "docs/cloud-server-runtime-v1.md"
+      - "tools/run_cloud_server_runtime_receipt.py"
+      - ".github/workflows/cloud-server-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust format
+        run: cargo fmt --package chaptera-server -- --check
+
+      - name: Rust clippy
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test -p chaptera-server
+
+      - name: Build runtime shell
+        env:
+          CHAPTERA_BUILD_GIT_SHA: ${{ github.sha }}
+        run: cargo build -p chaptera-server
+
+      - name: Loopback runtime smoke and receipt inputs
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          binary="./target/debug/chaptera"
+          version="$("$binary" --version | tr -d '\r\n')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          CHAPTERA_LISTEN=127.0.0.1:18080 "$binary" serve > /tmp/chaptera-serve.log 2>&1 &
+          server_pid=$!
+
+          cleanup() {
+            if kill -0 "$server_pid" 2>/dev/null; then
+              kill -TERM "$server_pid" || true
+              wait "$server_pid" || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 50); do
+            if curl --silent --fail http://127.0.0.1:18080/live >/tmp/live.json; then
+              break
+            fi
+            sleep 0.1
+          done
+
+          live_code="$(curl --silent --output /tmp/live.json --write-out '%{http_code}' http://127.0.0.1:18080/live)"
+          ready_code="$(curl --silent --output /tmp/ready.json --write-out '%{http_code}' http://127.0.0.1:18080/ready)"
+
+          set +e
+          "$binary" doctor >/tmp/doctor.out 2>/tmp/doctor.err
+          doctor_rc=$?
+          "$binary" worker >/tmp/worker.out 2>/tmp/worker.err
+          worker_rc=$?
+          "$binary" migrate status >/tmp/migrate-status.out 2>/tmp/migrate-status.err
+          migrate_status_rc=$?
+          "$binary" migrate up >/tmp/migrate-up.out 2>/tmp/migrate-up.err
+          migrate_up_rc=$?
+          set -e
+
+          kill -TERM "$server_pid"
+          set +e
+          wait "$server_pid"
+          server_rc=$?
+          set -e
+          trap - EXIT
+
+          echo "live_code=$live_code" >> "$GITHUB_OUTPUT"
+          echo "ready_code=$ready_code" >> "$GITHUB_OUTPUT"
+          echo "doctor_rc=$doctor_rc" >> "$GITHUB_OUTPUT"
+          echo "worker_rc=$worker_rc" >> "$GITHUB_OUTPUT"
+          echo "migrate_status_rc=$migrate_status_rc" >> "$GITHUB_OUTPUT"
+          echo "migrate_up_rc=$migrate_up_rc" >> "$GITHUB_OUTPUT"
+          echo "server_rc=$server_rc" >> "$GITHUB_OUTPUT"
+
+          test "$live_code" = "200"
+          test "$ready_code" = "503"
+          test "$doctor_rc" -ne 0
+          test "$worker_rc" -ne 0
+          test "$migrate_status_rc" -ne 0
+          test "$migrate_up_rc" -ne 0
+          test "$server_rc" -eq 0
+
+      - name: Produce machine-readable runtime receipt
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          python tools/run_cloud_server_runtime_receipt.py             --version "${{ steps.smoke.outputs.version }}"             --live-code "${{ steps.smoke.outputs.live_code }}"             --ready-code "${{ steps.smoke.outputs.ready_code }}"             --doctor-rc "${{ steps.smoke.outputs.doctor_rc }}"             --worker-rc "${{ steps.smoke.outputs.worker_rc }}"             --migrate-status-rc "${{ steps.smoke.outputs.migrate_status_rc }}"             --migrate-up-rc "${{ steps.smoke.outputs.migrate_up_rc }}"             --server-rc "${{ steps.smoke.outputs.server_rc }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-server-runtime-01-receipt
+          path: target/cloud-server-runtime-01/receipt.json
+          if-no-files-found: error
