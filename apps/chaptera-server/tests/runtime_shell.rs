@@ -1,8 +1,4 @@
-use std::{
-    process::Command,
-    sync::Arc,
-    time::Duration,
-};
+use std::{process::Command, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
@@ -12,9 +8,7 @@ use chaptera_server::{
     build_info::BUILD_IDENTITY,
     config::RuntimeConfig,
     serve,
-    state::{
-        AppState, DependencyFailure, RuntimeDependency, RuntimePorts,
-    },
+    state::{AppState, DependencyFailure, RuntimeDependency, RuntimePorts},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -96,9 +90,7 @@ async fn loopback_server_starts_answers_live_and_shuts_down() {
 
     let mut stream = TcpStream::connect(address).await.unwrap();
     stream
-        .write_all(
-            b"GET /live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-        )
+        .write_all(b"GET /live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .await
         .unwrap();
 
