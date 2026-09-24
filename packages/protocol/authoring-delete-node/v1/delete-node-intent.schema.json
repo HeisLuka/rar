@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/authoring-delete-node/v1/delete-node-intent.schema.json",
+  "title": "Chaptera DeleteNode intent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "source_hash",
+    "base_revision_id",
+    "client_operation_id",
+    "command"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.delete-node-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "client_operation_id": {"type": "string", "minLength": 8},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "node_id",
+        "expected_state_id",
+        "expected_parent_id",
+        "expected_child_index"
+      ],
+      "properties": {
+        "kind": {"const": "delete_node"},
+        "node_id": {"type": "string", "minLength": 1},
+        "expected_state_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "expected_parent_id": {"type": "string", "minLength": 1},
+        "expected_child_index": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
