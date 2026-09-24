@@ -1,0 +1,37 @@
+name: PUB KSU SharePoint Feed Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/provenance/ksu_sharepoint_feed_probe.py"
+      - ".github/workflows/pub-ksu-sharepoint-feed.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect archived SharePoint metadata feeds
+        run: |
+          set -euo pipefail
+          python tools/provenance/ksu_sharepoint_feed_probe.py --out out/ksu-sharepoint-feed
+      - name: Guard text-only output
+        run: |
+          set -euo pipefail
+          bad="$(find out/ksu-sharepoint-feed -type f | grep -Eiv '\.(json|txt|md)$' || true)"
+          if [[ -n "$bad" ]]; then echo "$bad" >&2; exit 4; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pub-ksu-sharepoint-feed-${{ github.run_id }}
+          path: out/ksu-sharepoint-feed/**
+          if-no-files-found: error
+          retention-days: 90
