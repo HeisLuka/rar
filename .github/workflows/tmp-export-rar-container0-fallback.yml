@@ -1,0 +1,37 @@
+name: TEMP export Rar M1 container0 fallback
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/corpus/tmp_export_container0_fallback.py'
+      - '.github/workflows/tmp-export-rar-container0-fallback.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Export container zero with IA storage fallback
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/corpus/tmp_export_container0_fallback.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rar-m1-container-0
+          path: out/container-0-fallback/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
