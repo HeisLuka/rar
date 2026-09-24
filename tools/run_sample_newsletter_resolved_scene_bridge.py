@@ -35,12 +35,6 @@ from resolved_graph_scene_bridge_v1 import (
 )
 from validate_viewer_geometry_receipt import validate_schema as validate_viewer_schema
 
-SOURCE_HASH = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
-RESOLVED_GRAPH_SHA256 = "7c327cd729fc2f9760e59cce1dd7c104c55162f4c3032c132068cfee513b1c4d"
-TARGET_NODE_ID = "007d9898-568b-5125-b519-8d88243aabfb"
-TARGET_PAGE_ID = "58ffa2e0-896e-5a40-806c-bd0184ea9c85"
-TARGET_AFTER_X = 653710
-TARGET_AFTER_Y = 1445292
 REDO_STATE = "chaptera-layout-redo-operation.json"
 
 
@@ -70,9 +64,11 @@ def load_inputs(
     resolved_graph_path: pathlib.Path,
     viewer_receipt_path: pathlib.Path,
     source_hash: str,
+    *,
+    expected_resolved_graph_sha256: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     graph_path = resolved_graph_path.expanduser().resolve(strict=True)
-    if sha256_path(graph_path) != RESOLVED_GRAPH_SHA256:
+    if sha256_path(graph_path) != expected_resolved_graph_sha256:
         raise SampleNewsletterSceneEngineError(
             "resolved graph SHA-256 differs from pinned historical authority"
         )
@@ -92,8 +88,6 @@ def load_inputs(
         raise SampleNewsletterSceneEngineError(
             "Viewer receipt source identity differs from builder request"
         )
-    if viewer_source["byte_len"] != 291840:
-        raise SampleNewsletterSceneEngineError("Viewer receipt byte length mismatch")
     return graph, viewer
 
 
@@ -119,14 +113,21 @@ def project_for_scene(
     return current_graph, scene
 
 
-def move_candidate(graph: dict[str, Any]) -> dict[str, Any]:
+def move_candidate(
+    graph: dict[str, Any],
+    *,
+    target_node_id: str,
+    target_page_id: str,
+    after_x_emu: int,
+    after_y_emu: int,
+) -> dict[str, Any]:
     try:
-        header = graph["nodes"][TARGET_NODE_ID]["header"]
+        header = graph["nodes"][target_node_id]["header"]
     except (KeyError, TypeError) as error:
         raise SampleNewsletterSceneEngineError(
             "pinned MoveNode target missing from resolved graph"
         ) from error
-    if header.get("parent_id") != TARGET_PAGE_ID:
+    if header.get("parent_id") != target_page_id:
         raise SampleNewsletterSceneEngineError(
             "pinned MoveNode target is not directly page-owned"
         )
@@ -134,14 +135,14 @@ def move_candidate(graph: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(before, dict):
         raise SampleNewsletterSceneEngineError("pinned MoveNode bounds missing")
     after = {
-        "x": TARGET_AFTER_X,
-        "y": TARGET_AFTER_Y,
+        "x": after_x_emu,
+        "y": after_y_emu,
         "width": before["width"],
         "height": before["height"],
     }
     return {
-        "node_id": TARGET_NODE_ID,
-        "page_id": TARGET_PAGE_ID,
+        "node_id": target_node_id,
+        "page_id": target_page_id,
         "before": before,
         "after": after,
     }
@@ -151,6 +152,8 @@ def canonical_operation(
     graph: dict[str, Any],
     base_project: dict[str, Any],
     command: dict[str, Any],
+    *,
+    target_node_id: str,
 ) -> dict[str, Any]:
     if not isinstance(command, dict) or set(command) != {
         "kind",
@@ -159,10 +162,10 @@ def canonical_operation(
         "y_emu",
     }:
         raise SampleNewsletterSceneEngineError("MoveNodeTo command fields mismatch")
-    if command["kind"] != "move_node_to" or command["node_id"] != TARGET_NODE_ID:
+    if command["kind"] != "move_node_to" or command["node_id"] != target_node_id:
         raise SampleNewsletterSceneEngineError("unsupported MoveNodeTo target")
     current_graph = apply_project_to_resolved_graph(graph, base_project)
-    header = current_graph["nodes"][TARGET_NODE_ID]["header"]
+    header = current_graph["nodes"][target_node_id]["header"]
     before = copy.deepcopy(header["bounds"])
     after = {
         "x": command["x_emu"],
@@ -172,7 +175,7 @@ def canonical_operation(
     }
     return {
         "kind": "move_node",
-        "node_id": TARGET_NODE_ID,
+        "node_id": target_node_id,
         "before": before,
         "after": after,
     }
@@ -182,8 +185,8 @@ def append_operation(
     base_project: dict[str, Any],
     operation: dict[str, Any],
 ) -> dict[str, Any]:
-    if base_project.get("source_hash") != SOURCE_HASH:
-        raise SampleNewsletterSceneEngineError("EditorProject source identity mismatch")
+    if not isinstance(base_project.get("source_hash"), str):
+        raise SampleNewsletterSceneEngineError("EditorProject source identity missing")
     operations = base_project.get("operations")
     if not isinstance(operations, list):
         raise SampleNewsletterSceneEngineError("EditorProject.operations must be an array")
@@ -202,6 +205,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--resolved-graph", required=True, type=pathlib.Path)
     parser.add_argument("--viewer-receipt", required=True, type=pathlib.Path)
+    parser.add_argument("--expected-resolved-graph-sha256", required=True)
+    parser.add_argument("--target-node-id", required=True)
+    parser.add_argument("--target-page-id", required=True)
+    parser.add_argument("--after-x-emu", required=True, type=int)
+    parser.add_argument("--after-y-emu", required=True, type=int)
     parser.add_argument("action", choices=["baseline", "commit", "history", "replay"])
     parser.add_argument("--state-dir", required=True, type=pathlib.Path)
     parser.add_argument("--fixture", type=pathlib.Path)
@@ -212,13 +220,14 @@ def main() -> int:
         if not isinstance(payload, dict) or payload.get("action") != args.action:
             raise SampleNewsletterSceneEngineError("builder action mismatch")
         source_hash = payload.get("source_hash")
-        if source_hash != SOURCE_HASH:
-            raise SampleNewsletterSceneEngineError("unexpected SampleNewsletter source hash")
+        if not isinstance(source_hash, str):
+            raise SampleNewsletterSceneEngineError("builder source hash missing")
 
         graph, viewer = load_inputs(
             args.resolved_graph,
             args.viewer_receipt,
             source_hash,
+            expected_resolved_graph_sha256=args.expected_resolved_graph_sha256,
         )
         args.state_dir.mkdir(parents=True, exist_ok=True)
 
@@ -230,15 +239,21 @@ def main() -> int:
             project = baseline_project(source_hash)
             _, scene = project_for_scene(graph, project)
             equivalence = compare_viewer_and_adapter_scene(viewer, scene)
-            candidate = move_candidate(graph)
+            candidate = move_candidate(
+                graph,
+                target_node_id=args.target_node_id,
+                target_page_id=args.target_page_id,
+                after_x_emu=args.after_x_emu,
+                after_y_emu=args.after_y_emu,
+            )
             return emit({
                 "source_hash": source_hash,
                 "baseline_project": project,
                 "move_candidate": candidate,
                 "baseline_scene_state": compact_scene_state(
                     scene,
-                    node_id=TARGET_NODE_ID,
-                    page_id=TARGET_PAGE_ID,
+                    node_id=args.target_node_id,
+                    page_id=args.target_page_id,
                 ),
                 "baseline_equivalence": equivalence,
                 "adapter_invariants": {
@@ -260,8 +275,19 @@ def main() -> int:
             command = payload.get("command")
             if not isinstance(base_project, dict):
                 raise SampleNewsletterSceneEngineError("commit base_project missing")
-            operation = canonical_operation(graph, base_project, command)
-            candidate = move_candidate(graph)
+            operation = canonical_operation(
+                graph,
+                base_project,
+                command,
+                target_node_id=args.target_node_id,
+            )
+            candidate = move_candidate(
+                graph,
+                target_node_id=args.target_node_id,
+                target_page_id=args.target_page_id,
+                after_x_emu=args.after_x_emu,
+                after_y_emu=args.after_y_emu,
+            )
             if operation["before"] != candidate["before"] or operation["after"] != candidate["after"]:
                 raise SampleNewsletterSceneEngineError(
                     "commit does not match pinned Producer B MoveNode"
@@ -282,8 +308,8 @@ def main() -> int:
                 }],
                 "scene_state": compact_scene_state(
                     scene,
-                    node_id=TARGET_NODE_ID,
-                    page_id=TARGET_PAGE_ID,
+                    node_id=args.target_node_id,
+                    page_id=args.target_page_id,
                 ),
                 "source_hash_after": source_hash,
                 "source_reparse_after_edit_count": 0,
@@ -318,8 +344,8 @@ def main() -> int:
                 "resulting_project": result,
                 "scene_state": compact_scene_state(
                     scene,
-                    node_id=TARGET_NODE_ID,
-                    page_id=TARGET_PAGE_ID,
+                    node_id=args.target_node_id,
+                    page_id=args.target_page_id,
                 ),
                 "consequences": [{
                     "key": "history." + kind,
@@ -338,8 +364,8 @@ def main() -> int:
             "replayed_project": copy.deepcopy(project),
             "scene_state": compact_scene_state(
                 scene,
-                node_id=TARGET_NODE_ID,
-                page_id=TARGET_PAGE_ID,
+                node_id=args.target_node_id,
+                page_id=args.target_page_id,
             ),
             "source_hash_after": source_hash,
             "source_reparse_after_edit_count": 0,
