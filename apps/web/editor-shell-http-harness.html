@@ -3,9 +3,15 @@
 <title>Chaptera Browser Editor HTTP Harness</title>
 <style>
   html, body { margin: 0; font-family: system-ui, sans-serif; background: #e9e9e9; }
+  #toolbar { box-sizing: border-box; min-height: 44px; padding: 6px 12px; background: #f7f7f7; border-bottom: 1px solid #ccc; display: flex; gap: 8px; align-items: center; }
+  #toolbar button { min-width: 72px; min-height: 30px; }
   #status { box-sizing: border-box; min-height: 64px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ccc; font-size: 12px; }
   #host { width: 1200px; height: 800px; position: relative; overflow: hidden; touch-action: none; }
 </style>
+<div id="toolbar" aria-label="Editor history">
+  <button id="undo" type="button">Undo</button>
+  <button id="redo" type="button">Redo</button>
+</div>
 <div id="status"></div>
 <div id="host" aria-label="editor canvas"></div>
 <script type="module">
@@ -19,6 +25,8 @@
 
   const status = document.getElementById("status");
   const host = document.getElementById("host");
+  const undoButton = document.getElementById("undo");
+  const redoButton = document.getElementById("redo");
   let idCounter = 0;
   const observability = new BrowserObservabilityV1({
     sessionIncarnation: "session:http-harness-v1",
@@ -28,6 +36,7 @@
   const service = new HttpEditorServiceV1(api, { observability });
   const snapshot = await service.currentScene();
   const states = [];
+  const historyActions = [];
 
   let shell = null;
   shell = new BrowserEditorShellV1({
@@ -40,6 +49,8 @@
         claim: "synthetic_http_service_plumbing_not_product_acceptance",
         revision_id: state.revision_id,
         selected_node_id: state.selected_node_id,
+        commit_requests: state.commit_request_count,
+        history_requests: state.history_request_count,
         reason: state.reason
       });
     }
@@ -47,9 +58,43 @@
   shell.loadSnapshot(snapshot, { preserveSelection: false });
   shell.bindPointerEvents();
 
+  async function runHistory(kind) {
+    const button = kind === "undo" ? undoButton : redoButton;
+    undoButton.disabled = true;
+    redoButton.disabled = true;
+    try {
+      const result = kind === "undo"
+        ? await shell.undo()
+        : await shell.redo();
+      historyActions.push({
+        kind,
+        request: structuredClone(result.request),
+        result: structuredClone(result.result),
+        revision_id: shell.snapshot.revision_id,
+      });
+      return result;
+    } finally {
+      undoButton.disabled = false;
+      redoButton.disabled = false;
+    }
+  }
+
+  undoButton.addEventListener("click", () => {
+    runHistory("undo").catch((error) => {
+      window.__historyError = String(error?.stack ?? error);
+    });
+  });
+  redoButton.addEventListener("click", () => {
+    runHistory("redo").catch((error) => {
+      window.__historyError = String(error?.stack ?? error);
+    });
+  });
+
   window.__shell = shell;
   window.__service = service;
   window.__states = states;
+  window.__historyActions = historyActions;
+  window.__historyError = null;
   window.__observability = observability;
   window.__shellReady = true;
 </script>
