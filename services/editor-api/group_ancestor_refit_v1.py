@@ -99,6 +99,19 @@ def _validate_rect_or_unsupported(rect: RectEmu) -> bool:
     return True
 
 
+def _round_signed_ratio(numerator: int, denominator: int, label: str) -> int:
+    try:
+        numerator = _checked_int(numerator, f"{label}.numerator")
+    except AuthoredGroupGeometryError as exc:
+        raise ValueError(str(exc)) from exc
+    sign = -1 if numerator < 0 else 1
+    try:
+        magnitude = _round_ratio_nearest_emu(abs(numerator), denominator)
+        return _checked_int(sign * magnitude, label)
+    except AuthoredGroupGeometryError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def _snapshot_path_is_current(
     *,
     target_id: str,
@@ -186,16 +199,18 @@ def _map_edge_forward_unbounded(
         raise ValueError("local coordinate space origin must be zero")
 
     def map_x(edge: int) -> int:
-        scaled = _round_ratio_nearest_emu(
+        scaled = _round_signed_ratio(
             edge * group_bounds.width,
             local_coordinate_space.width,
+            "cascade.forward.x_scaled",
         )
         return _checked_add(group_bounds.x, scaled, "cascade.forward.x")
 
     def map_y(edge: int) -> int:
-        scaled = _round_ratio_nearest_emu(
+        scaled = _round_signed_ratio(
             edge * group_bounds.height,
             local_coordinate_space.height,
+            "cascade.forward.y_scaled",
         )
         return _checked_add(group_bounds.y, scaled, "cascade.forward.y")
 
@@ -230,29 +245,19 @@ def _map_edge_inverse_unbounded(
 
     def map_x(page_edge: int) -> int:
         relative = page_edge - edge.bounds_in_parent.x
-        numerator = _checked_int(
+        return _round_signed_ratio(
             relative * edge.local_coordinate_space.width,
-            "cascade.inverse.x_numerator",
-        )
-        sign = -1 if numerator < 0 else 1
-        value = _round_ratio_nearest_emu(
-            abs(numerator),
             edge.bounds_in_parent.width,
+            "cascade.inverse.x",
         )
-        return sign * value
 
     def map_y(page_edge: int) -> int:
         relative = page_edge - edge.bounds_in_parent.y
-        numerator = _checked_int(
+        return _round_signed_ratio(
             relative * edge.local_coordinate_space.height,
-            "cascade.inverse.y_numerator",
-        )
-        sign = -1 if numerator < 0 else 1
-        value = _round_ratio_nearest_emu(
-            abs(numerator),
             edge.bounds_in_parent.height,
+            "cascade.inverse.y",
         )
-        return sign * value
 
     left = map_x(parent_rect.x)
     right = map_x(parent_rect.right)
