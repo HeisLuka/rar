@@ -9,6 +9,9 @@ on:
       - "tools/scene_patch_v1.py"
       - "tools/optimization_receipt_v1.py"
       - "tools/run_optimization_spine_contract.py"
+      - "tools/render_path_ir_v1.py"
+      - "tools/test_render_path_ir_v1.py"
+      - "tools/run_render_path_ir_contract.py"
       - "docs/render-bench-v1.md"
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
@@ -30,6 +33,16 @@ jobs:
         run: python tools/run_render_bench_contract.py
       - name: Normalize benchmark into optimization measurement snapshot
         run: python tools/run_optimization_spine_contract.py
+      - name: Unit-test normalized path IR
+        working-directory: tools
+        run: python test_render_path_ir_v1.py
+      - name: Emit path IR receipt
+        run: mkdir -p target/render-path-ir && PYTHONPATH=tools python tools/run_render_path_ir_contract.py | tee target/render-path-ir/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-path-ir-${{ github.run_id }}
+          path: target/render-path-ir/receipt.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
