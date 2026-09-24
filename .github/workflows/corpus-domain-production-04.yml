@@ -1,0 +1,107 @@
+name: CORPUS domain production 04
+
+on:
+  push:
+    branches: [corpus-domain-production-04]
+    paths:
+      - '.github/workflows/corpus-domain-production-04.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover positive-domain shard
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/positive_domain_pub_seed.py             --seed tools/corpus/public_legacy_seed.csv             --seed tools/corpus/smoke_seed.csv             --max-domains 100 --max-pages-per-domain 150 --max-depth 2             --max-candidates-per-domain 200 --delay 0.5             --shard-index "${{ matrix.shard }}" --shard-count 4             --out "out/domain_seed-${{ matrix.shard }}.csv"             --summary "out/domain-${{ matrix.shard }}.summary.json"
+          cat "out/domain-${{ matrix.shard }}.summary.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: domain04-seed-${{ github.run_id }}-${{ matrix.shard }}
+          path: out/**
+          retention-days: 14
+
+  harvest:
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: domain04-seed-${{ github.run_id }}-${{ matrix.shard }}
+          path: seed
+      - name: Harvest shard
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py             --seed "seed/domain_seed-${{ matrix.shard }}.csv"             --out out/harvest --max-files -1 --timeout 25             --max-bytes 104857600 --per-host-delay 0.5
+      - name: Remove raw bytes
+        if: always()
+        run: find out/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: domain04-manifest-${{ github.run_id }}-${{ matrix.shard }}
+          path: |
+            out/harvest/manifest.json
+            out/harvest/manifest.csv
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: always()
+    needs: harvest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: domain04-manifest-${{ github.run_id }}-*
+          path: combined
+      - name: Aggregate exact yield
+        run: |
+          python - <<'PY'
+          import glob,json
+          from collections import Counter
+          from pathlib import Path
+          rows=[]
+          for p in glob.glob("combined/**/manifest.json",recursive=True):
+              rows.extend(json.loads(Path(p).read_text()))
+          sha={r.get("sha256") for r in rows if r.get("sha256")}
+          summary={
+            "schema":"rar-positive-domain-production-v4",
+            "manifest_rows":len(rows),
+            "unique_sha256":len(sha),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "domains":len({r.get("crawl_domain","") for r in rows if r.get("crawl_domain")}),
+          }
+          Path("aggregate").mkdir()
+          Path("aggregate/manifest.json").write_text(json.dumps(rows,indent=2,ensure_ascii=False))
+          Path("aggregate/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: domain04-union-${{ github.run_id }}
+          path: aggregate/**
+          retention-days: 30
