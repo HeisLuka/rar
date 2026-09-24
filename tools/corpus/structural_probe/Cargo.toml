@@ -1,0 +1,12 @@
+[package]
+name = "rar-pub-structural-probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+pub-cfb = { git = "https://github.com/HeisLuka/yab", rev = "2416bf1af401caa997e588b41285816422a7d59b", package = "pub-cfb" }
+pub-reader = { git = "https://github.com/HeisLuka/yab", rev = "2416bf1af401caa997e588b41285816422a7d59b", package = "pub-reader" }
