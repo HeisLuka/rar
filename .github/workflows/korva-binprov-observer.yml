@@ -1,0 +1,55 @@
+name: Observe Korva binprov
+
+on:
+  workflow_run:
+    workflows:
+      - "Korva 1.8.7 static provenance"
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Capture run metadata and logs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euxo pipefail
+          DEST="research/korva/1.8.7"
+          mkdir -p "$DEST"
+
+          {
+            echo "run_id=$RUN_ID"
+            echo "run_url=$RUN_URL"
+            echo "conclusion=$RUN_CONCLUSION"
+            echo "head_sha=$RUN_HEAD_SHA"
+            echo "captured_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$DEST/run-status.txt"
+
+          gh api "/repos/$GH_REPO/actions/runs/$RUN_ID/jobs?per_page=100"             > "$DEST/run-jobs.json"
+
+          job_id="$(jq -r '.jobs[0].id // empty' "$DEST/run-jobs.json")"
+          if [ -n "$job_id" ]; then
+            gh api               -H "Accept: application/vnd.github+json"               "/repos/$GH_REPO/actions/jobs/$job_id/logs"               > "$DEST/job-log.txt" || true
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DEST/run-status.txt" "$DEST/run-jobs.json" "$DEST/job-log.txt" 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "research: capture Korva binprov workflow result"
+            git push
+          fi
