@@ -303,10 +303,7 @@ impl SqliteJobQueue {
         Ok(())
     }
 
-    pub async fn enqueue(
-        &self,
-        request: EnqueueRequest,
-    ) -> Result<EnqueueOutcome, JobQueueError> {
+    pub async fn enqueue(&self, request: EnqueueRequest) -> Result<EnqueueOutcome, JobQueueError> {
         validate_enqueue(&request)?;
         let request_hash = enqueue_hash(&request);
 
@@ -359,10 +356,7 @@ impl SqliteJobQueue {
             )
             .await?
             .ok_or_else(|| {
-                JobQueueError::new(
-                    "enqueue_failed",
-                    "enqueue failed without an idempotent row",
-                )
+                JobQueueError::new("enqueue_failed", "enqueue failed without an idempotent row")
             })?;
 
         if existing.request_hash != request_hash {
@@ -426,13 +420,7 @@ impl SqliteJobQueue {
             .map_err(sqlite_error)?;
 
         let result = self
-            .claim_one_in_transaction(
-                &mut conn,
-                owner,
-                now_ms,
-                lease_ms,
-                allowed_kinds,
-            )
+            .claim_one_in_transaction(&mut conn, owner, now_ms, lease_ms, allowed_kinds)
             .await;
 
         match result {
@@ -623,12 +611,7 @@ impl SqliteJobQueue {
 
         if current.cancel_requested_at_ms.is_some() {
             let job = self
-                .finish(
-                    lease,
-                    now_ms,
-                    JobStatus::Cancelled,
-                    "cancel_requested",
-                )
+                .finish(lease, now_ms, JobStatus::Cancelled, "cancel_requested")
                 .await?;
             return Ok(FailureOutcome::Cancelled(job));
         }
@@ -690,12 +673,7 @@ impl SqliteJobQueue {
             .map_err(sqlite_error)?;
 
         let result = self
-            .publish_success_in_transaction(
-                &mut conn,
-                lease,
-                now_ms,
-                effect_key,
-            )
+            .publish_success_in_transaction(&mut conn, lease, now_ms, effect_key)
             .await;
 
         match result {
@@ -851,12 +829,10 @@ impl SqliteJobQueue {
     }
 
     pub async fn metrics(&self, now_ms: i64) -> Result<QueueMetrics, JobQueueError> {
-        let rows = sqlx::query(
-            "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(sqlite_error)?;
+        let rows = sqlx::query("SELECT status, COUNT(*) AS n FROM jobs GROUP BY status")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
 
         let mut counts = BTreeMap::new();
         for row in rows {
@@ -889,11 +865,7 @@ impl SqliteJobQueue {
     }
 }
 
-fn assert_live_lease(
-    current: &JobRecord,
-    lease: &Lease,
-    now_ms: i64,
-) -> Result<(), JobQueueError> {
+fn assert_live_lease(current: &JobRecord, lease: &Lease, now_ms: i64) -> Result<(), JobQueueError> {
     let live_expiry = current
         .lease_expires_at_ms
         .map(|expiry| expiry > now_ms)
@@ -957,9 +929,9 @@ fn validate_lease_ms(lease_ms: i64) -> Result<(), JobQueueError> {
 }
 
 fn require_ident(value: &str, label: &str) -> Result<(), JobQueueError> {
-    let allowed = value.bytes().all(|byte| {
-        byte.is_ascii_alphanumeric() || b"_.:@/-".contains(&byte)
-    });
+    let allowed = value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"_.:@/-".contains(&byte));
 
     if value.is_empty() || value.len() > 256 || !allowed {
         return Err(JobQueueError::new(
@@ -1000,9 +972,7 @@ fn enqueue_hash(request: &EnqueueRequest) -> String {
 
 fn retry_delay_ms(job_id: &str, attempt: i64) -> i64 {
     let exponent = attempt.saturating_sub(1).clamp(0, 10) as u32;
-    let base = 1_000_i64
-        .saturating_mul(1_i64 << exponent)
-        .min(60_000);
+    let base = 1_000_i64.saturating_mul(1_i64 << exponent).min(60_000);
     let digest = Sha256::digest(job_id.as_bytes());
     let jitter = i64::from(digest[0]) * 500 / 255;
     base.saturating_add(jitter)
@@ -1013,12 +983,8 @@ fn decode_job(row: sqlx::sqlite::SqliteRow) -> Result<JobRecord, JobQueueError> 
     let tenant_id = text_blob(&row, "tenant_id")?;
     let request_hash = text_blob(&row, "request_hash")?;
     let idempotency_key = text_blob(&row, "idempotency_key")?;
-    let job_kind = JobKind::parse(
-        &row.try_get::<String, _>("job_kind").map_err(sqlite_error)?,
-    )?;
-    let status = JobStatus::parse(
-        &row.try_get::<String, _>("status").map_err(sqlite_error)?,
-    )?;
+    let job_kind = JobKind::parse(&row.try_get::<String, _>("job_kind").map_err(sqlite_error)?)?;
+    let status = JobStatus::parse(&row.try_get::<String, _>("status").map_err(sqlite_error)?)?;
 
     Ok(JobRecord {
         job_id,
@@ -1035,9 +1001,7 @@ fn decode_job(row: sqlx::sqlite::SqliteRow) -> Result<JobRecord, JobQueueError> 
         max_attempts: row.try_get("max_attempts").map_err(sqlite_error)?,
         lease_owner: row.try_get("lease_owner").map_err(sqlite_error)?,
         lease_generation: row.try_get("lease_generation").map_err(sqlite_error)?,
-        lease_expires_at_ms: row
-            .try_get("lease_expires_at_ms")
-            .map_err(sqlite_error)?,
+        lease_expires_at_ms: row.try_get("lease_expires_at_ms").map_err(sqlite_error)?,
         cancel_requested_at_ms: row
             .try_get("cancel_requested_at_ms")
             .map_err(sqlite_error)?,
@@ -1049,19 +1013,10 @@ fn decode_job(row: sqlx::sqlite::SqliteRow) -> Result<JobRecord, JobQueueError> 
     })
 }
 
-fn text_blob(
-    row: &sqlx::sqlite::SqliteRow,
-    name: &str,
-) -> Result<String, JobQueueError> {
-    let value = row
-        .try_get::<Vec<u8>, _>(name)
-        .map_err(sqlite_error)?;
-    String::from_utf8(value).map_err(|_| {
-        JobQueueError::new(
-            "corrupt_job_row",
-            format!("{name} is not UTF-8"),
-        )
-    })
+fn text_blob(row: &sqlx::sqlite::SqliteRow, name: &str) -> Result<String, JobQueueError> {
+    let value = row.try_get::<Vec<u8>, _>(name).map_err(sqlite_error)?;
+    String::from_utf8(value)
+        .map_err(|_| JobQueueError::new("corrupt_job_row", format!("{name} is not UTF-8")))
 }
 
 fn sqlite_error(error: impl fmt::Display) -> JobQueueError {
@@ -1085,18 +1040,12 @@ mod tests {
 
     async fn queue() -> (SqliteJobQueue, PathBuf) {
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!(
-            "chaptera-job-{}-{n}.sqlite",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("chaptera-job-{}-{n}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let queue = SqliteJobQueue::open(
-            &path,
-            4,
-            Duration::from_secs(2),
-        )
-        .await
-        .unwrap();
+        let queue = SqliteJobQueue::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         (queue, path)
     }
 
@@ -1117,16 +1066,10 @@ mod tests {
     async fn exact_enqueue_retry_reuses_logical_job_and_changed_payload_conflicts() {
         let (queue, path) = queue().await;
 
-        let first = queue
-            .enqueue(req("job-1", "idem-1"))
-            .await
-            .unwrap();
+        let first = queue.enqueue(req("job-1", "idem-1")).await.unwrap();
         assert!(matches!(first, EnqueueOutcome::Enqueued(_)));
 
-        let second = queue
-            .enqueue(req("job-2", "idem-1"))
-            .await
-            .unwrap();
+        let second = queue.enqueue(req("job-2", "idem-1")).await.unwrap();
         assert!(matches!(second, EnqueueOutcome::Existing(_)));
 
         let mut changed = req("job-3", "idem-1");
@@ -1186,25 +1129,13 @@ mod tests {
             .unwrap();
 
         let live = queue
-            .heartbeat(
-                "job-1",
-                "worker-a",
-                lease.lease_generation,
-                250,
-                100,
-            )
+            .heartbeat("job-1", "worker-a", lease.lease_generation, 250, 100)
             .await
             .unwrap();
         assert_eq!(live.lease_expires_at_ms, Some(350));
 
         let error = queue
-            .heartbeat(
-                "job-1",
-                "worker-b",
-                lease.lease_generation,
-                260,
-                100,
-            )
+            .heartbeat("job-1", "worker-b", lease.lease_generation, 260, 100)
             .await
             .unwrap_err();
         assert_eq!(error.code, "stale_lease");
@@ -1226,33 +1157,20 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let requeued = queue
-            .fail(&first, 210, true, "transient")
-            .await
-            .unwrap();
+        let requeued = queue.fail(&first, 210, true, "transient").await.unwrap();
         let FailureOutcome::Requeued(job) = requeued else {
             panic!("expected requeue")
         };
         assert!(job.available_at_ms > 210);
 
         let second = queue
-            .claim_one(
-                "worker-a",
-                job.available_at_ms,
-                100,
-                &[JobKind::Export],
-            )
+            .claim_one("worker-a", job.available_at_ms, 100, &[JobKind::Export])
             .await
             .unwrap()
             .unwrap();
 
         let failed = queue
-            .fail(
-                &second,
-                job.available_at_ms + 1,
-                true,
-                "transient",
-            )
+            .fail(&second, job.available_at_ms + 1, true, "transient")
             .await
             .unwrap();
         let FailureOutcome::Failed(job) = failed else {
@@ -1282,10 +1200,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "cancel_requested");
 
-        let outcome = queue
-            .fail(&lease, 230, false, "ignored")
-            .await
-            .unwrap();
+        let outcome = queue.fail(&lease, 230, false, "ignored").await.unwrap();
         let FailureOutcome::Cancelled(job) = outcome else {
             panic!("expected cancellation")
         };
@@ -1316,10 +1231,7 @@ mod tests {
             .publish_success(&lease, 230, "export:stable-effect")
             .await
             .unwrap();
-        assert!(matches!(
-            second,
-            PublishOutcome::AlreadyPublished(_)
-        ));
+        assert!(matches!(second, PublishOutcome::AlreadyPublished(_)));
 
         let conflict = queue
             .publish_success(&lease, 230, "export:different-effect")
@@ -1343,13 +1255,9 @@ mod tests {
             .unwrap();
         queue.close().await;
 
-        let reopened = SqliteJobQueue::open(
-            &path,
-            4,
-            Duration::from_secs(2),
-        )
-        .await
-        .unwrap();
+        let reopened = SqliteJobQueue::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         let second = reopened
             .claim_one("worker-b", 251, 100, &[JobKind::Export])
             .await
