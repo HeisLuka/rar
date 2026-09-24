@@ -1,0 +1,51 @@
+{
+  "notion_version": "2026-03-11",
+  "sources": [
+    {
+      "key": "research_tasks",
+      "entity_type": "research_task",
+      "data_source_id": "45f30552-a8c3-451b-9b08-cd5dd70664e2",
+      "id_property": "Task ID",
+      "title_property": "Task",
+      "fields": {
+        "lifecycle": "Lifecycle",
+        "priority": "Priority",
+        "agent_gate": "Agent Gate",
+        "dispatch_state": "Dispatch State",
+        "execution_owner": "Execution Owner",
+        "execution_workspace": "Execution Workspace",
+        "authority_domain": "Authority Domain",
+        "blocker": "Blocker"
+      },
+      "relations": {
+        "depends_on": {"property": "Depends On", "target_type": "research_task"},
+        "blocks": {"property": "Blocks", "target_type": "research_task"},
+        "child_task": {"property": "Child Tasks", "target_type": "research_task"},
+        "agent_run": {"property": "Agent Runs", "target_type": "agent_run"},
+        "change_proposal": {"property": "Change Proposals", "target_type": "change_proposal"}
+      }
+    },
+    {
+      "key": "implementation_tasks",
+      "entity_type": "implementation_task",
+      "data_source_id": "41185aae-ecd8-4381-93f1-78f29ae5c2f6",
+      "id_property": "Task",
+      "title_property": "Task",
+      "fields": {
+        "lifecycle": "Status",
+        "priority": "Priority",
+        "dispatch_state": "Dispatch State",
+        "execution_owner": "Execution Owner",
+        "execution_workspace": "Execution Workspace",
+        "authority_domain": "Effective Authority Domain",
+        "blocker": "External Prerequisites"
+      },
+      "relations": {
+        "depends_on": {"property": "Depends On Tasks", "target_type": "implementation_task"},
+        "blocks": {"property": "Blocks Tasks", "target_type": "implementation_task"},
+        "research_dependency": {"property": "Research Dependencies", "target_type": "research_task"},
+        "capability": {"property": "Capability Contracts", "target_type": "capability"}
+      }
+    }
+  ]
+}
