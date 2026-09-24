@@ -3,10 +3,11 @@ use std::{error::Error, process::ExitCode};
 use chaptera_server::{
     cli::{Cli, Command},
     config::RuntimeConfig,
-    db::UnconfiguredMigrationRuntime,
     doctor,
     jobs::UnconfiguredWorkerRuntime,
-    migrate, serve,
+    migrate,
+    schema_migration::SqliteMigrationRuntime,
+    serve,
     state::{AppState, RuntimePorts},
     worker,
 };
@@ -35,7 +36,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             worker::run(&UnconfiguredWorkerRuntime)?;
         }
         Command::Migrate { action } => {
-            migrate::run(action, &UnconfiguredMigrationRuntime)?;
+            let runtime = SqliteMigrationRuntime::from_env()?;
+            migrate::run(action, &runtime).await?;
         }
         Command::Doctor => {
             doctor::run(&state)?;
