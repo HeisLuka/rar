@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthoredShapeV1, EntityProvenanceV1, ShapeKindV1, ShapeTransformV1,
-    validate_rect_emu_v1,
+    AuthoredShapeV1, EntityProvenanceV1, ShapeKindV1, ShapeTransformV1, validate_rect_emu_v1,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,11 +104,7 @@ fn format_half_scaled2(value: i128) -> Result<String, RotateQuarterError> {
         .checked_abs()
         .ok_or(RotateQuarterError::ArithmeticOverflow)?;
     let whole = magnitude / 2;
-    Ok(format!(
-        "{}{}.5",
-        if negative { "-" } else { "" },
-        whole
-    ))
+    Ok(format!("{}{}.5", if negative { "-" } else { "" }, whole))
 }
 
 fn affine_scaled2(
@@ -143,9 +138,7 @@ fn affine_scaled2(
     Ok((a, b, c, d, tx, ty))
 }
 
-pub fn validate_exact_affine_v1(
-    value: &ExactAffineV1,
-) -> Result<(), RotateQuarterError> {
+pub fn validate_exact_affine_v1(value: &ExactAffineV1) -> Result<(), RotateQuarterError> {
     affine_scaled2(value).map(|_| ())
 }
 
@@ -278,8 +271,14 @@ pub fn apply_authored_shape_quarter_turn_v1(
         return Err(RotateQuarterError::FullTurnNoOp);
     }
 
-    let pivot_x2 = checked_add(checked_mul(i128::from(shape.bounds.x), 2)?, i128::from(shape.bounds.width))?;
-    let pivot_y2 = checked_add(checked_mul(i128::from(shape.bounds.y), 2)?, i128::from(shape.bounds.height))?;
+    let pivot_x2 = checked_add(
+        checked_mul(i128::from(shape.bounds.x), 2)?,
+        i128::from(shape.bounds.width),
+    )?;
+    let pivot_y2 = checked_add(
+        checked_mul(i128::from(shape.bounds.y), 2)?,
+        i128::from(shape.bounds.height),
+    )?;
     let turn = quarter_turn_affine_v1(pivot_x2, pivot_y2, normalized)?;
     let after = compose_affine_v1(&turn, &before)?;
     if after == before {
@@ -310,9 +309,7 @@ pub fn apply_authored_shape_quarter_turn_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        RectEmuV1, SolidFillV1, SolidStrokeV1, Srgb8, author_created_shape_paint_v1,
-    };
+    use crate::{RectEmuV1, SolidFillV1, SolidStrokeV1, Srgb8, author_created_shape_paint_v1};
 
     fn identity() -> ExactAffineV1 {
         ExactAffineV1 {
@@ -372,13 +369,15 @@ mod tests {
                 ty: "-15".into(),
             }
         );
-        assert_eq!(canonical_shape_affine_v1(&rotated.transform).unwrap(), receipt.after);
+        assert_eq!(
+            canonical_shape_affine_v1(&rotated.transform).unwrap(),
+            receipt.after
+        );
     }
 
     #[test]
     fn signed_negative_turn_canonicalizes_to_three() {
-        let (_, receipt) =
-            apply_authored_shape_quarter_turn_v1(&shape(), &identity(), -1).unwrap();
+        let (_, receipt) = apply_authored_shape_quarter_turn_v1(&shape(), &identity(), -1).unwrap();
         assert_eq!(receipt.quarter_turns, 3);
         assert_eq!(
             receipt.after,
