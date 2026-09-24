@@ -1,0 +1,128 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Focus / Keyboard Probe</title>
+<style>
+  body { font-family: system-ui, sans-serif; }
+  #scene-tree { display: flex; gap: 8px; }
+</style>
+<button id="page-nav">Page 1</button>
+<div id="scene-tree" role="tree" aria-label="Publication objects">
+  <button role="treeitem" data-node-id="node:1" tabindex="0">Shape 1</button>
+  <button role="treeitem" data-node-id="node:2" tabindex="-1">Shape 2</button>
+  <button role="treeitem" data-node-id="node:3" tabindex="-1">Shape 3</button>
+</div>
+<label>Inspector name <input id="inspector" value="Object name"></label>
+<div id="text-editor" contenteditable="true" role="textbox" aria-label="Story text">hello world</div>
+<button id="open-dialog">Open dialog</button>
+<dialog id="dialog">
+  <label>Dialog field <input id="dialog-input"></label>
+  <button id="dialog-close">Close</button>
+</dialog>
+<script>
+  const commands = [];
+  let dragActive = false;
+  let composing = false;
+
+  function isTextTarget(target) {
+    return !!target.closest?.('input,textarea,select,[contenteditable="true"],[role="textbox"]');
+  }
+
+  function inOpenDialog(target) {
+    const dialog = document.querySelector('dialog[open]');
+    return dialog ? dialog.contains(target) : false;
+  }
+
+  function record(command, event) {
+    commands.push({
+      command,
+      key: event.key,
+      target_id: event.target.id || null,
+      target_role: event.target.getAttribute?.('role') || null,
+      node_id: event.target.dataset?.nodeId || null,
+      composing,
+      event_is_composing: !!event.isComposing,
+    });
+  }
+
+  document.addEventListener('compositionstart', () => { composing = true; }, true);
+  document.addEventListener('compositionend', () => { composing = false; }, true);
+
+  document.addEventListener('keydown', (event) => {
+    const target = event.target;
+    const textTarget = isTextTarget(target);
+    const dialog = document.querySelector('dialog[open]');
+
+    if (dialog && !inOpenDialog(target)) return;
+    if (composing || event.isComposing) return;
+    if (textTarget) return;
+
+    if (target.matches?.('[role="treeitem"]')) {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        record('delete_selection', event);
+        return;
+      }
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        record('nudge_left', event);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        const items = [...document.querySelectorAll('#scene-tree [role="treeitem"]')];
+        const index = items.indexOf(target);
+        const next = items[(index + 1) % items.length];
+        target.tabIndex = -1;
+        next.tabIndex = 0;
+        next.focus();
+        record('focus_next_scene_item', event);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        record('document_undo', event);
+        return;
+      }
+    }
+
+    if (event.key === 'Escape' && dragActive) {
+      event.preventDefault();
+      dragActive = false;
+      record('cancel_drag', event);
+    }
+  }, true);
+
+  document.querySelector('#open-dialog').addEventListener('click', () => {
+    document.querySelector('#dialog').showModal();
+    document.querySelector('#dialog-input').focus();
+  });
+  document.querySelector('#dialog-close').addEventListener('click', () => {
+    document.querySelector('#dialog').close();
+  });
+
+  window.__probe = {
+    commands,
+    setDragActive(value) { dragActive = !!value; },
+    composing() { return composing; },
+    active() {
+      const el = document.activeElement;
+      return {
+        id: el?.id || null,
+        role: el?.getAttribute?.('role') || null,
+        node_id: el?.dataset?.nodeId || null,
+        tag: el?.tagName?.toLowerCase() || null,
+      };
+    },
+    tabStops() {
+      return [...document.querySelectorAll('button,input,[contenteditable="true"],[tabindex]')]
+        .filter((el) => !el.closest('dialog:not([open])'))
+        .filter((el) => el.tabIndex >= 0)
+        .map((el) => ({
+          id: el.id || null,
+          role: el.getAttribute('role'),
+          node_id: el.dataset.nodeId || null,
+          tabindex: el.tabIndex,
+        }));
+    }
+  };
+</script>
