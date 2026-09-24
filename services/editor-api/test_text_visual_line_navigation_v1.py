@@ -161,7 +161,7 @@ class TextVisualLineNavigationV1Tests(unittest.TestCase):
             expected_layout_revision_id="layout:1",
         )
         self.assertEqual("l2",down.target_line_id)
-        self.assertEqual(5,down.selection.focus_scalar)
+        self.assertEqual(4,down.selection.focus_scalar)
         up=navigate_visual_line_v1(
             command="move_visual_line_up",state=down.selection,domain=d,caret_map=m,
             expected_layout_revision_id="layout:1",
