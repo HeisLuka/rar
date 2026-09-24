@@ -1,11 +1,13 @@
 use std::{
-    fmt,
-    io::{self, Read, Write},
+    fmt, io,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -141,7 +143,7 @@ pub trait BlobProvider: Send + Sync {
         &self,
         object_locator: &str,
         expected_byte_len: u64,
-        input: &mut (dyn Read + Send),
+        input: &mut (dyn AsyncRead + Unpin + Send),
     ) -> Result<ProviderObjectMetadata, ProviderError>;
 
     async fn head_exact(
@@ -153,7 +155,7 @@ pub trait BlobProvider: Send + Sync {
         &self,
         object_locator: &str,
         generation: &str,
-    ) -> Result<Box<dyn Read + Send>, ProviderError>;
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, ProviderError>;
 
     async fn delete_exact(
         &self,
@@ -293,7 +295,7 @@ impl BlobStoreService {
     pub async fn create_canonical_binding(
         &self,
         request: CreateBindingRequest,
-        input: &mut (dyn Read + Send),
+        input: &mut (dyn AsyncRead + Unpin + Send),
     ) -> Result<ResourceBinding, BlobStoreError> {
         validate_create_request(&request)?;
 
@@ -392,7 +394,7 @@ impl BlobStoreService {
         &self,
         tenant_id: &str,
         binding_id: &str,
-        output: &mut dyn Write,
+        output: &mut (dyn AsyncWrite + Unpin + Send),
     ) -> Result<u64, BlobStoreError> {
         require_ident(tenant_id, "tenant_id")?;
         require_ident(binding_id, "binding_id")?;
@@ -658,7 +660,7 @@ impl BlobStoreService {
     async fn copy_and_verify(
         &self,
         physical: &PhysicalBlobRecord,
-        output: &mut dyn Write,
+        output: &mut (dyn AsyncWrite + Unpin + Send),
     ) -> Result<u64, BlobStoreError> {
         let reader = self
             .provider
@@ -670,12 +672,14 @@ impl BlobStoreService {
         loop {
             let count = reader
                 .read(&mut buffer)
+                .await
                 .map_err(|error| BlobStoreError::new("blob_read_failed", error.to_string()))?;
             if count == 0 {
                 break;
             }
             output
                 .write_all(&buffer[..count])
+                .await
                 .map_err(|error| BlobStoreError::new("blob_output_failed", error.to_string()))?;
         }
         reader.require_exact_eof(physical.byte_len)?;
@@ -804,7 +808,7 @@ fn provider_error(error: ProviderError) -> BlobStoreError {
 }
 
 struct HashingBoundedReader<'a> {
-    inner: &'a mut (dyn Read + Send),
+    inner: &'a mut (dyn AsyncRead + Unpin + Send),
     max_bytes: u64,
     bytes_read: u64,
     saw_eof: bool,
@@ -812,7 +816,7 @@ struct HashingBoundedReader<'a> {
 }
 
 impl<'a> HashingBoundedReader<'a> {
-    fn new(inner: &'a mut (dyn Read + Send), max_bytes: u64) -> Self {
+    fn new(inner: &'a mut (dyn AsyncRead + Unpin + Send), max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
@@ -837,40 +841,56 @@ impl<'a> HashingBoundedReader<'a> {
     }
 }
 
-impl Read for HashingBoundedReader<'_> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let remaining = self.max_bytes.saturating_sub(self.bytes_read);
+impl AsyncRead for HashingBoundedReader<'_> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let remaining = this.max_bytes.saturating_sub(this.bytes_read);
         let allowed = usize::try_from(remaining.saturating_add(1))
             .unwrap_or(usize::MAX)
-            .min(buffer.len());
+            .min(buffer.remaining());
         if allowed == 0 {
-            return Err(io::Error::new(
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "blob write exceeds expected length",
-            ));
+            )));
         }
-        let count = self.inner.read(&mut buffer[..allowed])?;
-        if count == 0 {
-            self.saw_eof = true;
-            return Ok(0);
+
+        let mut limited = buffer.take(allowed);
+        let before = limited.filled().len();
+        match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(())) => {
+                let count = limited.filled().len() - before;
+                if count == 0 {
+                    this.saw_eof = true;
+                    return Poll::Ready(Ok(()));
+                }
+                let newly_read = &limited.filled()[before..];
+                this.bytes_read = this
+                    .bytes_read
+                    .checked_add(count as u64)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
+                if this.bytes_read > this.max_bytes {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "blob write exceeds expected length",
+                    )));
+                }
+                this.hasher.update(newly_read);
+                buffer.advance(count);
+                Poll::Ready(Ok(()))
+            }
         }
-        self.bytes_read = self
-            .bytes_read
-            .checked_add(count as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
-        if self.bytes_read > self.max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "blob write exceeds expected length",
-            ));
-        }
-        self.hasher.update(&buffer[..count]);
-        Ok(count)
     }
 }
 
 struct HashingOwnedReader {
-    inner: Box<dyn Read + Send>,
+    inner: Box<dyn AsyncRead + Unpin + Send>,
     max_bytes: u64,
     bytes_read: u64,
     saw_eof: bool,
@@ -878,7 +898,7 @@ struct HashingOwnedReader {
 }
 
 impl HashingOwnedReader {
-    fn new(inner: Box<dyn Read + Send>, max_bytes: u64) -> Self {
+    fn new(inner: Box<dyn AsyncRead + Unpin + Send>, max_bytes: u64) -> Self {
         Self {
             inner,
             max_bytes,
@@ -903,35 +923,51 @@ impl HashingOwnedReader {
     }
 }
 
-impl Read for HashingOwnedReader {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let remaining = self.max_bytes.saturating_sub(self.bytes_read);
+impl AsyncRead for HashingOwnedReader {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let remaining = this.max_bytes.saturating_sub(this.bytes_read);
         let allowed = usize::try_from(remaining.saturating_add(1))
             .unwrap_or(usize::MAX)
-            .min(buffer.len());
+            .min(buffer.remaining());
         if allowed == 0 {
-            return Err(io::Error::new(
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "blob read exceeds authorized length",
-            ));
+            )));
         }
-        let count = self.inner.read(&mut buffer[..allowed])?;
-        if count == 0 {
-            self.saw_eof = true;
-            return Ok(0);
+
+        let mut limited = buffer.take(allowed);
+        let before = limited.filled().len();
+        match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(())) => {
+                let count = limited.filled().len() - before;
+                if count == 0 {
+                    this.saw_eof = true;
+                    return Poll::Ready(Ok(()));
+                }
+                let newly_read = &limited.filled()[before..];
+                this.bytes_read = this
+                    .bytes_read
+                    .checked_add(count as u64)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
+                if this.bytes_read > this.max_bytes {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "blob read exceeds authorized length",
+                    )));
+                }
+                this.hasher.update(newly_read);
+                buffer.advance(count);
+                Poll::Ready(Ok(()))
+            }
         }
-        self.bytes_read = self
-            .bytes_read
-            .checked_add(count as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "byte count overflow"))?;
-        if self.bytes_read > self.max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "blob read exceeds authorized length",
-            ));
-        }
-        self.hasher.update(&buffer[..count]);
-        Ok(count)
     }
 }
 
@@ -950,7 +986,7 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 mod tests {
     use std::{
         collections::BTreeMap,
-        io::{Cursor, Read},
+        io::Cursor,
         sync::{
             Mutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -1158,11 +1194,12 @@ mod tests {
             &self,
             object_locator: &str,
             expected_byte_len: u64,
-            input: &mut (dyn Read + Send),
+            input: &mut (dyn AsyncRead + Unpin + Send),
         ) -> Result<ProviderObjectMetadata, ProviderError> {
             let mut bytes = Vec::new();
             input
                 .read_to_end(&mut bytes)
+                .await
                 .map_err(|_| ProviderError::new(ProviderErrorKind::Other, "read_failed"))?;
             if bytes.len() as u64 != expected_byte_len {
                 return Err(ProviderError::new(
@@ -1222,7 +1259,7 @@ mod tests {
             &self,
             object_locator: &str,
             generation: &str,
-        ) -> Result<Box<dyn Read + Send>, ProviderError> {
+        ) -> Result<Box<dyn AsyncRead + Unpin + Send>, ProviderError> {
             let object = self
                 .objects
                 .lock()
@@ -1494,7 +1531,7 @@ mod tests {
 
         let mut read = provider.open_read(locator, "generation-1").await.unwrap();
         let mut bytes = Vec::new();
-        read.read_to_end(&mut bytes).unwrap();
+        read.read_to_end(&mut bytes).await.unwrap();
         assert_eq!(bytes, b"one");
     }
 }
