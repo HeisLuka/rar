@@ -1,0 +1,259 @@
+name: PUB blocker artifact acquisition
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pub-blocker-acquisition.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pub-blocker-acquisition-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  aspose-19-10-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve and fetch official Aspose.PUB 19.10.1 DLL package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          page="https://releases.aspose.com/pub/net/new-releases/aspose.pub-for-.net-19.10.1-dlls-only/"
+          curl -fL --retry 3 --retry-delay 2 --max-time 120 "$page" -o out/page.html
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from urllib.parse import urljoin
+          from pathlib import Path
+          base="https://releases.aspose.com/pub/net/new-releases/aspose.pub-for-.net-19.10.1-dlls-only/"
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__(); self.hrefs=[]
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower()=="a":
+                      d=dict(attrs)
+                      if d.get("href"): self.hrefs.append(urljoin(base,d["href"]))
+          p=P(); p.feed(Path("out/page.html").read_text(errors="replace"))
+          c=[]
+          for u in p.hrefs:
+              lo=u.lower()
+              if any(x in lo for x in [".zip",".msi","download","downloads"]):
+                  if u not in c: c.append(u)
+          Path("out/candidates.txt").write_text("\n".join(c)+"\n")
+          print("\n".join(c))
+          PY
+          found=0
+          while IFS= read -r url; do
+            [ -n "$url" ] || continue
+            echo "TRY $url" | tee -a out/fetch.log
+            if curl -fL --retry 2 --retry-delay 2 --max-time 900 "$url" -o out/candidate.bin.tmp; then
+              ctype="$(file -b --mime-type out/candidate.bin.tmp || true)"
+              size="$(stat -c %s out/candidate.bin.tmp)"
+              printf 'url=%s\ncontent_type=%s\nsize=%s\n' "$url" "$ctype" "$size" | tee out/selected.txt
+              if [ "$size" -gt 1000000 ] && [ "$ctype" != "text/html" ]; then
+                mv out/candidate.bin.tmp out/Aspose.PUB-19.10.1-dlls.bin
+                found=1
+                break
+              fi
+            fi
+          done < out/candidates.txt
+          test "$found" -eq 1
+          sha256sum out/Aspose.PUB-19.10.1-dlls.bin | tee out/sha256.txt
+          sha1sum out/Aspose.PUB-19.10.1-dlls.bin | tee out/sha1.txt
+          md5sum out/Aspose.PUB-19.10.1-dlls.bin | tee out/md5.txt
+          file out/Aspose.PUB-19.10.1-dlls.bin | tee out/file.txt
+          stat -c 'size_bytes=%s' out/Aspose.PUB-19.10.1-dlls.bin | tee out/size.txt
+      - name: Upload Aspose acquisition
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspose-pub-19.10.1-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  pubconv-12-0-4518:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Fetch exact archived Microsoft X12-30247 package
+        shell: bash
+        env:
+          EXPECTED_SHA256: "6caa1d57b0b91485beb7cfbd38a44ab723043651a117223ef7ac735bf920c6dd"
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          url="https://web.archive.org/web/20111006143949id_/http://msft-dnl.digitalrivercontent.net/msoffice/pub/X12-30247/X12-30247.exe"
+          echo "$url" > out/source-url.txt
+          curl -fL --retry 4 --retry-delay 5 --max-time 1800 "$url" -o out/X12-30247.exe
+          sha256sum out/X12-30247.exe | tee out/sha256.txt
+          actual="$(sha256sum out/X12-30247.exe | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+          sha1sum out/X12-30247.exe | tee out/sha1.txt
+          md5sum out/X12-30247.exe | tee out/md5.txt
+          stat -c 'size_bytes=%s' out/X12-30247.exe | tee out/size.txt
+          file out/X12-30247.exe | tee out/file.txt
+          test "$(stat -c %s out/X12-30247.exe)" -eq 233139240
+      - name: Upload exact X12-30247 package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pubconv-x12-30247-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  corel-x4-trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Fetch archived original Corel X4 trial
+        shell: bash
+        env:
+          EXPECTED_SHA1: "9b1232bb63cf1257c447146da8e059297fcffa35"
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          url="https://web.archive.org/web/20130509032142id_/http://www.corel.com/akdlm/6763/downloads/trials/GraphicsSuiteX4/CorelDRAWGraphicsSuiteX4Installer_EN.exe"
+          echo "$url" > out/source-url.txt
+          curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/CorelDRAWGraphicsSuiteX4Installer_EN.exe
+          sha1sum out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/sha1.txt
+          actual="$(sha1sum out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA1"
+          sha256sum out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/sha256.txt
+          md5sum out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/md5.txt
+          stat -c 'size_bytes=%s' out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/size.txt
+          file out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/file.txt
+      - name: Upload exact Corel X4 trial
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corel-x4-trial-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publisher-2010:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            filename: X16-32967.exe
+            url: https://web.archive.org/web/20110930003223id_/http://msft.digitalrivercontent.net/office2010/X16-32967.exe
+          - arch: x64
+            filename: X16-32930.exe
+            url: https://web.archive.org/web/20110930003223id_/http://msft.digitalrivercontent.net/office2010/X16-32930.exe
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Fetch archived original Publisher 2010 ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          echo "${{ matrix.url }}" > out/source-url.txt
+          curl -fL --retry 4 --retry-delay 5 --max-time 3000 "${{ matrix.url }}" -o "out/${{ matrix.filename }}"
+          size="$(stat -c %s "out/${{ matrix.filename }}")"
+          test "$size" -gt 50000000
+          head -c 2 "out/${{ matrix.filename }}" | od -An -tx1 | tr -d ' \n' | grep -qi '^4d5a$'
+          sha256sum "out/${{ matrix.filename }}" | tee out/sha256.txt
+          sha1sum "out/${{ matrix.filename }}" | tee out/sha1.txt
+          md5sum "out/${{ matrix.filename }}" | tee out/md5.txt
+          printf 'size_bytes=%s\n' "$size" | tee out/size.txt
+          file "out/${{ matrix.filename }}" | tee out/file.txt
+      - name: Upload Publisher 2010 candidate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publisher-2010-${{ matrix.arch }}-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  modern-12527-filelists:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [32, 64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch exact Microsoft build file list
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          url="https://config.office.com/api/filelist?Channel=Insiders&Version=16.0.12527.22145&Arch=${{ matrix.arch }}&AllLanguages=True"
+          echo "$url" > out/source-url.txt
+          curl -fL --retry 3 --retry-delay 2 --max-time 120 "$url" -o out/filelist.json
+          python3 -m json.tool out/filelist.json > out/filelist.pretty.json
+          sha256sum out/filelist.json | tee out/sha256.txt
+          stat -c 'size_bytes=%s' out/filelist.json | tee out/size.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modern-12527-filelist-${{ matrix.arch }}-${{ github.run_id }}
+          path: out/**
+          retention-days: 30
+
+  historical-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Search Internet Archive by exact historical identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 - <<'PY'
+          import json, subprocess, urllib.parse
+          from pathlib import Path
+          queries = {
+            "publisher2000_trial": '"Microsoft Publisher 2000" AND (trial OR "trial cd")',
+            "publisher2002_trial": '"Publisher 2002" AND (trial OR X08-20172 OR X08-06831)',
+            "publisher2003_trial": '"Publisher 2003" AND (SKU119 OR X10-13869 OR X09-55389)',
+            "vbapb10_chm": '"VBAPB10.CHM"',
+            "keyview_mspubsr": '"mspubsr.dll"',
+            "pub2id": '"Pub2ID" AND (installer OR updater OR plugin)',
+            "office2000_cd2": '"O9PRMCD02"',
+            "office2000_cd1": '"O9PROCD01"',
+          }
+          for name,q in queries.items():
+              url="https://archive.org/advancedsearch.php?"+urllib.parse.urlencode([
+                  ("q",q),("fl[]","identifier"),("fl[]","title"),("fl[]","description"),
+                  ("fl[]","date"),("rows","50"),("page","1"),("output","json")
+              ])
+              p=subprocess.run(["curl","-fL","--retry","3","--max-time","120",url],capture_output=True)
+              Path(f"out/{name}.url.txt").write_text(url+"\n")
+              Path(f"out/{name}.json").write_bytes(p.stdout)
+              Path(f"out/{name}.stderr.txt").write_bytes(p.stderr)
+              if p.returncode==0:
+                  try:
+                      data=json.loads(p.stdout)
+                      docs=data.get("response",{}).get("docs",[])
+                      Path(f"out/{name}.summary.json").write_text(json.dumps({
+                          "query":q,
+                          "numFound":data.get("response",{}).get("numFound"),
+                          "top":docs[:20],
+                      },indent=2,ensure_ascii=False))
+                  except Exception as e:
+                      Path(f"out/{name}.parse-error.txt").write_text(repr(e))
+          PY
+          for f in out/*.summary.json; do echo "===== $f ====="; cat "$f"; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historical-acquisition-discovery-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
