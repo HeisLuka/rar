@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/fixed-output/v1/shaped-flow-receipt.schema.json",
+  "title": "Chaptera shaped-flow to fixed-PDF producer receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "source_hash",
+    "flow_id",
+    "lines",
+    "runs",
+    "story_overset",
+    "invariants"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.fixed-pdf-shaped-flow-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "source_hash": {"$ref": "#/$defs/sha256"},
+    "flow_id": {"$ref": "#/$defs/hashId"},
+    "lines": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/line"}
+    },
+    "runs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/run"}
+    },
+    "story_overset": {"type": "boolean"},
+    "invariants": {"$ref": "#/$defs/invariants"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line_index",
+        "frame_node_id",
+        "story_id",
+        "scalar_start",
+        "scalar_end",
+        "glyph_count",
+        "glyph_sequence_hash",
+        "units_per_em",
+        "measured_width"
+      ],
+      "properties": {
+        "line_index": {"type": "integer", "minimum": 0},
+        "frame_node_id": {"$ref": "#/$defs/uuid"},
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "scalar_start": {"type": "integer", "minimum": 0},
+        "scalar_end": {"type": "integer", "minimum": 0},
+        "glyph_count": {"type": "integer", "minimum": 0},
+        "glyph_sequence_hash": {"$ref": "#/$defs/hashId"},
+        "units_per_em": {"type": "integer", "minimum": 1},
+        "measured_width": {"type": "integer", "minimum": 0}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_index",
+        "frame_node_id",
+        "story_id",
+        "scalar_base",
+        "scalar_end",
+        "glyph_count",
+        "glyph_sequence_hash",
+        "baseline_x",
+        "baseline_y"
+      ],
+      "properties": {
+        "run_index": {"type": "integer", "minimum": 0},
+        "frame_node_id": {"$ref": "#/$defs/uuid"},
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "scalar_base": {"type": "integer", "minimum": 0},
+        "scalar_end": {"type": "integer", "minimum": 0},
+        "glyph_count": {"type": "integer", "minimum": 0},
+        "glyph_sequence_hash": {"$ref": "#/$defs/hashId"},
+        "baseline_x": {"type": "integer"},
+        "baseline_y": {"type": "integer"}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reshaping_calls",
+        "raw_text_emitted",
+        "ascii_gate_applied",
+        "overset_tail_painted",
+        "line_order_preserved",
+        "story_global_clusters_preserved"
+      ],
+      "properties": {
+        "reshaping_calls": {"const": 0},
+        "raw_text_emitted": {"const": false},
+        "ascii_gate_applied": {"const": false},
+        "overset_tail_painted": {"const": false},
+        "line_order_preserved": {"const": true},
+        "story_global_clusters_preserved": {"const": true}
+      }
+    }
+  }
+}
