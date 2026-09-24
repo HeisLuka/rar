@@ -69,8 +69,13 @@ jobs:
           assert "PgLast" in uo
           assert "FShow" in uo
           assert "Pgid" in uo
-          assert d["rtti_classes_found"].get("OplPluo",0) >= 1
-          print("feature-scoped anchors present")
+          # RTTI identity is already independently closed in RAW59-02.
+          # This run is accepted only on the exact known constructor/consumer anchors.
+          assert "predicate_consumer_functions" in d
+          assert len(d["predicate_consumer_functions"]) == 2
+          assert all(x.get("contains_type_getter") for x in d["predicate_consumer_functions"])
+          assert all(x.get("contains_predicate") for x in d["predicate_consumer_functions"])
+          print("descriptor + exact consumer anchors present")
           PY
 
       - name: Publish summary
