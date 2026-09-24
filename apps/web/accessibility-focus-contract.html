@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Accessibility / Focus V1 Contract</title>
+<style>
+  body { font-family: system-ui, sans-serif; }
+  #visual-host { width: 900px; height: 500px; position: relative; overflow: hidden; }
+  #story-editor { min-height: 2rem; border: 1px solid #999; }
+</style>
+<button id="page-nav" data-focus-owner="page_navigation">Page 1</button>
+<div id="semantic-mirror"></div>
+<div id="visual-host" aria-hidden="true"></div>
+<label>
+  Inspector name
+  <input id="inspector" data-focus-owner="inspector" value="Object name">
+</label>
+<div
+  id="story-editor"
+  data-focus-owner="story"
+  contenteditable="true"
+  role="textbox"
+  aria-label="Story text"
+>hello world</div>
+<button id="open-dialog">Open dialog</button>
+<dialog id="dialog">
+  <label>Dialog field <input id="dialog-input"></label>
+  <button id="dialog-close">Close</button>
+</dialog>
+
+<script type="module">
+import {createRenderer} from "/apps/web/render-v1.mjs";
+import {
+  SemanticAccessibilityControllerV1,
+  attachBrowserFocusRoutingV1,
+} from "/apps/web/accessibility-focus-v1.mjs";
+
+const BASE_VIEW = {
+  emu_per_css_px: 9525,
+  zoom: 1,
+  pan_x_css_px: 0,
+  pan_y_css_px: 0,
+  page_gap_css_px: 32,
+  page_margin_css_px: 24,
+};
+
+const fixtureUrl = "/packages/protocol/scene/v1/fixtures/group-table.json";
+const scene = await (await fetch(fixtureUrl)).json();
+const semanticHost = document.querySelector("#semantic-mirror");
+const visualHost = document.querySelector("#visual-host");
+
+const semantic = new SemanticAccessibilityControllerV1({
+  host: semanticHost,
+  snapshot: scene,
+  activeNodeId: scene.nodes[0]?.node_id ?? null,
+});
+const routing = attachBrowserFocusRoutingV1({
+  root: document,
+  semanticController: semantic,
+});
+
+let renderer = null;
+let rendererKind = null;
+
+function activeElementState() {
+  const el = document.activeElement;
+  return {
+    id: el?.id ?? null,
+    role: el?.getAttribute?.("role") ?? null,
+    node_id: el?.dataset?.nodeId ?? null,
+    tag: el?.tagName?.toLowerCase() ?? null,
+  };
+}
+
+function tabStops() {
+  return [...document.querySelectorAll(
+    'button,input,select,textarea,[contenteditable="true"],[tabindex]'
+  )]
+    .filter((el) => !el.closest('dialog:not([open])'))
+    .filter((el) => el.tabIndex >= 0)
+    .map((el) => ({
+      id: el.id || null,
+      role: el.getAttribute("role"),
+      node_id: el.dataset.nodeId || null,
+      tabindex: el.tabIndex,
+      focus_owner: el.dataset.focusOwner || null,
+    }));
+}
+
+async function setRenderer(kind) {
+  renderer?.destroy();
+  renderer = createRenderer(kind, visualHost, scene, BASE_VIEW);
+  rendererKind = kind;
+  const stats = renderer.stats();
+  semantic.reproject(scene);
+  await new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return {
+    renderer_kind: kind,
+    renderer_stats: stats,
+    semantic_state: semantic.snapshotState(),
+    active_element: activeElementState(),
+  };
+}
+
+await setRenderer("svg");
+
+document.querySelector("#open-dialog").addEventListener("click", () => {
+  document.querySelector("#dialog").showModal();
+  document.querySelector("#dialog-input").focus();
+});
+document.querySelector("#dialog-close").addEventListener("click", () => {
+  document.querySelector("#dialog").close();
+});
+
+window.__a11yFocusContract = {
+  sceneSummary() {
+    return {
+      document_id: scene.document_id,
+      revision_id: scene.revision_id,
+      node_ids: scene.nodes.map((node) => node.node_id),
+    };
+  },
+  semanticState() {
+    return semantic.snapshotState();
+  },
+  focusNode(nodeId) {
+    return semantic.focusSceneNode(nodeId);
+  },
+  selectNodes(nodeIds) {
+    return semantic.setSelectedNodeIds(nodeIds);
+  },
+  async setRenderer(kind) {
+    return setRenderer(kind);
+  },
+  rendererKind() {
+    return rendererKind;
+  },
+  commands() {
+    return structuredClone(routing.commands);
+  },
+  clearCommands() {
+    routing.commands.splice(0);
+  },
+  setTransientOperation(value) {
+    routing.setTransientOperation(value);
+  },
+  composing() {
+    return routing.isComposing();
+  },
+  activeElement: activeElementState,
+  tabStops,
+};
+</script>
