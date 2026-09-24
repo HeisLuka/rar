@@ -67,11 +67,12 @@ jobs:
               "cmp    esi,DWORD PTR [ebp+0x10]",
               "mov    eax,ecx",
               "mov    edx,ecx",
-              "ret    0xc",
           ]
           for token in required:
               if token not in body:
                   raise SystemExit(f"expected binary-search opcode pattern absent: {token}")
+          if not re.search(r"\bret\s+0xc\b", body):
+              raise SystemExit("expected binary-search return instruction absent: ret 0xc")
 
           call_addrs=[]
           for line in all_dis.splitlines():
