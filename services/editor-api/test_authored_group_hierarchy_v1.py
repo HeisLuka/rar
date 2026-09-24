@@ -74,7 +74,7 @@ class AuthoredGroupHierarchyV1Tests(unittest.TestCase):
 
     def test_parent_back_reference_mismatch_fails_closed(self):
         project = valid_project()
-        project["nodes"]["rect:a"]["parent_id"] = "page:1"
+        project["nodes"]["rect:a"]["parent_id"] = "group:other"
         with self.assertRaisesRegex(AuthoredGroupHierarchyError, "does not point back"):
             validate_authored_group_hierarchy_v1(project)
 
