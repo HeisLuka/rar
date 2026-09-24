@@ -1,0 +1,493 @@
+name: TEMP CORPUS brochure lineage execution
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-brochure-01.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-corpus-lineage-brochure-01
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB/archive tools
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Rehydrate exact triad and emit source-free lineage receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import difflib
+          import hashlib
+          import json
+          import re
+          import subprocess
+          import tempfile
+          import time
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          import olefile
+
+          UA = "rar-corpus-lineage-brochure/1.0"
+          MAX_ROOT = 64 * 1024 * 1024
+          SUMMARY = "/\x05SummaryInformation"
+          CONTENTS = "/Contents"
+          COMPOBJ = "/\x01CompObj"
+          INTERNAL = "/\x03Internal"
+
+          files = {
+              "publisher2": {
+                  "filename": "BROCHURE.PUB",
+                  "sha256": "2c1e67b1a2db446babf6cc4f871a9e942425984b5697d5980657d2ba8caddb0d",
+                  "size": 22528,
+                  "member": "TEMPLATE/BROCHURE.PUB",
+                  "root_sha256": "8f1e46dd43be728d7b39f53cf4f642149b19eebe0c74103270fc14ecae1291c4",
+                  "root_size": 23851008,
+                  "root_kind": "iso",
+                  "urls": [
+                      "https://dn721802.ca.archive.org/0/items/microsoft-publisher-2.0_202011/microsoft-publisher-2.0.iso",
+                      "https://archive.org/download/microsoft-publisher-2.0_202011/microsoft-publisher-2.0.iso",
+                  ],
+                  "source_page": "https://archive.org/details/microsoft-publisher-2.0_202011",
+                  "provenance_class": "Microsoft Publisher 2.0 installation media",
+                  "additional_exact_media": [
+                      {
+                          "label": "Microsoft Publisher 2.0a.iso",
+                          "root_sha256": "0bcf5cc2915286c00bc51ec5bbe0b4d4cdd940a50cdb3c7caea51ebe9cb5afc8",
+                          "source_page": "https://archive.org/details/microsoft-home-collection-1993-1995-",
+                      },
+                      {
+                          "label": "PUB20_GER.iso",
+                          "root_sha256": "970aff60fec2629ae62685387eb76b69123015ef96fe1cae3f72d0472071a7f5",
+                          "source_page": "https://archive.org/details/microsoft-publisher-2.0-disc",
+                      },
+                      {
+                          "label": "mspublisher.iso",
+                          "root_sha256": "ee5540db799447c216a1756375adf3767e93893364b5d425ac51a1d921500dcd",
+                          "source_page": "https://archive.org/details/mspublisher_202602",
+                      },
+                  ],
+              },
+              "compaq1": {
+                  "filename": "BROCHUR1.PUB",
+                  "sha256": "acda39da541203f9f7b451caa9ba70e0afc860ab8a2bc242353161e07b422989",
+                  "size": 24576,
+                  "member": "COMPAQ_4xx_433_425_C-FILES_MS-DOS_6_2/MSPUB/TEMPLATE/BROCHUR1.PUB",
+                  "root_sha256": "e00e7eeadb82d987083c8234006feaa12fe60fded218e1995af6ecb5b0d27a89",
+                  "root_size": 44319721,
+                  "root_kind": "zip",
+                  "urls": [
+                      "https://dn721606.ca.archive.org/0/items/compaq425433filesmsdos62/COMPAQ_4xx_433_425_C-FILES_MS-DOS_6_2.zip",
+                      "https://archive.org/download/compaq425433filesmsdos62/COMPAQ_4xx_433_425_C-FILES_MS-DOS_6_2.zip",
+                  ],
+                  "source_page": "https://archive.org/details/compaq425433filesmsdos62",
+                  "provenance_class": "Compaq Presario 425/433 factory image, MS-DOS 6.2, MSPUB/TEMPLATE",
+              },
+              "compaq2": {
+                  "filename": "BROCHUR2.PUB",
+                  "sha256": "4fb4ef028ac41c55ab42a8968e4321c1b55820086224c1823d25ab1b325db8e7",
+                  "size": 24576,
+                  "member": "COMPAQ_4xx_433_425_C-FILES_MS-DOS_6_2/MSPUB/TEMPLATE/BROCHUR2.PUB",
+                  "root_sha256": "e00e7eeadb82d987083c8234006feaa12fe60fded218e1995af6ecb5b0d27a89",
+                  "root_size": 44319721,
+                  "root_kind": "zip",
+                  "urls": [
+                      "https://dn721606.ca.archive.org/0/items/compaq425433filesmsdos62/COMPAQ_4xx_433_425_C-FILES_MS-DOS_6_2.zip",
+                      "https://archive.org/download/compaq425433filesmsdos62/COMPAQ_4xx_433_425_C-FILES_MS-DOS_6_2.zip",
+                  ],
+                  "source_page": "https://archive.org/details/compaq425433filesmsdos62",
+                  "provenance_class": "Compaq Presario 425/433 factory image, MS-DOS 6.2, MSPUB/TEMPLATE",
+              },
+          }
+
+          def sha256(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def fetch_exact(urls, dest: Path, expected_sha: str, expected_size: int) -> str:
+              last = None
+              for url in urls:
+                  for attempt in range(3):
+                      try:
+                          req = urllib.request.Request(
+                              url,
+                              headers={"User-Agent": UA, "Accept-Encoding": "identity"},
+                          )
+                          h = hashlib.sha256()
+                          total = 0
+                          with urllib.request.urlopen(req, timeout=90) as r, dest.open("wb") as f:
+                              while True:
+                                  chunk = r.read(1024 * 1024)
+                                  if not chunk:
+                                      break
+                                  total += len(chunk)
+                                  if total > MAX_ROOT:
+                                      raise ValueError(f"root exceeds cap: {total}")
+                                  h.update(chunk)
+                                  f.write(chunk)
+                          actual = h.hexdigest()
+                          if total != expected_size:
+                              raise ValueError(f"root size drift: {total} != {expected_size}")
+                          if actual != expected_sha:
+                              raise ValueError(f"root SHA drift: {actual} != {expected_sha}")
+                          return url
+                      except Exception as exc:
+                          last = exc
+                          dest.unlink(missing_ok=True)
+                          if attempt < 2:
+                              time.sleep(2 ** attempt)
+              raise RuntimeError(f"all root fetches failed: {last}")
+
+          def extract_iso(path: Path, member: str) -> bytes:
+              proc = subprocess.run(
+                  ["7z", "x", "-so", str(path), member],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+              )
+              return proc.stdout
+
+          def extract_zip(path: Path, member: str) -> bytes:
+              with zipfile.ZipFile(path) as zf:
+                  return zf.read(member)
+
+          def safe_value(value):
+              if value is None:
+                  return None
+              if isinstance(value, bytes):
+                  return {"byte_len": len(value), "sha256": sha256(value)}
+              if hasattr(value, "isoformat"):
+                  try:
+                      return value.isoformat()
+                  except Exception:
+                      pass
+              if isinstance(value, (str, int, float, bool)):
+                  return value if not isinstance(value, str) else value[:512]
+              if isinstance(value, (list, tuple)):
+                  return [safe_value(v) for v in value]
+              return str(value)[:512]
+
+          META_FIELDS = [
+              "codepage", "title", "subject", "author", "keywords", "comments",
+              "template", "last_saved_by", "revision_number", "total_edit_time",
+              "last_printed", "create_time", "last_saved_time", "num_pages",
+              "num_words", "num_chars", "thumbnail", "creating_application",
+              "security", "codepage_doc", "category", "presentation_target",
+              "bytes", "lines", "paragraphs", "slides", "notes", "hidden_slides",
+              "mm_clips", "scale_crop", "heading_pairs", "titles_of_parts",
+              "manager", "company", "links_dirty", "chars_with_spaces",
+              "shared_doc", "link_base", "hlinks", "hlinks_changed", "version",
+              "dig_sig", "content_type", "content_status", "language", "doc_version",
+          ]
+
+          def cfb_probe(data: bytes) -> dict:
+              with olefile.OleFileIO(data) as ole:
+                  streams = {}
+                  for parts in ole.listdir(streams=True, storages=False):
+                      path = "/" + "/".join(parts)
+                      payload = ole.openstream(parts).read()
+                      streams[path] = payload
+                  try:
+                      meta = ole.get_metadata()
+                      metadata = {
+                          key: safe_value(getattr(meta, key, None))
+                          for key in META_FIELDS
+                          if getattr(meta, key, None) is not None
+                      }
+                  except Exception as exc:
+                      metadata = {"_error": f"{type(exc).__name__}:{exc}"}
+              summary = {
+                  "stream_count": len(streams),
+                  "stream_paths": sorted(streams),
+                  "streams": {
+                      path: {"len": len(payload), "sha256": sha256(payload)}
+                      for path, payload in sorted(streams.items())
+                  },
+                  "summary_metadata": metadata,
+              }
+              contents = streams.get(CONTENTS, b"")
+              if len(contents) >= 4 and contents[:2] == b"\xe8\xac":
+                  summary["contents_family_marker"] = f"0x{int.from_bytes(contents[2:4], 'little'):04X}"
+              else:
+                  summary["contents_family_marker"] = "unrecognized"
+              return summary, streams
+
+          def common_prefix(a: bytes, b: bytes) -> int:
+              n = min(len(a), len(b))
+              i = 0
+              while i < n and a[i] == b[i]:
+                  i += 1
+              return i
+
+          def common_suffix(a: bytes, b: bytes, prefix: int) -> int:
+              n = min(len(a), len(b)) - prefix
+              i = 0
+              while i < n and a[len(a) - 1 - i] == b[len(b) - 1 - i]:
+                  i += 1
+              return i
+
+          def token_hashes(data: bytes) -> set[str]:
+              out = set()
+              for match in re.finditer(rb"[\x20-\x7e]{4,}", data):
+                  out.add("a:" + sha256(match.group(0)))
+              for match in re.finditer(rb"(?:[\x20-\x7e]\x00){4,}", data):
+                  out.add("u:" + sha256(match.group(0)))
+              return out
+
+          def delta_stream(a: bytes, b: bytes) -> dict:
+              prefix = common_prefix(a, b)
+              suffix = common_suffix(a, b, prefix)
+              sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+              ops = []
+              for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                  if tag == "equal":
+                      continue
+                  left = a[i1:i2]
+                  right = b[j1:j2]
+                  ops.append({
+                      "tag": tag,
+                      "left_offset": i1,
+                      "left_len": len(left),
+                      "left_sha256": sha256(left),
+                      "right_offset": j1,
+                      "right_len": len(right),
+                      "right_sha256": sha256(right),
+                  })
+              ta, tb = token_hashes(a), token_hashes(b)
+              union = ta | tb
+              return {
+                  "left_len": len(a),
+                  "right_len": len(b),
+                  "common_prefix": prefix,
+                  "common_suffix": suffix,
+                  "sequence_match_ratio": round(sm.ratio(), 6),
+                  "delta_span_count": len(ops),
+                  "delta_spans": ops,
+                  "text_token_hash_count_left": len(ta),
+                  "text_token_hash_count_right": len(tb),
+                  "text_token_overlap": len(ta & tb),
+                  "text_token_jaccard": round(len(ta & tb) / len(union), 6) if union else 1.0,
+              }
+
+          def metadata_diff(a: dict, b: dict) -> dict:
+              keys = sorted(set(a) | set(b))
+              return {
+                  k: {"left": a.get(k), "right": b.get(k)}
+                  for k in keys
+                  if a.get(k) != b.get(k)
+              }
+
+          def compare(left_key: str, right_key: str, probes: dict, raw_streams: dict) -> dict:
+              lp = probes[left_key]
+              rp = probes[right_key]
+              ls = raw_streams[left_key]
+              rs = raw_streams[right_key]
+              paths = sorted(set(ls) | set(rs))
+              changed = []
+              stream_deltas = {}
+              for path in paths:
+                  a = ls.get(path)
+                  b = rs.get(path)
+                  if a is None or b is None or a != b:
+                      changed.append(path)
+                      if a is not None and b is not None:
+                          stream_deltas[path] = delta_stream(a, b)
+                      else:
+                          stream_deltas[path] = {
+                              "left_present": a is not None,
+                              "right_present": b is not None,
+                          }
+              unchanged = [
+                  path for path in paths
+                  if path in ls and path in rs and ls[path] == rs[path]
+              ]
+              if not changed:
+                  conclusion = "same-logical"
+              elif (
+                  set(changed).issubset({SUMMARY, CONTENTS})
+                  and COMPOBJ in unchanged
+                  and INTERNAL in unchanged
+                  and lp["stream_paths"] == rp["stream_paths"]
+                  and lp["contents_family_marker"] == rp["contents_family_marker"]
+              ):
+                  contents_delta = stream_deltas.get(CONTENTS, {})
+                  if (
+                      contents_delta.get("sequence_match_ratio", 0.0) >= 0.60
+                      or contents_delta.get("text_token_jaccard", 0.0) >= 0.50
+                  ):
+                      conclusion = "lineage-plausible-needs-semantic-discriminator"
+                  else:
+                      conclusion = "structural-resemblance-only"
+              else:
+                  conclusion = "structural-resemblance-only"
+              return {
+                  "left": left_key,
+                  "right": right_key,
+                  "left_sha256": files[left_key]["sha256"],
+                  "right_sha256": files[right_key]["sha256"],
+                  "paths_equal": lp["stream_paths"] == rp["stream_paths"],
+                  "contents_family_left": lp["contents_family_marker"],
+                  "contents_family_right": rp["contents_family_marker"],
+                  "changed_streams": changed,
+                  "unchanged_streams": unchanged,
+                  "summary_metadata_diff": metadata_diff(
+                      lp["summary_metadata"], rp["summary_metadata"]
+                  ),
+                  "stream_deltas": stream_deltas,
+                  "conclusion_class": conclusion,
+              }
+
+          out = Path("out")
+          out.mkdir(parents=True, exist_ok=True)
+
+          with tempfile.TemporaryDirectory(prefix="brochure-lineage-") as td_raw:
+              td = Path(td_raw)
+              root_paths = {}
+              selected_urls = {}
+
+              anchor_root = td / "publisher2.iso"
+              selected_urls["publisher2"] = fetch_exact(
+                  files["publisher2"]["urls"],
+                  anchor_root,
+                  files["publisher2"]["root_sha256"],
+                  files["publisher2"]["root_size"],
+              )
+              root_paths["publisher2"] = anchor_root
+
+              compaq_root = td / "compaq.zip"
+              selected_urls["compaq"] = fetch_exact(
+                  files["compaq1"]["urls"],
+                  compaq_root,
+                  files["compaq1"]["root_sha256"],
+                  files["compaq1"]["root_size"],
+              )
+              root_paths["compaq"] = compaq_root
+
+              payloads = {
+                  "publisher2": extract_iso(anchor_root, files["publisher2"]["member"]),
+                  "compaq1": extract_zip(compaq_root, files["compaq1"]["member"]),
+                  "compaq2": extract_zip(compaq_root, files["compaq2"]["member"]),
+              }
+
+              probes = {}
+              raw_streams = {}
+              file_receipts = {}
+              for key, data in payloads.items():
+                  spec = files[key]
+                  if len(data) != spec["size"]:
+                      raise ValueError(f"{key} size drift: {len(data)} != {spec['size']}")
+                  actual = sha256(data)
+                  if actual != spec["sha256"]:
+                      raise ValueError(f"{key} SHA drift: {actual} != {spec['sha256']}")
+                  probe, streams = cfb_probe(data)
+                  probe2, _ = cfb_probe(data)
+                  if probe != probe2:
+                      raise RuntimeError(f"{key} probe nondeterministic")
+                  probes[key] = probe
+                  raw_streams[key] = streams
+                  file_receipts[key] = {
+                      "filename": spec["filename"],
+                      "sha256": spec["sha256"],
+                      "byte_len": len(data),
+                      "member": spec["member"],
+                      "source_page": spec["source_page"],
+                      "provenance_class": spec["provenance_class"],
+                      "root_sha256": spec["root_sha256"],
+                      "root_size": spec["root_size"],
+                      "selected_delivery_url": selected_urls[
+                          "publisher2" if key == "publisher2" else "compaq"
+                      ],
+                      "additional_exact_media": spec.get("additional_exact_media", []),
+                      "probe": probe,
+                  }
+
+              pairs = [
+                  compare("publisher2", "compaq1", probes, raw_streams),
+                  compare("publisher2", "compaq2", probes, raw_streams),
+                  compare("compaq1", "compaq2", probes, raw_streams),
+              ]
+
+              summary = {
+                  "schema": "chaptera.corpus-lineage-brochure.v1",
+                  "task": "CORPUS-LINEAGE-BROCHURE-01",
+                  "file_count": 3,
+                  "pair_count": 3,
+                  "all_exact_members_verified": True,
+                  "pair_conclusions": {
+                      f"{p['left']}->{p['right']}": p["conclusion_class"]
+                      for p in pairs
+                  },
+                  "pair_changed_streams": {
+                      f"{p['left']}->{p['right']}": p["changed_streams"]
+                      for p in pairs
+                  },
+                  "source_safe": True,
+                  "raw_pub_retained": False,
+              }
+
+              (out / "files.json").write_text(
+                  json.dumps(file_receipts, indent=2, ensure_ascii=False),
+                  encoding="utf-8",
+              )
+              (out / "pairwise.json").write_text(
+                  json.dumps(pairs, indent=2, ensure_ascii=False),
+                  encoding="utf-8",
+              )
+              (out / "summary.json").write_text(
+                  json.dumps(summary, indent=2, ensure_ascii=False),
+                  encoding="utf-8",
+              )
+              print(json.dumps(summary, indent=2))
+          PY
+      - name: Enforce source-safe receipt boundary
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s = json.loads(Path("out/summary.json").read_text())
+          assert s["file_count"] == 3, s
+          assert s["pair_count"] == 3, s
+          assert s["all_exact_members_verified"] is True, s
+          assert s["source_safe"] is True, s
+          assert s["raw_pub_retained"] is False, s
+          p = json.loads(Path("out/pairwise.json").read_text())
+          assert len(p) == 3
+          by = {(x["left"], x["right"]): x for x in p}
+          for key in [("publisher2", "compaq1"), ("publisher2", "compaq2")]:
+              row = by[key]
+              assert row["paths_equal"] is True, row
+              assert set(row["changed_streams"]).issubset(
+                  {"/\u0005SummaryInformation", "/Contents"}
+              ), row
+              assert "/\u0001CompObj" in row["unchanged_streams"], row
+              assert "/\u0003Internal" in row["unchanged_streams"], row
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-brochure-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
