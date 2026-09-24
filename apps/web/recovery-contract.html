@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera recovery V1 contract</title>
+<script type="module">
+import {
+  BrowserRecoveryCoordinatorV1,
+  IndexedDbRecoveryStoreV1,
+} from "./recovery-v1.mjs";
+
+const SCOPE = "principal:contract";
+const DOC = "doc:contract";
+const APP = "web-app:v1";
+const SEMANTIC = "move-node:v1";
+const DB = "chaptera-recovery-contract-v1";
+
+function store() {
+  return new IndexedDbRecoveryStoreV1({dbName: DB});
+}
+
+function coordinator(session = "tab:default") {
+  return new BrowserRecoveryCoordinatorV1({
+    store: store(),
+    principalScopeId: SCOPE,
+    documentId: DOC,
+    clientSessionIncarnation: session,
+    appVersion: APP,
+    commandSemanticVersion: SEMANTIC,
+  });
+}
+
+window.recoveryCapabilities = async () => ({
+  indexeddb: !!window.indexedDB,
+  web_locks: !!navigator.locks,
+  broadcast_channel: typeof BroadcastChannel === "function",
+  storage_persisted: navigator.storage?.persisted
+    ? await navigator.storage.persisted()
+    : null,
+});
+
+window.recoveryReset = async () => {
+  await store().clearDocument(SCOPE, DOC);
+  return true;
+};
+
+window.recoveryPrepare = async ({
+  session = "tab:A",
+  clientOperationId,
+  baseRevisionId,
+  lifecycleGeneration = 7,
+  x = 10,
+  commandSemanticVersion = SEMANTIC,
+}) => {
+  const c = new BrowserRecoveryCoordinatorV1({
+    store: store(),
+    principalScopeId: SCOPE,
+    documentId: DOC,
+    clientSessionIncarnation: session,
+    appVersion: APP,
+    commandSemanticVersion,
+  });
+  return c.prepareIntent({
+    clientOperationId,
+    baseRevisionId,
+    lifecycleGeneration,
+    normalizedIntent: {
+      kind: "move_node_to",
+      node_id: "node:1",
+      x_emu: x,
+      y_emu: 20,
+    },
+  });
+};
+
+window.recoveryMarkUnknown = async (clientOperationId, session = "tab:A") =>
+  coordinator(session).markSendStarted(clientOperationId);
+
+window.recoveryList = async (session = "tab:reader") =>
+  coordinator(session).listPending();
+
+window.recoveryPlan = async ({
+  session = "tab:recovery",
+  currentRevisionId,
+  lifecycleGeneration = 7,
+  appVersion = APP,
+  commandSemanticVersion = SEMANTIC,
+  authzAllowed = true,
+  outcomes = {},
+}) => coordinator(session).planRecovery({
+  principal_scope_id: SCOPE,
+  current_revision_id: currentRevisionId,
+  lifecycle_generation: lifecycleGeneration,
+  app_version: appVersion,
+  command_semantic_version: commandSemanticVersion,
+  authz_allowed: authzAllowed,
+  lookupOperationOutcome: async (operationId) =>
+    outcomes[operationId] ?? {status: "not_found"},
+});
+</script>
