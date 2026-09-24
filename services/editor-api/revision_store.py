@@ -13,6 +13,27 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
+try:
+    from authored_stack_v1 import reorder_authored_lane, validate_authored_lane
+except ModuleNotFoundError:
+    # Some local producer builders load revision_store.py directly via
+    # importlib.spec_from_file_location without placing this sibling directory
+    # on sys.path. Load the source-neutral sibling explicitly in that case.
+    import importlib.util
+    import pathlib
+
+    _authored_stack_path = pathlib.Path(__file__).with_name("authored_stack_v1.py")
+    _authored_stack_spec = importlib.util.spec_from_file_location(
+        "chaptera_authored_stack_v1",
+        _authored_stack_path,
+    )
+    if _authored_stack_spec is None or _authored_stack_spec.loader is None:
+        raise ImportError("cannot load authored_stack_v1 sibling module")
+    _authored_stack_module = importlib.util.module_from_spec(_authored_stack_spec)
+    _authored_stack_spec.loader.exec_module(_authored_stack_module)
+    reorder_authored_lane = _authored_stack_module.reorder_authored_lane
+    validate_authored_lane = _authored_stack_module.validate_authored_lane
+
 
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
@@ -254,6 +275,21 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_paragraph_alignment_request_shape,
             canonical_validator=self._validate_canonical_paragraph_alignment,
+            pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_reorder_authored_stack(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_reorder_authored_stack_request_shape,
+            canonical_validator=self._validate_canonical_reorder_authored_stack,
             pre_execute_validator=pre_execute_validator,
         )
 
@@ -617,6 +653,53 @@ class RevisionKernel:
         depends = request.get("depends_on_client_operation_id")
         if depends is not None and (not isinstance(depends, str) or len(depends) < 8):
             raise ValueError("depends_on_client_operation_id is invalid")
+
+    @staticmethod
+    def _validate_reorder_authored_stack_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.authored-stack-reorder-intent.v1":
+            raise ValueError("V1 authored-stack protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "page_id", "node_id", "expected_before", "mode"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "reorder_authored_stack"
+            or set(command) != allowed
+        ):
+            raise ValueError("ReorderAuthoredStackV1 contains non-intent fields")
+        for field in ("page_id", "node_id"):
+            value = command.get(field)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"ReorderAuthoredStackV1 {field} is required")
+        validate_authored_lane(command.get("expected_before"))
+        if command["node_id"] not in command["expected_before"]:
+            raise ValueError("authored-stack target is not in expected lane")
+        # Also validates mode and no-op against the exact expected lane.
+        reorder_authored_lane(
+            command["expected_before"],
+            command["node_id"],
+            command.get("mode"),
+        )
+
+    @staticmethod
+    def _validate_canonical_reorder_authored_stack(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "reorder_authored_stack":
+            raise ValueError("authoritative executor returned non-authored-stack operation")
+        for field in ("page_id", "node_id", "mode"):
+            if operation.get(field) != command.get(field):
+                raise ValueError(f"canonical authored-stack {field} differs from accepted intent")
+        before = operation.get("before")
+        after = operation.get("after")
+        validate_authored_lane(before)
+        validate_authored_lane(after)
+        if before != command.get("expected_before"):
+            raise ValueError("canonical authored-stack before lane differs from expected precondition")
+        expected_after = reorder_authored_lane(
+            before,
+            command["node_id"],
+            command["mode"],
+        )
+        if after != expected_after:
+            raise ValueError("canonical authored-stack after lane violates V1 reorder law")
 
     @staticmethod
     def _validate_paragraph_alignment_state(state: dict, label: str) -> None:
