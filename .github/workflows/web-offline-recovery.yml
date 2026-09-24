@@ -1,0 +1,58 @@
+name: WEB-OFFLINE-01 recovery contract
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/recovery-v1.mjs"
+      - "apps/web/recovery-v1.test.mjs"
+      - "apps/web/recovery-contract.html"
+      - "tools/run_web_offline_recovery_receipt.mjs"
+      - "tools/run_web_offline_recovery_contract.mjs"
+      - "docs/web-offline-recovery-v1.md"
+      - ".github/workflows/web-offline-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  logic-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run recovery state-machine tests
+        run: node --test apps/web/recovery-v1.test.mjs
+      - name: Produce logic receipt
+        run: node tools/run_web_offline_recovery_receipt.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-offline-recovery-v1-logic
+          path: target/web-offline-recovery-v1/logic-receipt.json
+          if-no-files-found: error
+
+  browser-durable-store:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run IndexedDB recovery contract
+        run: node tools/run_web_offline_recovery_contract.mjs ${{ matrix.browser }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-offline-recovery-v1-${{ matrix.browser }}
+          path: target/web-offline-recovery-v1/${{ matrix.browser }}-receipt.json
+          if-no-files-found: error
