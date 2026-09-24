@@ -1,0 +1,44 @@
+name: CORPUS-VAC Wayback retry failed queries
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/corpus-vac-wayback-retry-errors.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Retry only failed Wayback queries from run 35949861453
+        run: |
+          set -euo pipefail
+          mkdir -p out/discovery
+          python tools/corpus/wayback_pub_seed.py             --url 'https://www.adelphi.edu/brand/wp-content/uploads/sites/55/2020/08/Adelphi-TriFold.pub'             --url 'https://www.tnstate.edu/publications/documents/pubtemplatenewsletter1.pub'             --url 'https://www.wichita.edu/services/printing/_documents/Publisher_8.5x11_portrait_fullbleed_template.pub'             --domain 'adelphi.edu'             --domain 'christchurch-pellon.calderdale.sch.uk'             --domain 'effectivechurchcom.com'             --domain 'ludwell.wilts.sch.uk'             --domain 'stpauls-school.co.uk'             --domain 'txwes.edu'             --domain 'uaf.edu'             --domain 'westga.edu'             --domain 'wichita.edu'             --max-domains 20             --exact-limit 20             --domain-limit 500             --delay 2.0             --timeout 90             --retries 4             --out out/discovery/wayback_retry_seed.csv             --summary out/discovery/wayback_retry_seed.summary.json
+          cat out/discovery/wayback_retry_seed.summary.json
+      - name: Recover only newly returned locators
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py             --seed out/discovery/wayback_retry_seed.csv             --out out/harvest             --max-files -1             --timeout 30             --max-bytes 104857600             --per-host-delay 0.2
+      - name: Keep public artifact manifest-only
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/harvest -type f             ! -name 'manifest.json'             ! -name 'manifest.csv'             -delete || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wayback-retry-errors-${{ github.run_id }}
+          path: |
+            out/discovery/**
+            out/harvest/manifest.json
+            out/harvest/manifest.csv
+          if-no-files-found: error
+          retention-days: 30
