@@ -345,6 +345,16 @@ fn validate_applied(applied: &[AppliedMigration]) -> Result<(), MigrationError> 
     let mut expected_next = 1_i64;
 
     for row in applied {
+        if row.version > CURRENT_SCHEMA_VERSION {
+            return Err(MigrationError::new(
+                "schema_version_too_new",
+                format!(
+                    "database contains migration {} newer than supported {}",
+                    row.version, CURRENT_SCHEMA_VERSION
+                ),
+            ));
+        }
+
         if row.version != expected_next {
             return Err(MigrationError::new(
                 "migration_history_gap",
@@ -625,7 +635,7 @@ mod tests {
         drop(connection);
 
         let error = runtime.status_report().await.unwrap_err();
-        assert_eq!(error.code, "migration_history_gap");
+        assert_eq!(error.code, "schema_version_too_new");
         cleanup(&path);
     }
 
