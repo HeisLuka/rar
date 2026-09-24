@@ -167,7 +167,10 @@ impl ChapteraConfig {
         })?;
 
         let config: Self = toml::from_str(&source).map_err(|error| {
-            ConfigError::new("config_parse_failed", format!("invalid TOML config: {error}"))
+            ConfigError::new(
+                "config_parse_failed",
+                format!("invalid TOML config: {error}"),
+            )
         })?;
 
         config.validate()?;
@@ -346,10 +349,7 @@ fn validate_listener(listen: SocketAddr) -> Result<(), ConfigError> {
     }
 }
 
-fn validate_origin(
-    mode: EnvironmentMode,
-    raw_origin: Option<&str>,
-) -> Result<(), ConfigError> {
+fn validate_origin(mode: EnvironmentMode, raw_origin: Option<&str>) -> Result<(), ConfigError> {
     let Some(raw_origin) = raw_origin else {
         return if mode == EnvironmentMode::Prod {
             Err(ConfigError::new(
@@ -850,11 +850,10 @@ client_secret = {secret_source}
         );
         assert!(toml::from_str::<ChapteraConfig>(&unknown).is_err());
 
-        let insecure = prod_toml(r#"{ source = "env", name = "OIDC_SECRET" }"#)
-            .replace(
-                r#"public_origin = "https://cloud.example.invalid""#,
-                r#"public_origin = "http://cloud.example.invalid""#,
-            );
+        let insecure = prod_toml(r#"{ source = "env", name = "OIDC_SECRET" }"#).replace(
+            r#"public_origin = "https://cloud.example.invalid""#,
+            r#"public_origin = "http://cloud.example.invalid""#,
+        );
         let config: ChapteraConfig = toml::from_str(&insecure).unwrap();
         assert_eq!(
             config.validate().unwrap_err().code,
@@ -909,10 +908,7 @@ client_secret = {secret_source}
             fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
         }
         let direct = resolver
-            .resolve(
-                EnvironmentMode::Prod,
-                &SecretRef::File { path: file },
-            )
+            .resolve(EnvironmentMode::Prod, &SecretRef::File { path: file })
             .unwrap();
         assert_eq!(direct.expose(), b"file-secret");
 
