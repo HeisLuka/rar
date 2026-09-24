@@ -194,6 +194,134 @@ class RevisionKernelTests(unittest.TestCase):
             self.kernel.current_revision(DOCUMENT_ID).revision_id,
         )
 
+class FakeStoryExecutor:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, base_project, command):
+        import hashlib
+        self.calls += 1
+        story = base_project["stories"][command["story_id"]]
+        chars = list(story)
+        start = command["start_scalar"]
+        end = command["end_scalar"]
+        if end > len(chars):
+            raise ValueError("Story range outside canonical text")
+        replacement = command["replacement_text"]
+        after = "".join(chars[:start]) + replacement + "".join(chars[end:])
+        operation = {
+            "kind": "replace_story_range",
+            "story_id": command["story_id"],
+            "start_scalar": start,
+            "end_scalar": end,
+            "replacement_text": replacement,
+            "before_text_hash": hashlib.sha256(story.encode("utf-8")).hexdigest(),
+            "after_text_hash": hashlib.sha256(after.encode("utf-8")).hexdigest(),
+        }
+        project = copy.deepcopy(base_project)
+        project["operations"] = list(project["operations"]) + [copy.deepcopy(operation)]
+        project["stories"] = dict(project["stories"])
+        project["stories"][command["story_id"]] = after
+        return operation, project, [{"key": "story.text", "state": "supported", "note": None}]
+
+
+class StoryRangeCommitTests(unittest.TestCase):
+    def setUp(self):
+        self.kernel = RevisionKernel()
+        self.project = {
+            "schema_version": "pub-editor-v0.4",
+            "source_hash": SOURCE_HASH,
+            "operations": [],
+            "stories": {"story:1": "A😀B"},
+        }
+        self.baseline = self.kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=self.project,
+        )
+        self.executor = FakeStoryExecutor()
+
+    def story_request(self, op_id, start, end, replacement, base=None, depends=None):
+        return {
+            "protocol_version": "chaptera.story-range-intent.v1",
+            "document_id": DOCUMENT_ID,
+            "source_hash": SOURCE_HASH,
+            "base_revision_id": base or self.baseline.revision_id,
+            "client_operation_id": op_id,
+            "depends_on_client_operation_id": depends,
+            "command": {
+                "kind": "replace_story_range",
+                "story_id": "story:1",
+                "start_scalar": start,
+                "end_scalar": end,
+                "replacement_text": replacement,
+            },
+        }
+
+    def test_story_range_commit_uses_scalar_range_and_server_hashes(self):
+        result = self.kernel.commit_story_range(
+            self.story_request("text-op-00000001", 1, 2, "漢"),
+            self.executor,
+        )
+        self.assertEqual("chaptera.commit-accepted.v1", result["protocol_version"])
+        self.assertEqual("replace_story_range", result["canonical_operation"]["kind"])
+        self.assertEqual(1, result["canonical_operation"]["start_scalar"])
+        self.assertEqual(2, result["canonical_operation"]["end_scalar"])
+        self.assertEqual(
+            "A漢B",
+            self.kernel.current_revision(DOCUMENT_ID).project["stories"]["story:1"],
+        )
+        self.assertEqual(1, self.executor.calls)
+
+    def test_story_range_exact_retry_is_idempotent(self):
+        req = self.story_request("text-op-00000002", 1, 2, "漢")
+        first = self.kernel.commit_story_range(copy.deepcopy(req), self.executor)
+        second = self.kernel.commit_story_range(copy.deepcopy(req), self.executor)
+        self.assertEqual(first, second)
+        self.assertEqual(1, self.executor.calls)
+
+    def test_story_range_stale_base_rejected_without_execution(self):
+        first = self.kernel.commit_story_range(
+            self.story_request("text-op-00000003", 1, 2, "漢"),
+            self.executor,
+        )
+        calls = self.executor.calls
+        stale = self.kernel.commit_story_range(
+            self.story_request("text-op-00000004", 0, 1, "X"),
+            self.executor,
+        )
+        self.assertEqual("stale_revision", stale["code"])
+        self.assertEqual(first["revision_id"], stale["current_revision_id"])
+        self.assertEqual(calls, self.executor.calls)
+
+    def test_story_range_same_id_different_payload_conflicts(self):
+        op_id = "text-op-00000005"
+        self.kernel.commit_story_range(
+            self.story_request(op_id, 1, 2, "漢"),
+            self.executor,
+        )
+        current = self.kernel.current_revision(DOCUMENT_ID).revision_id
+        conflict = self.kernel.commit_story_range(
+            self.story_request(op_id, 1, 2, "X"),
+            self.executor,
+        )
+        self.assertEqual("idempotency_conflict", conflict["code"])
+        self.assertEqual(current, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_story_range_invalid_range_fails_before_execution(self):
+        with self.assertRaisesRegex(ValueError, "range"):
+            self.kernel.commit_story_range(
+                self.story_request("text-op-00000006", 3, 2, "X"),
+                self.executor,
+            )
+        self.assertEqual(0, self.executor.calls)
+
+    def test_browser_cannot_supply_authoritative_text_hashes(self):
+        req = self.story_request("text-op-00000007", 1, 2, "漢")
+        req["command"]["before_text_hash"] = "evil"
+        with self.assertRaisesRegex(ValueError, "replace_story_range"):
+            self.kernel.commit_story_range(req, self.executor)
+
 
 if __name__ == "__main__":
     unittest.main()

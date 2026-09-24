@@ -181,6 +181,18 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_story_range(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_story_range_request_shape,
+            canonical_validator=self._validate_canonical_story_range,
+        )
+
     def _commit_command(
         self,
         request: dict,
@@ -330,6 +342,37 @@ class RevisionKernel:
                 raise ValueError("browser EMU must be a JavaScript-safe integer")
 
     @staticmethod
+    def _validate_story_range_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.story-range-intent.v1":
+            raise ValueError("V1 Story range protocol_version is required")
+        command = request.get("command")
+        if not isinstance(command, dict) or command.get("kind") != "replace_story_range":
+            raise ValueError("V1 Story range requires replace_story_range command")
+        allowed = {"kind", "story_id", "start_scalar", "end_scalar", "replacement_text"}
+        if set(command) != allowed:
+            raise ValueError("replace_story_range contains non-intent/authoritative fields")
+        story_id = command.get("story_id")
+        if not isinstance(story_id, str) or not story_id:
+            raise ValueError("story_id is required")
+        start = command.get("start_scalar")
+        end = command.get("end_scalar")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start < 0
+            or end < start
+            or end > 0xFFFFFFFF
+        ):
+            raise ValueError("Story scalar range is invalid")
+        if not isinstance(command.get("replacement_text"), str):
+            raise ValueError("replacement_text is required")
+        depends = request.get("depends_on_client_operation_id")
+        if depends is not None and (not isinstance(depends, str) or len(depends) < 8):
+            raise ValueError("depends_on_client_operation_id is invalid")
+
+    @staticmethod
     def _validate_replace_image_request_shape(request: dict) -> None:
         command = request.get("command")
         if not isinstance(command, dict) or command.get("kind") != "replace_image":
@@ -378,6 +421,23 @@ class RevisionKernel:
                 or after.get("width", 0) <= 0 or after.get("height", 0) <= 0:
             raise ValueError("canonical MoveNode rectangles must have positive width/height")
 
+
+    @staticmethod
+    def _validate_canonical_story_range(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "replace_story_range":
+            raise ValueError("authoritative executor returned non-story-range operation")
+        if operation.get("story_id") != command.get("story_id"):
+            raise ValueError("canonical Story operation targets a different story")
+        if operation.get("start_scalar") != command.get("start_scalar"):
+            raise ValueError("canonical Story start_scalar differs from accepted intent")
+        if operation.get("end_scalar") != command.get("end_scalar"):
+            raise ValueError("canonical Story end_scalar differs from accepted intent")
+        if operation.get("replacement_text") != command.get("replacement_text"):
+            raise ValueError("canonical Story replacement_text differs from accepted intent")
+        if not isinstance(operation.get("before_text_hash"), str):
+            raise ValueError("authoritative executor must derive before_text_hash")
+        if not isinstance(operation.get("after_text_hash"), str):
+            raise ValueError("authoritative executor must derive after_text_hash")
 
     @staticmethod
     def _validate_canonical_replace_image(command: dict, operation: dict) -> None:
