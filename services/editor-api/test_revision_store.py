@@ -323,5 +323,198 @@ class StoryRangeCommitTests(unittest.TestCase):
             self.kernel.commit_story_range(req, self.executor)
 
 
+class FakeHistoryExecutor:
+    def __init__(self, *, baseline_project, moved_project):
+        self.baseline_project = copy.deepcopy(baseline_project)
+        self.moved_project = copy.deepcopy(moved_project)
+        self.calls = []
+
+    def __call__(self, base_project, transition_kind):
+        self.calls.append(transition_kind)
+        if transition_kind == "undo":
+            return copy.deepcopy(self.baseline_project), [
+                {"key": "history.undo", "state": "supported", "note": None}
+            ]
+        if transition_kind == "redo":
+            return copy.deepcopy(self.moved_project), [
+                {"key": "history.redo", "state": "supported", "note": None}
+            ]
+        raise ValueError("unsupported history transition")
+
+
+class HistoryTransitionTests(unittest.TestCase):
+    def setUp(self):
+        self.kernel = RevisionKernel()
+        self.baseline_project = {
+            "schema_version": "pub-editor-v0.4",
+            "source_hash": SOURCE_HASH,
+            "operations": [],
+        }
+        self.baseline = self.kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=self.baseline_project,
+        )
+        self.move_executor = FakeAuthoritativeExecutor()
+        self.move = self.kernel.commit_move(
+            request(
+                self.baseline.revision_id,
+                "90000000-0000-4000-8000-000000000101",
+            ),
+            self.move_executor,
+        )
+        self.moved_record = self.kernel.current_revision(DOCUMENT_ID)
+        self.history_executor = FakeHistoryExecutor(
+            baseline_project=self.baseline_project,
+            moved_project=self.moved_record.project,
+        )
+
+    def history_request(
+        self,
+        kind,
+        op_id,
+        *,
+        base=None,
+        source_hash=SOURCE_HASH,
+    ):
+        return {
+            "protocol_version": "chaptera.history-transition-intent.v1",
+            "document_id": DOCUMENT_ID,
+            "source_hash": source_hash,
+            "base_revision_id": base or self.kernel.current_revision(DOCUMENT_ID).revision_id,
+            "client_operation_id": op_id,
+            "command": {"kind": kind},
+        }
+
+    def test_undo_creates_new_revision_that_reuses_baseline_state(self):
+        undo = self.kernel.commit_history_transition(
+            self.history_request("undo", "history-op-00000001"),
+            self.history_executor,
+        )
+        self.assertEqual(
+            "chaptera.history-transition-accepted.v1",
+            undo["protocol_version"],
+        )
+        self.assertEqual("undo", undo["transition_kind"])
+        self.assertEqual(self.baseline.state_id, undo["state_id"])
+        self.assertNotEqual(self.baseline.revision_id, undo["revision_id"])
+        self.assertNotEqual(self.move["revision_id"], undo["revision_id"])
+        record = self.kernel.current_revision(DOCUMENT_ID)
+        self.assertEqual(self.move["revision_id"], record.parent_revision_id)
+        self.assertEqual("undo", record.transition_kind)
+        self.assertEqual(self.baseline_project, record.project)
+        self.assertTrue(
+            self.kernel.has_revision(
+                document_id=DOCUMENT_ID,
+                revision_id=self.baseline.revision_id,
+            )
+        )
+        self.assertTrue(
+            self.kernel.has_revision(
+                document_id=DOCUMENT_ID,
+                revision_id=self.move["revision_id"],
+            )
+        )
+
+    def test_redo_creates_fresh_revision_that_reuses_moved_state(self):
+        undo = self.kernel.commit_history_transition(
+            self.history_request("undo", "history-op-00000002"),
+            self.history_executor,
+        )
+        redo = self.kernel.commit_history_transition(
+            self.history_request(
+                "redo",
+                "history-op-00000003",
+                base=undo["revision_id"],
+            ),
+            self.history_executor,
+        )
+        self.assertEqual("redo", redo["transition_kind"])
+        self.assertEqual(self.moved_record.state_id, redo["state_id"])
+        self.assertNotEqual(self.move["revision_id"], redo["revision_id"])
+        self.assertNotEqual(undo["revision_id"], redo["revision_id"])
+        record = self.kernel.current_revision(DOCUMENT_ID)
+        self.assertEqual(undo["revision_id"], record.parent_revision_id)
+        self.assertEqual(self.moved_record.project, record.project)
+        self.assertEqual(["undo", "redo"], self.history_executor.calls)
+
+    def test_history_exact_retry_is_idempotent_without_second_executor_call(self):
+        req = self.history_request("undo", "history-op-00000004")
+        first = self.kernel.commit_history_transition(
+            copy.deepcopy(req),
+            self.history_executor,
+        )
+        second = self.kernel.commit_history_transition(
+            copy.deepcopy(req),
+            self.history_executor,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(["undo"], self.history_executor.calls)
+
+    def test_history_stale_base_rejected_before_executor(self):
+        stale = self.kernel.commit_history_transition(
+            self.history_request(
+                "undo",
+                "history-op-00000005",
+                base=self.baseline.revision_id,
+            ),
+            self.history_executor,
+        )
+        self.assertEqual("stale_revision", stale["code"])
+        self.assertEqual(self.move["revision_id"], stale["current_revision_id"])
+        self.assertEqual([], self.history_executor.calls)
+        self.assertEqual(
+            self.move["revision_id"],
+            self.kernel.current_revision(DOCUMENT_ID).revision_id,
+        )
+
+    def test_history_same_id_different_intent_conflicts_without_execution(self):
+        op_id = "history-op-00000006"
+        first = self.kernel.commit_history_transition(
+            self.history_request("undo", op_id),
+            self.history_executor,
+        )
+        calls = list(self.history_executor.calls)
+        conflict = self.kernel.commit_history_transition(
+            self.history_request(
+                "redo",
+                op_id,
+                base=first["revision_id"],
+            ),
+            self.history_executor,
+        )
+        self.assertEqual("idempotency_conflict", conflict["code"])
+        self.assertEqual(calls, self.history_executor.calls)
+        self.assertEqual(
+            first["revision_id"],
+            self.kernel.current_revision(DOCUMENT_ID).revision_id,
+        )
+
+    def test_history_source_mismatch_rejected_before_executor(self):
+        result = self.kernel.commit_history_transition(
+            self.history_request(
+                "undo",
+                "history-op-00000007",
+                source_hash="b" * 64,
+            ),
+            self.history_executor,
+        )
+        self.assertEqual("source_hash_mismatch", result["code"])
+        self.assertEqual([], self.history_executor.calls)
+
+    def test_browser_cannot_supply_history_target_or_project(self):
+        req = self.history_request("undo", "history-op-00000008")
+        req["command"]["target_revision_id"] = self.baseline.revision_id
+        with self.assertRaisesRegex(ValueError, "non-intent"):
+            self.kernel.commit_history_transition(req, self.history_executor)
+        self.assertEqual([], self.history_executor.calls)
+
+    def test_history_intent_rejects_unknown_transition_kind(self):
+        req = self.history_request("rewind", "history-op-00000009")
+        with self.assertRaisesRegex(ValueError, "undo or redo"):
+            self.kernel.commit_history_transition(req, self.history_executor)
+        self.assertEqual([], self.history_executor.calls)
+
+
 if __name__ == "__main__":
     unittest.main()
