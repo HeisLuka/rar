@@ -5,6 +5,8 @@ on:
     paths:
       - "Cargo.toml"
       - "crates/pub-plccmob-projection/**"
+      - "crates/pub-model/src/projection_context.rs"
+      - "crates/pub-model/src/lib.rs"
       - "packages/protocol/pub-projection/**"
       - "tools/validate_plccmob_projection_receipt.py"
       - "tools/test_plccmob_projection_receipt.py"
