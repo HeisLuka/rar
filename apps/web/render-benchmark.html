@@ -1,0 +1,183 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Web Renderer Benchmark</title>
+<style>
+  html, body { margin: 0; font-family: system-ui, sans-serif; background: #eee; }
+  #host { width: 1200px; height: 800px; overflow: hidden; position: relative; }
+</style>
+<div id="host"></div>
+<script type="module">
+  import { createRenderer, RENDERER_KINDS } from "./render-v1.mjs";
+
+  const host = document.getElementById("host");
+  const BASE_VIEW = {
+    emu_per_css_px: 9525,
+    zoom: 1,
+    pan_x_css_px: 0,
+    pan_y_css_px: 0,
+    page_gap_css_px: 32,
+    page_margin_css_px: 24
+  };
+
+  const raf2 = () => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const ordered = [...values].sort((a, b) => a - b);
+    const index = Math.min(ordered.length - 1, Math.floor((ordered.length - 1) * q));
+    return ordered[index];
+  }
+
+  function sampleStats(values) {
+    return {
+      samples: values.length,
+      p50_ms: quantile(values, 0.50),
+      p95_ms: quantile(values, 0.95),
+      max_ms: values.length ? Math.max(...values) : null
+    };
+  }
+
+  async function constructAndPaint(fn) {
+    const start = performance.now();
+    const value = fn();
+    await raf2();
+    return { value, ms: performance.now() - start };
+  }
+
+  window.runRenderBenchmark = async function runRenderBenchmark(payloadText, meta) {
+    const parseStart = performance.now();
+    const snapshot = JSON.parse(payloadText);
+    const parseMs = performance.now() - parseStart;
+    const immutableBefore = JSON.stringify(snapshot);
+    const selected = snapshot.nodes[0] ?? null;
+    const preview = selected ? {
+      x: selected.bounds.x + 12700,
+      y: selected.bounds.y + 12700,
+      width: selected.bounds.width,
+      height: selected.bounds.height
+    } : null;
+
+    const results = [];
+    for (const kind of RENDERER_KINDS) {
+      host.replaceChildren();
+      const first = await constructAndPaint(() =>
+        createRenderer(kind, host, snapshot, BASE_VIEW)
+      );
+      const renderer = first.value;
+      const initial = renderer.stats();
+
+      if (!initial.available) {
+        results.push({
+          renderer: kind,
+          available: false,
+          unavailable_reason: initial.unavailable_reason,
+          first_render_ms: first.ms,
+          pan_zoom: sampleStats([]),
+          selection_overlay: sampleStats([]),
+          transient_preview: sampleStats([]),
+          dom_elements: initial.dom_elements
+        });
+        renderer.destroy();
+        continue;
+      }
+
+      const panZoom = [];
+      for (let i = 0; i < 24; i += 1) {
+        const start = performance.now();
+        renderer.setView({
+          ...BASE_VIEW,
+          zoom: i % 2 ? 1.25 : 0.85,
+          pan_x_css_px: (i % 7) * 4,
+          pan_y_css_px: -(i % 5) * 3
+        });
+        panZoom.push(performance.now() - start);
+      }
+      await raf2();
+
+      const selection = [];
+      for (let i = 0; i < 80; i += 1) {
+        const start = performance.now();
+        renderer.updateOverlay({
+          selected_node_id: selected?.node_id ?? null
+        });
+        selection.push(performance.now() - start);
+      }
+
+      const drag = [];
+      for (let i = 0; i < 80; i += 1) {
+        const start = performance.now();
+        renderer.updateOverlay({
+          selected_node_id: selected?.node_id ?? null,
+          preview_bounds: preview ? {
+            ...preview,
+            x: preview.x + i * 1000,
+            y: preview.y + i * 500
+          } : null
+        });
+        drag.push(performance.now() - start);
+      }
+      await raf2();
+
+      const finalStats = renderer.stats();
+      results.push({
+        renderer: kind,
+        available: true,
+        unavailable_reason: null,
+        first_render_ms: first.ms,
+        pan_zoom: sampleStats(panZoom),
+        selection_overlay: sampleStats(selection),
+        transient_preview: sampleStats(drag),
+        dom_elements: finalStats.dom_elements
+      });
+      renderer.destroy();
+    }
+
+    if (JSON.stringify(snapshot) !== immutableBefore) {
+      throw new Error("renderer mutated the BrowserSceneSnapshotV1 input");
+    }
+
+    return {
+      input_class: meta.input_class,
+      fixture: meta.fixture,
+      real_pub: false,
+      payload_bytes: new TextEncoder().encode(payloadText).byteLength,
+      parse_ms: parseMs,
+      pages: snapshot.pages.length,
+      nodes: snapshot.nodes.length,
+      stories: snapshot.stories.length,
+      resources: snapshot.resources.length,
+      diagnostics: snapshot.diagnostics.length,
+      fidelity: snapshot.fidelity,
+      resource_decode: {
+        measured: false,
+        reason: "protocol fixtures expose opaque handles, not fetchable production bytes"
+      },
+      memory: performance.memory
+        ? { used_js_heap_bytes: performance.memory.usedJSHeapSize }
+        : null,
+      renderers: results
+    };
+  };
+
+  window.renderForScreenshot = async function renderForScreenshot(payloadText, kind) {
+    const snapshot = JSON.parse(payloadText);
+    host.replaceChildren();
+    if (window.__screenshotRenderer) {
+      window.__screenshotRenderer.destroy();
+      window.__screenshotRenderer = null;
+    }
+    const renderer = createRenderer(kind, host, snapshot, BASE_VIEW);
+    if (!renderer.stats().available) {
+      renderer.destroy();
+      return { available: false };
+    }
+    if (snapshot.nodes[0]) {
+      renderer.updateOverlay({ selected_node_id: snapshot.nodes[0].node_id });
+    }
+    await raf2();
+    window.__screenshotRenderer = renderer;
+    return { available: true };
+  };
+</script>
