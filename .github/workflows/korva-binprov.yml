@@ -205,12 +205,17 @@ jobs:
           elf_path = Path("out/Korva.elf")
           nm_lines = Path("out/reports/nm-demangled.txt").read_text(errors="replace").splitlines()
           
-          symbol_re = re.compile(r"^([0-9a-fA-F]+)\\s+([A-Za-z?])\\s+(.*)$")
           symbols = []
           for line in nm_lines:
-              m = symbol_re.match(line)
-              if m:
-                  symbols.append((int(m.group(1), 16), m.group(2), m.group(3), line))
+              parts = line.split(maxsplit=2)
+              if len(parts) != 3:
+                  continue
+              addr_s, kind, name = parts
+              try:
+                  addr = int(addr_s, 16)
+              except ValueError:
+                  continue
+              symbols.append((addr, kind, name, line))
           
           exact_name = "pagewell_core::import_pub::import_pub_bytes"
           exact = [x for x in symbols if x[2] == exact_name]
