@@ -622,19 +622,19 @@ impl BlobGcProcessor {
                 storage_generation,
                 delete_fence,
             } => {
-                if let Some(observed) = &lease.candidate.observed_generation {
-                    if observed != &storage_generation {
-                        return self
-                            .ledger
-                            .terminal(
-                                &lease,
-                                now_ms,
-                                GcCandidateState::Cancelled,
-                                Some("generation_changed"),
-                            )
-                            .await
-                            .map(Some);
-                    }
+                if let Some(observed) = &lease.candidate.observed_generation
+                    && observed != &storage_generation
+                {
+                    return self
+                        .ledger
+                        .terminal(
+                            &lease,
+                            now_ms,
+                            GcCandidateState::Cancelled,
+                            Some("generation_changed"),
+                        )
+                        .await
+                        .map(Some);
                 }
 
                 let deleted = match self

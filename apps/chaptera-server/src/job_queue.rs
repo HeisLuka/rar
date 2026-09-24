@@ -447,8 +447,7 @@ impl SqliteJobQueue {
         allowed_kinds: &[JobKind],
     ) -> Result<Option<Lease>, JobQueueError> {
         let kinds: Vec<&str> = allowed_kinds.iter().map(|kind| kind.as_str()).collect();
-        let placeholders = std::iter::repeat("?")
-            .take(kinds.len())
+        let placeholders = std::iter::repeat_n("?", kinds.len())
             .collect::<Vec<_>>()
             .join(",");
 

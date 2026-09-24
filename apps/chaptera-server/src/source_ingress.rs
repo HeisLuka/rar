@@ -311,13 +311,13 @@ impl SourceIngressService {
                 "upload expiry must be after issue time",
             ));
         }
-        if let Some(content_type) = &request.declared_content_type {
-            if content_type.len() > 256 || content_type.chars().any(char::is_control) {
-                return Err(IngressError::new(
-                    "invalid_content_type",
-                    "declared content type is not a bounded display hint",
-                ));
-            }
+        if let Some(content_type) = &request.declared_content_type
+            && (content_type.len() > 256 || content_type.chars().any(char::is_control))
+        {
+            return Err(IngressError::new(
+                "invalid_content_type",
+                "declared content type is not a bounded display hint",
+            ));
         }
 
         let request_hash = issue_request_hash(&request)?;

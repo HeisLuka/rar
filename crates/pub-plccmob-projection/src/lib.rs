@@ -529,7 +529,7 @@ pub fn parse_confirmed_mature_plc_cmob(
     }
 
     let payload_len = bytes.len() - PLC_CMOB_FIXED_PREFIX_SIZE;
-    if payload_len % PLC_CMOB_ROW_SIZE != 0 {
+    if !payload_len.is_multiple_of(PLC_CMOB_ROW_SIZE) {
         return Err(PlcCmobProjectionError::MalformedPayloadLength { payload_len });
     }
     let actual_count = payload_len / PLC_CMOB_ROW_SIZE;
@@ -651,7 +651,7 @@ pub fn parse_confirmed_mature_plc_cmob(
 
 pub fn decode_hex(value: &str) -> Result<Vec<u8>, PlcCmobProjectionError> {
     let bytes = value.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(PlcCmobProjectionError::InvalidHexLength);
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);
@@ -780,12 +780,12 @@ pub fn build_projection_receipt_v1(
                 field: "carrier_node_id",
             });
         }
-        if let Some(story_id) = &carrier.carrier_story_id {
-            if !valid_uuid(story_id) {
-                return Err(PlcCmobProjectionError::InvalidUuid {
-                    field: "carrier_story_id",
-                });
-            }
+        if let Some(story_id) = &carrier.carrier_story_id
+            && !valid_uuid(story_id)
+        {
+            return Err(PlcCmobProjectionError::InvalidUuid {
+                field: "carrier_story_id",
+            });
         }
         if carrier.source_parent_id != carrier.effective_parent_id {
             return Err(PlcCmobProjectionError::CarrierReparented {
@@ -806,12 +806,12 @@ pub fn build_projection_receipt_v1(
                 field: "target_story_id",
             });
         }
-        if let Some(frame_id) = &target.target_frame_node_id {
-            if !valid_uuid(frame_id) {
-                return Err(PlcCmobProjectionError::InvalidUuid {
-                    field: "target_frame_node_id",
-                });
-            }
+        if let Some(frame_id) = &target.target_frame_node_id
+            && !valid_uuid(frame_id)
+        {
+            return Err(PlcCmobProjectionError::InvalidUuid {
+                field: "target_frame_node_id",
+            });
         }
         if targets.insert(target.target_qsid, target).is_some() {
             return Err(PlcCmobProjectionError::DuplicateTargetQsid {
