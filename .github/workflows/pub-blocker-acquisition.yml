@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends p7zip-full msitools cabextract
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools unshield binutils cabextract
           mkdir -p out/extracted out/msi-scan out/msi-extracted
           7z x -y out/X12-30247.exe -oout/extracted >/tmp/7z-pubconv.log 2>&1
           find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
@@ -94,7 +94,7 @@ jobs:
             if grep -i 'PUBCONV' "out/msi-scan/$safe.File.txt" >> out/pubconv-msi-hits.txt; then
               printf 'MSI=%s\n' "$msi" >> out/pubconv-msi-hits.txt
             fi
-          done < <(find out/extracted -type f -iname '*.msi' | sort)
+          done < <(find out/extracted out/unshield -type f -iname '*.msi' | sort)
           cat out/pubconv-msi-hits.txt
 
           owner_msi="$(grep '^MSI=' out/pubconv-msi-hits.txt | head -n1 | cut -d= -f2- || true)"
@@ -202,8 +202,29 @@ jobs:
           mkdir -p out/extracted out/msi-scan
           7z x -y out/CorelDRAWGraphicsSuiteX4Installer_EN.exe -oout/extracted >/tmp/7z-corel.log 2>&1
           find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
-          find out/extracted -type f -iname '*.msi' -printf '%s\t%p\n' | sort -nr > out/msi-files.txt
-          grep -RaiE '7F05E704-30A6-421A-97A7-8EEB1C7FF017|cdrPUB|Publisher' out/extracted > out/raw-pub-productcode-hits.txt || true
+          echo "=== TOP EXTRACTED FILES ==="
+          head -n 200 out/extracted-files.txt || true
+          find out/extracted -type f | sed 's/.*\.//' | tr '[:upper:]' '[:lower:]' | sort | uniq -c | sort -nr > out/extensions.txt
+          echo "=== EXTENSIONS ==="
+          cat out/extensions.txt || true
+          mkdir -p out/unshield
+          while IFS= read -r cab; do
+            if unshield l "$cab" >/tmp/unshield-list.txt 2>/dev/null; then
+              tag="$(basename "$(dirname "$cab")")-$(basename "$cab" .cab)"
+              dest="out/unshield/$tag"
+              mkdir -p "$dest"
+              unshield x -d "$dest" "$cab" >"out/unshield-$tag.log" 2>&1 || true
+            fi
+          done < <(find out/extracted -type f -iname 'data*.cab' | sort)
+          find out/unshield -type f -printf '%s\t%p\n' | sort -nr > out/unshield-files.txt
+          echo "=== TOP UNSHIELD FILES ==="
+          head -n 200 out/unshield-files.txt || true
+          find out/extracted out/unshield -type f -iname '*.msi' -printf '%s\t%p\n' | sort -nr > out/msi-files.txt
+          {
+            grep -RaiE '7F05E704-30A6-421A-97A7-8EEB1C7FF017|cdrPUB|Publisher' out/extracted out/unshield || true
+            strings -a out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | grep -Ei '7F05E704|cdrPUB|Publisher' || true
+            strings -el out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | grep -Ei '7F05E704|cdrPUB|Publisher' || true
+          } > out/raw-pub-productcode-hits.txt
 
           found=0
           : > out/msi-pub-hits.txt
@@ -235,7 +256,7 @@ jobs:
           cat out/msi-pub-hits.txt || true
 
           if [ "$found" -ne 1 ]; then
-            candidate="$(find out/extracted -type f \( -iname '*filter*.msi' -o -iname 'Filters.msi' \) | head -n1 || true)"
+            candidate="$(find out/extracted out/unshield -type f \( -iname '*filter*.msi' -o -iname 'Filters.msi' \) | head -n1 || true)"
             if [ -n "$candidate" ]; then
               cp "$candidate" out/Corel-X4-Filters.msi
               printf '%s\n' "$candidate" | tee out/filters-msi-path.txt
@@ -266,6 +287,10 @@ jobs:
             out/md5.txt
             out/size.txt
             out/file.txt
+            out/extracted-files.txt
+            out/extensions.txt
+            out/unshield-files.txt
+            out/unshield-*.log
             out/msi-files.txt
             out/raw-pub-productcode-hits.txt
             out/msi-pub-hits.txt
