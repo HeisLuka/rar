@@ -1,0 +1,30 @@
+name: CORPUS lineage rank
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/corpus_lineage_rank.py'
+      - '.github/workflows/corpus-lineage-rank.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/corpus_lineage_rank.py'
+      - '.github/workflows/corpus-lineage-rank.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate bounded ranking contract
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/corpus_lineage_rank.py
+          python tools/corpus/corpus_lineage_rank.py self-test
