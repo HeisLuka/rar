@@ -125,7 +125,10 @@ impl fmt::Display for DecodeErrorV1 {
 impl std::error::Error for DecodeErrorV1 {}
 
 fn fail(code: &'static str, detail: impl Into<String>) -> DecodeErrorV1 {
-    DecodeErrorV1 { code, detail: detail.into() }
+    DecodeErrorV1 {
+        code,
+        detail: detail.into(),
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -133,11 +136,21 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn validate_hash(expected: &str, bytes: &[u8]) -> Result<(), DecodeErrorV1> {
-    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
-        return Err(fail("invalid_resource_hash", "expected SHA-256 must be lowercase hex"));
+    if expected.len() != 64
+        || !expected
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err(fail(
+            "invalid_resource_hash",
+            "expected SHA-256 must be lowercase hex",
+        ));
     }
     if sha256_hex(bytes) != expected {
-        return Err(fail("resource_hash_mismatch", "exact resource bytes do not match expected SHA-256"));
+        return Err(fail(
+            "resource_hash_mismatch",
+            "exact resource bytes do not match expected SHA-256",
+        ));
     }
     Ok(())
 }
@@ -150,22 +163,37 @@ fn validate_limits(
     limits: &DecodeLimitsV1,
 ) -> Result<(), DecodeErrorV1> {
     if encoded_len > limits.max_encoded_bytes {
-        return Err(fail("encoded_bytes_limit", "encoded image exceeds byte limit"));
+        return Err(fail(
+            "encoded_bytes_limit",
+            "encoded image exceeds byte limit",
+        ));
     }
     if width == 0 || height == 0 {
-        return Err(fail("invalid_dimensions", "image dimensions must be positive"));
+        return Err(fail(
+            "invalid_dimensions",
+            "image dimensions must be positive",
+        ));
     }
     if width > limits.max_dimension_px || height > limits.max_dimension_px {
-        return Err(fail("dimension_limit", "image dimension exceeds configured limit"));
+        return Err(fail(
+            "dimension_limit",
+            "image dimension exceeds configured limit",
+        ));
     }
     let pixels = u64::from(width)
         .checked_mul(u64::from(height))
         .ok_or_else(|| fail("allocation_overflow", "pixel count overflow"))?;
     if pixels > limits.max_total_pixels {
-        return Err(fail("pixel_limit", "decoded pixel count exceeds configured limit"));
+        return Err(fail(
+            "pixel_limit",
+            "decoded pixel count exceeds configured limit",
+        ));
     }
     if decoded_len > limits.max_decoded_bytes {
-        return Err(fail("decoded_bytes_limit", "decoded image exceeds byte limit"));
+        return Err(fail(
+            "decoded_bytes_limit",
+            "decoded image exceeds byte limit",
+        ));
     }
     Ok(())
 }
@@ -231,7 +259,10 @@ fn decode_png(
     limits: &DecodeLimitsV1,
 ) -> Result<DecodedImageV1, DecodeErrorV1> {
     if bytes.len() > limits.max_encoded_bytes {
-        return Err(fail("encoded_bytes_limit", "encoded PNG exceeds byte limit"));
+        return Err(fail(
+            "encoded_bytes_limit",
+            "encoded PNG exceeds byte limit",
+        ));
     }
     let mut decoder = PngDecoder::new(Cursor::new(bytes));
     decoder.set_transformations(Transformations::EXPAND);
@@ -241,17 +272,26 @@ fn decode_png(
     let source_color = reader.info().color_type;
     let source_depth = reader.info().bit_depth;
     if reader.info().animation_control.is_some() {
-        return Err(fail("animated_or_multiframe_unsupported", "APNG is not admitted by V1"));
+        return Err(fail(
+            "animated_or_multiframe_unsupported",
+            "APNG is not admitted by V1",
+        ));
     }
     let width = reader.info().width;
     let height = reader.info().height;
     validate_limits(bytes.len(), width, height, 0, limits)?;
 
-    let output_size = reader
-        .output_buffer_size()
-        .ok_or_else(|| fail("allocation_overflow", "PNG output buffer size is not representable"))?;
+    let output_size = reader.output_buffer_size().ok_or_else(|| {
+        fail(
+            "allocation_overflow",
+            "PNG output buffer size is not representable",
+        )
+    })?;
     if output_size > limits.max_decoded_bytes {
-        return Err(fail("decoded_bytes_limit", "PNG output buffer exceeds configured limit"));
+        return Err(fail(
+            "decoded_bytes_limit",
+            "PNG output buffer exceeds configured limit",
+        ));
     }
     let mut buffer = vec![0_u8; output_size];
     let output = reader
@@ -262,7 +302,10 @@ fn decode_png(
 
     let decoded_depth = bit_depth_bits(output.bit_depth);
     let decoded_model = png_decoded_model(output.color_type).to_string();
-    let alpha_present = matches!(output.color_type, ColorType::GrayscaleAlpha | ColorType::Rgba);
+    let alpha_present = matches!(
+        output.color_type,
+        ColorType::GrayscaleAlpha | ColorType::Rgba
+    );
     let frame_disposition = "single_static".to_string();
 
     Ok(DecodedImageV1 {
@@ -279,7 +322,12 @@ fn decode_png(
         source_precision_bits: bit_depth_bits(source_depth),
         decoded_precision_bits: decoded_depth,
         alpha_present,
-        alpha_association: if alpha_present { "straight_unassociated" } else { "none" }.into(),
+        alpha_association: if alpha_present {
+            "straight_unassociated"
+        } else {
+            "none"
+        }
+        .into(),
         orientation_class: "normal".into(),
         exif_orientation: None,
         orientation_applied: false,
@@ -323,15 +371,26 @@ fn parse_exif_orientation(tiff: &[u8]) -> Result<Option<u16>, DecodeErrorV1> {
         return Ok(None);
     }
     if tiff.len() < 8 {
-        return Err(fail("invalid_exif_orientation", "EXIF TIFF header is truncated"));
+        return Err(fail(
+            "invalid_exif_orientation",
+            "EXIF TIFF header is truncated",
+        ));
     }
     let little = match &tiff[0..2] {
         b"II" => true,
         b"MM" => false,
-        _ => return Err(fail("invalid_exif_orientation", "EXIF byte order is invalid")),
+        _ => {
+            return Err(fail(
+                "invalid_exif_orientation",
+                "EXIF byte order is invalid",
+            ));
+        }
     };
     if read_u16(tiff, 2, little) != Some(42) {
-        return Err(fail("invalid_exif_orientation", "EXIF TIFF magic is invalid"));
+        return Err(fail(
+            "invalid_exif_orientation",
+            "EXIF TIFF magic is invalid",
+        ));
     }
     let ifd0 = read_u32(tiff, 4, little)
         .ok_or_else(|| fail("invalid_exif_orientation", "EXIF IFD0 offset is truncated"))?
@@ -352,12 +411,22 @@ fn parse_exif_orientation(tiff: &[u8]) -> Result<Option<u16>, DecodeErrorV1> {
         let ty = read_u16(tiff, entry + 2, little).unwrap_or(0);
         let n = read_u32(tiff, entry + 4, little).unwrap_or(0);
         if ty != 3 || n != 1 {
-            return Err(fail("invalid_exif_orientation", "EXIF Orientation entry has unexpected type/count"));
+            return Err(fail(
+                "invalid_exif_orientation",
+                "EXIF Orientation entry has unexpected type/count",
+            ));
         }
-        let value = read_u16(tiff, entry + 8, little)
-            .ok_or_else(|| fail("invalid_exif_orientation", "EXIF Orientation value is truncated"))?;
+        let value = read_u16(tiff, entry + 8, little).ok_or_else(|| {
+            fail(
+                "invalid_exif_orientation",
+                "EXIF Orientation value is truncated",
+            )
+        })?;
         if !(1..=8).contains(&value) {
-            return Err(fail("invalid_exif_orientation", "EXIF Orientation must be 1..8"));
+            return Err(fail(
+                "invalid_exif_orientation",
+                "EXIF Orientation must be 1..8",
+            ));
         }
         return Ok(Some(value));
     }
@@ -380,7 +449,10 @@ fn decode_jpeg(
     limits: &DecodeLimitsV1,
 ) -> Result<DecodedImageV1, DecodeErrorV1> {
     if bytes.len() > limits.max_encoded_bytes {
-        return Err(fail("encoded_bytes_limit", "encoded JPEG exceeds byte limit"));
+        return Err(fail(
+            "encoded_bytes_limit",
+            "encoded JPEG exceeds byte limit",
+        ));
     }
     let mut decoder = JpegDecoder::new(Cursor::new(bytes));
     decoder.set_max_decoding_buffer_size(limits.max_decoded_bytes);
@@ -402,13 +474,13 @@ fn decode_jpeg(
                 return Err(fail(
                     "unusual_jpeg_precision_unsupported",
                     "16-bit JPEG sample precision is not admitted by V1",
-                ))
+                ));
             }
             PixelFormat::CMYK32 => {
                 return Err(fail(
                     "cmyk_or_ycck_unsupported",
                     "CMYK/YCCK JPEG is detected but no V1 display transform is admitted",
-                ))
+                ));
             }
         };
     if info.coding_process == CodingProcess::Lossless {
@@ -477,9 +549,24 @@ pub fn decode_image_v1(
 ) -> Result<DecodedImageV1, DecodeErrorV1> {
     validate_hash(expected_sha256, bytes)?;
     match mime_type {
-        "image/png" => decode_png(bytes, expected_sha256, color_disposition_ref, policy, limits),
-        "image/jpeg" => decode_jpeg(bytes, expected_sha256, color_disposition_ref, policy, limits),
-        _ => Err(fail("unsupported_codec", "V1 admits only image/png and image/jpeg")),
+        "image/png" => decode_png(
+            bytes,
+            expected_sha256,
+            color_disposition_ref,
+            policy,
+            limits,
+        ),
+        "image/jpeg" => decode_jpeg(
+            bytes,
+            expected_sha256,
+            color_disposition_ref,
+            policy,
+            limits,
+        ),
+        _ => Err(fail(
+            "unsupported_codec",
+            "V1 admits only image/png and image/jpeg",
+        )),
     }
 }
 
@@ -520,7 +607,13 @@ mod tests {
         sha256_hex(data)
     }
 
-    fn png_fixture(color: ColorType, depth: BitDepth, width: u32, height: u32, samples: &[u8]) -> Vec<u8> {
+    fn png_fixture(
+        color: ColorType,
+        depth: BitDepth,
+        width: u32,
+        height: u32,
+        samples: &[u8],
+    ) -> Vec<u8> {
         let mut out = Vec::new();
         {
             let mut encoder = PngEncoder::new(&mut out, width, height);
@@ -545,7 +638,12 @@ mod tests {
         out
     }
 
-    fn jpeg_fixture(color: JpegColorType, data: &[u8], progressive: bool, exif: Option<&[u8]>) -> Vec<u8> {
+    fn jpeg_fixture(
+        color: JpegColorType,
+        data: &[u8],
+        progressive: bool,
+        exif: Option<&[u8]>,
+    ) -> Vec<u8> {
         let mut out = Vec::new();
         let mut encoder = JpegEncoder::new(&mut out, 95);
         encoder.set_progressive(progressive);
@@ -587,9 +685,23 @@ mod tests {
     fn png_grayscale_rgb_ga_rgba_decode_deterministically() {
         let fixtures = [
             (ColorType::Grayscale, vec![0, 64, 128, 255], "gray"),
-            (ColorType::Rgb, vec![255,0,0, 0,255,0, 0,0,255, 255,255,255], "rgb"),
-            (ColorType::GrayscaleAlpha, vec![0,0, 64,128, 128,200, 255,255], "gray_alpha"),
-            (ColorType::Rgba, vec![255,0,0,10, 0,255,0,20, 0,0,255,30, 255,255,255,40], "rgba"),
+            (
+                ColorType::Rgb,
+                vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
+                "rgb",
+            ),
+            (
+                ColorType::GrayscaleAlpha,
+                vec![0, 0, 64, 128, 128, 200, 255, 255],
+                "gray_alpha",
+            ),
+            (
+                ColorType::Rgba,
+                vec![
+                    255, 0, 0, 10, 0, 255, 0, 20, 0, 0, 255, 30, 255, 255, 255, 40,
+                ],
+                "rgba",
+            ),
         ];
         for (color, bytes, model) in fixtures {
             let encoded = png_fixture(color, BitDepth::Eight, 2, 2, &bytes);
@@ -622,7 +734,7 @@ mod tests {
             BitDepth::Sixteen,
             1,
             1,
-            &[0x12,0x34, 0x56,0x78, 0x9a,0xbc],
+            &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
         );
         let decoded = decode(&encoded, "image/png");
         assert_eq!(decoded.source_precision_bits, 16);
@@ -632,7 +744,7 @@ mod tests {
 
     #[test]
     fn alpha_is_explicit_and_straight() {
-        let encoded = png_fixture(ColorType::Rgba, BitDepth::Eight, 1, 1, &[100,50,25,128]);
+        let encoded = png_fixture(ColorType::Rgba, BitDepth::Eight, 1, 1, &[100, 50, 25, 128]);
         let decoded = decode(&encoded, "image/png");
         assert!(decoded.alpha_present);
         assert_eq!(decoded.alpha_association, "straight_unassociated");
@@ -640,14 +752,14 @@ mod tests {
 
     #[test]
     fn jpeg_grayscale_baseline_and_rgb_progressive_are_admitted() {
-        let gray = jpeg_fixture(JpegColorType::Luma, &[0,64,128,255], false, None);
+        let gray = jpeg_fixture(JpegColorType::Luma, &[0, 64, 128, 255], false, None);
         let gray_decoded = decode(&gray, "image/jpeg");
         assert_eq!(gray_decoded.decoded_sample_model, "gray");
         assert_eq!(gray_decoded.coding_process, "jpeg_dct_sequential");
 
         let rgb = jpeg_fixture(
             JpegColorType::Rgb,
-            &[255,0,0, 0,255,0, 0,0,255, 255,255,255],
+            &[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
             true,
             None,
         );
@@ -660,7 +772,7 @@ mod tests {
     fn cmyk_jpeg_is_detected_not_silently_treated_as_rgb() {
         let cmyk = jpeg_fixture(
             JpegColorType::Cmyk,
-            &[0,255,255,0, 255,0,255,0, 255,255,0,0, 0,0,0,0],
+            &[0, 255, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 0, 0, 0, 0],
             false,
             None,
         );
@@ -681,7 +793,7 @@ mod tests {
         let tiff = exif_orientation_tiff(6);
         let rgb = jpeg_fixture(
             JpegColorType::Rgb,
-            &[255,0,0, 0,255,0, 0,0,255, 255,255,255],
+            &[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
             false,
             Some(&tiff),
         );
@@ -689,32 +801,48 @@ mod tests {
         assert_eq!(decoded.exif_orientation, Some(6));
         assert_eq!(decoded.orientation_class, "metadata_only_non_normal");
         assert!(!decoded.orientation_applied);
-        assert_eq!((decoded.encoded_width_px, decoded.encoded_height_px), (2,2));
-        assert_eq!((decoded.decoded_width_px, decoded.decoded_height_px), (2,2));
+        assert_eq!(
+            (decoded.encoded_width_px, decoded.encoded_height_px),
+            (2, 2)
+        );
+        assert_eq!(
+            (decoded.decoded_width_px, decoded.decoded_height_px),
+            (2, 2)
+        );
     }
 
     #[test]
     fn hostile_limits_and_truncation_fail_closed() {
-        let encoded = png_fixture(ColorType::Rgb, BitDepth::Eight, 2, 2, &[0;12]);
+        let encoded = png_fixture(ColorType::Rgb, BitDepth::Eight, 2, 2, &[0; 12]);
         let mut limits = DecodeLimitsV1::default();
         limits.max_total_pixels = 3;
         let err = decode_image_v1(
-            &encoded, "image/png", &hash(&encoded), "color:test",
-            &DecodePolicyV1::reference(), &limits,
-        ).unwrap_err();
+            &encoded,
+            "image/png",
+            &hash(&encoded),
+            "color:test",
+            &DecodePolicyV1::reference(),
+            &limits,
+        )
+        .unwrap_err();
         assert_eq!(err.code, "pixel_limit");
 
-        let truncated = &encoded[..encoded.len()/2];
+        let truncated = &encoded[..encoded.len() / 2];
         let err = decode_image_v1(
-            truncated, "image/png", &hash(truncated), "color:test",
-            &DecodePolicyV1::reference(), &DecodeLimitsV1::default(),
-        ).unwrap_err();
+            truncated,
+            "image/png",
+            &hash(truncated),
+            "color:test",
+            &DecodePolicyV1::reference(),
+            &DecodeLimitsV1::default(),
+        )
+        .unwrap_err();
         assert_eq!(err.code, "png_decode_error");
     }
 
     #[test]
     fn trailing_decoder_tolerance_cannot_redefine_exact_resource_identity() {
-        let base = png_fixture(ColorType::Rgb, BitDepth::Eight, 1, 1, &[1,2,3]);
+        let base = png_fixture(ColorType::Rgb, BitDepth::Eight, 1, 1, &[1, 2, 3]);
         let mut tailed = base.clone();
         tailed.extend_from_slice(b"officeart-adjacent-bytes");
         let a = decode(&base, "image/png");
@@ -726,25 +854,41 @@ mod tests {
 
     #[test]
     fn cache_identity_separates_policy_changes() {
-        let encoded = png_fixture(ColorType::Rgb, BitDepth::Eight, 1, 1, &[1,2,3]);
+        let encoded = png_fixture(ColorType::Rgb, BitDepth::Eight, 1, 1, &[1, 2, 3]);
         let reference = DecodePolicyV1::reference();
         let mut changed = reference.clone();
         changed.alpha_policy = "premultiplied".into();
         let a = decode_image_v1(
-            &encoded, "image/png", &hash(&encoded), "color:test",
-            &reference, &DecodeLimitsV1::default(),
-        ).unwrap();
+            &encoded,
+            "image/png",
+            &hash(&encoded),
+            "color:test",
+            &reference,
+            &DecodeLimitsV1::default(),
+        )
+        .unwrap();
         let b = decode_image_v1(
-            &encoded, "image/png", &hash(&encoded), "color:test",
-            &changed, &DecodeLimitsV1::default(),
-        ).unwrap();
+            &encoded,
+            "image/png",
+            &hash(&encoded),
+            "color:test",
+            &changed,
+            &DecodeLimitsV1::default(),
+        )
+        .unwrap();
         assert_ne!(a.cache_identity_sha256, b.cache_identity_sha256);
         assert_eq!(a.sample_digest_sha256, b.sample_digest_sha256);
     }
 
     #[test]
     fn cold_warm_evicted_redecode_converges_to_same_normalized_receipt() {
-        let encoded = png_fixture(ColorType::Rgba, BitDepth::Eight, 2, 1, &[1,2,3,4, 5,6,7,8]);
+        let encoded = png_fixture(
+            ColorType::Rgba,
+            BitDepth::Eight,
+            2,
+            1,
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+        );
         let cold = decode(&encoded, "image/png");
         let warm = decode(&encoded, "image/png");
         let evicted = decode(&encoded, "image/png");

@@ -1,6 +1,4 @@
-use chaptera_image_decode_contract::{
-    decode_image_v1, receipt_v1, DecodeLimitsV1, DecodePolicyV1,
-};
+use chaptera_image_decode_contract::{DecodeLimitsV1, DecodePolicyV1, decode_image_v1, receipt_v1};
 use png::{BitDepth, ColorType, Encoder};
 use sha2::{Digest, Sha256};
 
@@ -11,7 +9,9 @@ fn main() {
         encoder.set_color(ColorType::Rgba);
         encoder.set_depth(BitDepth::Eight);
         let mut writer = encoder.write_header().unwrap();
-        writer.write_image_data(&[255, 0, 0, 128, 0, 255, 0, 255]).unwrap();
+        writer
+            .write_image_data(&[255, 0, 0, 128, 0, 255, 0, 255])
+            .unwrap();
     }
     let hash = format!("{:x}", Sha256::digest(&encoded));
     let decoded = decode_image_v1(
@@ -23,5 +23,8 @@ fn main() {
         &DecodeLimitsV1::default(),
     )
     .unwrap();
-    println!("{}", serde_json::to_string_pretty(&receipt_v1(&decoded)).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt_v1(&decoded)).unwrap()
+    );
 }
