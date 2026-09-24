@@ -1,0 +1,34 @@
+name: Nested Multi Geometry V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/group_transform_chain_v1.py"
+      - "services/editor-api/test_group_transform_chain_v1.py"
+      - "services/editor-api/multi_resize_plan_v1.py"
+      - "services/editor-api/nested_group_selection_v1.py"
+      - "services/editor-api/nested_multi_geometry_v1.py"
+      - "services/editor-api/test_nested_multi_geometry_v1.py"
+      - ".github/workflows/nested-multi-geometry-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run parent-local nested multi geometry tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_nested_multi_geometry_v1
+      - name: Re-run transform point and aggregate-resize primitives
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_transform_chain_v1 test_multi_resize_plan_v1
+      - name: Re-run nested selection path primitive
+        working-directory: services/editor-api
+        run: python -m unittest -v test_nested_group_selection_v1

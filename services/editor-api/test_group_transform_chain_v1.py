@@ -3,10 +3,13 @@ import unittest
 from authored_group_geometry_v1 import RectEmu
 from group_transform_chain_v1 import (
     AuthoredGroupEdgeV1,
+    GroupPointEmu,
     GroupTransformChainError,
     MAX_AUTHORED_GROUP_DEPTH_V1,
     inverse_group_transform_chain_v1,
+    inverse_group_transform_point_v1,
     project_group_transform_chain_v1,
+    project_group_transform_point_v1,
 )
 
 def edge(g,p,parent,children,bounds,local):
@@ -42,6 +45,56 @@ class GroupTransformChainV1Tests(unittest.TestCase):
         inv=inverse_group_transform_chain_v1(target_id="n",target_page_id="p",ancestry=a,desired_page_rect=RectEmu(90,50,20,20))
         repro=project_group_transform_chain_v1(target_id="n",target_page_id="p",ancestry=a,target_local_rect=inv.canonical_local_rect)
         self.assertEqual(inv.effective_page_rect,repro.effective_page_rect)
+
+    def test_point_forward_inverse_uses_same_boundary_rounding(self):
+        a=(
+            edge("g0","p",None,["n"],RectEmu(100,200,200,100),RectEmu(0,0,100,100)),
+        )
+        projected=project_group_transform_point_v1(
+            target_id="n",
+            target_page_id="p",
+            ancestry=a,
+            local_point=GroupPointEmu(25,40),
+        )
+        self.assertEqual(GroupPointEmu(150,240), projected.effective_page_point)
+        inverse=inverse_group_transform_point_v1(
+            target_id="n",
+            target_page_id="p",
+            ancestry=a,
+            page_point=projected.effective_page_point,
+        )
+        self.assertEqual(GroupPointEmu(25,40), inverse.canonical_local_point)
+
+    def test_point_inverse_rejects_non_exact_quantized_page_point(self):
+        a=(
+            edge("g0","p",None,["n"],RectEmu(0,0,3,3),RectEmu(0,0,2,2)),
+        )
+        with self.assertRaisesRegex(GroupTransformChainError, "not exactly representable"):
+            inverse_group_transform_point_v1(
+                target_id="n",
+                target_page_id="p",
+                ancestry=a,
+                page_point=GroupPointEmu(1,0),
+            )
+
+    def test_point_mapping_allows_signed_extrapolation_but_requires_exact_roundtrip(self):
+        a=(
+            edge("g0","p",None,["n"],RectEmu(100,100,200,200),RectEmu(0,0,100,100)),
+        )
+        projected=project_group_transform_point_v1(
+            target_id="n",
+            target_page_id="p",
+            ancestry=a,
+            local_point=GroupPointEmu(-10,120),
+        )
+        self.assertEqual(GroupPointEmu(80,340), projected.effective_page_point)
+        inverse=inverse_group_transform_point_v1(
+            target_id="n",
+            target_page_id="p",
+            ancestry=a,
+            page_point=GroupPointEmu(80,340),
+        )
+        self.assertEqual(GroupPointEmu(-10,120), inverse.canonical_local_point)
 
     def test_depth_cycle_membership_and_page_fail_closed(self):
         too_deep=tuple(edge(f"g{i}","p",None if i==0 else f"g{i-1}", [("n" if i==MAX_AUTHORED_GROUP_DEPTH_V1 else f"g{i+1}")], RectEmu(0,0,10,10), RectEmu(0,0,10,10)) for i in range(MAX_AUTHORED_GROUP_DEPTH_V1+1))
