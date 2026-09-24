@@ -11,6 +11,7 @@ pub mod jobs;
 pub mod migrate;
 pub mod runtime_error;
 pub mod schema_migration;
+pub mod s3_blob_provider;
 pub mod serve;
 pub mod shutdown;
 pub mod source_ingress;
