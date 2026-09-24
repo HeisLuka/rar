@@ -1,0 +1,82 @@
+name: WEB-REVISION-ADAPTER real SampleNewsletter slice
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/revision/v1/fixtures/sample-newsletter-move-baseline.real.json"
+      - "packages/protocol/revision/v1/producer-receipt.schema.json"
+      - "packages/protocol/revision/v1/producer-receipts/sample-newsletter.real.json"
+      - "services/editor-api/revision_store.py"
+      - "tools/build_revision_producer_receipt.py"
+      - "tools/sample_newsletter_move_producer.py"
+      - "tools/test_build_revision_producer_receipt.py"
+      - "tools/test_revision_producer_receipt_schema.py"
+      - "tools/test_sample_newsletter_move_producer.py"
+      - "tools/validate_revision_producer_receipt.py"
+      - ".github/workflows/web-revision-real-producer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-revision-producer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned receipt validator dependency
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Run revision producer regression suite
+        run: |
+          python -m unittest -v \
+            tools/test_sample_newsletter_move_producer.py \
+            tools/test_build_revision_producer_receipt.py \
+            tools/test_revision_producer_receipt_schema.py
+      - name: Build real SampleNewsletter revision receipt
+        run: |
+          mkdir -p target/web-revision-real-producer
+          python tools/build_revision_producer_receipt.py \
+            --output target/web-revision-real-producer/sample-newsletter.real.json \
+            --implementation chaptera-rar-samplenewsletter-move-slice \
+            --commit-or-build "$GITHUB_SHA" \
+            -- python tools/sample_newsletter_move_producer.py
+          python tools/validate_revision_producer_receipt.py \
+            target/web-revision-real-producer/sample-newsletter.real.json
+      - name: Compare retained closure receipt when present
+        run: |
+          retained="packages/protocol/revision/v1/producer-receipts/sample-newsletter.real.json"
+          generated="target/web-revision-real-producer/sample-newsletter.real.json"
+          if test -f "$retained"; then
+            python tools/validate_revision_producer_receipt.py "$retained"
+            python - "$retained" "$generated" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          retained = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          generated = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+          # The generated build identity is expected to change when the retained
+          # receipt is committed. All semantic evidence must remain identical.
+          retained = dict(retained)
+          generated = dict(generated)
+          retained_producer = dict(retained["producer"])
+          generated_producer = dict(generated["producer"])
+          retained_producer.pop("commit_or_build", None)
+          generated_producer.pop("commit_or_build", None)
+          retained["producer"] = retained_producer
+          generated["producer"] = generated_producer
+
+          if retained != generated:
+              raise SystemExit("retained real receipt differs from regenerated semantic evidence")
+          PY
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-revision-real-producer-sample-newsletter
+          path: target/web-revision-real-producer/sample-newsletter.real.json
+          if-no-files-found: error
