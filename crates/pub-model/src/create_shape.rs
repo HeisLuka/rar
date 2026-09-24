@@ -221,7 +221,10 @@ mod tests {
             "01890F47-0C00-7ABC-8DEF-0123456789AB",
             "not-a-uuid",
         ] {
-            assert_eq!(validate_uuid_v7_v1(bad), Err(CreateShapeError::InvalidUuidV7));
+            assert_eq!(
+                validate_uuid_v7_v1(bad),
+                Err(CreateShapeError::InvalidUuidV7)
+            );
         }
     }
 
