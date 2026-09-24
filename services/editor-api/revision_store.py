@@ -197,6 +197,21 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_text_frame_columns(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_text_frame_columns_request_shape,
+            canonical_validator=self._validate_canonical_text_frame_columns,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_story_range(
         self,
         request: dict,
@@ -518,6 +533,80 @@ class RevisionKernel:
         depends = request.get("depends_on_client_operation_id")
         if depends is not None and (not isinstance(depends, str) or len(depends) < 8):
             raise ValueError("depends_on_client_operation_id is invalid")
+
+    @staticmethod
+    def _validate_text_frame_columns_state(state: dict, label: str) -> None:
+        if not isinstance(state, dict) or set(state) != {"column_count", "gutter_emu"}:
+            raise ValueError(f"{label} must contain exactly column_count/gutter_emu")
+        column_count = state.get("column_count")
+        if (
+            not isinstance(column_count, int)
+            or isinstance(column_count, bool)
+            or column_count < 1
+            or column_count > 1024
+        ):
+            raise ValueError(f"{label}.column_count must be an integer in 1..1024")
+        gutter = state.get("gutter_emu")
+        if (
+            not isinstance(gutter, int)
+            or isinstance(gutter, bool)
+            or gutter < 0
+            or gutter > MAX_SAFE_EMU
+        ):
+            raise ValueError(f"{label}.gutter_emu must be a non-negative JavaScript-safe integer")
+
+    @staticmethod
+    def _validate_text_frame_columns_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.text-frame-columns-intent.v1":
+            raise ValueError("V1 text-frame columns protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "node_id", "expected_before", "after"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "set_text_frame_columns"
+            or set(command) != allowed
+        ):
+            raise ValueError("SetTextFrameColumns contains non-intent/authoritative fields")
+        node_id = command.get("node_id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("SetTextFrameColumns node_id is required")
+        RevisionKernel._validate_text_frame_columns_state(
+            command.get("expected_before"),
+            "expected_before columns",
+        )
+        RevisionKernel._validate_text_frame_columns_state(
+            command.get("after"),
+            "after columns",
+        )
+        if command["expected_before"] == command["after"]:
+            raise ValueError("SetTextFrameColumns no-op is not a durable edit")
+
+    @staticmethod
+    def _validate_canonical_text_frame_columns(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "set_text_frame_columns":
+            raise ValueError("authoritative executor returned non-SetTextFrameColumns operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical SetTextFrameColumns targets a different node")
+        before = operation.get("before")
+        after = operation.get("after")
+        RevisionKernel._validate_text_frame_columns_state(
+            before,
+            "canonical before columns",
+        )
+        RevisionKernel._validate_text_frame_columns_state(
+            after,
+            "canonical after columns",
+        )
+        if before != command.get("expected_before"):
+            raise ValueError(
+                "canonical SetTextFrameColumns before-state differs from expected precondition"
+            )
+        if after != command.get("after"):
+            raise ValueError(
+                "canonical SetTextFrameColumns after-state differs from accepted intent"
+            )
+        if before == after:
+            raise ValueError("canonical SetTextFrameColumns must change column state")
 
     @staticmethod
     def _validate_crop_state(crop: dict, label: str) -> None:
