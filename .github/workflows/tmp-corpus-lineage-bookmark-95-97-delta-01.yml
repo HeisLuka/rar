@@ -1,0 +1,271 @@
+name: TEMP CORPUS BOOKMARK 95-97 generation delta
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-bookmark-95-97-delta-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Isolate Publisher95 to Publisher97 BOOKMARK generation delta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib, json, time, urllib.parse, urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-bookmark-delta/1.0"; SECTOR=2048
+          SPECS={
+            "pub95":{"sha256":"0d4c2e9e6a84a39f212f71c95591e17eb62ebaac7026427a4f84f6d1e636f5d5","size":22528,"member":"PAGEWIZ/BOOKMARK.PUB","url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso","source_page":"https://archive.org/details/microsoft-home-collection-1993-1995-"},
+            "pub97":{"sha256":"8a706ca56ce5d2853b9469a666cd769bab4c62d6fb56d8d7872ff9a322394367","size":22528,"member":"PAGEWIZ/BOOKMARK.PUB","url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso","source_page":"https://archive.org/details/MSPublisher97-EN"}
+          }
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def s16(b,o):
+            v=u16(b,o); return v-65536 if v>=32768 else v
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+          def s8(v):return v-256 if v>=128 else v
+
+          class ISO:
+            def __init__(self,url):self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              with urllib.request.urlopen(req,timeout=30) as r:m=json.load(r)
+              d=str(m.get("dir") or "");out=[]
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"];return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError("range length drift")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              last=None
+              for a in range(3):
+                try:return self.rr(self.delivery,start,n)
+                except Exception as e:
+                  last=e
+                  if a<2:time.sleep(2**a)
+              raise last
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","strict"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              if (e,s) in self.cache:return self.cache[e,s]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[e,s]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
+              parts=[x.upper() for x in path.strip("/").split("/") if x]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2:raise ValueError("not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def contents(pub):
+            with olefile.OleFileIO(pub) as ole:return ole.openstream(["Contents"]).read()
+
+          def parse_dir(c):
+            off=u32(c,0x16);n=u16(c,off);rows=[]
+            for i in range(n):
+              p=off+2+i*10
+              row={"index":i,"service":u16(c,p),"id":u16(c,p+2),"parent":u16(c,p+4),"offset":u32(c,p+6)}
+              row["marker"]=u16(c,row["offset"]);rows.append(row)
+            by={r["id"]:r for r in rows}
+            offsets=sorted(set(r["offset"] for r in rows))
+            chunks={}
+            for r in rows:
+              greater=[x for x in offsets if x>r["offset"]]
+              end=min(greater) if greater else len(c)
+              raw=c[r["offset"]:end]
+              chunks[r["id"]]={"len":len(raw),"sha256":sha(raw),"raw":raw}
+            return {"offset":off,"n":n,"rows":rows,"by_id":by,"chunks":chunks}
+
+          def text_meta(c):
+            root=u32(c,0x12);m=root+14
+            return {"root":root,"start":u32(c,m),"end":u32(c,m+4),"char":u16(c,m+8),"para":u16(c,m+10),"cell":u16(c,m+12),"prop_end":u16(c,m+14)}
+
+          def record(page,idx):
+            pos=2*idx
+            if pos>=511:return {"valid":False,"index":idx,"error":"offset-oob"}
+            ln=page[pos]
+            if pos+1+ln>511:return {"valid":False,"index":idx,"length":ln,"error":"record-oob"}
+            raw=page[pos:pos+1+ln]
+            return {"valid":True,"index":idx,"length":ln,"sha256":sha(raw),"raw":raw}
+
+          def char_sem(rec):
+            if not rec["valid"]:return {"valid":False}
+            raw=rec["raw"];ln=rec["length"];p=raw[1:]
+            out={"valid":True,"length":ln}
+            if ln>=1: out.update({"bold":bool(p[0]&1),"italic":bool(p[0]&2)})
+            if ln>=3:out["font_index"]=p[2]
+            if ln>=5:
+              delta=s16(p,4) if ln>=6 else s8(p[4])
+              out["size_delta_half_points"]=delta;out["text_size_pt"]=10+delta/2
+            if ln>=9:out["underline_single"]=bool(p[8]&1)
+            if ln>=16:out["color_index_raw_u32"]=u32(p,12)
+            return out
+
+          def para_sem(rec):
+            if not rec["valid"]:return {"valid":False}
+            raw=rec["raw"];ln=rec["length"]
+            out={"valid":True,"length":ln}
+            if len(raw)>=4:
+              out["tab_pos_or_extent"]=raw[1];out["reserved_byte2"]=raw[2]
+              align=raw[3];out["alignment_low2"]=align&3;out["paragraph_spacing_preset"]=(align>>3)&0x0f
+            if len(raw)>=12:
+              out["right_indent_raw"]=u16(raw,4);out["left_indent_raw"]=u16(raw,6)
+              out["first_line_indent_raw_s16"]=s16(raw,8);out["line_spacing_raw"]=u16(raw,10)
+            if len(raw)>=14:
+              out["before_raw"]=raw[12];out["after_raw"]=raw[13]
+            return out
+
+          def page_records(c,index,kind):
+            page=c[index*0x200:(index+1)*0x200];n=page[-1]
+            if kind=="char":
+              base=u32(page,0);pos=[u32(page,4*i)-base for i in range(1,n+1)];start=4*(n+1)
+            else:
+              pos=[u32(page,4*i) for i in range(n)];start=4*n
+            styles=list(page[start:start+n])
+            recs={}
+            for idx in sorted(set(styles)):
+              r=record(page,idx)
+              sem=char_sem(r) if kind=="char" else para_sem(r) if kind=="para" else {"valid":r["valid"],"length":r.get("length")}
+              recs[str(idx)]={k:v for k,v in r.items() if k!="raw"}|{"semantic":sem}
+            return {"n":n,"positions":pos,"styles":styles,"records":recs,"page_sha256":sha(page)}
+
+          def normalize_chunk(raw,offset_map):
+            data=bytearray(raw)
+            for p in range(0,max(0,len(data)-3)):
+              v=int.from_bytes(data[p:p+4],"little")
+              if v in offset_map:data[p:p+4]=offset_map[v].to_bytes(4,"little")
+            return bytes(data)
+
+          parsed={};deliveries={}
+          for side,s in SPECS.items():
+            iso=ISO(s["url"]);pub=iso.member(s["member"])
+            if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(side+" exact member drift")
+            c=contents(pub);tm=text_meta(c);di=parse_dir(c)
+            parsed[side]={"contents":c,"text":tm,"dir":di,
+              "char":page_records(c,tm["char"],"char"),
+              "para":page_records(c,tm["para"],"para"),
+              "cell":page_records(c,tm["cell"],"cell")}
+            deliveries[side]=iso.delivery
+
+          L,R=parsed["pub95"],parsed["pub97"]
+          common=sorted(set(L["dir"]["by_id"])&set(R["dir"]["by_id"]))
+          added=sorted(set(R["dir"]["by_id"])-set(L["dir"]["by_id"]))
+          removed=sorted(set(L["dir"]["by_id"])-set(R["dir"]["by_id"]))
+
+          lmap={L["text"]["root"]:0xF1000001,L["text"]["start"]:0xF1000002,L["text"]["end"]:0xF1000003,L["dir"]["offset"]:0xF1000004}
+          rmap={R["text"]["root"]:0xF1000001,R["text"]["start"]:0xF1000002,R["text"]["end"]:0xF1000003,R["dir"]["offset"]:0xF1000004}
+          for oid in common:
+            token=0xF2000000|(oid&0xffff)
+            lmap[L["dir"]["by_id"][oid]["offset"]]=token;rmap[R["dir"]["by_id"][oid]["offset"]]=token
+          for j,oid in enumerate(added):
+            rmap[R["dir"]["by_id"][oid]["offset"]]=0xF3000000+j
+
+          chunk_cmp=[];raw_changed=[];norm_equal=[];norm_changed=[]
+          for oid in common:
+            lc=L["dir"]["chunks"][oid];rc=R["dir"]["chunks"][oid]
+            raw_eq=lc["sha256"]==rc["sha256"] and lc["len"]==rc["len"]
+            ln=normalize_chunk(lc["raw"],lmap);rn=normalize_chunk(rc["raw"],rmap)
+            ne=sha(ln)==sha(rn) and len(ln)==len(rn)
+            if not raw_eq:raw_changed.append(oid)
+            if not raw_eq and ne:norm_equal.append(oid)
+            if not ne:norm_changed.append(oid)
+            chunk_cmp.append({"id":oid,"service":L["dir"]["by_id"][oid]["service"],"parent":L["dir"]["by_id"][oid]["parent"],"marker":L["dir"]["by_id"][oid]["marker"],"left_len":lc["len"],"right_len":rc["len"],"raw_equal":raw_eq,"relocation_normalized_equal":ne})
+
+          new_nodes=[]
+          for oid in added:
+            row=R["dir"]["by_id"][oid];ch=R["dir"]["chunks"][oid]["raw"]
+            words=[u16(ch,i) for i in range(0,min(len(ch)//2*2,32),2)]
+            new_nodes.append({"id":oid,"service":row["service"],"parent":row["parent"],"marker":row["marker"],"offset":row["offset"],"chunk_len":len(ch),"chunk_sha256":sha(ch),"first_u16_words":words})
+          parent256=R["dir"]["by_id"].get(256)
+
+          def semantic_record_map(page):
+            return {k:{"length":v["length"],"sha256":v["sha256"],"semantic":v["semantic"]} for k,v in page["records"].items() if v.get("valid")}
+          style_cmp={
+            "char":{"positions_equal":L["char"]["positions"]==R["char"]["positions"],"styles_equal":L["char"]["styles"]==R["char"]["styles"],"left_records":semantic_record_map(L["char"]),"right_records":semantic_record_map(R["char"])},
+            "paragraph":{"left_positions_relative":[x-L["text"]["start"] for x in L["para"]["positions"]],"right_positions_relative":[x-R["text"]["start"] for x in R["para"]["positions"]],"left_styles":L["para"]["styles"],"right_styles":R["para"]["styles"],"left_records":semantic_record_map(L["para"]),"right_records":semantic_record_map(R["para"])},
+            "cell":{"left_positions_relative":[x-L["text"]["start"] for x in L["cell"]["positions"]],"right_positions_relative":[x-R["text"]["start"] for x in R["cell"]["positions"]],"left_styles":L["cell"]["styles"],"right_styles":R["cell"]["styles"],"left_records":semantic_record_map(L["cell"]),"right_records":semantic_record_map(R["cell"])}
+          }
+
+          if not removed and len(added)==2 and len(norm_changed)<=10:
+            classification="identity-preserving-generation-extension-with-bounded-residual-chunk-delta"
+          elif not removed and len(added)==2:
+            classification="identity-preserving-generation-extension-with-broad-chunk-reserialization"
+          else:
+            classification="unexpected-graph-mutation"
+
+          # strip raw before retention
+          for side in parsed.values():
+            side.pop("contents",None)
+            for ch in side["dir"]["chunks"].values():ch.pop("raw",None)
+            side["dir"].pop("by_id",None)
+
+          summary={"schema":"chaptera.bookmark-95-97-delta-summary.v1","all_exact_members_verified":True,"common_id_count":len(common),"removed_ids":removed,"added_ids":added,"raw_changed_common_ids":raw_changed,"relocation_normalized_equal_ids":norm_equal,"residual_changed_common_ids":norm_changed,"parent256":parent256,"new_nodes":new_nodes,"style_comparison":style_cmp,"classification":classification,"source_safe":True}
+          receipt={"schema":"chaptera.bookmark-95-97-delta.v1","files":{s:{"sha256":SPECS[s]["sha256"],"source_page":SPECS[s]["source_page"],"delivery_url":deliveries[s]} for s in SPECS},"chunk_comparison":chunk_cmp,"summary":summary,"raw_pub_retained":False,"source_safe":True}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps({"common_id_count":len(common),"added_ids":added,"raw_changed_count":len(raw_changed),"normalized_equal_count":len(norm_equal),"residual_changed_count":len(norm_changed),"residual_changed_ids":norm_changed,"classification":classification},indent=2))
+          PY
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["common_id_count"] == 45
+          assert s["removed_ids"] == []
+          assert s["added_ids"] == [300,301]
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-bookmark-95-97-delta-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
