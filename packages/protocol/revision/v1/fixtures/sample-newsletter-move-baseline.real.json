@@ -1,0 +1,45 @@
+{
+  "baseline_version": "chaptera.sample-newsletter-move-baseline.v1",
+  "source": {
+    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+    "byte_len": 291840
+  },
+  "provenance": {
+    "kind": "historical_real_fixture_resolved_graph_artifact",
+    "workflow_run_id": 35833517170,
+    "artifact_id": 10737864631,
+    "artifact_digest": "sha256:ee9249e3eceba18b633a819260b12d6b950d057d152de7e5356a9b35f4ac614a",
+    "artifact_file": "resolved-graph.json",
+    "artifact_file_sha256": "7c327cd729fc2f9760e59cce1dd7c104c55162f4c3032c132068cfee513b1c4d",
+    "producer_head_sha": "b24b9f07e89299d5daf5c3a9366c240da2a47a50"
+  },
+  "page_ids": [
+    "07d06e09-fc17-5b90-971f-7041f58d0f1e",
+    "19f3e0c5-cc56-5121-abfe-99ad368836c9",
+    "4cefaede-69d1-5a65-9fe7-10f965530d10",
+    "58ffa2e0-896e-5a40-806c-bd0184ea9c85",
+    "5bd75ee1-470f-5c8d-9ab5-0281fcbe95db",
+    "782eec0b-01ee-5d9b-bad4-1ef749beb9b1",
+    "804583a0-a0fe-5dc0-a121-b5232db7e91e",
+    "b8e92891-809c-55f7-bd14-fd7c52cae259"
+  ],
+  "move_candidate": {
+    "node_id": "007d9898-568b-5125-b519-8d88243aabfb",
+    "parent_page_id": "58ffa2e0-896e-5a40-806c-bd0184ea9c85",
+    "kind": "shape",
+    "transform": {
+      "a": "1",
+      "b": "0",
+      "c": "0",
+      "d": "1",
+      "tx": 0,
+      "ty": 0
+    },
+    "before": {
+      "x": 526710,
+      "y": 1191292,
+      "width": 4436165,
+      "height": 587274
+    }
+  }
+}
