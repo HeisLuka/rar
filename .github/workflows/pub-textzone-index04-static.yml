@@ -45,7 +45,7 @@ jobs:
       - name: Extract binary-search primitive and direct callers
         run: |
           set -euo pipefail
-          objdump -d -Mintel --start-address=0x345309ce --stop-address=0x345309fd out/PUBCONV.DLL > out/sub-345309ce.txt
+          objdump -d -Mintel --start-address=0x345309ce --stop-address=0x34530a23 out/PUBCONV.DLL > out/sub-345309ce.txt
           objdump -d -Mintel --start-address=0x34530a23 --stop-address=0x34530af3 out/PUBCONV.DLL > out/caller-34530a23.txt
           objdump -d -Mintel --start-address=0x34530af3 --stop-address=0x34530b80 out/PUBCONV.DLL > out/caller-34530af3.txt
           grep -n -E 'call[[:space:]]+0x345309ce' out/disasm.txt > out/direct-call-sites.txt
