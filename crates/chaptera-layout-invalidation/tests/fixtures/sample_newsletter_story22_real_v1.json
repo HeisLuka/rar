@@ -1,0 +1,95 @@
+{
+  "schema": "chaptera.sample-newsletter-story22-real.v1",
+  "source": {
+    "name": "Apache POI SampleNewsletter.pub",
+    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+    "size_bytes": 291840,
+    "provenance_url": "https://raw.githubusercontent.com/apache/poi/6fdbaa55f387ea3927512412eadd569a67973a61/test-data/publisher/SampleNewsletter.pub"
+  },
+  "extraction_receipt": {
+    "quill_stream": "/Quill/QuillSub/CONTENTS",
+    "quill_sha256": "ef3bb76a454b34b72f1738f006cf507733c648061ca8e60fe5d305195b4d331c",
+    "escher_stream": "/Escher/EscherStm",
+    "escher_sha256": "32151602499898989291f019f0f919657acc9cbb33dd04465bea1c13da858d56",
+    "story_contract": "SYID + STRS + TEXT, strict UTF-16LE",
+    "geometry_contract": "ClientData 0x6801 seqNum + ClientAnchor 0x2001..0x2004 + page-relative A4 extent",
+    "independent_oracle": "LibreOffice/libmspub ODG import matches frame x/width/height geometry"
+  },
+  "page_extent_emu": {
+    "width": 7560000,
+    "height": 10692000
+  },
+  "story": {
+    "text_id": 22,
+    "utf16_code_units": 601,
+    "unicode_scalar_count": 601,
+    "paragraph_boundary_count": 5,
+    "text": "This story can fit 75-125 words.\rSelecting pictures or graphics is an important part of adding content to your newsletter.\rThink about your article and ask yourself if the picture supports or enhances the message you’re trying to convey. Avoid selecting images that appear to be out of context.\rMicrosoft Publisher includes thousands of clip art images from which you can choose and import into your newsletter. There are also several tools you can use to draw shapes and symbols.\rOnce you have chosen an image, place it close to the article. Be sure to place the caption of the image near the image.\r"
+  },
+  "frames": [
+    {
+      "seq_num": 330,
+      "effective_ordinal": 0,
+      "raw_explicit_ordinal": null,
+      "previous_seq_num": null,
+      "next_seq_num": 329,
+      "bounds_emu": {
+        "x": 2596806,
+        "y": 7930671,
+        "width": 1360324,
+        "height": 2059945
+      }
+    },
+    {
+      "seq_num": 329,
+      "effective_ordinal": 1,
+      "raw_explicit_ordinal": 1,
+      "previous_seq_num": 330,
+      "next_seq_num": 331,
+      "bounds_emu": {
+        "x": 4134862,
+        "y": 7930671,
+        "width": 1360325,
+        "height": 2059945
+      }
+    },
+    {
+      "seq_num": 331,
+      "effective_ordinal": 2,
+      "raw_explicit_ordinal": 2,
+      "previous_seq_num": 329,
+      "next_seq_num": null,
+      "bounds_emu": {
+        "x": 5672918,
+        "y": 7930671,
+        "width": 1360324,
+        "height": 2059945
+      }
+    }
+  ],
+  "wrap_obstacle_refs": {
+    "330": [],
+    "329": [337, 338],
+    "331": [337, 338]
+  },
+  "benchmark_harness": {
+    "authority": "real Story text/topology/frame geometry; synthetic typography only",
+    "synthetic_advance_emu_per_non_cr_scalar": 12000,
+    "synthetic_line_height_emu": 700000,
+    "break_after": "Unicode whitespace only",
+    "wrap_obstacles_materialized": false,
+    "baseline_expected_frame_end_scalars": [230, 481, 601],
+    "mutation": {
+      "frame_330_width_delta_emu": -100000,
+      "frame_329_width_delta_emu": 50000
+    },
+    "mutated_expected_frame_end_scalars": [227, 481, 601],
+    "expected_convergence_after_seq_num": 329,
+    "expected_reused_suffix_from_seq_num": 331
+  },
+  "limitations": [
+    "ParagraphIds are deterministic test-harness identities, not source Publisher identities.",
+    "Typography advances and line height are synthetic; this fixture does not claim glyph-exact Publisher layout.",
+    "Story 22 wrap refs are retained as provenance but not materialized into line regions in this benchmark slice."
+  ]
+}
