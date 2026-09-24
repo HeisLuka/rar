@@ -9,6 +9,9 @@ on:
       - "tools/scene_patch_v1.py"
       - "tools/optimization_receipt_v1.py"
       - "tools/run_optimization_spine_contract.py"
+      - "tools/glyph_runtime_v1.py"
+      - "tools/test_glyph_runtime_v1.py"
+      - "tools/run_glyph_runtime_benchmark.py"
       - "docs/render-bench-v1.md"
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
@@ -30,6 +33,16 @@ jobs:
         run: python tools/run_render_bench_contract.py
       - name: Normalize benchmark into optimization measurement snapshot
         run: python tools/run_optimization_spine_contract.py
+      - name: Unit-test glyph runtime
+        working-directory: tools
+        run: python test_glyph_runtime_v1.py
+      - name: Run glyph runtime benchmark
+        run: mkdir -p target/glyph-runtime && PYTHONPATH=tools python tools/run_glyph_runtime_benchmark.py | tee target/glyph-runtime/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glyph-runtime-${{ github.run_id }}
+          path: target/glyph-runtime/receipt.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
