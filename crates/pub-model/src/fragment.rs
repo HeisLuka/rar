@@ -62,6 +62,7 @@ pub enum AuthoringFragmentError {
     UnsupportedTransform,
     MissingExplicitFill,
     MissingExplicitStroke,
+    PaintMustBeAuthorCreated,
     InvalidFragmentSchema,
     InvalidFragmentEntityId,
     IdentityMapMismatch,
@@ -82,6 +83,13 @@ pub fn capture_rectangle_fragment_v1(
         return Err(AuthoringFragmentError::UnsupportedTransform);
     }
     validate_rect_emu_v1(shape.bounds).map_err(AuthoringFragmentError::InvalidMaterializedShape)?;
+
+    if !matches!(
+        shape.paint.provenance,
+        crate::ShapePaintProvenanceV1::AuthorCreated
+    ) {
+        return Err(AuthoringFragmentError::PaintMustBeAuthorCreated);
+    }
 
     let fill = shape
         .paint
@@ -260,6 +268,28 @@ mod tests {
         assert_eq!(
             fragment.rectangle.stroke,
             source_shape().paint.stroke.expect("stroke")
+        );
+    }
+
+    #[test]
+    fn capture_rejects_source_backed_paint_provenance() {
+        let mut shape = source_shape();
+        shape.paint.provenance = ShapePaintProvenanceV1::SourceBacked {
+            source_ref: crate::SourceRefV1 {
+                format: "pub".to_owned(),
+                adapter_version: "pub-rs/0.1".to_owned(),
+                source_hash_hex: "11".repeat(32),
+                carrier: "/Escher/EscherStm".to_owned(),
+                object_key: Some("shape/1".to_owned()),
+                path: Some("SpContainer/FOPT".to_owned()),
+                role: crate::SourceRoleV1::Semantic,
+                authority: crate::AuthorityClassV1::Authoritative,
+                confidence: crate::ReadConfidenceV1::Exact,
+            },
+        };
+        assert_eq!(
+            capture_rectangle_fragment_v1(&shape),
+            Err(AuthoringFragmentError::PaintMustBeAuthorCreated)
         );
     }
 
