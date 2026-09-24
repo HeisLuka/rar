@@ -1,0 +1,135 @@
+name: CORPUS-VAC GitHub history
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/github_history_pub_seed.py'
+      - 'tools/corpus/test_github_history_pub_seed.py'
+      - 'tools/corpus/pub_history_repositories.txt'
+      - '.github/workflows/corpus-vac-github-history.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/github_history_pub_seed.py'
+      - 'tools/corpus/test_github_history_pub_seed.py'
+      - 'tools/corpus/pub_history_repositories.txt'
+      - '.github/workflows/corpus-vac-github-history.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-vac-github-history-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline validation
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/github_history_pub_seed.py tools/corpus/test_github_history_pub_seed.py
+          python tools/corpus/test_github_history_pub_seed.py
+
+  smoke:
+    if: github.event_name == 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Mine bounded Apache POI history
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/github_history_pub_seed.py \
+            --repo apache/poi --no-search --max-repos 1 \
+            --history-depth 500 --max-paths-per-repo 25 --max-captures-per-path 2 \
+            --out out/github_history_seed.csv \
+            --summary out/github_history.summary.json
+          cat out/github_history.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: github-history-smoke-${{ github.run_id }}
+          path: out/**
+          retention-days: 7
+
+  discover:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Mine public repository history and releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/discovery
+          python tools/corpus/github_history_pub_seed.py \
+            --repo-file tools/corpus/pub_history_repositories.txt \
+            --search-pages 3 --max-repos 25 --history-depth 2000 \
+            --max-paths-per-repo 250 --max-captures-per-path 3 --max-releases 50 \
+            --out out/discovery/github_history_seed.csv \
+            --summary out/discovery/github_history.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: github-history-seed-${{ github.run_id }}
+          path: out/discovery/**
+          retention-days: 14
+
+  harvest:
+    if: github.event_name != 'pull_request'
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: github-history-seed-${{ github.run_id }}
+          path: seed
+      - name: Fetch immutable history/release locators
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed seed/github_history_seed.csv --out out/harvest \
+            --max-files -1 --timeout 25 --max-bytes 104857600 --per-host-delay 0.05 \
+            --shard-index "${{ matrix.shard }}" --shard-count 4
+      - name: Keep public artifact manifest-only
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: github-history-manifest-${{ github.run_id }}-${{ matrix.shard }}
+          path: |
+            out/harvest/manifest.json
+            out/harvest/manifest.csv
+          if-no-files-found: error
+          retention-days: 30
