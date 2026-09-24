@@ -21,6 +21,7 @@
   "exact_linked_flow_equivalence": true,
   "exact_shaped_flow_equivalence": true,
   "exact_fixed_run_equivalence": true,
+  "exact_scene_shard_equivalence": true,
   "reshaping_calls_after_geometry_edit": 0,
   "synthetic_typography": true,
   "publisher_glyph_exact_claim": false
