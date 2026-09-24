@@ -1,0 +1,113 @@
+name: CORPUS-VAC-RAR-BASE
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/**'
+      - '.github/workflows/corpus-vac-rar-base.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-vac-rar-base-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile corpus tools
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            tools/corpus/harvest_pub.py \
+            tools/corpus/corpus_manifest_union.py \
+            tools/corpus/warc_completeness_audit.py
+
+      - name: Run offline corpus regressions
+        run: |
+          set -euo pipefail
+          python tools/corpus/test_corpus_manifest_union.py
+          python tools/corpus/test_warc_completeness_audit.py
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          path = Path("tools/corpus/harvest_pub.py")
+          spec = importlib.util.spec_from_file_location("harvest_pub", path)
+          mod = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(mod)
+
+          fake_pub = mod.CFB_MAGIC + b"\x00" * 64 + "Microsoft Publisher".encode("utf-16le") + b"\x00" * 512
+          cls, hints = mod.classify(fake_pub)
+          assert cls == "cfb_publisher_hint", (cls, hints)
+
+          cls, _ = mod.classify(b"<SCRIPT>x</SCRIPT><!DOCTYPE html><html></html>")
+          assert cls == "html_mislabel", cls
+
+          cls, _ = mod.classify(b"%PDF-1.7\n")
+          assert cls == "pdf_mislabel", cls
+          PY
+
+      - name: Harvest pinned public smoke fixture
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed tools/corpus/smoke_seed.csv \
+            --out out/corpus-smoke \
+            --max-files 1 \
+            --timeout 30 \
+            --per-host-delay 0
+
+      - name: Verify exact smoke identity
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          expected_sha = "6fefdef46b87c767150878dc384549cb2d2ec2ac54de25f8ddb3a5628301107e"
+          expected_size = 72192
+
+          rows = json.loads(Path("out/corpus-smoke/manifest.json").read_text(encoding="utf-8"))
+          assert len(rows) == 1, rows
+          row = rows[0]
+          assert row.get("fetch_status") == "ok", row
+          assert row.get("classification") == "cfb_publisher_hint", row
+          assert row.get("sha256") == expected_sha, row
+          assert int(row.get("size_bytes") or 0) == expected_size, row
+
+          stored = Path("out/corpus-smoke") / row["stored_path"]
+          data = stored.read_bytes()
+          assert len(data) == expected_size
+          assert hashlib.sha256(data).hexdigest() == expected_sha
+          PY
+
+      - name: Upload public-safe smoke receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-vac-rar-base-${{ github.run_id }}
+          path: |
+            out/corpus-smoke/manifest.json
+            out/corpus-smoke/manifest.csv
+            out/corpus-smoke/natural_wild/**
+            out/corpus-smoke/mislabel_negative/**
+            out/corpus-smoke/source_container/**
+            out/corpus-smoke/truncated_partial/**
+          if-no-files-found: warn
+          retention-days: 7
