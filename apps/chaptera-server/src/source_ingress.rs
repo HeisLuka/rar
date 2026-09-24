@@ -7,8 +7,6 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const STREAM_BUFFER_BYTES: usize = 64 * 1024;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IngressError {
     pub code: &'static str,
@@ -960,6 +958,8 @@ mod tests {
     };
 
     use super::*;
+
+    const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 
     #[derive(Default)]
     struct MemoryRepo {
