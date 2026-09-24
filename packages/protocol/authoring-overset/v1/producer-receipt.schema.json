@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/authoring-overset/v1/producer-receipt.schema.json",
+  "title": "Chaptera one-frame authoring overset producer receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "source_hash",
+    "story_id",
+    "frame_node_id",
+    "canonical_edit",
+    "states",
+    "layout_unknown_probe",
+    "output_probe",
+    "invariants"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.authoring-overset-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "source_hash": {"$ref": "#/$defs/sha256"},
+    "story_id": {"$ref": "#/$defs/uuid"},
+    "frame_node_id": {"$ref": "#/$defs/uuid"},
+    "canonical_edit": {"$ref": "#/$defs/edit"},
+    "states": {"$ref": "#/$defs/states"},
+    "layout_unknown_probe": {"$ref": "#/$defs/layoutState"},
+    "output_probe": {"$ref": "#/$defs/outputProbe"},
+    "invariants": {"$ref": "#/$defs/invariants"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before_story_hash",
+        "after_story_hash",
+        "before_scalar_count",
+        "after_scalar_count"
+      ],
+      "properties": {
+        "before_story_hash": {"$ref": "#/$defs/hashId"},
+        "after_story_hash": {"$ref": "#/$defs/hashId"},
+        "before_scalar_count": {"type": "integer", "minimum": 0},
+        "after_scalar_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "layoutState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "story_hash",
+        "scalar_count",
+        "state",
+        "reason_code",
+        "environment_authoritative",
+        "layout_environment_hash"
+      ],
+      "properties": {
+        "story_hash": {"$ref": "#/$defs/hashId"},
+        "scalar_count": {"type": "integer", "minimum": 0},
+        "state": {"enum": ["fits", "overset", "layout_unknown"]},
+        "reason_code": {
+          "anyOf": [
+            {"type": "string", "pattern": "^[a-z0-9._-]+$", "minLength": 1, "maxLength": 128},
+            {"type": "null"}
+          ]
+        },
+        "environment_authoritative": {"type": "boolean"},
+        "layout_environment_hash": {
+          "anyOf": [
+            {"$ref": "#/$defs/hashId"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "states": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "accepted", "undo", "redo", "replay"],
+      "properties": {
+        "baseline": {"$ref": "#/$defs/layoutState"},
+        "accepted": {"$ref": "#/$defs/layoutState"},
+        "undo": {"$ref": "#/$defs/layoutState"},
+        "redo": {"$ref": "#/$defs/layoutState"},
+        "replay": {"$ref": "#/$defs/layoutState"}
+      }
+    },
+    "outputProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editable_export_story_hash",
+        "fixed_output_outcome",
+        "overset_state_explicit"
+      ],
+      "properties": {
+        "editable_export_story_hash": {"$ref": "#/$defs/hashId"},
+        "fixed_output_outcome": {
+          "enum": ["explicit_overset_loss", "blocked"]
+        },
+        "overset_state_explicit": {"const": true}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_story_truncated",
+        "autofit_mutation_count",
+        "source_write_count",
+        "linked_frame_flow_used",
+        "host_font_fallback_used",
+        "raw_story_text_emitted"
+      ],
+      "properties": {
+        "canonical_story_truncated": {"const": false},
+        "autofit_mutation_count": {"const": 0},
+        "source_write_count": {"const": 0},
+        "linked_frame_flow_used": {"const": false},
+        "host_font_fallback_used": {"const": false},
+        "raw_story_text_emitted": {"const": false}
+      }
+    }
+  }
+}
