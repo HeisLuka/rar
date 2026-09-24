@@ -45,10 +45,18 @@ pub enum ShapeKindV1 {
     Rectangle,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ShapeTransformV1 {
     Identity,
+    Affine {
+        a: String,
+        b: String,
+        c: String,
+        d: String,
+        tx: String,
+        ty: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
