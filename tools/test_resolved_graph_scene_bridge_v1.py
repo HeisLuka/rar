@@ -77,6 +77,28 @@ def graph():
     }
 
 
+def projection_context_sidecar():
+    return {
+        "schema_version": "chaptera.editor-projection-context-sidecar.v1",
+        "source_hash": SOURCE_HASH,
+        "context": {
+            "schema_version": "chaptera.pub-projection-context.v1",
+            "master_relations": [],
+            "cmo_relations": [{
+                "source_order": 0,
+                "cmo_id": 1,
+                "carrier_ohpo": 319,
+                "carrier_cmo_id": 1,
+                "target_qsid": 218,
+                "carrier_node_id": NODE_ID,
+                "carrier_story_id": None,
+                "target_story_id": STORY_ID,
+                "target_frame_node_id": NODE_ID,
+            }],
+        },
+    }
+
+
 def viewer_for(scene):
     return {
         "schema_version": "0.1",
@@ -184,6 +206,11 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
             state_dir = root / "state"
             fixture = root / "fixture.pub"
             fixture.write_bytes(b"launcher-verifies-real-fixture-in-production")
+            context_path = root / "projection-context-sidecar.json"
+            context_path.write_text(
+                json.dumps(projection_context_sidecar()),
+                encoding="utf-8",
+            )
 
             prefix = [
                 sys.executable,
@@ -195,6 +222,7 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
                 "--target-page-id", PAGE_ID,
                 "--after-x-emu", str(AFTER["x"]),
                 "--after-y-emu", str(AFTER["y"]),
+                "--projection-context-sidecar", str(context_path),
             ]
 
             def invoke(action, payload, fixture_arg=False):
@@ -220,6 +248,17 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
             )
             self.assertEqual(BEFORE, baseline["move_candidate"]["before"])
             self.assertEqual(AFTER, baseline["move_candidate"]["after"])
+            self.assertEqual(
+                1,
+                baseline["projection_context_state"]["cmo_relation_count"],
+            )
+            self.assertFalse(
+                baseline["projection_context_state"]["cmo_layout_consumed"],
+            )
+            context_hash = baseline["projection_context_state"][
+                "projection_context_hash"
+            ]
+            self.assertNotIn("projection_context", baseline["baseline_project"])
 
             command = {
                 "kind": "move_node_to",
@@ -235,6 +274,11 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
             })
             self.assertEqual(AFTER, committed["scene_state"]["bounds"])
             self.assertEqual(0, committed["source_reparse_after_edit_count"])
+            self.assertEqual(
+                context_hash,
+                committed["projection_context_state"]["projection_context_hash"],
+            )
+            self.assertNotIn("projection_context", committed["resulting_project"])
 
             undone = invoke("history", {
                 "action": "history",
@@ -243,6 +287,10 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
                 "base_project": committed["resulting_project"],
             })
             self.assertEqual(BEFORE, undone["scene_state"]["bounds"])
+            self.assertEqual(
+                context_hash,
+                undone["projection_context_state"]["projection_context_hash"],
+            )
 
             redone = invoke("history", {
                 "action": "history",
@@ -251,6 +299,10 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
                 "base_project": undone["resulting_project"],
             })
             self.assertEqual(AFTER, redone["scene_state"]["bounds"])
+            self.assertEqual(
+                context_hash,
+                redone["projection_context_state"]["projection_context_hash"],
+            )
 
             replayed = invoke("replay", {
                 "action": "replay",
@@ -261,6 +313,11 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
                 committed["scene_state"]["scene_snapshot_id"],
                 replayed["scene_state"]["scene_snapshot_id"],
             )
+            self.assertEqual(
+                context_hash,
+                replayed["projection_context_state"]["projection_context_hash"],
+            )
+            self.assertNotIn("projection_context", replayed["replayed_project"])
 
 
 if __name__ == "__main__":
