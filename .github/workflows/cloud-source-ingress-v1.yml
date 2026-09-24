@@ -1,0 +1,28 @@
+name: Cloud source ingress V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/source_ingress.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/Cargo.toml"
+      - "apps/chaptera-server/migrations/0001_source_ingress.sql"
+      - ".github/workflows/cloud-source-ingress-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Chaptera server tests
+        run: cargo test -p chaptera-server
