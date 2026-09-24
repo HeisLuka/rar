@@ -1,0 +1,33 @@
+name: Fetch Korva 1.8.7
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-korva:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download Korva 1.8.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 \
+            -o Korva_1.8.7_amd64.deb \
+            https://github.com/kai63001/korva-releases/releases/download/v1.8.7/Korva_1.8.7_amd64.deb
+
+      - name: Verify SHA-256
+        shell: bash
+        run: |
+          echo "e0a2abde284c4c714262c07afab168659387a797f033a869d0db1b1f4bfa010c  Korva_1.8.7_amd64.deb" | sha256sum -c -
+
+      - name: Upload Korva artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Korva_1.8.7_amd64
+          path: Korva_1.8.7_amd64.deb
+          if-no-files-found: error
+          retention-days: 1
