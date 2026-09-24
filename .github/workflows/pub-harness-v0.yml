@@ -1,0 +1,32 @@
+name: PUB harness v0
+
+on:
+  pull_request:
+    paths:
+      - "services/pub-harness/**"
+      - "docs/pub-harness-v0.md"
+      - ".github/workflows/pub-harness-v0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: SQLite capabilities
+        run: |
+          python - <<'PY'
+          import sqlite3
+          c = sqlite3.connect(":memory:")
+          c.execute("create virtual table x using fts5(body)")
+          print("sqlite", sqlite3.sqlite_version, "fts5=ok")
+          PY
+      - name: Test PUB harness
+        working-directory: services/pub-harness
+        run: python -m unittest -v
