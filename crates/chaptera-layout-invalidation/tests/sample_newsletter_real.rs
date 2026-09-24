@@ -17,7 +17,7 @@ use pub_fixed_flow_adapter::{
     materialize_fixed_runs_v1, run_local_cluster_v1,
 };
 use pub_model::{derive_pub_node_id_v1, derive_pub_story_id_v1};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 struct Fixture {
@@ -79,6 +79,33 @@ struct Harness {
 struct Mutation {
     frame_330_width_delta_emu: i64,
     frame_329_width_delta_emu: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct WorkReceiptV1 {
+    schema: String,
+    source_sha256: String,
+    story_text_id: u32,
+    clean_full_recomputed_frame_ids: Vec<String>,
+    incremental_recomputed_frame_ids: Vec<String>,
+    reused_suffix_frame_ids: Vec<String>,
+    clean_full_frame_count: usize,
+    incremental_recomputed_frame_count: usize,
+    reused_frame_count: usize,
+    frame_resolve_work_reduction_permille: u32,
+    exact_linked_flow_equivalence: bool,
+    exact_shaped_flow_equivalence: bool,
+    exact_fixed_run_equivalence: bool,
+    reshaping_calls_after_geometry_edit: u32,
+    synthetic_typography: bool,
+    publisher_glyph_exact_claim: bool,
+}
+
+fn expected_work_receipt() -> WorkReceiptV1 {
+    serde_json::from_str(include_str!(
+        "fixtures/sample_newsletter_story22_work_receipt_v1.json"
+    ))
+    .expect("source-free deterministic work receipt")
 }
 
 fn fixture() -> Fixture {
@@ -480,7 +507,7 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
 
     assert_eq!(incremental_shaped, clean_shaped);
 
-    let baseline_runs =
+    let _baseline_runs =
         materialize_fixed_runs_v1(&baseline_shaped).expect("baseline fixed-run materialization");
     let incremental_runs = materialize_fixed_runs_v1(&incremental_shaped)
         .expect("incremental fixed-run materialization");
@@ -529,6 +556,51 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
     assert_eq!(
         frame_run_receipts(&baseline_receipt, &reused_frame_id),
         frame_run_receipts(&incremental_receipt, &reused_frame_id)
+    );
+
+    let clean_full_recomputed_frame_ids = clean
+        .frames
+        .iter()
+        .map(|frame| frame.frame_id.clone())
+        .collect::<Vec<_>>();
+    let incremental_recomputed_frame_ids = incremental.recomputed_frame_ids.clone();
+    let reused_suffix_frame_ids = clean_full_recomputed_frame_ids
+        .iter()
+        .filter(|frame_id| !incremental_recomputed_frame_ids.contains(frame_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let clean_full_frame_count = clean_full_recomputed_frame_ids.len();
+    let incremental_recomputed_frame_count = incremental_recomputed_frame_ids.len();
+    let reused_frame_count = clean_full_frame_count - incremental_recomputed_frame_count;
+    let frame_resolve_work_reduction_permille = u32::try_from(
+        reused_frame_count * 1000 / clean_full_frame_count
+    )
+    .expect("bounded frame work ratio");
+
+    let work_receipt = WorkReceiptV1 {
+        schema: "chaptera.layout-invalidation-work-receipt.v1".into(),
+        source_sha256: fixture.source.sha256.clone(),
+        story_text_id: fixture.story.text_id,
+        clean_full_recomputed_frame_ids,
+        incremental_recomputed_frame_ids,
+        reused_suffix_frame_ids,
+        clean_full_frame_count,
+        incremental_recomputed_frame_count,
+        reused_frame_count,
+        frame_resolve_work_reduction_permille,
+        exact_linked_flow_equivalence: incremental.flow == clean,
+        exact_shaped_flow_equivalence: incremental_shaped == clean_shaped,
+        exact_fixed_run_equivalence: incremental_runs == clean_runs,
+        reshaping_calls_after_geometry_edit: incremental_receipt.invariants.reshaping_calls,
+        synthetic_typography: true,
+        publisher_glyph_exact_claim: false,
+    };
+    assert_eq!(work_receipt, expected_work_receipt());
+    assert!(work_receipt.incremental_recomputed_frame_count < work_receipt.clean_full_frame_count);
+    assert!(work_receipt.reused_frame_count > 0);
+    println!(
+        "LAYOUT_INVALIDATION_WORK_RECEIPT={}",
+        serde_json::to_string(&work_receipt).expect("serialize work receipt")
     );
 
     let changed_frame_id =
