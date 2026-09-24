@@ -13,3 +13,7 @@ serde_json.workspace = true
 [[bin]]
 name = "master-projection-producer"
 path = "src/main.rs"
+
+[[bin]]
+name = "master-source-context-producer"
+path = "src/bin/master_source_context_producer.rs"
