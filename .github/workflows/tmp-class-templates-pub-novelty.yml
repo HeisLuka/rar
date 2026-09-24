@@ -99,10 +99,12 @@ jobs:
           print(json.dumps(summary,indent=2,ensure_ascii=False))
           PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: class-templates-pub-novelty-${{ github.run_id }}
+          name: class-templates-pub-harvest-${{ github.run_id }}
           path: |
             out/discovery.json
+            out/harvest/**
             out/summary.json
             out/novel.json
             out/novel/**
