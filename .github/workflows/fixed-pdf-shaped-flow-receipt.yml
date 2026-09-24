@@ -1,0 +1,26 @@
+name: Fixed PDF shaped-flow receipt V1
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/fixed-output/**"
+      - "tools/validate_fixed_pdf_shaped_flow_receipt.py"
+      - "tools/test_fixed_pdf_shaped_flow_receipt.py"
+      - ".github/workflows/fixed-pdf-shaped-flow-receipt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install schema validator
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Run shaped-flow to fixed-PDF contract tests
+        run: python tools/test_fixed_pdf_shaped_flow_receipt.py -v
