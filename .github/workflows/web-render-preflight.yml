@@ -9,7 +9,7 @@ on:
       - "tools/run_web_renderer_benchmark.mjs"
       - "apps/web/frame-pacing-v1.mjs"
       - "apps/web/frame-pacing-v1.test.mjs"
-      - "tools/run_web_worker_boundary_benchmark.mjs"
+      - "tools/run_web_frame_pacing_benchmark.mjs"
       - "docs/web-editor-render-surface-v1.md"
       - ".github/workflows/web-render-preflight.yml"
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
       - name: Run synthetic/protocol fixture benchmark
         run: node tools/run_web_renderer_benchmark.mjs ${{ matrix.browser }}
       - name: Run rAF storm benchmark
-        run: node tools/run_web_worker_boundary_benchmark.mjs ${{ matrix.browser }}
+        run: node tools/run_web_frame_pacing_benchmark.mjs ${{ matrix.browser }}
       - uses: actions/upload-artifact@v4
         with:
           name: web-render-preflight-${{ matrix.browser }}
