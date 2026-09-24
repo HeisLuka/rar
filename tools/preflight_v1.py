@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-import copy
 import hashlib
 import json
 
 SEVERITY = {"info": 0, "warning": 1, "error": 2}
 
+
 def canonical_json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
+
 def hash_id(value):
     return "sha256:" + hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
 
 def _diag(code, severity, message_key, origin_node_id=None, detail=None):
     return {
@@ -20,8 +22,10 @@ def _diag(code, severity, message_key, origin_node_id=None, detail=None):
         "detail": detail,
     }
 
-def evaluate(scene, target_risks=None):
+
+def evaluate(scene, target_risks=None, resource_expectations=None):
     target_risks = target_risks or []
+    resource_expectations = resource_expectations or {}
     diagnostics = []
 
     for item in scene.get("diagnostics", []):
@@ -40,38 +44,56 @@ def evaluate(scene, target_risks=None):
             nodes_by_resource.setdefault(resource_id, []).append(node["node_id"])
 
     for resource in scene.get("resources", []):
+        resource_id = resource["resource_id"]
         availability = resource.get("availability")
+        origins = nodes_by_resource.get(resource_id) or [None]
         if availability in {"missing", "blocked"}:
-            origins = nodes_by_resource.get(resource["resource_id"]) or [None]
             for origin in origins:
                 diagnostics.append(_diag(
                     "preflight.resource_missing",
                     "error",
                     "preflight.resource_missing",
                     origin,
-                    f"{resource['resource_id']}:{availability}",
+                    f"{resource_id}:{availability}",
                 ))
         elif availability in {"preview_only", "unsupported", "unknown"}:
-            origins = nodes_by_resource.get(resource["resource_id"]) or [None]
             for origin in origins:
                 diagnostics.append(_diag(
                     "preflight.resource_partial",
                     "warning",
                     "preflight.resource_partial",
                     origin,
-                    f"{resource['resource_id']}:{availability}",
+                    f"{resource_id}:{availability}",
                 ))
+
+        expected_hash = resource_expectations.get(resource_id)
+        actual_hash = resource.get("content_hash")
+        if expected_hash is not None and actual_hash is not None and actual_hash != expected_hash:
+            for origin in origins:
+                diagnostics.append(_diag(
+                    "preflight.resource_modified",
+                    "warning",
+                    "preflight.resource_modified",
+                    origin,
+                    f"{resource_id}:expected={expected_hash}:actual={actual_hash}",
+                ))
+
+    story_nodes = {}
+    for frame in scene.get("story_frames", []):
+        story_nodes.setdefault(frame["story_id"], []).append(frame["node_id"])
 
     for story in scene.get("stories", []):
         state = story.get("text_fidelity")
         if state in {"unsupported", "opaque"}:
-            diagnostics.append(_diag(
-                "preflight.story_semantics_opaque",
-                "warning" if state == "opaque" else "error",
-                "preflight.story_semantics_opaque",
-                None,
-                f"{story['story_id']}:{state}",
-            ))
+            origins = story_nodes.get(story["story_id"]) or [None]
+            for origin in origins:
+                diagnostics.append(_diag(
+                    "preflight.story_semantics_opaque",
+                    "warning" if state == "opaque" else "error",
+                    "preflight.story_semantics_opaque",
+                    origin,
+                    f"{story['story_id']}:{state}",
+                ))
 
     for cap in scene.get("capabilities", []):
         if cap.get("state") != "supported":
@@ -100,6 +122,11 @@ def evaluate(scene, target_risks=None):
         d.get("detail") or "",
     ))
     counts = {level: sum(1 for d in diagnostics if d["severity"] == level) for level in SEVERITY}
+    blocking = counts["error"] > 0
+    human_summary = (
+        f"{counts['error']} error(s), {counts['warning']} warning(s), "
+        f"{counts['info']} info; blocking={'yes' if blocking else 'no'}"
+    )
     result = {
         "receipt_version": "chaptera.preflight.v1",
         "source_hash": scene["source_hash"],
@@ -110,7 +137,8 @@ def evaluate(scene, target_risks=None):
             "error_count": counts["error"],
             "warning_count": counts["warning"],
             "info_count": counts["info"],
-            "blocking": counts["error"] > 0,
+            "blocking": blocking,
+            "human": human_summary,
         },
     }
     result["receipt_id"] = hash_id(result)
