@@ -443,7 +443,7 @@ pub fn decode_canonical_event(encoded: &[u8]) -> Result<Vec<u8>, SqliteStoreErro
 
     let payload = &encoded[EVENT_HEADER_BYTES..];
     let actual = Sha256::digest(payload);
-    if &actual[..] != &encoded[hash_start..hash_end] {
+    if actual[..] != encoded[hash_start..hash_end] {
         return Err(SqliteStoreError::new(
             "canonical_event_corrupt",
             "canonical event payload hash mismatch",
