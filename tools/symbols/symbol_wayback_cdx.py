@@ -74,8 +74,8 @@ def main():
     a=ap.parse_args()
     rows=[]; receipts=[]; errors=[]
     for gen,module,pdb,index in RECORDS:
-        for scheme in ("http","https"):
-            for pdbname in variants(pdb):
+        for scheme in ("http",):
+            for pdbname in [pdb]:
                 prefix=f"{scheme}://msdl.microsoft.com/download/symbols/{pdbname}/{index}/"
                 params=[
                     ("url",prefix),("matchType","prefix"),("output","json"),
