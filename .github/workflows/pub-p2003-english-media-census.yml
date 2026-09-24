@@ -1,0 +1,161 @@
+name: PUB 2003 English media census
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pub-p2003-english-media-census.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run bounded Internet Archive metadata census
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 - <<'PY'
+          import json, urllib.parse, urllib.request, time
+          from pathlib import Path
+
+          queries = [
+              'title:"Microsoft Publisher 2003"',
+              '"Publisher 2003" AND mediatype:software',
+              '"Office Publisher 2003" AND mediatype:software',
+              'OFFICE11 AND Publisher',
+              '"Publisher 2003" AND language:eng',
+          ]
+          media_exts = ('.iso','.mdf','.mds','.bin','.cue','.img','.nrg','.7z','.zip','.rar')
+          english_tokens = ('english',' eng ','[english]',' en-us ',' 1033 ','x10-13869','099-91827','164-02924','164-03341')
+          publisher_tokens = ('publisher','office11','sku119','x10-13869','099-91827','164-02924','164-03341')
+
+          def get_json(url, timeout=45):
+              req=urllib.request.Request(url, headers={'User-Agent':'Rar-PUB-Research/1.0'})
+              with urllib.request.urlopen(req, timeout=timeout) as r:
+                  return json.load(r)
+
+          discovered={}
+          query_receipts=[]
+          for q in queries:
+              params={
+                  'q': q,
+                  'fl[]':['identifier','title','date','year','language','mediatype','description'],
+                  'rows': 50,
+                  'page': 1,
+                  'output':'json',
+              }
+              url='https://archive.org/advancedsearch.php?'+urllib.parse.urlencode(params, doseq=True)
+              try:
+                  d=get_json(url)
+                  docs=d.get('response',{}).get('docs',[])
+                  query_receipts.append({'query':q,'numFound':d.get('response',{}).get('numFound',0),'returned':len(docs)})
+                  for doc in docs:
+                      ident=doc.get('identifier')
+                      if ident and ident not in discovered:
+                          discovered[ident]=doc
+              except Exception as e:
+                  query_receipts.append({'query':q,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(0.25)
+
+          # Bound metadata fan-out.
+          ids=sorted(discovered)[:60]
+          candidates=[]
+          metadata_errors=[]
+          for ident in ids:
+              try:
+                  meta=get_json('https://archive.org/metadata/'+urllib.parse.quote(ident), timeout=60)
+              except Exception as e:
+                  metadata_errors.append({'identifier':ident,'error':f'{type(e).__name__}: {e}'})
+                  continue
+              md=meta.get('metadata',{}) or {}
+              title=str(md.get('title',''))
+              language=md.get('language','')
+              lang_text=' '.join(language) if isinstance(language,list) else str(language)
+              desc=str(md.get('description',''))
+              item_blob=(' '+ident+' '+title+' '+lang_text+' '+desc+' ').lower()
+
+              media=[]
+              file_name_hits=[]
+              for f in meta.get('files',[]) or []:
+                  name=str(f.get('name',''))
+                  low=name.lower()
+                  if low.endswith(media_exts):
+                      media.append({
+                          'name':name,
+                          'size':f.get('size'),
+                          'md5':f.get('md5'),
+                          'sha1':f.get('sha1'),
+                          'crc32':f.get('crc32'),
+                          'source':f.get('source'),
+                      })
+                  if any(tok in low for tok in ('publisher','office11','sku119','vbapb10','x10-13869')):
+                      file_name_hits.append(name)
+
+              publisher_signal = any(tok in item_blob for tok in publisher_tokens) or bool(file_name_hits)
+              english_signal = (
+                  any(tok in item_blob for tok in english_tokens)
+                  or lang_text.lower() in {'eng','en','english','en-us'}
+              )
+              if publisher_signal or media:
+                  candidates.append({
+                      'identifier':ident,
+                      'title':title,
+                      'date':md.get('date'),
+                      'year':md.get('year'),
+                      'language':language,
+                      'publisher_signal':publisher_signal,
+                      'english_signal':english_signal,
+                      'media_files':media,
+                      'file_name_hits':file_name_hits[:100],
+                  })
+              time.sleep(0.15)
+
+          ranked=sorted(
+              candidates,
+              key=lambda x:(not (x['publisher_signal'] and x['english_signal'] and x['media_files']),
+                            not (x['publisher_signal'] and x['media_files']),
+                            x['identifier'])
+          )
+
+          receipt={
+              'schema':'rar-p2003-english-media-census-v1',
+              'queries':query_receipts,
+              'unique_identifiers_discovered':len(discovered),
+              'metadata_items_examined':len(ids),
+              'metadata_errors':metadata_errors,
+              'candidate_count':len(ranked),
+              'strong_candidates':sum(1 for x in ranked if x['publisher_signal'] and x['english_signal'] and x['media_files']),
+              'candidates':ranked,
+              'boundary':'Metadata census only. Titles/language/file names are acquisition leads, not authentic Publisher 2003 English media proof; no installation media bytes were downloaded.',
+          }
+          Path('out/p2003-english-media-census.json').write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding='utf-8')
+          with Path('out/p2003-english-media-candidates.tsv').open('w',encoding='utf-8') as w:
+              w.write('identifier\ttitle\tlanguage\tenglish_signal\tpublisher_signal\tmedia_count\n')
+              for x in ranked:
+                  w.write(f"{x['identifier']}\t{x['title'].replace(chr(9),' ')}\t{str(x['language']).replace(chr(9),' ')}\t{x['english_signal']}\t{x['publisher_signal']}\t{len(x['media_files'])}\n")
+          print(json.dumps({
+              'queries':query_receipts,
+              'unique_identifiers_discovered':len(discovered),
+              'metadata_items_examined':len(ids),
+              'metadata_error_count':len(metadata_errors),
+              'candidate_count':len(ranked),
+              'strong_candidates':receipt['strong_candidates'],
+              'top_candidates':ranked[:12],
+          },indent=2,ensure_ascii=False))
+          PY
+
+      - name: Upload bounded census receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2003-english-media-census-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
