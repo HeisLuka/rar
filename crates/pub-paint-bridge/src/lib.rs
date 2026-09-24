@@ -278,7 +278,7 @@ mod tests {
             .expect("promotion")
             .expect("fill");
 
-        assert_eq!(paint.fill.as_ref().expect("fill").visible, false);
+        assert!(!paint.fill.as_ref().expect("fill").visible);
         assert!(paint.stroke.is_none());
         assert_eq!(project_viewer_node_paint_v1(&paint), None);
         assert_eq!(
