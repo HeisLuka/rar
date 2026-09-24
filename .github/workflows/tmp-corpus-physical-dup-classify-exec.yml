@@ -1,0 +1,258 @@
+name: TEMP CORPUS physical duplicate classify execution
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-physical-dup-classify-exec.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-corpus-physical-dup-classify-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    strategy:
+      fail-fast: false
+      matrix:
+        target_root: [thai, en, deluxe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB/archive tools
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Rehydrate and classify one target medium
+        env:
+          TARGET_ROOT: ${{ matrix.target_root }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, sys, tempfile
+          from collections import Counter
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("tools/corpus").resolve()))
+          import pub_container_extract as containers
+          import cfb_physical_diff as physical
+
+          receipt = json.loads(Path(
+              "tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json"
+          ).read_text())
+          target_root = os.environ["TARGET_ROOT"]
+          expected = {"thai": 102, "en": 45, "deluxe": 13}[target_root]
+          out = Path("out")
+          out.mkdir(parents=True, exist_ok=True)
+
+          roots = receipt["roots"]
+          selected = []
+          for group in receipt["groups"]:
+              anchor = group["anchor"]
+              for copy in group["copies"]:
+                  if copy["root"] == target_root:
+                      selected.append((group["logical_identity"], anchor, copy))
+          assert len(selected) == expected, (target_root, len(selected), expected)
+
+          with tempfile.TemporaryDirectory(prefix=f"physical-dup-{target_root}-") as raw:
+              td = Path(raw)
+              archives = {}
+              for rid in ["pub40cd", target_root]:
+                  spec = roots[rid]
+                  path = td / f"{rid}.iso"
+                  meta = containers.fetch(spec["url"], path, 120, 320 * 1024 * 1024)
+                  assert meta["sha256"] == spec["sha256"], (rid, meta)
+                  archives[rid] = path
+
+              def member_bytes(tag, side):
+                  dest = td / (hashlib.sha256(tag.encode()).hexdigest()[:20] + ".pub")
+                  try:
+                      actual_size = containers.extract_member(
+                          archives[side["root"]],
+                          side["member"],
+                          dest,
+                          90,
+                          8 * 1024 * 1024,
+                      )
+                      data = dest.read_bytes()
+                  finally:
+                      dest.unlink(missing_ok=True)
+                  assert actual_size == side["size"], (tag, actual_size, side["size"])
+                  actual_sha = hashlib.sha256(data).hexdigest()
+                  assert actual_sha == side["sha256"], (tag, actual_sha, side["sha256"])
+                  return data
+
+              results = []
+              for idx, (identity, anchor, copy) in enumerate(selected):
+                  left = member_bytes(f"{idx}-anchor", anchor)
+                  right = member_bytes(f"{idx}-copy", copy)
+                  result = physical.compare(left, right, f"{anchor['filename']}::{target_root}")
+                  assert result["left_sha256"] == anchor["sha256"]
+                  assert result["right_sha256"] == copy["sha256"]
+                  assert result["byte_len"] == anchor["size"] == copy["size"]
+                  assert result["logical_streams_identical"] is True
+                  result["logical_identity"] = identity
+                  result["anchor_root"] = anchor["root"]
+                  result["target_root"] = target_root
+                  result["anchor_member"] = anchor["member"]
+                  result["target_member"] = copy["member"]
+                  result["anchor_filename"] = anchor["filename"]
+                  result["target_filename"] = copy["filename"]
+
+                  signature_payload = {
+                      "broad_categories": sorted(result["broad_category_counts"]),
+                      "exact_categories": sorted(result["exact_category_counts"]),
+                      "fat_table_changed": bool(result["fat_table_diff_entries"]),
+                      "minifat_table_changed": bool(result["minifat_table_diff_entries"]),
+                      "stream_chain_changed": bool(result["stream_chain_diffs"]),
+                      "directory_fields": sorted({
+                          field
+                          for row in result["directory_metadata_diffs"]
+                          for field in row["changed_fields"]
+                      }),
+                      "unclassified": result["unclassified_byte_count"],
+                  }
+                  result["physical_signature"] = hashlib.sha256(
+                      json.dumps(signature_payload, sort_keys=True).encode()
+                  ).hexdigest()
+                  results.append(result)
+
+          results.sort(key=lambda r: (r["logical_identity"], r["right_sha256"]))
+          signatures = Counter(r["physical_signature"] for r in results)
+          broad = Counter()
+          directory_fields = Counter()
+          for r in results:
+              broad.update(r["broad_category_counts"])
+              for row in r["directory_metadata_diffs"]:
+                  directory_fields.update(row["changed_fields"].keys())
+
+          summary = {
+              "schema": "chaptera.logical-duplicate-physical-classification-shard.v1",
+              "target_root": target_root,
+              "comparison_count": len(results),
+              "logical_streams_identical": sum(r["logical_streams_identical"] for r in results),
+              "fully_classified": sum(r["unclassified_byte_count"] == 0 for r in results),
+              "with_unclassified": sum(r["unclassified_byte_count"] != 0 for r in results),
+              "total_different_bytes": sum(r["different_byte_count"] for r in results),
+              "signature_count": len(signatures),
+              "signature_sizes": dict(sorted(signatures.items())),
+              "broad_category_counts": dict(sorted(broad.items())),
+              "directory_changed_fields": dict(sorted(directory_fields.items())),
+              "pairs_with_fat_table_diff": sum(bool(r["fat_table_diff_entries"]) for r in results),
+              "pairs_with_minifat_table_diff": sum(bool(r["minifat_table_diff_entries"]) for r in results),
+              "pairs_with_stream_chain_diff": sum(bool(r["stream_chain_diffs"]) for r in results),
+          }
+          (out / "pairs.json").write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+          (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Prove source-safe retained output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: physical-dup-classify-${{ github.run_id }}-${{ matrix.target_root }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    if: always()
+    needs: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: physical-dup-classify-${{ github.run_id }}-*
+          path: shards
+      - name: Aggregate exact 160-comparison result
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json
+          from collections import Counter
+          from pathlib import Path
+
+          pairs = []
+          shard_summaries = []
+          for p in sorted(Path("shards").rglob("pairs.json")):
+              pairs.extend(json.loads(p.read_text()))
+          for p in sorted(Path("shards").rglob("summary.json")):
+              shard_summaries.append(json.loads(p.read_text()))
+
+          assert len(pairs) == 160, len(pairs)
+          media = Counter(r["target_root"] for r in pairs)
+          assert media == Counter({"thai": 102, "en": 45, "deluxe": 13}), media
+
+          identities = [(r["logical_identity"], r["right_sha256"]) for r in pairs]
+          assert len(identities) == len(set(identities)) == 160
+
+          signatures = Counter(r["physical_signature"] for r in pairs)
+          broad = Counter()
+          directory_fields = Counter()
+          for r in pairs:
+              broad.update(r["broad_category_counts"])
+              for row in r["directory_metadata_diffs"]:
+                  directory_fields.update(row["changed_fields"].keys())
+
+          pairs.sort(key=lambda r: (r["logical_identity"], r["target_root"], r["right_sha256"]))
+          summary = {
+              "schema": "chaptera.logical-duplicate-physical-classification.v1",
+              "comparison_count": len(pairs),
+              "media_counts": dict(sorted(media.items())),
+              "logical_streams_identical": sum(r["logical_streams_identical"] for r in pairs),
+              "fully_classified": sum(r["unclassified_byte_count"] == 0 for r in pairs),
+              "with_unclassified": sum(r["unclassified_byte_count"] != 0 for r in pairs),
+              "total_different_bytes": sum(r["different_byte_count"] for r in pairs),
+              "physical_signature_count": len(signatures),
+              "physical_signature_sizes": dict(sorted(signatures.items())),
+              "broad_category_counts": dict(sorted(broad.items())),
+              "directory_changed_fields": dict(sorted(directory_fields.items())),
+              "pairs_with_fat_table_diff": sum(bool(r["fat_table_diff_entries"]) for r in pairs),
+              "pairs_with_minifat_table_diff": sum(bool(r["minifat_table_diff_entries"]) for r in pairs),
+              "pairs_with_stream_chain_diff": sum(bool(r["stream_chain_diffs"]) for r in pairs),
+              "shards": sorted(shard_summaries, key=lambda s: s["target_root"]),
+          }
+          out = Path("aggregate")
+          out.mkdir(parents=True, exist_ok=True)
+          (out / "pairs.json").write_text(json.dumps(pairs, indent=2, ensure_ascii=False), encoding="utf-8")
+          (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+          print(json.dumps(summary, indent=2))
+          PY
+          sha256sum aggregate/*.json | tee aggregate/sha256sums.txt
+      - name: Enforce exact closure boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("aggregate/summary.json").read_text())
+          assert s["comparison_count"] == 160, s
+          assert s["logical_streams_identical"] == 160, s
+          assert s["fully_classified"] == 160, s
+          assert s["with_unclassified"] == 0, s
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: physical-dup-classify-aggregate-${{ github.run_id }}
+          path: aggregate/**
+          if-no-files-found: error
+          retention-days: 90
