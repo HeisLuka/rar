@@ -18,10 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from resolved_text_caret_map_v1 import (
-    ResolvedTextCaretMapV1,
-    project_selection_state_v1 if False else ResolvedTextCaretMapV1,
-)
+from resolved_text_caret_map_v1 import ResolvedTextCaretMapV1
 from story_edit_domain_v1 import StoryEditDomainV1
 from story_edit_transaction_v1 import validate_story_edit_transaction_request_v1
 from text_edit_session_v1 import TextEditSessionV1
