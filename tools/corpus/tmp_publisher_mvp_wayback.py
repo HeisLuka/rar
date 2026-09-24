@@ -48,6 +48,7 @@ def prefix_query(prefix: str, limit: int, timeout: float, retries: int):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--scope", action="append", default=[], help="Override default prefix scope; repeatable")
     ap.add_argument("--summary", type=Path)
     ap.add_argument("--limit", type=int, default=5000)
     ap.add_argument("--timeout", type=float, default=60)
@@ -55,10 +56,11 @@ def main() -> int:
     ap.add_argument("--delay", type=float, default=0.5)
     args = ap.parse_args()
 
+    scopes = args.scope or SCOPES
     rows = []
     errors = []
     per_scope = {}
-    for scope in SCOPES:
+    for scope in scopes:
         try:
             found = prefix_query(scope, args.limit, args.timeout, args.retries)
             converted = [
@@ -89,7 +91,7 @@ def main() -> int:
 
     summary = {
         "schema": "rar-publisher-mvp-wayback-v1",
-        "scopes": SCOPES,
+        "scopes": scopes,
         "per_scope_rows": per_scope,
         "raw_capture_rows": len(rows),
         "deduplicated_locator_rows": len(final),
