@@ -1,0 +1,5 @@
+# Known public repositories with Publisher fixtures/parser history
+apache/poi
+LibreOffice/libmspub
+aspose-pub/Aspose.PUB-for-.NET
+deepin-community/libwps
