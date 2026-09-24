@@ -1,0 +1,27 @@
+name: Group Insert Refit V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/group_insert_refit_v1.py"
+      - "services/editor-api/test_group_insert_refit_v1.py"
+      - "services/editor-api/group_refit_plan_v1.py"
+      - "services/editor-api/group_transform_chain_v1.py"
+      - "services/editor-api/authored_group_hierarchy_v1.py"
+      - ".github/workflows/group-insert-refit-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Group insert-refit planner tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_insert_refit_v1
