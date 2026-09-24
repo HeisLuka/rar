@@ -33,6 +33,13 @@ from resolved_graph_scene_bridge_v1 import (
     project_resolved_graph_scene,
     source_hash_from_graph,
 )
+from projection_context_sidecar_v1 import (
+    ProjectionContextSidecarError,
+    empty_sidecar,
+    normalize_sidecar,
+    scene_supported_context,
+    sidecar_state,
+)
 from validate_viewer_geometry_receipt import validate_schema as validate_viewer_schema
 
 REDO_STATE = "chaptera-layout-redo-operation.json"
@@ -104,13 +111,13 @@ def baseline_project(source_hash: str) -> dict[str, Any]:
 def project_for_scene(
     graph: dict[str, Any],
     project: dict[str, Any],
+    projection_context: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     current_graph = apply_project_to_resolved_graph(graph, project)
-    scene = project_resolved_graph_scene(current_graph, context={
-        "schema_version": "chaptera.pub-projection-context.v1",
-        "master_relations": [],
-        "cmo_relations": [],
-    })
+    scene = project_resolved_graph_scene(
+        current_graph,
+        context=scene_supported_context(projection_context),
+    )
     return current_graph, scene
 
 
@@ -214,6 +221,7 @@ def main() -> int:
     parser.add_argument("action", choices=["baseline", "commit", "history", "replay"])
     parser.add_argument("--state-dir", required=True, type=pathlib.Path)
     parser.add_argument("--fixture", type=pathlib.Path)
+    parser.add_argument("--projection-context-sidecar", type=pathlib.Path)
     args = parser.parse_args()
 
     try:
@@ -230,6 +238,21 @@ def main() -> int:
             source_hash,
             expected_resolved_graph_sha256=args.expected_resolved_graph_sha256,
         )
+        if args.projection_context_sidecar is None:
+            sidecar = normalize_sidecar(
+                empty_sidecar(source_hash),
+                expected_source_hash=source_hash,
+            )
+        else:
+            sidecar = normalize_sidecar(
+                load_json(
+                    args.projection_context_sidecar.expanduser().resolve(strict=True),
+                    "projection context sidecar",
+                ),
+                expected_source_hash=source_hash,
+            )
+        projection_context = sidecar["context"]
+        projection_context_state = sidecar_state(sidecar)
         args.state_dir.mkdir(parents=True, exist_ok=True)
 
         if args.action == "baseline":
@@ -238,7 +261,7 @@ def main() -> int:
                     "baseline requires launcher-verified fixture"
                 )
             project = baseline_project(source_hash)
-            _, scene = project_for_scene(graph, project)
+            _, scene = project_for_scene(graph, project, projection_context)
             equivalence = compare_viewer_and_adapter_scene(viewer, scene)
             candidate = move_candidate(
                 graph,
@@ -257,12 +280,18 @@ def main() -> int:
                     page_id=args.target_page_id,
                 ),
                 "baseline_equivalence": equivalence,
+                "projection_context_state": copy.deepcopy(projection_context_state),
                 "adapter_invariants": {
                     "viewer_private_mapping_used": False,
                     "browser_layout_authoritative": False,
                     "second_geometry_model_created": False,
                     "context_extension_seam_present": True,
-                    "graph_only_wrapper_is_empty_context": True,
+                    "graph_only_wrapper_is_empty_context": (
+                        projection_context_state["master_relation_count"] == 0
+                        and projection_context_state["cmo_relation_count"] == 0
+                    ),
+                    "projection_context_carried_outside_editor_project": True,
+                    "unsupported_cmo_layout_deferred": True,
                 },
             })
 
@@ -294,7 +323,7 @@ def main() -> int:
                     "commit does not match pinned Producer B MoveNode"
                 )
             result = append_operation(base_project, operation)
-            _, scene = project_for_scene(graph, result)
+            _, scene = project_for_scene(graph, result, projection_context)
             (args.state_dir / REDO_STATE).write_text(
                 json.dumps(operation, sort_keys=True, separators=(",", ":")) + "\n",
                 encoding="utf-8",
@@ -314,6 +343,7 @@ def main() -> int:
                 ),
                 "source_hash_after": source_hash,
                 "source_reparse_after_edit_count": 0,
+                "projection_context_state": copy.deepcopy(projection_context_state),
             })
 
         if args.action == "history":
@@ -340,7 +370,7 @@ def main() -> int:
                     raise SampleNewsletterSceneEngineError("nothing to redo")
                 operation = load_json(redo_path, "redo operation")
                 result["operations"] = list(copy.deepcopy(operations)) + [operation]
-            _, scene = project_for_scene(graph, result)
+            _, scene = project_for_scene(graph, result, projection_context)
             return emit({
                 "resulting_project": result,
                 "scene_state": compact_scene_state(
@@ -355,12 +385,13 @@ def main() -> int:
                 }],
                 "source_hash_after": source_hash,
                 "source_reparse_after_edit_count": 0,
+                "projection_context_state": copy.deepcopy(projection_context_state),
             })
 
         project = payload.get("project")
         if not isinstance(project, dict):
             raise SampleNewsletterSceneEngineError("replay project missing")
-        _, scene = project_for_scene(graph, project)
+        _, scene = project_for_scene(graph, project, projection_context)
         return emit({
             "replayed_project": copy.deepcopy(project),
             "scene_state": compact_scene_state(
@@ -370,9 +401,11 @@ def main() -> int:
             ),
             "source_hash_after": source_hash,
             "source_reparse_after_edit_count": 0,
+            "projection_context_state": copy.deepcopy(projection_context_state),
         })
     except (
         SampleNewsletterSceneEngineError,
+        ProjectionContextSidecarError,
         ResolvedGraphSceneError,
         AssertionError,
         KeyError,
