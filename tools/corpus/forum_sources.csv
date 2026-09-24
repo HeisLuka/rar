@@ -1,13 +1,17 @@
-source_class,source_page,notes
-google_groups,https://groups.google.com/g/microsoft.public.publisher,General Publisher newsgroup archive
-google_groups,https://groups.google.com/g/microsoft.public.publisher.programming,Publisher programming archive
-google_groups,https://groups.google.com/g/microsoft.public.publisher.prepress,Publisher prepress archive
-google_groups,https://groups.google.com/g/microsoft.public.publisher.webdesign,Publisher webdesign archive
-office_forums,https://www.office-forums.com/threads/using-pub-from-beginning-why-is-it-not-backwards-compatible.113567/,Compatibility thread
-office_forums,https://www.office-forums.com/threads/help-im-in-trouble.109383/,Recovery pub temp thread
-google_groups,https://groups.google.com/g/microsoft.public.publisher/c/tg__iEbWLxI,Recovery cannot open file thread
-office_forums,https://www.office-forums.com/threads/publisher-cannot-open-the-file-error-1100009.445052/,Bad-file acceptance thread
-office_forums,https://www.office-forums.com/threads/publication-loses-picture.115049/,Linked picture loss thread
-google_groups,https://groups.google.com/g/microsoft.public.publisher.prepress/c/kmpsNG0dYnU,Prepress driver thread
-office_forums,https://www.office-forums.com/threads/publisher-2002.119284/,Publisher 2002 versus 2003 thread
-office_forums,https://www.office-forums.com/threads/publishing-a-website.120018/,Web export thread
+source_class,source_page,exact_url,exact_filename,claimed_version,notes
+google_groups,https://groups.google.com/g/microsoft.public.publisher,,,,General Publisher newsgroup archive
+google_groups,https://groups.google.com/g/microsoft.public.publisher.programming,,,,Publisher programming archive
+google_groups,https://groups.google.com/g/microsoft.public.publisher.prepress,,,,Publisher prepress archive
+google_groups,https://groups.google.com/g/microsoft.public.publisher.webdesign,,,,Publisher webdesign archive
+office_forums,https://www.office-forums.com/threads/using-pub-from-beginning-why-is-it-not-backwards-compatible.113567/,,,,Compatibility thread
+office_forums,https://www.office-forums.com/threads/help-im-in-trouble.109383/,,,,Recovery pub temp thread
+google_groups,https://groups.google.com/g/microsoft.public.publisher/c/tg__iEbWLxI,,,,Recovery cannot open file thread
+google_groups,https://groups.google.com/g/microsoft.public.publisher/c/S_GVhKXClfo,,,,Publisher cannot open file thread preserving Microsoft KB text
+office_forums,https://www.office-forums.com/threads/publisher-cannot-open-the-file-error-1100009.445052/,,,,Bad-file acceptance thread
+office_forums,https://www.office-forums.com/threads/publication-loses-picture.115049/,,,,Linked picture loss thread
+google_groups,https://groups.google.com/g/microsoft.public.publisher.prepress/c/kmpsNG0dYnU,,,,Prepress driver thread
+office_forums,https://www.office-forums.com/threads/publisher-2002.119284/,,,,Publisher 2002 versus 2003 thread
+office_forums,https://www.office-forums.com/threads/publishing-a-website.120018/,,,,Web export thread
+libmspub_github_issue,https://github.com/LibreOffice/libmspub/issues/4,https://github.com/LibreOffice/libmspub/files/14734233/pub_text.zip,pub_text.zip,"Publisher 2021 (reporter claim)","Exact upstream issue attachment; recovered independently before and kept here as a provenance-pinned locator"
+apache_bugzilla,https://bz.apache.org/bugzilla/show_bug.cgi?id=45602,https://raw.githubusercontent.com/apache/poi/trunk/test-data/publisher/SampleBrochure.pub,SampleBrochure.pub,,"Bug #45602 provenance is anchored by Apache POI import commit d3704b79; raw repository file is a stable recovery mirror"
+apache_bugzilla,https://bz.apache.org/bugzilla/show_bug.cgi?id=45602,https://raw.githubusercontent.com/apache/poi/trunk/test-data/publisher/SampleNewsletter.pub,SampleNewsletter.pub,,"Bug #45602 provenance is anchored by Apache POI import commit d3704b79; raw repository file is a stable recovery mirror"
