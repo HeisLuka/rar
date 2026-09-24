@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/pub-projection/v1/cmo-slot-flow-receipt.schema.json",
+  "title": "Chaptera bounded Cmo/U+FFFC slot-flow receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "source_hash",
+    "target_story_id",
+    "target_frame_node_id",
+    "host",
+    "story_marker_count",
+    "slot_count",
+    "visible_slots",
+    "overset",
+    "invariants"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.cmo-slot-flow-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "source_hash": {"$ref": "#/$defs/sha256"},
+    "target_story_id": {"$ref": "#/$defs/uuid"},
+    "target_frame_node_id": {"$ref": "#/$defs/uuid"},
+    "host": {"$ref": "#/$defs/host"},
+    "story_marker_count": {"type": "integer", "minimum": 0},
+    "slot_count": {"type": "integer", "minimum": 0},
+    "visible_slots": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/slot"}
+    },
+    "overset": {"$ref": "#/$defs/overset"},
+    "invariants": {"$ref": "#/$defs/invariants"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width_emu", "height_emu"],
+      "properties": {
+        "width_emu": {"type": "integer", "minimum": 1},
+        "height_emu": {"type": "integer", "minimum": 1}
+      }
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot_index",
+        "scalar_index",
+        "source_order",
+        "cmo_id",
+        "carrier_node_id",
+        "carrier_story_id",
+        "instance_id",
+        "used_height_before_emu",
+        "used_height_after_emu",
+        "intrinsic_width_emu",
+        "intrinsic_height_emu",
+        "resolved_x_emu",
+        "resolved_y_emu",
+        "resolved_width_emu",
+        "resolved_height_emu"
+      ],
+      "properties": {
+        "slot_index": {"type": "integer", "minimum": 0},
+        "scalar_index": {"type": "integer", "minimum": 0},
+        "source_order": {"type": "integer", "minimum": 0},
+        "cmo_id": {"type": "integer", "minimum": 1},
+        "carrier_node_id": {"$ref": "#/$defs/uuid"},
+        "carrier_story_id": {
+          "oneOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "instance_id": {"$ref": "#/$defs/hashId"},
+        "used_height_before_emu": {"type": "integer", "minimum": 0},
+        "used_height_after_emu": {"type": "integer", "minimum": 1},
+        "intrinsic_width_emu": {"type": "integer", "minimum": 1},
+        "intrinsic_height_emu": {"type": "integer", "minimum": 1},
+        "resolved_x_emu": {"type": "integer"},
+        "resolved_y_emu": {"type": "integer", "minimum": 0},
+        "resolved_width_emu": {"type": "integer", "minimum": 1},
+        "resolved_height_emu": {"type": "integer", "minimum": 1}
+      }
+    },
+    "overset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "story_overset",
+        "first_nonfitting_kind",
+        "first_nonfitting_slot_index",
+        "first_nonfitting_scalar_index",
+        "failure_reason",
+        "remaining_item_count",
+        "remaining_slot_count"
+      ],
+      "properties": {
+        "story_overset": {"type": "boolean"},
+        "first_nonfitting_kind": {
+          "type": ["string", "null"],
+          "enum": ["shaped_line", "object_slot", null]
+        },
+        "first_nonfitting_slot_index": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "first_nonfitting_scalar_index": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "failure_reason": {
+          "type": ["string", "null"],
+          "enum": ["width", "height", "width_and_height", null]
+        },
+        "remaining_item_count": {"type": "integer", "minimum": 0},
+        "remaining_slot_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "u_fffc_marker_count_preserved",
+        "slot_order_preserved",
+        "carrier_reparent_count",
+        "scaling_applied",
+        "skip_to_fit",
+        "raw_text_emitted",
+        "nested_cmo_admitted"
+      ],
+      "properties": {
+        "u_fffc_marker_count_preserved": {"const": true},
+        "slot_order_preserved": {"const": true},
+        "carrier_reparent_count": {"const": 0},
+        "scaling_applied": {"const": false},
+        "skip_to_fit": {"const": false},
+        "raw_text_emitted": {"const": false},
+        "nested_cmo_admitted": {"const": false}
+      }
+    }
+  }
+}
