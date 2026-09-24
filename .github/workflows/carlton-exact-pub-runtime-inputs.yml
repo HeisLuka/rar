@@ -21,7 +21,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install bounded acquisition dependencies
-        run: python -m pip install "requests==2.32.5" "olefile==0.47"
+        run: python -m pip install "requests==2.32.5" "olefile==0.47" "jsonschema==4.23.0"
 
       - name: Acquire exact Carlton PUBs from School Jotter hydration state
         shell: bash
@@ -447,6 +447,49 @@ jobs:
                   )
               return matches[0]
 
+          def optional_u32_field_before_unknown(chunk, field_id, expected_wire):
+              p = 4
+              matches = []
+              while p < len(chunk):
+                  if p + 2 > len(chunk):
+                      raise ValueError("truncated chunk field")
+                  current_id = chunk[p]
+                  wire = chunk[p + 1]
+                  p += 2
+                  if wire in (0x08, 0x78):
+                      value = None
+                  elif wire in (0x10, 0x18):
+                      value = u16(chunk, p)
+                      p += 2
+                  elif wire in (0x20, 0x68, 0x70, 0xB8):
+                      value = u32(chunk, p)
+                      p += 4
+                  elif wire == 0x28:
+                      p += 8
+                      value = None
+                  elif wire == 0x38:
+                      p += 16
+                      value = None
+                  elif wire in (0x88, 0x90, 0xA0):
+                      declared = u32(chunk, p)
+                      if declared < 4:
+                          raise ValueError("invalid nested container length")
+                      p += declared
+                      value = None
+                  else:
+                      break
+                  if current_id == field_id:
+                      if wire != expected_wire:
+                          raise ValueError(
+                              f"field 0x{field_id:02x}: wire 0x{wire:02x} != 0x{expected_wire:02x}"
+                          )
+                      matches.append(value)
+              if len(matches) > 1:
+                  raise ValueError(
+                      f"field 0x{field_id:02x}/0x{expected_wire:02x}: duplicate values {matches}"
+                  )
+              return matches[0] if matches else None
+
           def parse_plccmob(chunk):
               if u32(chunk, 0) != len(chunk):
                   raise ValueError("PlcCmob chunk envelope length mismatch")
@@ -532,9 +575,13 @@ jobs:
                       raise ValueError(
                           f"{label}: carrier {carrier_ohpo} CmoID {carrier_cmo_id} != row {cmo_id}"
                       )
+                  carrier_story_qsid = optional_u32_field_before_unknown(
+                      carrier_chunk, 0x27, 0x20
+                  )
                   carrier_checks.append({
                       "carrier_ohpo": carrier_ohpo,
                       "carrier_cmo_id": carrier_cmo_id,
+                      "carrier_story_qsid": carrier_story_qsid,
                       "parent_seq_num": 279,
                       "chunk_offset": carrier_offset,
                   })
@@ -865,6 +912,123 @@ jobs:
           )
           PY
 
+      - name: Build exact canonical PlcCmob projection contexts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          extraction = json.loads((root / "plccmob-runtime-extraction.json").read_text())
+          targets = json.loads((root / "plccmob-target-cardinality.json").read_text())
+          manifest = json.loads((root / "manifest.json").read_text())
+          source_hashes = {
+              "March-2026": manifest["files"]["March 2026.pub"]["sha256"],
+              "December-2025": manifest["files"]["December 2025.pub"]["sha256"],
+          }
+
+          for label in ("March-2026", "December-2025"):
+              receipt = extraction["receipts"][label]
+              target_checks = targets["targets"][label]
+              payload = {
+                  "source_hash": source_hashes[label],
+                  "producer": {
+                      "implementation": "rar-carlton-exact-actions",
+                      "commit_or_build": os.environ["GITHUB_SHA"],
+                      "core_integration": True,
+                  },
+                  "opl_docq_field": {
+                      "field_id": 5,
+                      "block_type": receipt["opldocq"]["field0x05_wire"],
+                      "value": receipt["opldocq"]["plccmob_seq_num"],
+                  },
+                  "plccmob_chunk": {
+                      "seq_num": receipt["plccmob"]["seq_num"],
+                      "raw_type": receipt["plccmob"]["raw_type"],
+                      "hex": (root / f"{label}-PlcCmob.bin").read_bytes().hex(),
+                  },
+                  "carriers": [
+                      {
+                          "carrier_ohpo": item["carrier_ohpo"],
+                          "carrier_cmo_id": item["carrier_cmo_id"],
+                          "carrier_story_qsid": item["carrier_story_qsid"],
+                          "source_parent_seq_num": item["parent_seq_num"],
+                          "effective_parent_seq_num": item["parent_seq_num"],
+                      }
+                      for item in receipt["carrier_checks"]
+                  ],
+                  "targets": [
+                      {
+                          "target_qsid": int(qsid),
+                          "target_frame_seq_nums": sorted(
+                              frame["frame_seq_num"]
+                              for frame in check["source_frames"]
+                          ),
+                          "object_marker_count": check["object_marker_count"],
+                      }
+                      for qsid, check in sorted(
+                          target_checks.items(), key=lambda pair: int(pair[0])
+                      )
+                  ],
+              }
+              (root / f"{label}-plccmob-source-input.json").write_text(
+                  json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
+          cargo run -q -p pub-plccmob-projection --bin plccmob-source-context-producer --             out/carlton/exact/March-2026-plccmob-source-input.json             > out/carlton/exact/March-2026-plccmob-source-output.json
+          cargo run -q -p pub-plccmob-projection --bin plccmob-source-context-producer --             out/carlton/exact/December-2025-plccmob-source-input.json             > out/carlton/exact/December-2025-plccmob-source-output.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          for label, expected_rows in (("March-2026", 9), ("December-2025", 21)):
+              output = json.loads(
+                  (root / f"{label}-plccmob-source-output.json").read_text()
+              )
+              context = output["context"]
+              receipt = output["receipt"]
+
+              relations = context["cmo_relations"]
+              assert context["schema_version"] == "chaptera.pub-projection-context.v1"
+              assert context["master_relations"] == []
+              assert len(relations) == expected_rows
+              assert [row["source_order"] for row in relations] == list(range(expected_rows))
+              assert relations == receipt["relations"]
+
+              if label == "December-2025":
+                  qsid218 = [row for row in relations if row["target_qsid"] == 218]
+                  assert len(qsid218) == 2
+                  assert all(row["target_frame_node_id"] is None for row in qsid218)
+              else:
+                  assert all(
+                      row["target_frame_node_id"] is not None
+                      for row in relations
+                  )
+
+              (root / f"{label}-projection-context.json").write_text(
+                  json.dumps(context, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              (root / f"{label}-plccmob-receipt.json").write_text(
+                  json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              print(
+                  f"{label}: canonical context PASS relations={len(relations)} "
+                  f"multi_frame_qsid218={'yes' if label == 'December-2025' else 'no'}"
+              )
+          PY
+
+          python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/March-2026-plccmob-receipt.json
+          python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/December-2025-plccmob-receipt.json
+
       - name: Parse exact PlcCmob chunks through Rust core
         shell: bash
         run: |
@@ -921,6 +1085,7 @@ jobs:
             out/carlton/exact/*-Contents.bin
             out/carlton/exact/*-CONTENTS.bin
             out/carlton/exact/*-PlcCmob.bin
+            out/carlton/exact/*-plccmob-source-input.json
             out/carlton/exact/*-cfb-manifest.json
             out/carlton/exact/plccmob-runtime-extraction.json
             out/carlton/exact/manifest.json
@@ -938,6 +1103,10 @@ jobs:
             out/carlton/exact/plccmob-target-cardinality.json
             out/carlton/exact/March-2026-plccmob-wire.json
             out/carlton/exact/December-2025-plccmob-wire.json
+            out/carlton/exact/March-2026-projection-context.json
+            out/carlton/exact/December-2025-projection-context.json
+            out/carlton/exact/March-2026-plccmob-receipt.json
+            out/carlton/exact/December-2025-plccmob-receipt.json
           if-no-files-found: error
           retention-days: 30
 
