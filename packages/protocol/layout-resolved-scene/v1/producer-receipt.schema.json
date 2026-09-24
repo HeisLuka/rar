@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/layout-resolved-scene/v1/producer-receipt.schema.json",
+  "title": "Chaptera resolved-graph to Scene producer receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "source_hash",
+    "scene_protocol_version",
+    "projection_api",
+    "canonical_move",
+    "states",
+    "baseline_equivalence",
+    "invariants"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.layout-resolved-scene-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "source_hash": {"$ref": "#/$defs/sha256"},
+    "scene_protocol_version": {"const": "chaptera.scene.v1"},
+    "projection_api": {"const": "resolved_graph_adapter"},
+    "canonical_move": {"$ref": "#/$defs/move"},
+    "states": {"$ref": "#/$defs/states"},
+    "baseline_equivalence": {"$ref": "#/$defs/equivalence"},
+    "invariants": {"$ref": "#/$defs/invariants"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "move": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "page_id", "before", "after"],
+      "properties": {
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "page_id": {"$ref": "#/$defs/uuid"},
+        "before": {"$ref": "#/$defs/rect"},
+        "after": {"$ref": "#/$defs/rect"}
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scene_snapshot_id",
+        "node_id",
+        "page_id",
+        "origin_node_id",
+        "bounds",
+        "surface_page_ids_hash",
+        "origin_mapping_hash",
+        "projection_input"
+      ],
+      "properties": {
+        "scene_snapshot_id": {"$ref": "#/$defs/hashId"},
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "page_id": {"$ref": "#/$defs/uuid"},
+        "origin_node_id": {"$ref": "#/$defs/uuid"},
+        "bounds": {"$ref": "#/$defs/rect"},
+        "surface_page_ids_hash": {"$ref": "#/$defs/hashId"},
+        "origin_mapping_hash": {"$ref": "#/$defs/hashId"},
+        "projection_input": {"const": "current_resolved_graph"}
+      }
+    },
+    "states": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "accepted", "undo", "redo", "replay"],
+      "properties": {
+        "baseline": {"$ref": "#/$defs/state"},
+        "accepted": {"$ref": "#/$defs/state"},
+        "undo": {"$ref": "#/$defs/state"},
+        "redo": {"$ref": "#/$defs/state"},
+        "replay": {"$ref": "#/$defs/state"}
+      }
+    },
+    "equivalence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "viewer_geometry_hash",
+        "adapter_geometry_hash",
+        "viewer_surface_hash",
+        "adapter_surface_hash",
+        "viewer_origin_mapping_hash",
+        "adapter_origin_mapping_hash"
+      ],
+      "properties": {
+        "viewer_geometry_hash": {"$ref": "#/$defs/hashId"},
+        "adapter_geometry_hash": {"$ref": "#/$defs/hashId"},
+        "viewer_surface_hash": {"$ref": "#/$defs/hashId"},
+        "adapter_surface_hash": {"$ref": "#/$defs/hashId"},
+        "viewer_origin_mapping_hash": {"$ref": "#/$defs/hashId"},
+        "adapter_origin_mapping_hash": {"$ref": "#/$defs/hashId"}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_reparse_after_edit_count",
+        "viewer_private_mapping_used",
+        "browser_layout_authoritative",
+        "second_geometry_model_created",
+        "context_extension_seam_present",
+        "graph_only_wrapper_is_empty_context",
+        "raw_source_bytes_emitted"
+      ],
+      "properties": {
+        "source_reparse_after_edit_count": {"const": 0},
+        "viewer_private_mapping_used": {"const": false},
+        "browser_layout_authoritative": {"const": false},
+        "second_geometry_model_created": {"const": false},
+        "context_extension_seam_present": {"const": true},
+        "graph_only_wrapper_is_empty_context": {"const": true},
+        "raw_source_bytes_emitted": {"const": false}
+      }
+    }
+  }
+}
