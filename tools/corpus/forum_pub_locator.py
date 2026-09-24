@@ -38,6 +38,15 @@ def filename_from(text,url=""):
     if name.casefold().endswith(".pub"): return name
     cleaned=re.sub(r"\\s+"," ",html.unescape(text or "")).strip(" .,:;()[]{}")
     if cleaned.casefold().endswith(".pub") and len(cleaned)<=180:
+        lowered=cleaned.casefold()
+        for prefix in (
+            "please see ", "see ", "download ", "download file ",
+            "attachment ", "attached ", "file: ", "file ",
+        ):
+            if lowered.startswith(prefix):
+                candidate=cleaned[len(prefix):].strip(" .,:;()[]{}")
+                if candidate.casefold().endswith(".pub"):
+                    return candidate
         return cleaned
     m=FILE_RE.search(cleaned)
     return m.group(1).strip(".,;:()[]{}") if m else ""
