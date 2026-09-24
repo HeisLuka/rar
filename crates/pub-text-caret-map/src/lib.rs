@@ -1066,6 +1066,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn line(
         frame_id: &str,
         order: u32,
