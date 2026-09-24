@@ -59,12 +59,10 @@ jobs:
           python -m pip install --disable-pip-version-check olefile==0.47
           sudo apt-get update -qq
           sudo apt-get install -y p7zip-full
-      - name: Replay one root from exact v2 provenance
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Replay one root from exact retained provenance
         run: |
           set -euo pipefail
-          python tools/corpus/structural_novelty_container_delta.py scan-root             --receipt-artifact-id 10824422927             --receipt-artifact-sha256 93da02ee9b55cb4d5e15f74cd1cf923a469c64bbf1734a232a177b4c06a0d4e5             --root-index "${{ matrix.root_index }}"             --out out
+          python tools/corpus/structural_novelty_container_delta.py scan-root             --root-index "${{ matrix.root_index }}"             --out out
       - name: Prove raw-byte cleanup
         if: always()
         run: |
@@ -104,7 +102,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          s=json.loads(Path("aggregate/summary.json").read_text())
+          s = json.loads(Path("aggregate/summary.json").read_text())
           assert s["analyzed_rows"] == 407, s
           assert s["expected_sha"] == 407, s
           assert s["selected_cover_root_count"] == 6, s
