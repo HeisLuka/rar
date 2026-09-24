@@ -1,0 +1,37 @@
+name: PUB KSU SharePoint HTML Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/provenance/ksu_sharepoint_html_probe.py"
+      - ".github/workflows/pub-ksu-sharepoint-html.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect archived SharePoint list HTML only
+        run: |
+          set -euo pipefail
+          python tools/provenance/ksu_sharepoint_html_probe.py --out out/ksu-sharepoint-html
+      - name: Guard text-only output
+        run: |
+          set -euo pipefail
+          bad="$(find out/ksu-sharepoint-html -type f | grep -Eiv '\.(json|txt|md)$' || true)"
+          if [[ -n "$bad" ]]; then echo "$bad" >&2; exit 4; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pub-ksu-sharepoint-html-${{ github.run_id }}
+          path: out/ksu-sharepoint-html/**
+          if-no-files-found: error
+          retention-days: 90
