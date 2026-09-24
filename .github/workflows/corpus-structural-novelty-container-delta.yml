@@ -1,0 +1,118 @@
+name: CORPUS structural novelty container delta 407
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/structural_novelty_container_delta.py'
+      - '.github/workflows/corpus-structural-novelty-container-delta.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/structural_novelty_container_delta.py'
+      - '.github/workflows/corpus-structural-novelty-container-delta.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: corpus-structural-novelty-container-delta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB/archive tools
+        run: |
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Offline fail-closed validation
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/structural_novelty_container_delta.py
+          python tools/corpus/structural_novelty_container_delta.py self-test
+
+  scan:
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        root_index: [0, 1, 2, 3, 4, 5]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB/archive tools
+        run: |
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Replay one root from exact v2 provenance
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/corpus/structural_novelty_container_delta.py scan-root             --receipt-artifact-id 10824422927             --receipt-artifact-sha256 93da02ee9b55cb4d5e15f74cd1cf923a469c64bbf1734a232a177b4c06a0d4e5             --root-index "${{ matrix.root_index }}"             --out out
+      - name: Prove raw-byte cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-delta-407-${{ github.run_id }}-${{ matrix.root_index }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: github.event_name != 'pull_request' && always()
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: container-delta-407-${{ github.run_id }}-*
+          path: shards
+      - name: Aggregate exact 407-SHA replay
+        run: |
+          set -euo pipefail
+          python tools/corpus/structural_novelty_container_delta.py aggregate             --input shards             --out aggregate
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("aggregate/summary.json").read_text())
+          assert s["analyzed_rows"] == 407, s
+          assert s["expected_sha"] == 407, s
+          assert s["selected_cover_root_count"] == 6, s
+          assert s["selected_cover_total_bytes"] == 762499072, s
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-delta-407-aggregate-${{ github.run_id }}
+          path: aggregate/**
+          if-no-files-found: error
+          retention-days: 30
