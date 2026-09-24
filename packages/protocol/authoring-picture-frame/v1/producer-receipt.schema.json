@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/authoring-picture-frame/v1/producer-receipt.schema.json",
+  "title": "Chaptera source-backed picture frame producer receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "fixture_kind",
+    "target_gate",
+    "states",
+    "negative_probes",
+    "output_probe",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.authoring-picture-frame-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "fixture_kind": {"enum": ["synthetic_picture", "real_pub_sanitized"]},
+    "target_gate": {"$ref": "#/$defs/targetGate"},
+    "states": {"$ref": "#/$defs/states"},
+    "negative_probes": {"$ref": "#/$defs/negativeProbes"},
+    "output_probe": {"$ref": "#/$defs/outputProbe"},
+    "privacy": {"$ref": "#/$defs/privacy"}
+  },
+  "$defs": {
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "bindingId": {
+      "type": "string",
+      "pattern": "^ab_[0-9a-f]{32}$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "targetGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mature_0x2c",
+        "embedded_png_or_jpeg",
+        "direct_page_owned",
+        "identity_transform",
+        "explicit_native_crop",
+        "crop_semantics_authoritative",
+        "ambiguous_state"
+      ],
+      "properties": {
+        "mature_0x2c": {"const": true},
+        "embedded_png_or_jpeg": {"const": true},
+        "direct_page_owned": {"const": true},
+        "identity_transform": {"const": true},
+        "explicit_native_crop": {"const": true},
+        "crop_semantics_authoritative": {"const": true},
+        "ambiguous_state": {"const": false}
+      }
+    },
+    "pictureState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frame_state_hash",
+        "asset_binding_id",
+        "crop_state_hash",
+        "crop_authority"
+      ],
+      "properties": {
+        "frame_state_hash": {"$ref": "#/$defs/hashId"},
+        "asset_binding_id": {"$ref": "#/$defs/bindingId"},
+        "crop_state_hash": {"$ref": "#/$defs/hashId"},
+        "crop_authority": {"const": "native_crop_v1"}
+      }
+    },
+    "states": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline",
+        "after_crop",
+        "crop_undo",
+        "crop_redo",
+        "after_replace",
+        "after_move",
+        "after_resize",
+        "replay"
+      ],
+      "properties": {
+        "baseline": {"$ref": "#/$defs/pictureState"},
+        "after_crop": {"$ref": "#/$defs/pictureState"},
+        "crop_undo": {"$ref": "#/$defs/pictureState"},
+        "crop_redo": {"$ref": "#/$defs/pictureState"},
+        "after_replace": {"$ref": "#/$defs/pictureState"},
+        "after_move": {"$ref": "#/$defs/pictureState"},
+        "after_resize": {"$ref": "#/$defs/pictureState"},
+        "replay": {"$ref": "#/$defs/pictureState"}
+      }
+    },
+    "negativeProbes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "same_crop_noop_rejected",
+        "stale_crop_rejected",
+        "grouped_picture_rejected",
+        "transformed_picture_rejected",
+        "ambiguous_crop_rejected",
+        "same_asset_replace_rejected"
+      ],
+      "properties": {
+        "same_crop_noop_rejected": {"const": true},
+        "stale_crop_rejected": {"const": true},
+        "grouped_picture_rejected": {"const": true},
+        "transformed_picture_rejected": {"const": true},
+        "ambiguous_crop_rejected": {"const": true},
+        "same_asset_replace_rejected": {"const": true}
+      }
+    },
+    "outputResult": {
+      "enum": ["preserved", "explicit_loss", "blocked"]
+    },
+    "outputProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idml",
+        "odg",
+        "fixed_pdf",
+        "silent_uncropped_source_fallback",
+        "silent_old_asset_fallback"
+      ],
+      "properties": {
+        "idml": {"$ref": "#/$defs/outputResult"},
+        "odg": {"$ref": "#/$defs/outputResult"},
+        "fixed_pdf": {"$ref": "#/$defs/outputResult"},
+        "silent_uncropped_source_fallback": {"const": false},
+        "silent_old_asset_fallback": {"const": false}
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_pub_unchanged",
+        "source_write_count",
+        "fit_pan_synthesized",
+        "raw_source_bytes_in_receipt",
+        "raw_asset_bytes_in_receipt",
+        "node_id_in_receipt",
+        "asset_sha_in_receipt",
+        "crop_values_in_receipt"
+      ],
+      "properties": {
+        "source_pub_unchanged": {"const": true},
+        "source_write_count": {"const": 0},
+        "fit_pan_synthesized": {"const": false},
+        "raw_source_bytes_in_receipt": {"const": false},
+        "raw_asset_bytes_in_receipt": {"const": false},
+        "node_id_in_receipt": {"const": false},
+        "asset_sha_in_receipt": {"const": false},
+        "crop_values_in_receipt": {"const": false}
+      }
+    }
+  }
+}
