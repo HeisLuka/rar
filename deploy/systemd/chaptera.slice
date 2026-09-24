@@ -1,0 +1,10 @@
+[Unit]
+Description=Chaptera Cloud resource envelope
+
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=1280M
+MemoryMax=1536M
+TasksAccounting=yes
+TasksMax=384
+CPUAccounting=yes
