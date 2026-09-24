@@ -1,0 +1,32 @@
+name: CLOUD-PROJECTIONS-01 contract
+
+on:
+  pull_request:
+    paths:
+      - "services/cloud-projections/**"
+      - "tools/run_cloud_projections_contract.py"
+      - "docs/cloud-projections-v1.md"
+      - ".github/workflows/cloud-projections.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  projections-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run projection contract tests
+        working-directory: services/cloud-projections
+        run: python -m unittest -v test_projections_v1.py
+      - name: Produce machine-readable projection receipt
+        run: python tools/run_cloud_projections_contract.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-projections-v1-contract
+          path: target/cloud-projections-v1/receipt.json
+          if-no-files-found: error
