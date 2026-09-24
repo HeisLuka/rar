@@ -917,8 +917,8 @@ pub fn materialize_source_projection_input_v1(
         .map(|carrier| {
             let carrier_node_id = derive_pub_node_id_v1(&input.source_hash, carrier.carrier_ohpo)
                 .map_err(|_| PlcCmobProjectionError::CanonicalIdentity {
-                    field: "carrier_node_id",
-                })?;
+                field: "carrier_node_id",
+            })?;
             let carrier_story_id = carrier
                 .carrier_story_qsid
                 .map(|qsid| {
@@ -972,11 +972,9 @@ pub fn materialize_source_projection_input_v1(
                 }
             }
 
-            let target_story_id =
-                derive_pub_story_id_v1(&input.source_hash, target.target_qsid).map_err(|_| {
-                    PlcCmobProjectionError::CanonicalIdentity {
-                        field: "target_story_id",
-                    }
+            let target_story_id = derive_pub_story_id_v1(&input.source_hash, target.target_qsid)
+                .map_err(|_| PlcCmobProjectionError::CanonicalIdentity {
+                    field: "target_story_id",
                 })?;
             let target_frame_node_id = if target.target_frame_seq_nums.len() == 1 {
                 Some(
@@ -1184,11 +1182,13 @@ mod tests {
         let output = build_source_projection_output_v1(&source).expect("output");
         assert_eq!(output.receipt.relations.len(), 2);
         assert_eq!(output.context.cmo_relations, output.receipt.relations);
-        assert!(output
-            .context
-            .cmo_relations
-            .iter()
-            .all(|relation| relation.target_frame_node_id.is_none()));
+        assert!(
+            output
+                .context
+                .cmo_relations
+                .iter()
+                .all(|relation| relation.target_frame_node_id.is_none())
+        );
     }
 
     #[test]
