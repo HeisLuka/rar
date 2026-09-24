@@ -123,12 +123,51 @@ jobs:
           md5sum out/PUBCONV.DLL | tee out/pubconv-dll-md5.txt
           file out/PUBCONV.DLL | tee out/pubconv-dll-file.txt
           stat -c 'size_bytes=%s' out/PUBCONV.DLL | tee out/pubconv-dll-size.txt
+          python3 -m pip install --disable-pip-version-check pefile
+          python3 - <<'PY' | tee out/pubconv-pe-verification.txt
+          import pefile
+          pe=pefile.PE("out/PUBCONV.DLL")
+          print(f"checksum_header={pe.OPTIONAL_HEADER.CheckSum}")
+          print(f"checksum_generated={pe.generate_checksum()}")
+          strings={}
+          if hasattr(pe, "FileInfo"):
+              for group in pe.FileInfo:
+                  for entry in group:
+                      if getattr(entry, "Key", b"") == b"StringFileInfo":
+                          for st in entry.StringTable:
+                              for k,v in st.entries.items():
+                                  kk=k.decode(errors="replace") if isinstance(k,bytes) else str(k)
+                                  vv=v.decode(errors="replace") if isinstance(v,bytes) else str(v)
+                                  strings[kk]=vv
+          for k in ["FileVersion","ProductVersion","OriginalFilename","CompanyName","ProductName"]:
+              print(f"{k}={strings.get(k,'')}")
+          assert strings.get("FileVersion","").startswith("12.0.4518.1014"), strings
+          assert strings.get("ProductVersion","").startswith("12.0.4518.1014"), strings
+          assert strings.get("OriginalFilename","").upper()=="PUBCONV.DLL", strings
+          assert pe.OPTIONAL_HEADER.CheckSum == 652414, pe.OPTIONAL_HEADER.CheckSum
+          assert pe.generate_checksum() == pe.OPTIONAL_HEADER.CheckSum, (pe.generate_checksum(),pe.OPTIONAL_HEADER.CheckSum)
+          PY
+          sudo apt-get install -y --no-install-recommends osslsigncode
+          osslsigncode verify -in out/PUBCONV.DLL > out/pubconv-signature.txt 2>&1 || true
+          cat out/pubconv-signature.txt
       - name: Upload exact X12-30247 package
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pubconv-x12-30247-${{ github.run_id }}
-          path: out/**
+          path: |
+            out/X12-30247.exe
+            out/PUBCONV.DLL
+            out/source-url.txt
+            out/sha256.txt
+            out/sha1.txt
+            out/md5.txt
+            out/size.txt
+            out/file.txt
+            out/pubconv-dll-*.txt
+            out/pubconv-pe-verification.txt
+            out/pubconv-signature.txt
+            out/pubconv-msi-hits.txt
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -188,6 +227,11 @@ jobs:
               break
             fi
           done < <(find out/extracted -type f -iname '*.msi' | sort)
+          echo "=== MSI INVENTORY ==="
+          cat out/msi-files.txt || true
+          echo "=== RAW PRODUCT/PUB HITS ==="
+          cat out/raw-pub-productcode-hits.txt || true
+          echo "=== MSI PUB HITS ==="
           cat out/msi-pub-hits.txt || true
 
           if [ "$found" -ne 1 ]; then
@@ -198,7 +242,10 @@ jobs:
               found=1
             fi
           fi
-          test "$found" -eq 1
+          if [ "$found" -ne 1 ]; then
+            echo "No direct Filters MSI identified; preserving diagnostic inventory." | tee out/filters-msi-not-found.txt
+            exit 2
+          fi
           sha256sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha256.txt
           sha1sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha1.txt
           md5sum out/Corel-X4-Filters.msi | tee out/filters-msi-md5.txt
@@ -210,8 +257,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: corel-x4-trial-${{ github.run_id }}
-          path: out/**
-          if-no-files-found: error
+          path: |
+            out/CorelDRAWGraphicsSuiteX4Installer_EN.exe
+            out/Corel-X4-Filters.msi
+            out/source-url.txt
+            out/sha256.txt
+            out/sha1.txt
+            out/md5.txt
+            out/size.txt
+            out/file.txt
+            out/msi-files.txt
+            out/raw-pub-productcode-hits.txt
+            out/msi-pub-hits.txt
+            out/filters-msi-*.txt
+          if-no-files-found: warn
           retention-days: 14
           compression-level: 0
 
