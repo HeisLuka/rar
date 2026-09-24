@@ -33,7 +33,7 @@ class EditorMultiSelectV1Tests(unittest.TestCase):
         state=shift_click_authored_node_v1(state,candidate=node("b"))
         state=shift_click_authored_node_v1(state,candidate=node("a"))
         self.assertEqual(("a","b"),state.selected_node_ids)
-        self.assertIsNone(state.primary_node_id)
+        self.assertEqual("b",state.primary_node_id)
         state=shift_click_authored_node_v1(state,candidate=node("a"))
         self.assertEqual(("b",),state.selected_node_ids)
         self.assertEqual("b",state.primary_node_id)
