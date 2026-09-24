@@ -1,0 +1,185 @@
+name: CORPUS-VAC Wayback
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/wayback_pub_seed.py'
+      - 'tools/corpus/test_wayback_pub_seed.py'
+      - 'tools/corpus/public_legacy_seed.csv'
+      - '.github/workflows/corpus-vac-wayback.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/wayback_pub_seed.py'
+      - 'tools/corpus/test_wayback_pub_seed.py'
+      - 'tools/corpus/public_legacy_seed.csv'
+      - '.github/workflows/corpus-vac-wayback.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-vac-wayback-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline validation
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/wayback_pub_seed.py tools/corpus/test_wayback_pub_seed.py
+          python tools/corpus/test_wayback_pub_seed.py
+
+  smoke:
+    if: github.event_name == 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Live CDX smoke
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/wayback_pub_seed.py \
+            --seed tools/corpus/smoke_seed.csv \
+            --max-domains 1 \
+            --exact-limit 3 \
+            --domain-limit 5 \
+            --delay 0.5 \
+            --out out/wayback_seed.csv \
+            --summary out/wayback_seed.summary.json
+          cat out/wayback_seed.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wayback-smoke-${{ github.run_id }}
+          path: out/**
+          retention-days: 7
+
+  discover:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Expand exact URLs and known-positive domains
+        run: |
+          set -euo pipefail
+          mkdir -p out/discovery
+          python tools/corpus/wayback_pub_seed.py \
+            --seed tools/corpus/public_legacy_seed.csv \
+            --seed tools/corpus/smoke_seed.csv \
+            --max-domains 100 \
+            --exact-limit 20 \
+            --domain-limit 500 \
+            --delay 1.0 \
+            --out out/discovery/wayback_seed.csv \
+            --summary out/discovery/wayback_seed.summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wayback-seed-${{ github.run_id }}
+          path: out/discovery/**
+          retention-days: 14
+
+  harvest:
+    if: github.event_name != 'pull_request'
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wayback-seed-${{ github.run_id }}
+          path: seed
+      - name: Recover archived bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed seed/wayback_seed.csv \
+            --out out/harvest \
+            --max-files -1 \
+            --timeout 25 \
+            --max-bytes 104857600 \
+            --per-host-delay 0.2 \
+            --shard-index "${{ matrix.shard }}" \
+            --shard-count 4
+      - name: Keep public artifact manifest-only
+        if: always()
+        run: |
+          set -euo pipefail
+          find out/harvest -type f \
+            ! -name 'manifest.json' \
+            ! -name 'manifest.csv' \
+            -delete
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wayback-manifest-${{ github.run_id }}-${{ matrix.shard }}
+          path: |
+            out/harvest/manifest.json
+            out/harvest/manifest.csv
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: github.event_name != 'pull_request' && always()
+    needs: harvest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wayback-manifest-${{ github.run_id }}-*
+          path: combined
+      - name: Aggregate receipts
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, json
+          from collections import Counter
+          from pathlib import Path
+          rows = []
+          for p in glob.glob("combined/**/manifest.json", recursive=True):
+              rows.extend(json.loads(Path(p).read_text(encoding="utf-8")))
+          unique = {r.get("sha256") for r in rows if r.get("sha256")}
+          summary = {
+              "schema": "rar-wayback-aggregate-v1",
+              "manifest_rows": len(rows),
+              "unique_sha256": len(unique),
+              "fetch_status": dict(Counter(r.get("fetch_status", "") for r in rows)),
+              "classification": dict(Counter(r.get("classification", "") for r in rows)),
+              "original_urls": len({r.get("wayback_original_url", "") for r in rows if r.get("wayback_original_url")}),
+          }
+          Path("aggregate").mkdir(exist_ok=True)
+          Path("aggregate/manifest.json").write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+          Path("aggregate/summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+          print(json.dumps(summary, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wayback-aggregate-${{ github.run_id }}
+          path: aggregate/**
+          retention-days: 30
