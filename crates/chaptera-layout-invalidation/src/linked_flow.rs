@@ -649,6 +649,16 @@ fn finish_linked_flow_v1(
     }
 }
 
+pub fn linked_scene_shard_output_fingerprint_v1(
+    page_id: &str,
+    flow: &LinkedStoryFlowV1,
+) -> FingerprintV1 {
+    fingerprint_v1(
+        "linked-story-scene-shard-v1",
+        &[page_id.as_bytes(), &flow.output_fingerprint],
+    )
+}
+
 fn ordered_frame_indices(frames: &[LinkedFrameInputV1]) -> Result<Vec<usize>, LinkedFlowErrorV1> {
     if frames.is_empty() {
         return Err(LinkedFlowErrorV1::MissingFrames);
