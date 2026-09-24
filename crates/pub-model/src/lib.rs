@@ -5,6 +5,7 @@
 //! the active task. It is a dependency slice, not a mirror of the frozen
 //! historical repositories.
 
+mod create_shape;
 mod shape_paint;
 mod shape_paint_op;
 
@@ -17,4 +18,9 @@ pub use shape_paint::{
 pub use shape_paint_op::{
     SetFillV1, SetStrokeV1, ShapePaintOperationError, ShapePaintOperationV1,
     apply_shape_paint_operation_v1, inverse_shape_paint_operation_v1,
+};
+
+pub use create_shape::{
+    AuthoredShapeV1, CreateShapeError, CreateShapeV1, EntityProvenanceV1, RectEmuV1, ShapeKindV1,
+    ShapeTransformV1, create_shape_entity_v1, validate_rect_emu_v1, validate_uuid_v7_v1,
 };
