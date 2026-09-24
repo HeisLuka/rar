@@ -63,9 +63,7 @@ mod tests {
             carrier_node_id: format!("10000000-0000-4000-8000-{order:012x}"),
             carrier_story_id: None,
             target_story_id: "20000000-0000-4000-8000-000000000001".to_owned(),
-            target_frame_node_id: Some(
-                "30000000-0000-4000-8000-000000000001".to_owned(),
-            ),
+            target_frame_node_id: Some("30000000-0000-4000-8000-000000000001".to_owned()),
         }
     }
 
