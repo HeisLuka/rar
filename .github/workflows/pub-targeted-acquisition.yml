@@ -148,6 +148,19 @@ jobs:
           cat out/vbapb10-msi-hits.txt
           grep -RaiE 'VBAPB10|VBAPB|VBA.*CHM' out/disc > out/raw-vbapb10-hits.txt || true
           head -n 300 out/raw-vbapb10-hits.txt || true
+
+          # PUB.MSI maps English VBAPB10.CHM (656752 bytes) to OFFICE1.CAB.
+          mkdir -p out/p2002-chm
+          test -f out/disc/OFFICE1.CAB
+          7z e -y out/disc/OFFICE1.CAB -oout/p2002-chm VBAPB10.CHM > out/vbapb10-extract.txt
+          test -f out/p2002-chm/VBAPB10.CHM
+          test "$(stat -c %s out/p2002-chm/VBAPB10.CHM)" -eq 656752
+          cp out/p2002-chm/VBAPB10.CHM out/VBAPB10-P2002-1033.CHM
+          sha256sum out/VBAPB10-P2002-1033.CHM | tee out/vbapb10-sha256.txt
+          sha1sum out/VBAPB10-P2002-1033.CHM | tee out/vbapb10-sha1.txt
+          md5sum out/VBAPB10-P2002-1033.CHM | tee out/vbapb10-md5.txt
+          stat -c 'size_bytes=%s' out/VBAPB10-P2002-1033.CHM | tee out/vbapb10-size.txt
+          file out/VBAPB10-P2002-1033.CHM | tee out/vbapb10-file.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -161,6 +174,9 @@ jobs:
             out/msi-list.txt
             out/vbapb10-msi-hits.txt
             out/raw-vbapb10-hits.txt
+            out/vbapb10-extract.txt
+            out/VBAPB10-P2002-1033.CHM
+            out/vbapb10-*.txt
             out/msi/*.HelpHits.txt
             out/msi/*.Media.txt
           if-no-files-found: warn
