@@ -2,6 +2,9 @@ name: PUB blocker artifact acquisition
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/pub-blocker-acquisition.yml"
   push:
     branches: [main]
     paths:
