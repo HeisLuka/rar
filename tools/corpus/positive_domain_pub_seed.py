@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse, csv, html, json, re, sys, time
+from http.client import InvalidURL
 from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
@@ -166,7 +167,7 @@ def crawl_domain(domain,starts,max_pages,max_depth,max_candidates,delay,timeout)
                     if len(out)>=max_candidates: break
                 elif depth<max_depth and page_like(link):
                     q.append((canonical_page(link),depth+1,final))
-        except (HTTPError,URLError,TimeoutError,OSError,ValueError) as exc:
+        except (HTTPError,URLError,TimeoutError,OSError,ValueError,InvalidURL) as exc:
             errors.append({"url":url,"error":f"{type(exc).__name__}: {exc}"})
         time.sleep(delay)
     return out,{"domain":domain,"pages_seen":len(seen),"candidate_rows":len(out),"errors":errors}
