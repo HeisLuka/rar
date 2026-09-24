@@ -104,14 +104,15 @@ class SnapIndexV1:
         )
         return cls(candidates=tuple(validated))
 
-    def best_axis_match_v1(
+    def axis_matches_v1(
         self,
         *,
         axis: SnapAxisV1,
         moving_anchors: tuple[tuple[SnapAnchorKindV1, int], ...],
         tolerance_emu: int,
         excluded_node_ids: tuple[str, ...] = (),
-    ) -> SnapAxisMatchV1 | None:
+    ) -> tuple[SnapAxisMatchV1, ...]:
+        """Return all admitted matches in the same stable order used by best-match."""
         if axis not in {"x", "y"}:
             raise SnapIndexError("axis must be x or y")
         _checked_nonnegative_emu(tolerance_emu, "tolerance_emu")
@@ -136,8 +137,7 @@ class SnapIndexV1:
             _checked_emu(anchor[1], f"moving_anchors[{index}].position_emu")
             normalized_anchors.append(anchor)
 
-        best_key = None
-        best_match = None
+        matches = []
         for moving_anchor, moving_position in normalized_anchors:
             for candidate in self.candidates:
                 if candidate.axis != axis:
@@ -151,28 +151,64 @@ class SnapIndexV1:
                 distance = abs(correction)
                 if distance > tolerance_emu:
                     continue
-
-                key = (
-                    distance,
-                    _TARGET_KIND_RANK[candidate.target_kind],
-                    candidate.target_node_id or "",
-                    _ANCHOR_RANK[candidate.target_anchor],
-                    _ANCHOR_RANK[moving_anchor],
+                feedback = SnapFeedbackV1(
+                    axis=axis,
+                    position_emu=candidate.position_emu,
+                    moving_anchor=moving_anchor,
+                    target_anchor=candidate.target_anchor,
+                    target_kind=candidate.target_kind,
+                    target_node_id=candidate.target_node_id,
                 )
-                if best_key is None or key < best_key:
-                    best_key = key
-                    best_match = SnapAxisMatchV1(
+                matches.append(
+                    SnapAxisMatchV1(
                         correction_emu=correction,
-                        feedback=SnapFeedbackV1(
-                            axis=axis,
-                            position_emu=candidate.position_emu,
-                            moving_anchor=moving_anchor,
-                            target_anchor=candidate.target_anchor,
-                            target_kind=candidate.target_kind,
-                            target_node_id=candidate.target_node_id,
-                        ),
+                        feedback=feedback,
                     )
-        return best_match
+                )
+
+        matches.sort(
+            key=lambda match: (
+                abs(match.correction_emu),
+                *snap_feedback_stable_key_v1(match.feedback),
+            )
+        )
+        return tuple(matches)
+
+    def best_axis_match_v1(
+        self,
+        *,
+        axis: SnapAxisV1,
+        moving_anchors: tuple[tuple[SnapAnchorKindV1, int], ...],
+        tolerance_emu: int,
+        excluded_node_ids: tuple[str, ...] = (),
+    ) -> SnapAxisMatchV1 | None:
+        matches = self.axis_matches_v1(
+            axis=axis,
+            moving_anchors=moving_anchors,
+            tolerance_emu=tolerance_emu,
+            excluded_node_ids=excluded_node_ids,
+        )
+        return matches[0] if matches else None
+
+
+def snap_feedback_stable_key_v1(
+    feedback: SnapFeedbackV1,
+) -> tuple[int, str, int, int]:
+    """Stable target tie-break shared by move, resize and composed solvers."""
+    if not isinstance(feedback, SnapFeedbackV1):
+        raise SnapIndexError("feedback must be SnapFeedbackV1")
+    if feedback.target_kind not in _TARGET_KIND_RANK:
+        raise SnapIndexError("feedback target_kind is invalid")
+    if feedback.target_anchor not in _ANCHOR_RANK:
+        raise SnapIndexError("feedback target_anchor is invalid")
+    if feedback.moving_anchor not in _ANCHOR_RANK:
+        raise SnapIndexError("feedback moving_anchor is invalid")
+    return (
+        _TARGET_KIND_RANK[feedback.target_kind],
+        feedback.target_node_id or "",
+        _ANCHOR_RANK[feedback.target_anchor],
+        _ANCHOR_RANK[feedback.moving_anchor],
+    )
 
 
 def _checked_emu(value: int, label: str) -> int:
