@@ -87,7 +87,9 @@ fn fp(domain: &str, value: &str) -> FingerprintV1 {
     fingerprint_v1(domain, &[value.as_bytes()])
 }
 
-fn build_prepared(fixture: &Fixture) -> chaptera_layout_invalidation::prepared_paragraph::PreparedStoryIndexV1 {
+fn build_prepared(
+    fixture: &Fixture,
+) -> chaptera_layout_invalidation::prepared_paragraph::PreparedStoryIndexV1 {
     let scalar_count =
         u32::try_from(fixture.story.text.chars().count()).expect("bounded real fixture");
     assert_eq!(scalar_count, fixture.story.unicode_scalar_count);
@@ -198,10 +200,7 @@ fn frame_end_scalars(
 fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute() {
     let fixture = fixture();
 
-    assert_eq!(
-        fixture.schema,
-        "chaptera.sample-newsletter-story22-real.v1"
-    );
+    assert_eq!(fixture.schema, "chaptera.sample-newsletter-story22-real.v1");
     assert_eq!(
         fixture.source.sha256,
         "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
@@ -246,7 +245,12 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
         fixture
             .frames
             .iter()
-            .map(|frame| (frame.bounds_emu.x, frame.bounds_emu.y, frame.bounds_emu.width, frame.bounds_emu.height))
+            .map(|frame| (
+                frame.bounds_emu.x,
+                frame.bounds_emu.y,
+                frame.bounds_emu.width,
+                frame.bounds_emu.height
+            ))
             .collect::<Vec<_>>(),
         vec![
             (2_596_806, 7_930_671, 1_360_324, 2_059_945),
@@ -255,20 +259,11 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
         ]
     );
     assert_eq!(fixture.wrap_obstacle_refs.get("330"), Some(&vec![]));
-    assert_eq!(
-        fixture.wrap_obstacle_refs.get("329"),
-        Some(&vec![337, 338])
-    );
-    assert_eq!(
-        fixture.wrap_obstacle_refs.get("331"),
-        Some(&vec![337, 338])
-    );
+    assert_eq!(fixture.wrap_obstacle_refs.get("329"), Some(&vec![337, 338]));
+    assert_eq!(fixture.wrap_obstacle_refs.get("331"), Some(&vec![337, 338]));
 
     let prepared = build_prepared(&fixture);
-    let environment = fp(
-        "sample-newsletter-layout-env-v1",
-        "synthetic-fixed-font",
-    );
+    let environment = fp("sample-newsletter-layout-env-v1", "synthetic-fixed-font");
     let flow_policy = fp(
         "sample-newsletter-flow-policy-v1",
         "largest-real-frame-regions",
@@ -324,14 +319,9 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
     assert_eq!(incremental.flow, clean);
     assert_eq!(
         frame_end_scalars(&incremental.flow),
-        fixture
-            .benchmark_harness
-            .mutated_expected_frame_end_scalars
+        fixture.benchmark_harness.mutated_expected_frame_end_scalars
     );
-    assert_eq!(
-        incremental.recomputed_frame_ids,
-        vec!["seq-330", "seq-329"]
-    );
+    assert_eq!(incremental.recomputed_frame_ids, vec!["seq-330", "seq-329"]);
     assert_eq!(
         incremental.convergence_after_frame_id.as_deref(),
         Some("seq-329")
@@ -344,9 +334,7 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
         incremental.convergence_after_frame_id,
         Some(format!(
             "seq-{}",
-            fixture
-                .benchmark_harness
-                .expected_convergence_after_seq_num
+            fixture.benchmark_harness.expected_convergence_after_seq_num
         ))
     );
     assert_eq!(
