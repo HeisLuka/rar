@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   exact-master:
@@ -18,6 +19,27 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Download exact March PUB from proven Carlton run
+        uses: actions/download-artifact@v4
+        with:
+          name: carlton-exact-pub-runtime-inputs
+          path: out/upstream-carlton
+          repository: HeisLuka/rar
+          run-id: 36061014857
+          github-token: ${{ github.token }}
+
+      - name: Stage and verify exact March PUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton-master/private out/carlton-master/sanitized
+          pub_path="$(find out/upstream-carlton -type f -name 'March-2026.pub' -print -quit)"
+          test -n "$pub_path"
+          cp "$pub_path" out/carlton-master/private/March-2026.pub
+          test "$(stat -c %s out/carlton-master/private/March-2026.pub)" = "9580032"
+          test "$(sha256sum out/carlton-master/private/March-2026.pub | awk '{print $1}')" = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
+          printf '%s\n' '{"file_id":"5a939344-76a6-4a6a-b30b-7237edac8bfa","size":9580032,"sha256":"bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3","artifact_file":"March-2026.pub","source":"github-actions:36061014857/carlton-exact-pub-runtime-inputs"}' > out/carlton-master/private/pub-acquisition.json
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -25,7 +47,7 @@ jobs:
       - name: Install bounded runtime dependencies
         run: python -m pip install "requests==2.32.5" "olefile==0.47" "pypdf==6.1.0"
 
-      - name: Acquire exact March PUB and published PDF
+      - name: Acquire published March PDF
         shell: bash
         run: |
           set -euo pipefail
@@ -44,12 +66,6 @@ jobs:
           ROOT = Path("out/carlton-master")
           PRIVATE = ROOT / "private"
           specs = {
-              "March 2026.pub": {
-                  "artifact_name": "March-2026.pub",
-                  "expected_id": "5a939344-76a6-4a6a-b30b-7237edac8bfa",
-                  "expected_size": 9_580_032,
-                  "expected_sha256": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
-              },
               "March 2026.pdf": {
                   "artifact_name": "March-2026.pdf",
                   "expected_id": None,
@@ -89,6 +105,7 @@ jobs:
               if not file_match:
                   raise SystemExit(f"{public_name}: file id missing")
               file_id = file_match.group(1)
+              print(f"DISCOVERED {public_name}: file_id={file_id}")
               if spec["expected_id"] is not None and file_id != spec["expected_id"]:
                   raise SystemExit(
                       f"{public_name}: file id drift {file_id} != {spec['expected_id']}"
@@ -203,6 +220,8 @@ jobs:
                   f"host={requests.utils.urlparse(downloaded_from).hostname}"
               )
 
+          pub_record = json.loads((PRIVATE / "pub-acquisition.json").read_text())
+          acquired["March 2026.pub"] = pub_record
           (PRIVATE / "acquisition.json").write_text(
               json.dumps(acquired, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
