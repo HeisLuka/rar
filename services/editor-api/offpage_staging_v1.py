@@ -78,12 +78,14 @@ def work_area_bounds(page_bounds: RectEmu, margin_emu: int) -> RectEmu:
     if margin_emu <= 0:
         raise OffpageStagingError("margin_emu must be positive")
     twice = _checked_add(margin_emu, margin_emu, "margin_emu.twice")
-    return RectEmu(
+    area = RectEmu(
         _checked_sub(page_bounds.x, margin_emu, "work_area.x"),
         _checked_sub(page_bounds.y, margin_emu, "work_area.y"),
         _checked_add(page_bounds.width, twice, "work_area.width"),
         _checked_add(page_bounds.height, twice, "work_area.height"),
     )
+    _validate_rect(area, "work_area")
+    return area
 
 
 def _intersects(left: RectEmu, right: RectEmu) -> bool:
