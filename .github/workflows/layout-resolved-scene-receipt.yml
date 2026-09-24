@@ -11,6 +11,7 @@ on:
       - "tools/run_local_layout_resolved_scene_engine.py"
       - "tools/test_run_local_layout_resolved_scene_engine.py"
       - "tools/resolved_graph_scene_bridge_v1.py"
+      - "tools/projection_context_sidecar_v1.py"
       - "tools/run_sample_newsletter_resolved_scene_bridge.py"
       - "tools/test_resolved_graph_scene_bridge_v1.py"
       - ".github/workflows/layout-resolved-scene-receipt.yml"
