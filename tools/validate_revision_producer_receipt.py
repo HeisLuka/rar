@@ -68,6 +68,8 @@ def validate_semantics(receipt):
 
     if request.get("document_id") != document_id or accepted.get("document_id") != document_id:
         raise AssertionError("document identity mismatch")
+    if baseline["project"].get("source_hash") != source_hash:
+        raise AssertionError("baseline project source identity mismatch")
     if request.get("source_hash") != source_hash or accepted.get("source_hash") != source_hash:
         raise AssertionError("source identity mismatch")
     if request.get("base_revision_id") != baseline["revision_id"]:
@@ -123,12 +125,18 @@ def validate_semantics(receipt):
         "commit",
         transition_hash,
     )
+    if accepted.get("project_schema_version") != resulting.get("schema_version"):
+        raise AssertionError("accepted project schema version mismatch")
     if accepted.get("state_id") != result_sid:
         raise AssertionError("accepted state_id mismatch")
     if accepted.get("revision_id") != expected_rid:
         raise AssertionError("accepted revision_id mismatch")
 
     probes = receipt["probes"]
+    if probes["stale_base"]["code"] != "stale_revision":
+        raise AssertionError("stale-base probe code mismatch")
+    if probes["idempotency_conflict"]["code"] != "idempotency_conflict":
+        raise AssertionError("idempotency-conflict probe code mismatch")
     for key in ("stale_base", "idempotency_conflict"):
         probe = probes[key]
         if probe["before_revision_id"] != probe["after_revision_id"]:

@@ -13,3 +13,16 @@ A receipt is data evidence, not source code. It must not contain raw PUB bytes, 
 The first closure receipt for WEB-REVISION-ADAPTER-01 should prove one bounded `MoveNodeTo` arm against the canonical EditorSession path, including replay, stale-base and idempotency probes.
 
 Synthetic receipts do not close the gate.
+
+
+## V1 public allowlist
+
+The V1 receipt schema is a source-free allowlist for the canonical EditorProject and
+MoveNode commit arm used by WEB-REVISION-ADAPTER-01. It rejects unknown request,
+accepted-result, project, operation and asset fields instead of relying on the semantic
+validator to ignore them. Editor replacement asset bytes are never part of EditorProject
+and are not admitted here.
+
+The bounded probes are also typed fail-closed evidence: `stale_base.code` must be
+`stale_revision`, `idempotency_conflict.code` must be `idempotency_conflict`,
+and both must prove zero executor calls and no revision movement.

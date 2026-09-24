@@ -18,18 +18,175 @@
   ],
   "properties": {
     "receipt_version": {"const": "chaptera.revision-producer-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "document_id": {"$ref": "#/$defs/uuid"},
+    "source_hash": {"$ref": "#/$defs/sha256"},
+    "baseline": {"$ref": "#/$defs/baseline"},
+    "request": {"$ref": "#/$defs/request"},
+    "accepted": {"$ref": "#/$defs/accepted"},
+    "resulting_project": {"$ref": "#/$defs/project"},
+    "replayed_project": {"$ref": "#/$defs/project"},
+    "probes": {"$ref": "#/$defs/probes"}
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "producer": {
       "type": "object",
       "additionalProperties": false,
       "required": ["implementation", "commit_or_build", "core_integration"],
       "properties": {
-        "implementation": {"type": "string", "minLength": 1},
-        "commit_or_build": {"type": "string", "minLength": 1},
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
         "core_integration": {"const": true}
       }
     },
-    "document_id": {"type": "string", "minLength": 1},
-    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "tableCellRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cell_id", "utf16_start", "utf16_end"],
+      "properties": {
+        "cell_id": {"$ref": "#/$defs/uuid"},
+        "utf16_start": {"type": "integer", "minimum": 0},
+        "utf16_end": {"type": "integer", "minimum": 0}
+      }
+    },
+    "projectAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "mime", "byte_len"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "mime": {"type": "string", "minLength": 1, "maxLength": 255},
+        "byte_len": {"type": "integer", "minimum": 1}
+      }
+    },
+    "replaceStoryText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "story_id", "before", "after"],
+      "properties": {
+        "kind": {"const": "replace_story_text"},
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "before": {"type": "string"},
+        "after": {"type": "string"}
+      }
+    },
+    "replaceTableCellText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "node_id",
+        "story_id",
+        "cell_id",
+        "before_story",
+        "after_story",
+        "before_ranges",
+        "after_ranges"
+      ],
+      "properties": {
+        "kind": {"const": "replace_table_cell_text"},
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "cell_id": {"$ref": "#/$defs/uuid"},
+        "before_story": {"type": "string"},
+        "after_story": {"type": "string"},
+        "before_ranges": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/tableCellRange"}
+        },
+        "after_ranges": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/tableCellRange"}
+        }
+      }
+    },
+    "replaceImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "node_id", "after_asset"],
+      "properties": {
+        "kind": {"const": "replace_image"},
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "before_asset": {"$ref": "#/$defs/sha256"},
+        "after_asset": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "moveNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "node_id", "before", "after"],
+      "properties": {
+        "kind": {"const": "move_node"},
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "before": {"$ref": "#/$defs/rect"},
+        "after": {"$ref": "#/$defs/rect"}
+      }
+    },
+    "editOperation": {
+      "oneOf": [
+        {"$ref": "#/$defs/replaceStoryText"},
+        {"$ref": "#/$defs/replaceTableCellText"},
+        {"$ref": "#/$defs/replaceImage"},
+        {"$ref": "#/$defs/moveNode"}
+      ]
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source_hash", "operations"],
+      "properties": {
+        "schema_version": {
+          "enum": [
+            "pub-editor-v0.1",
+            "pub-editor-v0.2",
+            "pub-editor-v0.3",
+            "pub-editor-v0.4"
+          ]
+        },
+        "source_hash": {"$ref": "#/$defs/sha256"},
+        "assets": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/projectAsset"}
+        },
+        "operations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/editOperation"}
+        }
+      }
+    },
     "baseline": {
       "type": "object",
       "additionalProperties": false,
@@ -41,60 +198,130 @@
         "revision_id": {"$ref": "#/$defs/hashId"}
       }
     },
-    "request": {"type": "object"},
-    "accepted": {"type": "object"},
-    "resulting_project": {"$ref": "#/$defs/project"},
-    "replayed_project": {"$ref": "#/$defs/project"},
+    "moveNodeTo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "node_id", "x_emu", "y_emu"],
+      "properties": {
+        "kind": {"const": "move_node_to"},
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "x_emu": {"type": "integer"},
+        "y_emu": {"type": "integer"}
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "document_id",
+        "source_hash",
+        "base_revision_id",
+        "client_operation_id",
+        "command"
+      ],
+      "properties": {
+        "protocol_version": {"const": "chaptera.commit-request.v1"},
+        "document_id": {"$ref": "#/$defs/uuid"},
+        "source_hash": {"$ref": "#/$defs/sha256"},
+        "base_revision_id": {"$ref": "#/$defs/hashId"},
+        "client_operation_id": {"$ref": "#/$defs/uuid"},
+        "command": {"$ref": "#/$defs/moveNodeTo"}
+      }
+    },
+    "consequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "state", "note"],
+      "properties": {
+        "key": {"const": "node.geometry.position"},
+        "state": {"const": "supported"},
+        "note": {"type": "null"}
+      }
+    },
+    "accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "document_id",
+        "source_hash",
+        "base_revision_id",
+        "revision_id",
+        "state_id",
+        "client_operation_id",
+        "canonical_operation",
+        "project_schema_version",
+        "consequences",
+        "scene_refresh"
+      ],
+      "properties": {
+        "protocol_version": {"const": "chaptera.commit-accepted.v1"},
+        "document_id": {"$ref": "#/$defs/uuid"},
+        "source_hash": {"$ref": "#/$defs/sha256"},
+        "base_revision_id": {"$ref": "#/$defs/hashId"},
+        "revision_id": {"$ref": "#/$defs/hashId"},
+        "state_id": {"$ref": "#/$defs/hashId"},
+        "client_operation_id": {"$ref": "#/$defs/uuid"},
+        "canonical_operation": {"$ref": "#/$defs/moveNode"},
+        "project_schema_version": {"const": "pub-editor-v0.4"},
+        "consequences": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/consequence"}
+        },
+        "scene_refresh": {"const": "full_snapshot"}
+      }
+    },
+    "staleProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "before_revision_id", "after_revision_id", "executor_calls_delta"],
+      "properties": {
+        "code": {"const": "stale_revision"},
+        "before_revision_id": {"$ref": "#/$defs/hashId"},
+        "after_revision_id": {"$ref": "#/$defs/hashId"},
+        "executor_calls_delta": {"const": 0}
+      }
+    },
+    "conflictProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "before_revision_id", "after_revision_id", "executor_calls_delta"],
+      "properties": {
+        "code": {"const": "idempotency_conflict"},
+        "before_revision_id": {"$ref": "#/$defs/hashId"},
+        "after_revision_id": {"$ref": "#/$defs/hashId"},
+        "executor_calls_delta": {"const": 0}
+      }
+    },
+    "exactRetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["same_result", "executor_calls_total"],
+      "properties": {
+        "same_result": {"const": true},
+        "executor_calls_total": {"const": 1}
+      }
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "replay"],
+      "properties": {
+        "before": {"$ref": "#/$defs/sha256"},
+        "after": {"$ref": "#/$defs/sha256"},
+        "replay": {"$ref": "#/$defs/sha256"}
+      }
+    },
     "probes": {
       "type": "object",
       "additionalProperties": false,
       "required": ["stale_base", "exact_retry", "idempotency_conflict", "source_identity"],
       "properties": {
-        "stale_base": {"$ref": "#/$defs/noMutationProbe"},
-        "idempotency_conflict": {"$ref": "#/$defs/noMutationProbe"},
-        "exact_retry": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["same_result", "executor_calls_total"],
-          "properties": {
-            "same_result": {"const": true},
-            "executor_calls_total": {"type": "integer", "const": 1}
-          }
-        },
-        "source_identity": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["before", "after", "replay"],
-          "properties": {
-            "before": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-            "after": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-            "replay": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-          }
-        }
-      }
-    }
-  },
-  "$defs": {
-    "hashId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "project": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["schema_version", "source_hash", "operations"],
-      "properties": {
-        "schema_version": {"type": "string", "minLength": 1},
-        "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "operations": {"type": "array"}
-      }
-    },
-    "noMutationProbe": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["code", "before_revision_id", "after_revision_id", "executor_calls_delta"],
-      "properties": {
-        "code": {"type": "string", "minLength": 1},
-        "before_revision_id": {"$ref": "#/$defs/hashId"},
-        "after_revision_id": {"$ref": "#/$defs/hashId"},
-        "executor_calls_delta": {"type": "integer", "const": 0}
+        "stale_base": {"$ref": "#/$defs/staleProbe"},
+        "exact_retry": {"$ref": "#/$defs/exactRetry"},
+        "idempotency_conflict": {"$ref": "#/$defs/conflictProbe"},
+        "source_identity": {"$ref": "#/$defs/sourceIdentity"}
       }
     }
   }
