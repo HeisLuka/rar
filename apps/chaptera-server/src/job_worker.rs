@@ -527,7 +527,7 @@ mod tests {
             let started = self.started.clone();
             let seen = self.cancelled_seen.clone();
             Box::pin(async move {
-                started.notify_waiters();
+                started.notify_one();
                 loop {
                     if cancellation.is_cancelled() {
                         seen.store(true, Ordering::SeqCst);
