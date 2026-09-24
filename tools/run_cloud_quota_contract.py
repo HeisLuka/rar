@@ -11,6 +11,7 @@ background_blocked=False
 try:q.reserve(tenant_id="t1",reservation_id="b2",work_class="background",amount=1)
 except QuotaRejected as x: background_blocked=str(x)=="background_budget_paused"
 i=q.reserve(tenant_id="t1",reservation_id="i1",work_class="interactive",amount=7)
+protected_before_expiry=q.usage("t1")["protected_interactive"]
 semantic_blocked=False
 try:q.reserve(tenant_id="t1",reservation_id="i2",work_class="interactive",amount=1)
 except QuotaRejected as x: semantic_blocked=str(x)=="semantic_headroom_exhausted"
@@ -21,7 +22,7 @@ except QuotaConflict as x: stale_expiry_fenced=str(x)=="lease_advanced"
 q.expire_stale(tenant_id="t1",reservation_id="e1",observed_lease_generation=renewed["lease_generation"])
 r={"receipt_kind":"chaptera.cloud-quota-v1.contract","real_service":False,"product_acceptance":False,"invariants":{
 "background_degrades_before_semantic":background_blocked,
-"interactive_uses_protected_headroom":q.usage("t1")["protected_interactive"]==5,
+"interactive_uses_protected_headroom":protected_before_expiry==5,
 "semantic_exhaustion_rejected":semantic_blocked,
 "stale_expiry_fenced":stale_expiry_fenced,
 "expired_reservation_released":q.usage("t1")["export"]==0
