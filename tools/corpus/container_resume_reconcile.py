@@ -76,8 +76,10 @@ def reconcile(
         raise ValueError(f"expected container first wave 425 SHA, got {len(first_wave)}")
     if len(crossarm) != 129:
         raise ValueError(f"expected cross-arm delta 129 SHA, got {len(crossarm)}")
-    if len(container) != 960:
-        raise ValueError(f"expected full container union 960 SHA, got {len(container)}")
+    if len(container) != 869:
+        raise ValueError(
+            f"expected 869 unique Publisher-CFB container SHA, got {len(container)}"
+        )
     if not first_wave <= container:
         missing = sorted(first_wave - container)
         raise ValueError(f"full container union lost {len(missing)} first-wave SHA")
@@ -119,7 +121,7 @@ def reconcile(
         "baseline_sha_count": len(baseline),
         "crossarm_delta_sha_count": len(crossarm),
         "current_rar_union_sha_count": len(baseline | crossarm),
-        "container_full_unique_sha_count": len(container),
+        "container_publisher_unique_sha_count": len(container),
         "container_first_wave_sha_count": len(first_wave),
         "container_overlap_baseline_sha_count": len(overlap_baseline),
         "container_overlap_crossarm_sha_count": len(overlap_crossarm),
@@ -169,6 +171,22 @@ def main() -> int:
         rows = load_json(container_dir / "manifest.json")
         if not isinstance(rows, list):
             raise ValueError("container manifest must be a list")
+        all_member_shas = {
+            require_sha(row.get("sha256"), "container member sha256")
+            for row in rows
+            if row.get("row_kind") == "container_member" and row.get("sha256")
+        }
+        if len(all_member_shas) != 960:
+            raise ValueError(
+                f"expected 960 unique all-class container member SHA, got {len(all_member_shas)}"
+            )
+        classification_unique: dict[str, set[str]] = defaultdict(set)
+        for row in rows:
+            if row.get("row_kind") != "container_member" or not row.get("sha256"):
+                continue
+            classification_unique[str(row.get("classification") or "unclassified")].add(
+                require_sha(row.get("sha256"), "container member sha256")
+            )
         container_by_sha = container_sha_rows(rows)
 
         crossarm_zip = work / "crossarm.zip"
@@ -184,6 +202,10 @@ def main() -> int:
         crossarm = crossarm_shas(crossarm_payload)
 
         summary, delta = reconcile(baseline_by_sha, container_by_sha, crossarm)
+        summary["container_all_member_unique_sha_count"] = len(all_member_shas)
+        summary["container_unique_sha_by_classification"] = {
+            key: len(value) for key, value in sorted(classification_unique.items())
+        }
         summary["baseline_source_counts"] = baseline_summary["source_counts"]
         summary["source_artifacts"] = {
             "container_union": {
