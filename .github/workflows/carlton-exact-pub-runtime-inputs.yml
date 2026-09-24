@@ -218,88 +218,696 @@ jobs:
                   print(pub.name, manifest["contents"])
           PY
 
-      - name: Locate exact PlcCmob wire in root Contents
+      - name: Extract PlcCmob through trailer directory and OplDocq locator
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib
           import json
           import struct
           from pathlib import Path
 
           root = Path("out/carlton/exact")
-          specs = [
-              ("March-2026", 9, 232),
-              ("December-2025", 21, 520),
-          ]
+          expected = {
+              "March-2026": {
+                  "raw_size": 232,
+                  "row_count": 9,
+                  "rows": [
+                      (1, 218, 319),
+                      (5, 216, 344),
+                      (6, 120, 343),
+                      (7, 49, 441),
+                      (9, 49, 446),
+                      (12, 49, 453),
+                      (13, 49, 462),
+                      (15, 49, 470),
+                      (16, 49, 471),
+                  ],
+              },
+              "December-2025": {
+                  "raw_size": 520,
+                  "row_count": 21,
+                  "rows": [
+                      (1, 218, 319),
+                      (2, 218, 323),
+                      (3, 139, 315),
+                      (4, 139, 316),
+                      (5, 170, 423),
+                      (6, 120, 343),
+                      (7, 49, 441),
+                      (9, 49, 446),
+                      (11, 192, 366),
+                      (12, 49, 453),
+                      (13, 49, 462),
+                      (15, 49, 470),
+                      (16, 49, 471),
+                      (35, 170, 431),
+                      (36, 170, 448),
+                      (37, 170, 454),
+                      (42, 170, 468),
+                      (46, 170, 457),
+                      (47, 170, 461),
+                      (51, 170, 467),
+                      (52, 170, 469),
+                  ],
+              },
+          }
 
-          def validate(raw, n):
-              if len(raw) != 16 + 24 * n:
-                  return None
-              if raw[0:2] != b"\x01\x20":
-                  return None
-              if struct.unpack_from("<I", raw, 2)[0] != n:
-                  return None
-              if raw[6:8] != b"\x02\xA0":
-                  return None
-              if struct.unpack_from("<I", raw, 8)[0] != len(raw) - 8:
-                  return None
+          def u16(data, off):
+              if off + 2 > len(data):
+                  raise ValueError(f"u16 out of bounds at {off}")
+              return struct.unpack_from("<H", data, off)[0]
+
+          def u32(data, off):
+              if off + 4 > len(data):
+                  raise ValueError(f"u32 out of bounds at {off}")
+              return struct.unpack_from("<I", data, off)[0]
+
+          def parse_reference_fields(payload):
+              fields = []
+              p = 0
+              while p < len(payload):
+                  if p + 2 > len(payload):
+                      raise ValueError("truncated directory reference field")
+                  field_id = payload[p]
+                  wire = payload[p + 1]
+                  p += 2
+                  if wire in (0x08, 0x78):
+                      value = None
+                  elif wire in (0x10, 0x18):
+                      value = u16(payload, p)
+                      p += 2
+                  elif wire in (0x20, 0x68, 0x70, 0xB8):
+                      value = u32(payload, p)
+                      p += 4
+                  else:
+                      raise ValueError(f"unsupported directory reference wire 0x{wire:02x}")
+                  fields.append((field_id, wire, value))
+              return fields
+
+          def parse_directory(data):
+              if data[:4] != b"\xe8\xac\x2c\x00":
+                  raise ValueError("not mature 0x2C Contents")
+              trailer_offset = u32(data, 0x1A)
+              p = trailer_offset
+              trailer_length = u32(data, p)
+              trailer_end = p + trailer_length
+              if trailer_end > len(data):
+                  raise ValueError("trailer out of bounds")
+              p += 4
+              if data[p:p+2] != b"\x01\x20":
+                  raise ValueError("trailer slot-count root mismatch")
+              slot_count = u32(data, p + 2)
+              p += 6
+              if data[p:p+2] != b"\x02\x20":
+                  raise ValueError("trailer max-ordinal root mismatch")
+              max_ordinal = u32(data, p + 2)
+              p += 6
+              if data[p:p+2] != b"\x03\x90":
+                  raise ValueError("trailer directory root mismatch")
+              directory_declared = u32(data, p + 2)
+              directory_start = p + 6
+              directory_end = directory_start + directory_declared - 4
+              if directory_end != trailer_end:
+                  raise ValueError("directory does not fill admitted trailer")
+              if max_ordinal + 1 != slot_count:
+                  raise ValueError("slot-count/max-ordinal mismatch")
+
+              refs = {}
+              p = directory_start
+              for seq_num in range(slot_count):
+                  if data[p] != 0:
+                      raise ValueError(f"directory slot {seq_num}: id != 0")
+                  wire = data[p + 1]
+                  if wire == 0x78:
+                      refs[seq_num] = {
+                          "seq_num": seq_num,
+                          "empty": True,
+                          "raw_types": [],
+                          "chunk_offsets": [],
+                          "parent_seq_nums": [],
+                      }
+                      p += 2
+                      continue
+                  if wire != 0x88:
+                      raise ValueError(
+                          f"directory slot {seq_num}: wire 0x{wire:02x} != 0x88"
+                      )
+                  declared = u32(data, p + 2)
+                  payload_start = p + 6
+                  payload_end = p + 2 + declared
+                  if payload_end > directory_end:
+                      raise ValueError(f"directory slot {seq_num}: out of bounds")
+                  fields = parse_reference_fields(data[payload_start:payload_end])
+                  refs[seq_num] = {
+                      "seq_num": seq_num,
+                      "empty": False,
+                      "raw_types": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x02 and field_wire == 0x18
+                      ],
+                      "chunk_offsets": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x04 and field_wire == 0xB8
+                      ],
+                      "parent_seq_nums": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x05 and field_wire == 0x68
+                      ],
+                  }
+                  p = payload_end
+              if p != directory_end:
+                  raise ValueError("directory parse did not end at boundary")
+              return refs
+
+          def unique_ref_by_raw_type(refs, raw_type):
+              matches = [
+                  ref for ref in refs.values()
+                  if ref.get("raw_types") == [raw_type]
+              ]
+              if len(matches) != 1:
+                  raise ValueError(
+                      f"raw type 0x{raw_type:02x}: expected one reference, got {len(matches)}"
+                  )
+              return matches[0]
+
+          def chunk_for_ref(data, ref):
+              offsets = ref["chunk_offsets"]
+              if len(offsets) != 1:
+                  raise ValueError(
+                      f"seq {ref['seq_num']}: expected one chunk offset, got {offsets}"
+                  )
+              off = offsets[0]
+              declared = u32(data, off)
+              end = off + declared
+              if declared < 4 or end > len(data):
+                  raise ValueError(f"seq {ref['seq_num']}: invalid chunk length {declared}")
+              return off, data[off:end]
+
+          def find_u32_field_before_unknown(chunk, field_id, expected_wire):
+              p = 4
+              matches = []
+              while p < len(chunk):
+                  if p + 2 > len(chunk):
+                      raise ValueError("truncated chunk field")
+                  current_id = chunk[p]
+                  wire = chunk[p + 1]
+                  p += 2
+                  if wire in (0x08, 0x78):
+                      value = None
+                  elif wire in (0x10, 0x18):
+                      value = u16(chunk, p)
+                      p += 2
+                  elif wire in (0x20, 0x68, 0x70, 0xB8):
+                      value = u32(chunk, p)
+                      p += 4
+                  elif wire == 0x28:
+                      p += 8
+                      value = None
+                  elif wire == 0x38:
+                      p += 16
+                      value = None
+                  elif wire in (0x88, 0x90, 0xA0):
+                      declared = u32(chunk, p)
+                      if declared < 4:
+                          raise ValueError("invalid nested container length")
+                      p += declared
+                      value = None
+                  else:
+                      break
+                  if current_id == field_id:
+                      if wire != expected_wire:
+                          raise ValueError(
+                              f"field 0x{field_id:02x}: wire 0x{wire:02x} != 0x{expected_wire:02x}"
+                          )
+                      matches.append(value)
+              if len(matches) != 1:
+                  raise ValueError(
+                      f"field 0x{field_id:02x}/0x{expected_wire:02x}: expected one, got {matches}"
+                  )
+              return matches[0]
+
+          def parse_plccmob(chunk):
+              if u32(chunk, 0) != len(chunk):
+                  raise ValueError("PlcCmob chunk envelope length mismatch")
+              if chunk[4:6] != b"\x01\x20":
+                  raise ValueError("PlcCmob count wire mismatch")
+              count = u32(chunk, 6)
+              if chunk[10:12] != b"\x02\xa0":
+                  raise ValueError("PlcCmob array wire mismatch")
+              if u32(chunk, 12) != len(chunk) - 12:
+                  raise ValueError("PlcCmob array length mismatch")
+              if len(chunk) != 16 + 24 * count:
+                  raise ValueError("PlcCmob size/count law mismatch")
               rows = []
-              for i in range(n):
-                  off = 16 + 24 * i
-                  if raw[off:off+2] != b"\x00\x88":
-                      return None
-                  if struct.unpack_from("<I", raw, off + 2)[0] != 22:
-                      return None
-                  if raw[off+6:off+8] != b"\x01\x20":
-                      return None
-                  if raw[off+12:off+14] != b"\x02\x20":
-                      return None
-                  if raw[off+18:off+20] != b"\x03\x68":
-                      return None
-                  rows.append({
-                      "source_order": i,
-                      "cmo_id": struct.unpack_from("<I", raw, off + 8)[0],
-                      "target_qsid": struct.unpack_from("<I", raw, off + 14)[0],
-                      "carrier_ohpo": struct.unpack_from("<I", raw, off + 20)[0],
-                  })
+              for source_order in range(count):
+                  p = 16 + 24 * source_order
+                  if chunk[p:p+2] != b"\x00\x88" or u32(chunk, p + 2) != 22:
+                      raise ValueError(f"PlcCmob row {source_order}: envelope mismatch")
+                  if chunk[p+6:p+8] != b"\x01\x20":
+                      raise ValueError(f"PlcCmob row {source_order}: CmoId wire mismatch")
+                  if chunk[p+12:p+14] != b"\x02\x20":
+                      raise ValueError(f"PlcCmob row {source_order}: Qsid wire mismatch")
+                  if chunk[p+18:p+20] != b"\x03\x68":
+                      raise ValueError(f"PlcCmob row {source_order}: Ohpo wire mismatch")
+                  rows.append((
+                      u32(chunk, p + 8),
+                      u32(chunk, p + 14),
+                      u32(chunk, p + 20),
+                  ))
               return rows
 
-          all_results = {}
-          for label, n, expected_size in specs:
+          receipts = {}
+          for label, spec in expected.items():
               data = (root / f"{label}-Main-Contents.bin").read_bytes()
-              prefix = b"\x01\x20" + struct.pack("<I", n) + b"\x02\xA0"
-              candidates = []
-              start = 0
-              while True:
-                  pos = data.find(prefix, start)
-                  if pos < 0:
-                      break
-                  raw = data[pos:pos + expected_size]
-                  rows = validate(raw, n)
-                  candidates.append({
-                      "offset": pos,
-                      "valid": rows is not None,
-                      "rows": rows,
-                      "sha256": hashlib.sha256(raw).hexdigest() if len(raw) == expected_size else None,
-                  })
-                  start = pos + 1
-              valid = [x for x in candidates if x["valid"]]
-              print(label, "prefix_candidates=", len(candidates), "valid=", len(valid))
-              for item in valid:
-                  print(label, "VALID", item)
-              all_results[label] = {"candidates": candidates}
-              if len(valid) == 1:
-                  pos = valid[0]["offset"]
-                  raw = data[pos:pos + expected_size]
-                  (root / f"{label}-PlcCmob.bin").write_bytes(raw)
-                  (root / f"{label}-PlcCmob.hex").write_text(raw.hex() + "\n", encoding="ascii")
+              refs = parse_directory(data)
 
-          (root / "plccmob-wire-scan.json").write_text(
-              json.dumps(all_results, indent=2, sort_keys=True) + "\n",
+              docq = unique_ref_by_raw_type(refs, 0x5B)
+              docq_offset, docq_chunk = chunk_for_ref(data, docq)
+              plccmob_seq = find_u32_field_before_unknown(docq_chunk, 0x05, 0x70)
+              if plccmob_seq not in refs:
+                  raise ValueError(f"{label}: OplDocq field0x05 points outside directory")
+
+              plccmob_ref = refs[plccmob_seq]
+              if plccmob_ref["raw_types"] != [0x70]:
+                  raise ValueError(
+                      f"{label}: OplDocq field0x05 target raw type is {plccmob_ref['raw_types']}"
+                  )
+              if plccmob_ref["parent_seq_nums"] != [docq["seq_num"]]:
+                  raise ValueError(
+                      f"{label}: PlcCmob parent {plccmob_ref['parent_seq_nums']} != Docq {docq['seq_num']}"
+                  )
+
+              plccmob_offset, plccmob_chunk = chunk_for_ref(data, plccmob_ref)
+              rows = parse_plccmob(plccmob_chunk)
+              if len(plccmob_chunk) != spec["raw_size"]:
+                  raise ValueError(
+                      f"{label}: PlcCmob size {len(plccmob_chunk)} != {spec['raw_size']}"
+                  )
+              if len(rows) != spec["row_count"]:
+                  raise ValueError(
+                      f"{label}: PlcCmob rows {len(rows)} != {spec['row_count']}"
+                  )
+              if rows != spec["rows"]:
+                  raise ValueError(f"{label}: PlcCmob row map drift: {rows}")
+
+              carrier_checks = []
+              for cmo_id, target_qsid, carrier_ohpo in rows:
+                  if carrier_ohpo not in refs:
+                      raise ValueError(f"{label}: unresolved carrier Ohpo {carrier_ohpo}")
+                  carrier_ref = refs[carrier_ohpo]
+                  if carrier_ref["raw_types"] != [0x01]:
+                      raise ValueError(
+                          f"{label}: carrier {carrier_ohpo} raw type {carrier_ref['raw_types']} != 0x01"
+                      )
+                  if carrier_ref["parent_seq_nums"] != [279]:
+                      raise ValueError(
+                          f"{label}: carrier {carrier_ohpo} parent {carrier_ref['parent_seq_nums']} != 279"
+                      )
+                  carrier_offset, carrier_chunk = chunk_for_ref(data, carrier_ref)
+                  carrier_cmo_id = find_u32_field_before_unknown(
+                      carrier_chunk, 0x0F, 0x20
+                  )
+                  if carrier_cmo_id != cmo_id:
+                      raise ValueError(
+                          f"{label}: carrier {carrier_ohpo} CmoID {carrier_cmo_id} != row {cmo_id}"
+                      )
+                  carrier_checks.append({
+                      "carrier_ohpo": carrier_ohpo,
+                      "carrier_cmo_id": carrier_cmo_id,
+                      "parent_seq_num": 279,
+                      "chunk_offset": carrier_offset,
+                  })
+
+              raw_path = root / f"{label}-PlcCmob.bin"
+              raw_path.write_bytes(plccmob_chunk)
+
+              receipts[label] = {
+                  "source_file": f"{label}.pub",
+                  "opldocq": {
+                      "seq_num": docq["seq_num"],
+                      "raw_type": 0x5B,
+                      "chunk_offset": docq_offset,
+                      "field0x05_wire": 0x70,
+                      "plccmob_seq_num": plccmob_seq,
+                  },
+                  "plccmob": {
+                      "seq_num": plccmob_seq,
+                      "raw_type": 0x70,
+                      "chunk_offset": plccmob_offset,
+                      "raw_size": len(plccmob_chunk),
+                      "row_count": len(rows),
+                      "rows": [
+                          {
+                              "source_order": i,
+                              "cmo_id": cmo_id,
+                              "target_qsid": target_qsid,
+                              "carrier_ohpo": carrier_ohpo,
+                          }
+                          for i, (cmo_id, target_qsid, carrier_ohpo) in enumerate(rows)
+                      ],
+                  },
+                  "carrier_checks": carrier_checks,
+              }
+              print(
+                  f"{label}: Docq seq={docq['seq_num']} -> PlcCmob seq={plccmob_seq}, "
+                  f"size={len(plccmob_chunk)}, rows={len(rows)}, carriers=PASS"
+              )
+
+          (root / "plccmob-runtime-extraction.json").write_text(
+              json.dumps(
+                  {
+                      "schema": "chaptera.plccmob-runtime-extraction.v1",
+                      "receipts": receipts,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
               encoding="utf-8",
           )
+          PY
+
+      - name: Validate target Story markers and source frame resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections
+          import json
+          import struct
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          extraction = json.loads(
+              (root / "plccmob-runtime-extraction.json").read_text()
+          )
+
+          def u16(data, off):
+              if off + 2 > len(data):
+                  raise ValueError(f"u16 out of bounds at {off}")
+              return struct.unpack_from("<H", data, off)[0]
+
+          def u32(data, off):
+              if off + 4 > len(data):
+                  raise ValueError(f"u32 out of bounds at {off}")
+              return struct.unpack_from("<I", data, off)[0]
+
+          def quill_marker_index(data):
+              descriptors = []
+              current = 0x18
+              seen = set()
+              while current != 0xFFFF_FFFF:
+                  if current in seen or current >= len(data):
+                      raise ValueError("invalid Quill descriptor chain")
+                  seen.add(current)
+                  count = u16(data, current + 2)
+                  next_offset = u32(data, current + 4)
+                  p = current + 8
+                  for _ in range(count):
+                      if u16(data, p) != 0x0018:
+                          raise ValueError("invalid Quill descriptor presence marker")
+                      name = data[p + 2:p + 6]
+                      descriptors.append({
+                          "name": name,
+                          "option_a": u16(data, p + 6),
+                          "offset": u32(data, p + 16),
+                          "length": u32(data, p + 20),
+                      })
+                      p += 24
+                  current = next_offset
+
+              def unique(name):
+                  matches = [item for item in descriptors if item["name"] == name]
+                  if len(matches) != 1:
+                      raise ValueError(
+                          f"Quill descriptor {name!r}: expected one, got {len(matches)}"
+                      )
+                  return matches[0]
+
+              syid = unique(b"SYID")
+              strs = unique(b"STRS")
+              text = unique(b"TEXT")
+
+              syid_count = u32(data, syid["offset"] + 4)
+              story_ids = [
+                  u32(data, syid["offset"] + 8 + 4 * i)
+                  for i in range(syid_count)
+              ]
+
+              strs_count = u32(data, strs["offset"])
+              if strs_count != syid_count:
+                  raise ValueError("Quill SYID/STRS count mismatch")
+              service_span = u32(data, strs["offset"] + 4)
+              lengths_start = strs["offset"] + 4 + service_span
+              lengths = [
+                  u32(data, lengths_start + 4 * i)
+                  for i in range(strs_count)
+              ]
+              if sum(lengths) * 2 != text["length"]:
+                  raise ValueError("Quill TEXT length mismatch")
+
+              p = text["offset"]
+              stories = {}
+              for index, (story_id, code_units) in enumerate(zip(story_ids, lengths)):
+                  byte_len = 2 * code_units
+                  raw = data[p:p + byte_len]
+                  if len(raw) != byte_len:
+                      raise ValueError("Quill Story out of bounds")
+                  marker_count = sum(
+                      1
+                      for off in range(0, len(raw), 2)
+                      if raw[off:off + 2] == b"\xfc\xff"
+                  )
+                  stories[story_id] = {
+                      "story_index": index,
+                      "utf16_code_units": code_units,
+                      "object_marker_count": marker_count,
+                  }
+                  p += byte_len
+              return stories
+
+          def directory_refs(data):
+              trailer = u32(data, 0x1A)
+              p = trailer + 4
+              if data[p:p + 2] != b"\x01\x20":
+                  raise ValueError("bad Contents trailer")
+              slot_count = u32(data, p + 2)
+              p += 12
+              if data[p:p + 2] != b"\x03\x90":
+                  raise ValueError("bad Contents directory root")
+              directory_len = u32(data, p + 2)
+              p += 6
+              directory_end = p + directory_len - 4
+              refs = {}
+              for seq_num in range(slot_count):
+                  if data[p] != 0:
+                      raise ValueError("bad directory slot id")
+                  wire = data[p + 1]
+                  if wire == 0x78:
+                      refs[seq_num] = {
+                          "raw_types": [],
+                          "chunk_offsets": [],
+                          "parent_seq_nums": [],
+                      }
+                      p += 2
+                      continue
+                  if wire != 0x88:
+                      raise ValueError("bad directory slot wire")
+                  declared = u32(data, p + 2)
+                  payload = data[p + 6:p + 2 + declared]
+                  q = 0
+                  fields = []
+                  while q < len(payload):
+                      field_id = payload[q]
+                      field_wire = payload[q + 1]
+                      q += 2
+                      if field_wire in (0x08, 0x78):
+                          value = None
+                      elif field_wire in (0x10, 0x18):
+                          value = u16(payload, q)
+                          q += 2
+                      elif field_wire in (0x20, 0x68, 0x70, 0xB8):
+                          value = u32(payload, q)
+                          q += 4
+                      else:
+                          raise ValueError(
+                              f"unsupported directory field wire 0x{field_wire:02x}"
+                          )
+                      fields.append((field_id, field_wire, value))
+                  refs[seq_num] = {
+                      "raw_types": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x02 and field_wire == 0x18
+                      ],
+                      "chunk_offsets": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x04 and field_wire == 0xB8
+                      ],
+                      "parent_seq_nums": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x05 and field_wire == 0x68
+                      ],
+                  }
+                  p += 2 + declared
+              if p != directory_end:
+                  raise ValueError("directory boundary mismatch")
+              return refs
+
+          def top_level_scalar_fields(chunk):
+              p = 4
+              fields = []
+              while p < len(chunk):
+                  if p + 2 > len(chunk):
+                      raise ValueError("truncated chunk field")
+                  field_id = chunk[p]
+                  wire = chunk[p + 1]
+                  p += 2
+                  if wire in (0x08, 0x78):
+                      value = None
+                  elif wire in (0x10, 0x18):
+                      value = u16(chunk, p)
+                      p += 2
+                  elif wire in (0x20, 0x68, 0x70, 0xB8):
+                      value = u32(chunk, p)
+                      p += 4
+                  elif wire == 0x28:
+                      p += 8
+                      value = None
+                  elif wire == 0x38:
+                      p += 16
+                      value = None
+                  elif wire in (0x88, 0x90, 0xA0):
+                      declared = u32(chunk, p)
+                      if declared < 4:
+                          raise ValueError("invalid nested container")
+                      p += declared
+                      value = None
+                  else:
+                      break
+                  fields.append((field_id, wire, value))
+              return fields
+
+          target_receipts = {}
+          for label, receipt in extraction["receipts"].items():
+              quill = (root / f"{label}-Quill-QuillSub-CONTENTS.bin").read_bytes()
+              stories = quill_marker_index(quill)
+              contents = (root / f"{label}-Main-Contents.bin").read_bytes()
+              refs = directory_refs(contents)
+
+              frames_by_qsid = collections.defaultdict(list)
+              for seq_num, ref in refs.items():
+                  if ref["raw_types"] != [0x01] or len(ref["chunk_offsets"]) != 1:
+                      continue
+                  off = ref["chunk_offsets"][0]
+                  declared = u32(contents, off)
+                  chunk = contents[off:off + declared]
+                  fields = top_level_scalar_fields(chunk)
+                  qsid_values = [
+                      value
+                      for field_id, wire, value in fields
+                      if field_id == 0x27 and wire == 0x20
+                  ]
+                  if len(qsid_values) > 1:
+                      raise ValueError(f"{label}: shape {seq_num} has duplicate field0x27")
+                  if not qsid_values:
+                      continue
+                  frame_ordinals = [
+                      value
+                      for field_id, wire, value in fields
+                      if field_id == 0x28 and wire == 0x20
+                  ]
+                  frames_by_qsid[qsid_values[0]].append({
+                      "frame_seq_num": seq_num,
+                      "parent_seq_nums": ref["parent_seq_nums"],
+                      "frame_ordinal": frame_ordinals[0] if len(frame_ordinals) == 1 else None,
+                  })
+
+              relation_counts = collections.Counter(
+                  row["target_qsid"] for row in receipt["plccmob"]["rows"]
+              )
+              checks = {}
+              for qsid, relation_count in sorted(relation_counts.items()):
+                  if qsid not in stories:
+                      raise ValueError(f"{label}: target Qsid {qsid} missing from Quill SYID")
+                  story = stories[qsid]
+                  if story["object_marker_count"] != relation_count:
+                      raise ValueError(
+                          f"{label}: Qsid {qsid} relations={relation_count} "
+                          f"markers={story['object_marker_count']}"
+                      )
+                  frames = frames_by_qsid.get(qsid, [])
+                  if not frames:
+                      raise ValueError(f"{label}: Qsid {qsid} has no source frame shape")
+                  checks[str(qsid)] = {
+                      "relation_count": relation_count,
+                      "quill_story_index": story["story_index"],
+                      "quill_utf16_code_units": story["utf16_code_units"],
+                      "object_marker_count": story["object_marker_count"],
+                      "source_frames": frames,
+                  }
+                  print(
+                      f"{label}: Qsid {qsid} relations={relation_count} "
+                      f"markers={story['object_marker_count']} frames={len(frames)} PASS"
+                  )
+
+              target_receipts[label] = checks
+
+          (root / "plccmob-target-cardinality.json").write_text(
+              json.dumps(
+                  {
+                      "schema": "chaptera.plccmob-target-cardinality.v1",
+                      "targets": target_receipts,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Parse exact PlcCmob chunks through Rust core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p pub-plccmob-projection --bin plccmob-wire-inspect -- out/carlton/exact/March-2026-PlcCmob.bin > out/carlton/exact/March-2026-plccmob-wire.json
+          cargo run -q -p pub-plccmob-projection --bin plccmob-wire-inspect -- out/carlton/exact/December-2025-PlcCmob.bin > out/carlton/exact/December-2025-plccmob-wire.json
+
+      - name: Cross-check Rust output against exact extraction receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          extraction = json.loads((root / "plccmob-runtime-extraction.json").read_text())
+          for label in ("March-2026", "December-2025"):
+              rust = json.loads((root / f"{label}-plccmob-wire.json").read_text())
+              expected = extraction["receipts"][label]["plccmob"]
+              assert rust["declared_length"] == expected["raw_size"]
+              assert rust["declared_count"] == expected["row_count"]
+              got_rows = [
+                  (
+                      row["cmo_id"],
+                      row["target_qsid"],
+                      row["carrier_ohpo"],
+                  )
+                  for row in rust["entries"]
+              ]
+              expected_rows = [
+                  (
+                      row["cmo_id"],
+                      row["target_qsid"],
+                      row["carrier_ohpo"],
+                  )
+                  for row in expected["rows"]
+              ]
+              assert got_rows == expected_rows, (label, got_rows, expected_rows)
+              print(
+                  f"{label}: Rust exact-wire PASS size={rust['declared_length']} "
+                  f"rows={rust['declared_count']}"
+              )
           PY
 
       - name: Upload exact runtime inputs
@@ -311,11 +919,27 @@ jobs:
             out/carlton/exact/March-2026.pub
             out/carlton/exact/December-2025.pub
             out/carlton/exact/*-Contents.bin
+            out/carlton/exact/*-CONTENTS.bin
+            out/carlton/exact/*-PlcCmob.bin
             out/carlton/exact/*-cfb-manifest.json
+            out/carlton/exact/plccmob-runtime-extraction.json
             out/carlton/exact/manifest.json
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+
+      - name: Upload sanitized PlcCmob runtime receipts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-plccmob-wire-runtime-receipts
+          path: |
+            out/carlton/exact/plccmob-runtime-extraction.json
+            out/carlton/exact/plccmob-target-cardinality.json
+            out/carlton/exact/March-2026-plccmob-wire.json
+            out/carlton/exact/December-2025-plccmob-wire.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload acquisition diagnostics
         uses: actions/upload-artifact@v4

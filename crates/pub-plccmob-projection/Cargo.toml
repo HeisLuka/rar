@@ -13,3 +13,7 @@ serde_json.workspace = true
 [[bin]]
 name = "plccmob-projection-producer"
 path = "src/main.rs"
+
+[[bin]]
+name = "plccmob-wire-inspect"
+path = "src/bin/plccmob_wire_inspect.rs"
