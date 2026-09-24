@@ -26,12 +26,17 @@ class CloudQuotaV1Tests(unittest.TestCase):
             q.reserve(tenant_id="t1",reservation_id="r1",work_class="background",amount=2)
 
     def test_export_cannot_consume_protected_semantic_headroom(self):
-        q=self.quota()
-        q.reserve(tenant_id="t1",reservation_id="i1",work_class="interactive",amount=5)
+        q=CloudQuotaV1(
+            shared_capacity=10,
+            semantic_headroom=5,
+            export_cap=10,
+            background_cap=4,
+        )
+        q.reserve(tenant_id="t1",reservation_id="i1",work_class="interactive",amount=6)
         q.reserve(tenant_id="t1",reservation_id="e1",work_class="export",amount=4)
         with self.assertRaisesRegex(QuotaRejected,"shared_capacity_exhausted"):
-            q.reserve(tenant_id="t1",reservation_id="e2",work_class="export",amount=2)
-        # Interactive may still use the protected reserve.
+            q.reserve(tenant_id="t1",reservation_id="e2",work_class="export",amount=1)
+        # Interactive may still use the protected reserve even though shared is full.
         i2=q.reserve(tenant_id="t1",reservation_id="i2",work_class="interactive",amount=5)
         self.assertFalse(i2["released"])
         self.assertEqual(5,q.usage("t1")["protected_interactive"])
