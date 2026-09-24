@@ -1,0 +1,36 @@
+name: CLOUD-TENANT-01
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/security/tenant-policy-v1.json"
+      - "services/editor-api/security/tenant_isolation.py"
+      - "services/editor-api/security/test_tenant_isolation.py"
+      - ".github/workflows/cloud-tenant.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test tenant isolation contract
+        working-directory: services/editor-api/security
+        run: python -m unittest -v test_tenant_isolation.py
+      - name: Validate tenant policy
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path("services/editor-api/security/tenant-policy-v1.json").read_text())
+          assert 0 < p["artifact_grant_ttl_seconds"] <= 300
+          assert 0 < p["max_job_inputs"] <= 128
+          assert "source" in p["allowed_artifact_kinds"]
+          print("tenant isolation policy: OK")
+          PY
