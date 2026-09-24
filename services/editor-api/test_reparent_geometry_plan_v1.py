@@ -249,7 +249,13 @@ class ReparentGeometryPlanV1Tests(unittest.TestCase):
 
     def test_stale_source_and_unsupported_authority_fail_closed(self):
         source = page("page:1", ("other",))
-        destination = page("page:1", ("x",))
+        destination = group(
+            "dest:g",
+            "page:1",
+            RectEmu(0, 0, 100, 100),
+            RectEmu(0, 0, 100, 100),
+            ("x",),
+        )
         stale = plan_reparent_geometry_v1(
             node_id="n",
             node_authority="chaptera-authored",
