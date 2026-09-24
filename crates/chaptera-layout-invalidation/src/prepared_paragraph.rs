@@ -2,8 +2,8 @@ use chaptera_layout_projection::{
     ProjectedParagraphV1, ProjectedShapingRunV1, ProjectedStoryTextV1,
 };
 
-use crate::{FingerprintV1, fingerprint_v1};
 use crate::runtime::ResolvedScalarMetricV1;
+use crate::{FingerprintV1, fingerprint_v1};
 
 pub const PREPARED_PARAGRAPH_STAGE_V1: &str = "prepared-paragraph-v1";
 pub const PREPARED_STORY_INDEX_STAGE_V1: &str = "prepared-story-index-v1";
@@ -179,12 +179,12 @@ pub fn prepare_projected_story_v1(
         });
     }
 
-    if let Some((index, metric)) = metrics
+    if let Some(metric) = metrics
         .iter()
         .enumerate()
         .find(|(index, _)| !assigned[*index])
+        .map(|(_, metric)| metric)
     {
-        let _ = index;
         return Err(PreparedParagraphErrorV1::MetricOutsideParagraphContent {
             scalar_start: metric.scalar_start,
             scalar_end: metric.scalar_end,
@@ -334,9 +334,7 @@ fn paragraph_position_fingerprint_v1(paragraph: &ProjectedParagraphV1) -> Finger
     fingerprint_v1("prepared-paragraph-position-v1", &[&payload])
 }
 
-fn story_index_output_fingerprint_v1(
-    paragraphs: &[PreparedParagraphBindingV1],
-) -> FingerprintV1 {
+fn story_index_output_fingerprint_v1(paragraphs: &[PreparedParagraphBindingV1]) -> FingerprintV1 {
     let mut payload = Vec::new();
     for paragraph in paragraphs {
         push_bytes(&mut payload, paragraph.paragraph_id.as_bytes());
@@ -432,8 +430,13 @@ mod tests {
         projected: &ProjectedStoryTextV1,
         metrics: &[ResolvedScalarMetricV1],
     ) -> PreparedStoryIndexV1 {
-        prepare_projected_story_v1(projected, metrics, fp("env-v1", "font-a"), fp("policy-v1", "p"))
-            .expect("prepare")
+        prepare_projected_story_v1(
+            projected,
+            metrics,
+            fp("env-v1", "font-a"),
+            fp("policy-v1", "p"),
+        )
+        .expect("prepare")
     }
 
     #[test]
@@ -579,16 +582,10 @@ mod tests {
     #[test]
     fn paragraph_split_changes_topology_instead_of_reusing_old_whole_paragraph() {
         let before_projection = projection("AB", &["p1"], "style-a");
-        let before = prepare(
-            &before_projection,
-            &[metric(0, 1, "A"), metric(1, 2, "B")],
-        );
+        let before = prepare(&before_projection, &[metric(0, 1, "A"), metric(1, 2, "B")]);
 
         let after_projection = projection("A\rB", &["p1", "p-new"], "style-a");
-        let after = prepare(
-            &after_projection,
-            &[metric(0, 1, "A"), metric(2, 3, "B")],
-        );
+        let after = prepare(&after_projection, &[metric(0, 1, "A"), metric(2, 3, "B")]);
 
         assert_eq!(before.paragraphs.len(), 1);
         assert_eq!(after.paragraphs.len(), 2);
