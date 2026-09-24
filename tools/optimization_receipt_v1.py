@@ -11,6 +11,7 @@ from typing import Any
 MEASUREMENT_SCHEMA = "chaptera.optimization.measurement.v1"
 RECEIPT_SCHEMA = "chaptera.optimization.receipt.v1"
 RENDER_BENCH_SCHEMA = "chaptera.render-bench.v1"
+COPY_LEDGER_SCHEMA = "chaptera.copy-ledger.v1"
 
 DIRECTIONS = {"lower_is_better", "higher_is_better", "neutral"}
 
@@ -226,6 +227,116 @@ def render_bench_measurement(receipt: dict[str, Any], build_identity: dict[str, 
             "blocker": receipt.get("closure_blocker"),
         },
         "metrics": metrics,
+        "limitations": copy.deepcopy(receipt.get("limitations", [])),
+    }
+
+
+def copy_ledger_measurement(receipt: dict[str, Any], build_identity: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a validated chaptera.copy-ledger.v1 receipt into the shared optimization spine."""
+    if receipt.get("receipt_version") != COPY_LEDGER_SCHEMA:
+        raise OptimizationIncompatible("expected chaptera.copy-ledger.v1 producer receipt")
+
+    from copy_ledger_v1 import validate_receipt
+
+    validate_receipt(receipt)
+    build = _require_build_identity(build_identity)
+    producer = receipt["producer"]
+    summary = receipt["summary"]
+    runtime_identity = copy.deepcopy(producer["runtime_identity"])
+
+    metrics: dict[str, dict[str, Any]] = {
+        "copy.total_materialized_bytes": observed(
+            summary["total_materialized_bytes"], "bytes", "lower_is_better"
+        ),
+        "copy.avoidable_duplicate_bytes": observed(
+            summary["avoidable_duplicate_bytes"], "bytes", "lower_is_better"
+        ),
+    }
+
+    allocation_values = [row.get("allocation_count") for row in receipt["events"]]
+    if all(value is not None for value in allocation_values):
+        metrics["copy.allocation_count"] = observed(
+            sum(allocation_values), "count", "lower_is_better"
+        )
+    else:
+        metrics["copy.allocation_count"] = unknown(
+            "one or more copy-ledger events do not expose allocation_count",
+            "count",
+            "lower_is_better",
+        )
+
+    peak_values = [row.get("peak_live_bytes") for row in receipt["events"]]
+    observed_peaks = [value for value in peak_values if value is not None]
+    if len(observed_peaks) == len(peak_values):
+        metrics["copy.max_event_peak_live_bytes"] = observed(
+            max(observed_peaks), "bytes", "lower_is_better"
+        )
+    else:
+        metrics["copy.max_event_peak_live_bytes"] = unknown(
+            "one or more copy-ledger events do not expose peak_live_bytes",
+            "bytes",
+            "lower_is_better",
+        )
+
+    for payload_class, row in sorted(summary["by_payload_class"].items()):
+        prefix = f"copy.payload.{payload_class}"
+        metrics[f"{prefix}.materialized_bytes"] = observed(
+            row["materialized_bytes"], "bytes", "lower_is_better"
+        )
+        metrics[f"{prefix}.avoidable_duplicate_bytes"] = observed(
+            row["avoidable_duplicate_bytes"], "bytes", "lower_is_better"
+        )
+        metrics[f"{prefix}.shared_bytes"] = observed(
+            row["shared_bytes"], "bytes", "neutral"
+        )
+        metrics[f"{prefix}.logical_unique_bytes"] = observed(
+            row["logical_unique_bytes"], "bytes", "neutral"
+        )
+        ratio = row.get("copy_amplification_ratio")
+        if ratio is None:
+            metrics[f"{prefix}.amplification_ratio"] = unknown(
+                "no non-zero unique logical byte denominator for this payload class",
+                "ratio",
+                "lower_is_better",
+            )
+        else:
+            metrics[f"{prefix}.amplification_ratio"] = observed(
+                ratio, "ratio", "lower_is_better"
+            )
+
+    workload_identity = {
+        "producer_receipt_version": receipt["receipt_version"],
+        "workload_id": producer["workload_id"],
+    }
+    real_pub = receipt["measurement_class"] == "real_pub_source_free"
+
+    return {
+        "schema": MEASUREMENT_SCHEMA,
+        "producer": {
+            "receipt_version": receipt["receipt_version"],
+            "measurement_class": receipt["measurement_class"],
+        },
+        "build_identity": build,
+        "runtime_identity": runtime_identity,
+        "workload_identity": workload_identity,
+        "workload_identity_hash": identity_hash(workload_identity),
+        "correctness": {
+            "semantic_equal": receipt["equivalence"]["semantic_equal"] is True,
+        },
+        "evidence_authority": {
+            "real_product_corpus": real_pub,
+            "synthetic_or_product_grounded_public": not real_pub,
+            "technology_decision_allowed": (
+                receipt["evidence_authority"]["technology_decision_allowed"] is True
+            ),
+            "blocker": receipt["evidence_authority"].get("blocker"),
+        },
+        "metrics": metrics,
+        "diagnostics": {
+            "top_materialization_sites": copy.deepcopy(
+                summary["top_materialization_sites"]
+            ),
+        },
         "limitations": copy.deepcopy(receipt.get("limitations", [])),
     }
 
