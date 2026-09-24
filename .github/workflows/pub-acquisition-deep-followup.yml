@@ -1,0 +1,181 @@
+name: PUB acquisition deep follow-up
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/pub-blocker-acquisition-run
+    paths:
+      - ".github/workflows/pub-acquisition-deep-followup.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  p2002-chm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Fetch P2002 original container, unwrap media, scan CABs for VBAPB10.CHM
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full cabextract
+          mkdir -p out/container out/disc out/cabs
+          url="https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z"
+          curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/p2002.7z
+          test "$(sha1sum out/p2002.7z | awk '{print $1}')" = "1ebbf5a8c188794e14a5ad2556bb751797034d0c"
+          7z x -y out/p2002.7z -oout/container > out/container-extract.txt
+          media="$(find out/container -type f -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+          test -n "$media"
+          cp "$media" out/p2002-media.bin
+          sha256sum out/p2002-media.bin | tee out/media-sha256.txt
+          sha1sum out/p2002-media.bin | tee out/media-sha1.txt
+          md5sum out/p2002-media.bin | tee out/media-md5.txt
+          stat -c 'size_bytes=%s' out/p2002-media.bin | tee out/media-size.txt
+          file out/p2002-media.bin | tee out/media-file.txt
+          7z l out/p2002-media.bin > out/media-list.txt 2>&1 || true
+          7z x -y out/p2002-media.bin -oout/disc > out/media-extract.txt 2>&1 || true
+          find out/disc -type f -printf '%s\t%p\n' | sort -nr > out/disc-files.txt
+          : > out/cab-vbapb10-hits.txt
+          while IFS= read -r cab; do
+            if 7z l "$cab" 2>/dev/null | grep -i 'VBAPB10.CHM' >> out/cab-vbapb10-hits.txt; then
+              printf 'CAB=%s\n' "$cab" >> out/cab-vbapb10-hits.txt
+              d="out/cabs/$(basename "$cab").d"
+              mkdir -p "$d"
+              7z x -y "$cab" -o"$d" >/dev/null 2>&1 || true
+            fi
+          done < <(find out/disc -type f -iname '*.cab' | sort)
+          find out/cabs -type f -iname 'VBAPB10.CHM' -printf '%s\t%p\n' > out/vbapb10-files.txt || true
+          if [ -s out/vbapb10-files.txt ]; then
+            chm="$(head -n1 out/vbapb10-files.txt | cut -f2-)"
+            cp "$chm" out/VBAPB10-P2002.CHM
+            sha256sum out/VBAPB10-P2002.CHM | tee out/vbapb10-sha256.txt
+            sha1sum out/VBAPB10-P2002.CHM | tee out/vbapb10-sha1.txt
+            md5sum out/VBAPB10-P2002.CHM | tee out/vbapb10-md5.txt
+            stat -c 'size_bytes=%s' out/VBAPB10-P2002.CHM | tee out/vbapb10-size.txt
+          fi
+          cat out/cab-vbapb10-hits.txt || true
+          cat out/vbapb10-files.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p2002-vbapb10-${{ github.run_id }}
+          path: |
+            out/media-*.txt
+            out/cab-vbapb10-hits.txt
+            out/vbapb10-files.txt
+            out/VBAPB10-P2002.CHM
+            out/vbapb10-*.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  p2003-chm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Fetch P2003 exact ISO and scan CABs for VBAPB10.CHM
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full
+          mkdir -p out/disc out/cabs
+          meta="https://archive.org/metadata/X10-15121"
+          curl -fL --retry 3 --max-time 120 "$meta" -o out/meta.json
+          python3 - <<'PY' > out/url.txt
+          import json,urllib.parse
+          d=json.load(open("out/meta.json"))
+          f=next(f for f in d["files"] if f.get("name")=="OFFICE11.iso")
+          print("https://archive.org/download/X10-15121/"+urllib.parse.quote(f["name"]))
+          PY
+          curl -fL --retry 4 --retry-delay 5 --max-time 1800 "$(cat out/url.txt)" -o out/p2003.iso
+          test "$(sha256sum out/p2003.iso | awk '{print $1}')" = "4970402ee5f59b9e7f5a7ac24561db7b0f4f0f352be815e1df3ebe88f5b1ae25"
+          7z x -y out/p2003.iso -oout/disc > out/media-extract.txt 2>&1
+          find out/disc -type f -printf '%s\t%p\n' | sort -nr > out/disc-files.txt
+          : > out/cab-vbapb10-hits.txt
+          while IFS= read -r cab; do
+            if 7z l "$cab" 2>/dev/null | grep -i 'VBAPB10.CHM' >> out/cab-vbapb10-hits.txt; then
+              printf 'CAB=%s\n' "$cab" >> out/cab-vbapb10-hits.txt
+              d="out/cabs/$(basename "$cab").d"
+              mkdir -p "$d"
+              7z x -y "$cab" -o"$d" >/dev/null 2>&1 || true
+            fi
+          done < <(find out/disc -type f -iname '*.cab' | sort)
+          find out/cabs -type f -iname 'VBAPB10.CHM' -printf '%s\t%p\n' > out/vbapb10-files.txt || true
+          if [ -s out/vbapb10-files.txt ]; then
+            chm="$(head -n1 out/vbapb10-files.txt | cut -f2-)"
+            cp "$chm" out/VBAPB10-P2003.CHM
+            sha256sum out/VBAPB10-P2003.CHM | tee out/vbapb10-sha256.txt
+            sha1sum out/VBAPB10-P2003.CHM | tee out/vbapb10-sha1.txt
+            md5sum out/VBAPB10-P2003.CHM | tee out/vbapb10-md5.txt
+            stat -c 'size_bytes=%s' out/VBAPB10-P2003.CHM | tee out/vbapb10-size.txt
+          fi
+          cat out/cab-vbapb10-hits.txt || true
+          cat out/vbapb10-files.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p2003-vbapb10-${{ github.run_id }}
+          path: |
+            out/cab-vbapb10-hits.txt
+            out/vbapb10-files.txt
+            out/VBAPB10-P2003.CHM
+            out/vbapb10-*.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  corel-overlay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Fetch exact Corel X4 trial and classify embedded overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full binutils file
+          mkdir -p out/outer
+          url="https://web.archive.org/web/20130509032142id_/http://www.corel.com/akdlm/6763/downloads/trials/GraphicsSuiteX4/CorelDRAWGraphicsSuiteX4Installer_EN.exe"
+          curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/corel.exe
+          test "$(sha1sum out/corel.exe | awk '{print $1}')" = "9b1232bb63cf1257c447146da8e059297fcffa35"
+          7z x -y out/corel.exe -oout/outer > out/outer-extract.txt 2>&1
+          overlay="$(find out/outer -maxdepth 1 -type f -name '[[]0]' | head -n1)"
+          test -n "$overlay"
+          sha256sum "$overlay" | tee out/overlay-sha256.txt
+          sha1sum "$overlay" | tee out/overlay-sha1.txt
+          md5sum "$overlay" | tee out/overlay-md5.txt
+          stat -c 'size_bytes=%s' "$overlay" | tee out/overlay-size.txt
+          file "$overlay" | tee out/overlay-file.txt
+          xxd -l 256 "$overlay" | tee out/overlay-head.hex
+          tail -c 512 "$overlay" | xxd | tee out/overlay-tail.hex
+          strings -a -n 6 "$overlay" | grep -Ei 'InstallShield|7F05E704|cdrPUB|Publisher|Filters|data[0-9]*\.cab|\.msi|MSCF|Nullsoft|Inno|Wise' | head -n 500 > out/overlay-interesting-strings.txt || true
+          strings -el -n 6 "$overlay" | grep -Ei 'InstallShield|7F05E704|cdrPUB|Publisher|Filters|data[0-9]*\.cab|\.msi|MSCF|Nullsoft|Inno|Wise' | head -n 500 >> out/overlay-interesting-strings.txt || true
+          python3 - <<'PY' | tee out/signatures.txt
+          from pathlib import Path
+          p=Path("out/outer/[0]")
+          b=p.read_bytes()
+          sigs={b"MSCF":"CAB",b"PK\x03\x04":"ZIP",b"7z\xbc\xaf\x27\x1c":"7Z",b"MZ":"MZ",b"MSI":"MSI_TEXT",b"InstallShield":"INSTALLSHIELD",b"Nullsoft":"NSIS",b"Inno Setup":"INNO"}
+          for s,n in sigs.items():
+              pos=[]; start=0
+              while True:
+                  i=b.find(s,start)
+                  if i<0: break
+                  pos.append(i); start=i+1
+                  if len(pos)>=50: break
+              print(n, pos)
+          PY
+          cat out/overlay-interesting-strings.txt || true
+          cat out/signatures.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corel-overlay-diagnostics-${{ github.run_id }}
+          path: |
+            out/overlay-*.txt
+            out/overlay-*.hex
+            out/signatures.txt
+          if-no-files-found: warn
+          retention-days: 30
