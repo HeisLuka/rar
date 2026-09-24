@@ -1,0 +1,43 @@
+name: CORPUS-VAC container resume second half
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/pub_container_extract.py'
+      - '.github/workflows/corpus-vac-container-resume.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mature archive tool
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+      - name: Refresh hardened IA container inventory
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/internet_archive_pub_seed.py             --rows 50 --pages 6 --max-items 500 --delay 0.2             --out out/ia_pub_seed.csv             --containers out/ia_containers.csv             --summary out/ia.summary.json
+      - name: Resume only second half of current inventory
+        run: |
+          set -euo pipefail
+          python tools/corpus/pub_container_extract.py             --seed out/ia_containers.csv             --out out/container_manifest.json             --skip-containers 100             --max-containers 96             --max-depth 2             --max-container-bytes 314572800             --max-member-bytes 104857600             --max-total-expanded 524288000             --max-members 300
+      - name: Upload manifest-only resume receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-vacuum-resume-${{ github.run_id }}
+          path: |
+            out/ia.summary.json
+            out/ia_containers.csv
+            out/container_manifest.json
+            out/container_manifest.csv
+            out/container_manifest.summary.json
+          if-no-files-found: error
+          retention-days: 30
