@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import copy
 import hashlib
 import json
 import pathlib
@@ -128,7 +129,7 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
         eq = compare_viewer_and_adapter_scene(viewer_for(scene), scene)
         self.assertEqual(eq["viewer_geometry_hash"], eq["adapter_geometry_hash"])
 
-        broken = viewer_for(scene)
+        broken = viewer_for(copy.deepcopy(scene))
         broken["scene"]["nodes"][0]["bounds"]["x"] += 1
         with self.assertRaisesRegex(ResolvedGraphSceneError, "differs"):
             compare_viewer_and_adapter_scene(broken, scene)
