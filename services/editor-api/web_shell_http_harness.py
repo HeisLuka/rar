@@ -53,12 +53,17 @@ class HarnessState:
         )
         raw_scene["revision_id"] = baseline.revision_id
         raw_scene["snapshot_id"] = scene_snapshot_id(raw_scene)
+        self.baseline_scene = copy.deepcopy(raw_scene)
         self.scenes = {baseline.revision_id: copy.deepcopy(raw_scene)}
         self.commit_requests = 0
+        self.history_requests = 0
         self.executor_calls = 0
+        self.history_executor_calls = 0
+        self.redo_stack = []
 
     def executor(self, project: dict, command: dict):
         self.executor_calls += 1
+        self.redo_stack.clear()
         base_revision = self.kernel.current_revision(self.document_id).revision_id
         base_scene = self.scenes[base_revision]
         node = next((item for item in base_scene["nodes"] if item["node_id"] == command["node_id"]), None)
@@ -80,18 +85,59 @@ class HarnessState:
         next_project["operations"] = list(next_project["operations"]) + [copy.deepcopy(operation)]
         return operation, next_project, []
 
+    def _scene_from_project(self, project: dict, revision_id: str) -> dict:
+        scene = copy.deepcopy(self.baseline_scene)
+        scene["revision_id"] = revision_id
+        for operation in project.get("operations", []):
+            if operation.get("kind") != "move_node":
+                raise ValueError("synthetic HTTP harness only projects MoveNode operations")
+            node = next(
+                (item for item in scene["nodes"] if item["node_id"] == operation["node_id"]),
+                None,
+            )
+            if node is None:
+                raise ValueError("project references unknown node")
+            node["bounds"] = copy.deepcopy(operation["after"])
+        scene["snapshot_id"] = scene_snapshot_id(scene)
+        return scene
+
+    def history_executor(self, base_project: dict, transition_kind: str):
+        self.history_executor_calls += 1
+        project = copy.deepcopy(base_project)
+        operations = list(project.get("operations", []))
+        if transition_kind == "undo":
+            if not operations:
+                raise ValueError("nothing to undo")
+            self.redo_stack.append(copy.deepcopy(operations.pop()))
+        elif transition_kind == "redo":
+            if not self.redo_stack:
+                raise ValueError("nothing to redo")
+            operations.append(self.redo_stack.pop())
+        else:
+            raise ValueError("unsupported history transition")
+        project["operations"] = operations
+        return project, []
+
     def commit(self, request: dict) -> dict:
         self.commit_requests += 1
-        result = self.kernel.commit_move(request, self.executor)
-        if result.get("protocol_version") == "chaptera.commit-accepted.v1":
-            base_scene = self.scenes[result["base_revision_id"]]
-            next_scene = copy.deepcopy(base_scene)
-            next_scene["revision_id"] = result["revision_id"]
-            operation = result["canonical_operation"]
-            node = next(item for item in next_scene["nodes"] if item["node_id"] == operation["node_id"])
-            node["bounds"] = copy.deepcopy(operation["after"])
-            next_scene["snapshot_id"] = scene_snapshot_id(next_scene)
-            self.scenes[result["revision_id"]] = next_scene
+        protocol = request.get("protocol_version")
+        if protocol == "chaptera.commit-request.v1":
+            result = self.kernel.commit_move(request, self.executor)
+        elif protocol == "chaptera.history-transition-intent.v1":
+            self.history_requests += 1
+            result = self.kernel.commit_history_transition(request, self.history_executor)
+        else:
+            raise ValueError("unsupported commit protocol")
+
+        if result.get("protocol_version") in {
+            "chaptera.commit-accepted.v1",
+            "chaptera.history-transition-accepted.v1",
+        }:
+            record = self.kernel.current_revision(self.document_id)
+            self.scenes[result["revision_id"]] = self._scene_from_project(
+                record.project,
+                result["revision_id"],
+            )
         return copy.deepcopy(result)
 
 
@@ -164,7 +210,9 @@ class Handler(BaseHTTPRequestHandler):
                 "source_hash": STATE.source_hash,
                 "current_revision_id": current,
                 "commit_requests": STATE.commit_requests,
+                "history_requests": STATE.history_requests,
                 "executor_calls": STATE.executor_calls,
+                "history_executor_calls": STATE.history_executor_calls,
             })
             return
         self._json({"error": "not_found"}, 404)
