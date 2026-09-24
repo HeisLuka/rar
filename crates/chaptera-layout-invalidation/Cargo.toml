@@ -12,3 +12,5 @@ chaptera-layout-projection = { path = "../chaptera-layout-projection" }
 [dev-dependencies]
 serde.workspace = true
 serde_json.workspace = true
+pub-fixed-flow-adapter = { path = "../pub-fixed-flow-adapter" }
+pub-model = { path = "../pub-model" }
