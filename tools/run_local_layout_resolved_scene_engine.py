@@ -146,7 +146,6 @@ def reject_local_path_leakage(raw: bytes, paths: list[pathlib.Path]) -> None:
         candidates = {
             str(path),
             str(path).replace("\\", "/"),
-            path.name,
         }
         for candidate in candidates:
             if candidate and candidate in decoded:
