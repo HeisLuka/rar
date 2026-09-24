@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn dependency_replacement_removes_obsolete_reverse_edge() {
-        let key = ArtifactKeyV1::SceneShard { page_id: "p1".into() };
+        let key = ArtifactKeyV1::SceneShard {\n            page_id: "p1".into(),\n        };
         let a = DependencyNodeV1::Resource("a".into());
         let b = DependencyNodeV1::Resource("b".into());
         let mut graph = InvalidationGraphV1::default();
