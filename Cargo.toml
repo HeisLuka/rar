@@ -4,6 +4,7 @@ members = [
   "crates/pub-model",
   "crates/pub-master-projection",
   "crates/pub-fixed-flow-adapter",
+  "crates/pub-line-placement",
   "crates/pub-paint-bridge",
   "crates/pub-plccmob-projection",
 ]
