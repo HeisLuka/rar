@@ -124,14 +124,18 @@ def session(text,m,fstate,a,f,*,anchor_line=None,focus_line=None,pending=()):
     s=build_text_selection_state_v1(
         domain=d,revision_id="rev:1",anchor_scalar=a,focus_scalar=f
     )
-    if m.caret_stops and (
-        not (a==f and all(x.scalar_boundary!=a for x in m.caret_stops))
-    ):
-        astop=stop(m,a,anchor_line).stop_id
-        fstop=stop(m,f,focus_line).stop_id
+    ahits=[
+        x for x in m.caret_stops
+        if x.scalar_boundary==a and (anchor_line is None or x.line_id==anchor_line)
+    ]
+    fhits=[
+        x for x in m.caret_stops
+        if x.scalar_boundary==f and (focus_line is None or x.line_id==focus_line)
+    ]
+    if len(ahits)==1 and len(fhits)==1:
         s=project_selection_state_v1(
             state=s,domain=d,caret_map=m,
-            anchor_stop_id=astop,focus_stop_id=fstop,
+            anchor_stop_id=ahits[0].stop_id,focus_stop_id=fhits[0].stop_id,
         ).state
     typing=derive_typing_format_state_v1(
         selection=s,domain=d,format_state=fstate
