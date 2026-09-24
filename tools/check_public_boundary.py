@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import pathlib
-import re
 import subprocess
 import sys
 
@@ -16,18 +15,23 @@ def changed_paths():
     )
     return [p.strip() for p in out.splitlines() if p.strip()]
 
-def normalized_components(path):
-    parts = []
-    for part in pathlib.PurePosixPath(path).parts:
-        for token in re.split(r"[^a-z0-9-]+", part.lower()):
-            if token:
-                parts.append(token)
-    return parts
+def frozen_hits(path):
+    hits = set()
+    for raw in pathlib.PurePosixPath(path).parts:
+        part = raw.lower()
+        for frozen in FROZEN_COMPONENTS:
+            if (
+                part == frozen
+                or part.startswith(frozen + "-")
+                or part.endswith("-" + frozen)
+                or ("-" + frozen + "-") in part
+            ):
+                hits.add(frozen)
+    return sorted(hits)
 
 bad = []
 for path in changed_paths():
-    comps = normalized_components(path)
-    hits = sorted(FROZEN_COMPONENTS.intersection(comps))
+    hits = frozen_hits(path)
     if hits:
         bad.append((path, hits))
 
