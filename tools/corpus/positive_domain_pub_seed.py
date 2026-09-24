@@ -2,7 +2,7 @@
 """Bounded same-origin crawler for public domains that already yielded PUB evidence."""
 from __future__ import annotations
 
-import argparse, csv, html, json, re, time
+import argparse, csv, html, json, re, sys, time
 from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
@@ -172,6 +172,14 @@ def crawl_domain(domain,starts,max_pages,max_depth,max_candidates,delay,timeout)
     return out,{"domain":domain,"pages_seen":len(seen),"candidate_rows":len(out),"errors":errors}
 
 
+def shard_values(values,index,count):
+    if count < 1:
+        raise ValueError("shard_count must be >= 1")
+    if index < 0 or index >= count:
+        raise ValueError("shard_index must satisfy 0 <= index < shard_count")
+    return [value for i,value in enumerate(values) if i % count == index]
+
+
 def write_csv(rows,path):
     path.parent.mkdir(parents=True,exist_ok=True)
     keys=[]; seen=set()
@@ -191,17 +199,20 @@ def main():
     ap.add_argument("--max-candidates-per-domain",type=int,default=200)
     ap.add_argument("--delay",type=float,default=0.5)
     ap.add_argument("--timeout",type=float,default=20)
+    ap.add_argument("--shard-index",type=int,default=0)
+    ap.add_argument("--shard-count",type=int,default=1)
     ap.add_argument("--out",type=Path,required=True)
     ap.add_argument("--summary",type=Path)
     args=ap.parse_args()
 
     starts=load_domains(args.seed)
-    domains=sorted(starts)[:args.max_domains]
+    all_domains=sorted(starts)[:args.max_domains]
+    domains=shard_values(all_domains,args.shard_index,args.shard_count)
     rows=[]; stats=[]
     for d in domains:
         found,stat=crawl_domain(d,starts[d],args.max_pages_per_domain,args.max_depth,args.max_candidates_per_domain,args.delay,args.timeout)
         rows.extend(found); stats.append(stat)
-        print(f"{d}: pages={stat['pages_seen']} candidates={stat['candidate_rows']}",file=sys.stderr if 'sys' in globals() else None)
+        print(f"{d}: pages={stat['pages_seen']} candidates={stat['candidate_rows']}",file=sys.stderr)
 
     # same locator may be linked from many pages; keep first provenance edge here.
     dedup={}
@@ -209,7 +220,10 @@ def main():
     final=sorted(dedup.values(),key=lambda r:(r["crawl_domain"],r["direct_url"]))
     write_csv(final,args.out)
     summary={
-        "schema":"rar-positive-domain-crawl-v1",
+        "schema":"rar-positive-domain-crawl-v2",
+        "total_domains_considered":len(all_domains),
+        "shard_index":args.shard_index,
+        "shard_count":args.shard_count,
         "domains_attempted":len(domains),
         "raw_candidate_edges":len(rows),
         "deduplicated_locators":len(final),
@@ -221,5 +235,4 @@ def main():
     return 0
 
 if __name__=="__main__":
-    import sys
     raise SystemExit(main())
