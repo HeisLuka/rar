@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/pub-projection/v1/plccmob-producer-receipt.schema.json",
+  "title": "Chaptera PlcCmob projection producer receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "source_hash",
+    "projection_context_version",
+    "plc_cmob",
+    "relations",
+    "targets",
+    "invariants",
+    "fail_closed_probes"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.plccmob-projection-receipt.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "source_hash": {"$ref": "#/$defs/sha256"},
+    "projection_context_version": {"const": "chaptera.pub-projection-context.v1"},
+    "plc_cmob": {"$ref": "#/$defs/plcCmob"},
+    "relations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/relation"}
+    },
+    "targets": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/target"}
+    },
+    "invariants": {"$ref": "#/$defs/invariants"},
+    "fail_closed_probes": {"$ref": "#/$defs/probes"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "plcCmob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared_count", "row_count", "raw_size"],
+      "properties": {
+        "declared_count": {"type": "integer", "minimum": 0},
+        "row_count": {"type": "integer", "minimum": 0},
+        "raw_size": {"type": "integer", "minimum": 0}
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_order",
+        "cmo_id",
+        "carrier_ohpo",
+        "carrier_cmo_id",
+        "target_qsid",
+        "carrier_node_id",
+        "carrier_story_id",
+        "target_story_id",
+        "target_frame_node_id"
+      ],
+      "properties": {
+        "source_order": {"type": "integer", "minimum": 0},
+        "cmo_id": {"$ref": "#/$defs/u32"},
+        "carrier_ohpo": {"$ref": "#/$defs/u32"},
+        "carrier_cmo_id": {"$ref": "#/$defs/u32"},
+        "target_qsid": {"$ref": "#/$defs/u32"},
+        "carrier_node_id": {"$ref": "#/$defs/uuid"},
+        "carrier_story_id": {
+          "anyOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "target_story_id": {"$ref": "#/$defs/uuid"},
+        "target_frame_node_id": {
+          "anyOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_qsid", "relation_count", "object_marker_count"],
+      "properties": {
+        "target_qsid": {"$ref": "#/$defs/u32"},
+        "relation_count": {"type": "integer", "minimum": 0},
+        "object_marker_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_parentage_preserved",
+        "carrier_reparent_count",
+        "raw_text_emitted",
+        "ordered_relation"
+      ],
+      "properties": {
+        "source_parentage_preserved": {"const": true},
+        "carrier_reparent_count": {"const": 0},
+        "raw_text_emitted": {"const": false},
+        "ordered_relation": {"const": true}
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "diagnostic_emitted", "projection_emitted"],
+      "properties": {
+        "code": {"type": "string"},
+        "diagnostic_emitted": {"const": true},
+        "projection_emitted": {"const": false}
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count_mismatch",
+        "malformed_row",
+        "unresolved_ohpo",
+        "carrier_cmo_id_mismatch",
+        "unresolved_target_qsid",
+        "marker_count_mismatch"
+      ],
+      "properties": {
+        "count_mismatch": {
+          "allOf": [
+            {"$ref": "#/$defs/probe"},
+            {"properties": {"code": {"const": "plccmob.count_mismatch"}}}
+          ]
+        },
+        "malformed_row": {
+          "allOf": [
+            {"$ref": "#/$defs/probe"},
+            {"properties": {"code": {"const": "plccmob.malformed_row"}}}
+          ]
+        },
+        "unresolved_ohpo": {
+          "allOf": [
+            {"$ref": "#/$defs/probe"},
+            {"properties": {"code": {"const": "plccmob.unresolved_ohpo"}}}
+          ]
+        },
+        "carrier_cmo_id_mismatch": {
+          "allOf": [
+            {"$ref": "#/$defs/probe"},
+            {"properties": {"code": {"const": "plccmob.carrier_cmo_id_mismatch"}}}
+          ]
+        },
+        "unresolved_target_qsid": {
+          "allOf": [
+            {"$ref": "#/$defs/probe"},
+            {"properties": {"code": {"const": "plccmob.unresolved_target_qsid"}}}
+          ]
+        },
+        "marker_count_mismatch": {
+          "allOf": [
+            {"$ref": "#/$defs/probe"},
+            {"properties": {"code": {"const": "plccmob.marker_count_mismatch"}}}
+          ]
+        }
+      }
+    }
+  }
+}
