@@ -293,7 +293,7 @@ jobs:
                   parent = u16(contents, off + 4)
                   chunk_off = u32(contents, off + 6)
                   if chunk_off + 2 > len(contents):
-                      raise ValueError(f"chunk offset out of bounds: {chunk_off}")
+                      raise ValueError(f"chunk offset out of bounds row={i} trailer={trailer} num_blocks={num_blocks} service={service} id={oid} parent={parent} chunk={chunk_off}")
                   marker = u16(contents, chunk_off)
                   entries.append({
                       "index": i,
