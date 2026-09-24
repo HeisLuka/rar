@@ -20,24 +20,62 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p out/carlton
-          printf '%s\n' 'source_page,direct_url,candidate_filename,quarantine,source_class,expected_sha256,expected_size' > out/carlton/seed.csv
-          printf 'https://www.carltonji.org.uk/parents/latest-letters?_pub_harvest=%s,,March 2026.pub,no,carlton_march_census,bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3,9580032\n' "$(date +%s)" >> out/carlton/seed.csv
-          # The public page's SSR state may carry an expired S3 presign; cache-bust the page fetch.
-          python scratch/carlton-yab/harvest_pub.py --seed out/carlton/seed.csv --out out/carlton/acquired --max-files -1 --max-bytes 20971520 --timeout 25
+          mkdir -p out/carlton/download
+          python -m pip install -q selenium
           python - <<'PY'
-          import json, os
+          import hashlib, os, shutil, time
           from pathlib import Path
-          root=Path("out/carlton/acquired")
-          rows=json.loads((root/"manifest.json").read_text())
-          row=next(r for r in rows if r.get("candidate_filename")=="March 2026.pub")
-          print(json.dumps(row,indent=2))
-          assert row.get("fetch_status")=="ok", row
-          assert row.get("sha256")=="bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3", row
-          assert row.get("size_bytes")==9580032, row
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              f.write(f'CARLTON_PUB={root / row["stored_path"]}\n')
+          from selenium import webdriver
+          from selenium.webdriver.common.by import By
+          from selenium.webdriver.chrome.options import Options
+          from selenium.webdriver.chrome.service import Service
+          from selenium.webdriver.support.ui import WebDriverWait
+
+          out = Path("out/carlton/download").resolve()
+          opts = Options()
+          opts.add_argument("--headless=new")
+          opts.add_argument("--no-sandbox")
+          opts.add_argument("--disable-dev-shm-usage")
+          opts.add_experimental_option("prefs", {
+              "download.default_directory": str(out),
+              "download.prompt_for_download": False,
+              "download.directory_upgrade": True,
+              "safebrowsing.enabled": True,
+          })
+          driver_path = shutil.which("chromedriver")
+          driver = webdriver.Chrome(service=Service(driver_path) if driver_path else Service(), options=opts)
+          try:
+              driver.get("https://www.carltonji.org.uk/parents/latest-letters")
+              wait = WebDriverWait(driver, 30)
+              row = wait.until(lambda d: next(
+                  (r for r in d.find_elements(By.CSS_SELECTOR, "tr") if "March 2026.pub" in r.text),
+                  None
+              ))
+              button = row.find_element(By.CSS_SELECTOR, '[title="Download"]')
+              driver.execute_script("arguments[0].click()", button)
+              deadline = time.time() + 60
+              candidate = None
+              while time.time() < deadline:
+                  pubs = [p for p in out.iterdir() if p.is_file() and p.suffix.lower() == ".pub" and not p.name.endswith(".crdownload")]
+                  if pubs:
+                      candidate = max(pubs, key=lambda p: p.stat().st_mtime)
+                      if candidate.stat().st_size == 9580032:
+                          break
+                  time.sleep(0.5)
+              if candidate is None:
+                  raise SystemExit("browser download produced no .pub")
+              data = candidate.read_bytes()
+              digest = hashlib.sha256(data).hexdigest()
+              print("downloaded", candidate, len(data), digest)
+              assert len(data) == 9580032
+              assert digest == "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
+              canonical = out / "March-2026.pub"
+              if candidate != canonical:
+                  candidate.replace(canonical)
+          finally:
+              driver.quit()
           PY
+          echo "CARLTON_PUB=$PWD/out/carlton/download/March-2026.pub" >> "$GITHUB_ENV"
       - name: Run current Chaptera Editor census
         shell: bash
         run: |
