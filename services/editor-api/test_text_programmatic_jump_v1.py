@@ -151,7 +151,7 @@ class TextProgrammaticJumpV1Tests(unittest.TestCase):
         l2=line(story,"l2",1,(cluster(1,2,0,10),),page="page:2",frame="frame:B",prev="l1",y=0)
         d,m,f,s=enter(story,"AB",focus=0,lines=(l1,l2))
         result=execute_text_programmatic_jump_v1(
-            request=request(story,1,2),
+            request=request(story,0,2),
             target_candidate=candidate(story,"frame:A"),
             domain=d,caret_map=m,format_state=f,
             expected_layout_revision_id="layout:1",
@@ -252,7 +252,7 @@ class TextProgrammaticJumpV1Tests(unittest.TestCase):
             target_candidate=candidate("story:1"),
             domain=d,caret_map=m,format_state=f,
             expected_layout_revision_id="layout:1",
-            viewport=viewport(),expected_view_revision_id="view:1",
+            viewport=viewport(x=-10,y=-10),expected_view_revision_id="view:1",
             active_session=s,
         )
         self.assertEqual("no_op",result.reveal.status)
