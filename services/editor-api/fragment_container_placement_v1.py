@@ -300,8 +300,19 @@ def plan_fragment_container_placement_v1(
 
     planned = []
     for member, desired_page in desired:
-        local_rect = _inverse_chain_unbounded(desired_page, destination.ancestry)
-        verified = _forward_chain_unbounded(local_rect, destination.ancestry)
+        try:
+            local_rect = _inverse_chain_unbounded(desired_page, destination.ancestry)
+            verified = _forward_chain_unbounded(local_rect, destination.ancestry)
+        except FragmentContainerPlacementError as exc:
+            return FragmentContainerPlacementPlanV1(
+                destination_kind="group",
+                destination_id=destination.group_id,
+                page_id=destination.page_id,
+                desired_origin_page=origin,
+                members=(),
+                status="not_exactly_representable",
+                diagnostic=f"{member.member_key}: {exc}",
+            )
         if verified != desired_page:
             return FragmentContainerPlacementPlanV1(
                 destination_kind="group",
