@@ -4,7 +4,7 @@
 //! the exact later-0x2C PlcCmob wire admitted by PLCCMOB-PROJECTION-01 plus the
 //! source-free join needed to emit the existing public receipt contract.
 
-use pub_model::{CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1};
+use pub_model::{\n    CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1,\n};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -827,7 +827,7 @@ pub fn build_pub_projection_context_v1(
     input: &PlcCmobProjectionInputV1,
 ) -> Result<PubProjectionContextV1, PlcCmobProjectionError> {
     let receipt = build_projection_receipt_v1(input)?;
-    Ok(PubProjectionContextV1::with_cmo_relations(receipt.relations))
+    Ok(PubProjectionContextV1::with_cmo_relations(\n        receipt.relations,\n    ))
 }
 
 #[cfg(test)]
