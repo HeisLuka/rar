@@ -71,9 +71,9 @@ impl S3BlobProvider {
 impl BlobProvider for S3BlobProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
-            hard_create_only: true,
+            hard_create_only: false,
             hard_exact_or_max_upload_size: false,
-            signed_content_type: true,
+            signed_content_type: false,
             strong_head_after_put: true,
         }
     }
@@ -209,18 +209,10 @@ impl BlobProvider for S3BlobProvider {
 
         let opaque_url = match request.operation {
             GrantOperation::UploadCreateOnly => {
-                let presigned = self
-                    .client
-                    .put_object()
-                    .bucket(bucket)
-                    .key(key)
-                    .set_expected_bucket_owner(self.expected_bucket_owner.clone())
-                    .if_none_match("*")
-                    .set_content_type(request.required_content_type.clone())
-                    .presigned(config)
-                    .await
-                    .map_err(|error| provider_sdk_error(&error, ErrorIntent::Grant))?;
-                presigned.uri().to_string()
+                return Err(ProviderError::new(
+                    ProviderErrorKind::Other,
+                    "s3_upload_grant_requires_signed_headers",
+                ));
             }
             GrantOperation::Download => {
                 let presigned = self
@@ -228,10 +220,15 @@ impl BlobProvider for S3BlobProvider {
                     .get_object()
                     .bucket(bucket)
                     .key(key)
-                    .set_expected_bucket_owner(self.expected_bucket_owner.clone())
                     .presigned(config)
                     .await
                     .map_err(|error| provider_sdk_error(&error, ErrorIntent::Grant))?;
+                if presigned.headers().next().is_some() {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Other,
+                        "s3_download_grant_requires_headers",
+                    ));
+                }
                 presigned.uri().to_string()
             }
         };
@@ -570,9 +567,9 @@ mod tests {
         )
         .unwrap();
         let capabilities = provider.capabilities();
-        assert!(capabilities.hard_create_only);
+        assert!(!capabilities.hard_create_only);
         assert!(!capabilities.hard_exact_or_max_upload_size);
-        assert!(capabilities.signed_content_type);
+        assert!(!capabilities.signed_content_type);
         assert!(capabilities.strong_head_after_put);
     }
 
