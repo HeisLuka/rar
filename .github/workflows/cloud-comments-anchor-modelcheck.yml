@@ -1,0 +1,27 @@
+name: Cloud comments anchor architecture modelcheck
+
+on:
+  pull_request:
+    paths:
+      - "tools/run_comment_anchor_model.py"
+      - ".github/workflows/cloud-comments-anchor-modelcheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comment-anchor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Model-check comment anchor survival/orphaning
+        run: python tools/run_comment_anchor_model.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-comment-anchor-model
+          path: target/cloud-comments/comment-anchor.json
+          if-no-files-found: error
