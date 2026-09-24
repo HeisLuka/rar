@@ -15,6 +15,8 @@ on:
       - "apps/web/export-preview-v1.schema.json"
       - "tools/validate_export_preview.py"
       - "tools/test_export_preview_schema.py"
+      - "tools/verify_editable_export_geometry.py"
+      - "tools/test_editable_export_geometry.py"
       - "tools/build_revision_producer_receipt.py"
       - "tools/test_build_revision_producer_receipt.py"
       - "packages/protocol/scene/v1/**"
@@ -52,6 +54,8 @@ jobs:
         run: python tools/test_revision_producer_receipt_schema.py
       - name: Prove export preview is source-free and semantically bound
         run: python tools/test_export_preview_schema.py
+      - name: Prove editable export geometry binds the selected NodeId
+        run: python tools/test_editable_export_geometry.py
       - name: Prove local revision receipt builder reuses kernel semantics
         run: python tools/test_build_revision_producer_receipt.py
       - name: Prove browser acceptance binds canonical revision and Scene chain
