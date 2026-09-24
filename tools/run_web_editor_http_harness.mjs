@@ -168,7 +168,9 @@ async function main() {
       const hostRect = document.getElementById("host").getBoundingClientRect();
       return {
         node_id: nodeId,
+        document_id: window.__shell.snapshot.document_id,
         revision_id: window.__shell.snapshot.revision_id,
+        snapshot_id: window.__shell.snapshot.snapshot_id,
         source_hash: window.__shell.snapshot.source_hash,
         bounds: window.__shell.nodeScreenBounds(nodeId),
         host: { x: hostRect.x, y: hostRect.y },
@@ -273,6 +275,97 @@ async function main() {
       throw new Error("stale HTTP request mutated server state");
     }
 
+    const history = await page.evaluate(async (runIndex) => {
+      const shell = window.__shell;
+      const service = window.__service;
+      const undoRequest = {
+        protocol_version: "chaptera.history-transition-intent.v1",
+        document_id: shell.snapshot.document_id,
+        source_hash: shell.snapshot.source_hash,
+        base_revision_id: shell.snapshot.revision_id,
+        client_operation_id: "history-undo-" + runIndex,
+        command: { kind: "undo" },
+      };
+      const undo = await service.historyTransition(structuredClone(undoRequest));
+      const undoScene = await service.sceneForRevision(undo.revision_id);
+      shell.loadSnapshot(undoScene, { preserveSelection: false });
+
+      const redoRequest = {
+        protocol_version: "chaptera.history-transition-intent.v1",
+        document_id: shell.snapshot.document_id,
+        source_hash: shell.snapshot.source_hash,
+        base_revision_id: shell.snapshot.revision_id,
+        client_operation_id: "history-redo-" + runIndex,
+        command: { kind: "redo" },
+      };
+      const redo = await service.historyTransition(structuredClone(redoRequest));
+      const redoScene = await service.sceneForRevision(redo.revision_id);
+      shell.loadSnapshot(redoScene, { preserveSelection: false });
+
+      return {
+        undo_request: undoRequest,
+        undo,
+        undo_snapshot_id: undoScene.snapshot_id,
+        redo_request: redoRequest,
+        redo,
+        redo_snapshot_id: redoScene.snapshot_id,
+        final_revision_id: shell.snapshot.revision_id,
+        final_snapshot_id: shell.snapshot.snapshot_id,
+        history_requests: service.historyRequests,
+        last_history_trace: structuredClone(service.lastHistoryTraceContext),
+        spans: structuredClone(window.__observability.spans),
+      };
+    }, RUN_INDEX);
+
+    if (history.undo.protocol_version !== "chaptera.history-transition-accepted.v1") {
+      throw new Error("Undo did not cross the HTTP history seam");
+    }
+    if (history.redo.protocol_version !== "chaptera.history-transition-accepted.v1") {
+      throw new Error("Redo did not cross the HTTP history seam");
+    }
+    if (history.history_requests !== 2) throw new Error("browser history request count mismatch");
+    if (history.final_revision_id !== history.redo.revision_id) {
+      throw new Error("browser did not load Redo revision scene");
+    }
+    if (!history.last_history_trace?.trace_id) throw new Error("history trace context missing");
+
+    const afterHistory = await harnessState();
+    if (
+      afterHistory.current_revision_id !== history.redo.revision_id ||
+      afterHistory.executor_calls !== 1 ||
+      afterHistory.history_executor_calls !== 2 ||
+      afterHistory.history_requests !== 2
+    ) {
+      throw new Error("HTTP history seam did not execute exactly one Undo and one Redo");
+    }
+
+    const historyRetry = await page.evaluate(
+      async (undoRequest) => window.__service.historyTransition(structuredClone(undoRequest)),
+      history.undo_request,
+    );
+    if (historyRetry.revision_id !== history.undo.revision_id) {
+      throw new Error("exact history retry did not return original Undo revision");
+    }
+    const afterHistoryRetry = await harnessState();
+    if (
+      afterHistoryRetry.current_revision_id !== history.redo.revision_id ||
+      afterHistoryRetry.history_executor_calls !== 2
+    ) {
+      throw new Error("exact history retry re-executed or moved current revision");
+    }
+
+    const historyBrowserSpan = lastSpan(history.spans, "browser.history_http");
+    const historyTrace = await traceSummary(historyBrowserSpan.trace_id);
+    const historyServerSpan = serverSpan(historyTrace, "gateway.commit");
+    if (historyTrace.trace_id !== history.last_history_trace.trace_id) {
+      throw new Error("browser/server history trace identity diverged");
+    }
+    if (!historyTrace.spans.some(
+      (span) => span.client_operation_id === history.redo_request.client_operation_id
+    )) {
+      throw new Error("server trace lost history client-operation correlation");
+    }
+
     if (RUN_INDEX === "0") {
       await page.locator("#host").screenshot({
         path: path.join(TARGET, BROWSER_ENGINE + "-http-shell.png")
@@ -290,11 +383,20 @@ async function main() {
       server_kernel: "public RevisionKernel harness",
       initial_revision_id: initial.revision_id,
       accepted_revision_id: browserFinal.shell.revision_id,
+      undo_revision_id: history.undo.revision_id,
+      redo_revision_id: history.redo.revision_id,
       browser_commit_requests: browserFinal.browser_commit_requests,
-      server_commit_requests_after_probes: afterStale.commit_requests,
-      semantic_executor_calls: afterStale.executor_calls,
+      browser_history_requests: history.history_requests + 1,
+      server_commit_requests_after_probes: afterHistoryRetry.commit_requests,
+      semantic_executor_calls: afterHistoryRetry.executor_calls,
+      history_executor_calls: afterHistoryRetry.history_executor_calls,
       exact_retry_same_revision: exactRetry.revision_id === browserFinal.shell.revision_id,
       stale_base_rejected: stale.code === "stale_revision",
+      undo_redo_cross_http_commit_transport:
+        history.undo.protocol_version === "chaptera.history-transition-accepted.v1" &&
+        history.redo.protocol_version === "chaptera.history-transition-accepted.v1",
+      history_exact_retry_no_reexecution:
+        afterHistoryRetry.history_executor_calls === afterHistory.history_executor_calls,
       browser_sent_before_state: "before" in browserFinal.last_request.command,
       node_id_stable: browserFinal.shell.selected_node_id === initial.node_id,
       source_hash_stable: browserFinal.source_hash === initial.source_hash,
@@ -314,6 +416,8 @@ async function main() {
           gateway_commit: commitServerSpan.duration_ms,
           browser_scene_revision_http: sceneBrowserSpan.duration_ms,
           gateway_scene_revision: sceneServerSpan.duration_ms,
+          browser_history_http: historyBrowserSpan.duration_ms,
+          gateway_history_commit: historyServerSpan.duration_ms,
         }
       },
       note: "Synthetic Scene V1 plus public revision-kernel HTTP harness. Timings are CI transport/observability baselines only and must not be used as real-PUB product SLOs."
