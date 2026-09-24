@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "apps/chaptera-server",
   "crates/pub-model",
   "crates/pub-paint-bridge",
 ]
