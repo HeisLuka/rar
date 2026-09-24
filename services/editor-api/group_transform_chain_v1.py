@@ -75,6 +75,21 @@ class GroupTransformInverseV1:
     forward_steps: tuple[GroupTransformStepV1, ...]
 
 
+@dataclass(frozen=True)
+class GroupPointEmu:
+    x: int
+    y: int
+
+
+@dataclass(frozen=True)
+class GroupPointTransformV1:
+    target_id: str
+    page_id: str
+    group_path: tuple[str, ...]
+    canonical_local_point: GroupPointEmu
+    effective_page_point: GroupPointEmu
+
+
 def _fail(message: str) -> None:
     raise GroupTransformChainError(message)
 
@@ -376,4 +391,143 @@ def inverse_group_transform_chain_v1(
         effective_page_rect=projected.effective_page_rect,
         inverse_steps=tuple(inverse_steps),
         forward_steps=projected.steps,
+    )
+
+
+def _round_signed_ratio_v1(
+    numerator: int,
+    denominator: int,
+    label: str,
+) -> int:
+    try:
+        numerator = _checked_int(numerator, f"{label}.numerator")
+        sign = -1 if numerator < 0 else 1
+        magnitude = _round_ratio_nearest_emu(abs(numerator), denominator)
+        return _checked_int(sign * magnitude, label)
+    except AuthoredGroupGeometryError as exc:
+        raise GroupTransformChainError(str(exc)) from exc
+
+
+def _validate_point_v1(point: GroupPointEmu, label: str) -> None:
+    if not isinstance(point, GroupPointEmu):
+        _fail(f"{label} must be GroupPointEmu")
+    try:
+        _checked_int(point.x, f"{label}.x")
+        _checked_int(point.y, f"{label}.y")
+    except AuthoredGroupGeometryError as exc:
+        raise GroupTransformChainError(str(exc)) from exc
+
+
+def _project_point_boundary_v1(
+    *,
+    local_point: GroupPointEmu,
+    edge: AuthoredGroupEdgeV1,
+    label: str,
+) -> GroupPointEmu:
+    _validate_point_v1(local_point, f"{label}.local_point")
+    x = edge.bounds_in_parent.x + _round_signed_ratio_v1(
+        local_point.x * edge.bounds_in_parent.width,
+        edge.local_coordinate_space.width,
+        f"{label}.x",
+    )
+    y = edge.bounds_in_parent.y + _round_signed_ratio_v1(
+        local_point.y * edge.bounds_in_parent.height,
+        edge.local_coordinate_space.height,
+        f"{label}.y",
+    )
+    try:
+        x = _checked_int(x, f"{label}.projected.x")
+        y = _checked_int(y, f"{label}.projected.y")
+    except AuthoredGroupGeometryError as exc:
+        raise GroupTransformChainError(str(exc)) from exc
+    return GroupPointEmu(x, y)
+
+
+def _inverse_point_boundary_v1(
+    *,
+    parent_point: GroupPointEmu,
+    edge: AuthoredGroupEdgeV1,
+    label: str,
+) -> GroupPointEmu:
+    _validate_point_v1(parent_point, f"{label}.parent_point")
+    x = _round_signed_ratio_v1(
+        (parent_point.x - edge.bounds_in_parent.x)
+        * edge.local_coordinate_space.width,
+        edge.bounds_in_parent.width,
+        f"{label}.x",
+    )
+    y = _round_signed_ratio_v1(
+        (parent_point.y - edge.bounds_in_parent.y)
+        * edge.local_coordinate_space.height,
+        edge.bounds_in_parent.height,
+        f"{label}.y",
+    )
+    return GroupPointEmu(x, y)
+
+
+def project_group_transform_point_v1(
+    *,
+    target_id: str,
+    target_page_id: str,
+    ancestry: tuple[AuthoredGroupEdgeV1, ...],
+    local_point: GroupPointEmu,
+) -> GroupPointTransformV1:
+    validate_group_transform_chain_v1(
+        target_id=target_id,
+        target_page_id=target_page_id,
+        ancestry=ancestry,
+    )
+    _validate_point_v1(local_point, "local_point")
+    current = local_point
+    for reverse_index, edge in enumerate(reversed(ancestry)):
+        current = _project_point_boundary_v1(
+            local_point=current,
+            edge=edge,
+            label=f"ancestry[{len(ancestry) - 1 - reverse_index}]",
+        )
+    return GroupPointTransformV1(
+        target_id=target_id,
+        page_id=target_page_id,
+        group_path=tuple(edge.group_id for edge in ancestry),
+        canonical_local_point=local_point,
+        effective_page_point=current,
+    )
+
+
+def inverse_group_transform_point_v1(
+    *,
+    target_id: str,
+    target_page_id: str,
+    ancestry: tuple[AuthoredGroupEdgeV1, ...],
+    page_point: GroupPointEmu,
+) -> GroupPointTransformV1:
+    validate_group_transform_chain_v1(
+        target_id=target_id,
+        target_page_id=target_page_id,
+        ancestry=ancestry,
+    )
+    _validate_point_v1(page_point, "page_point")
+    current = page_point
+    for index, edge in enumerate(ancestry):
+        current = _inverse_point_boundary_v1(
+            parent_point=current,
+            edge=edge,
+            label=f"ancestry[{index}]",
+        )
+
+    projected = project_group_transform_point_v1(
+        target_id=target_id,
+        target_page_id=target_page_id,
+        ancestry=ancestry,
+        local_point=current,
+    )
+    if projected.effective_page_point != page_point:
+        _fail("page point is not exactly representable through GroupTransformChainV1")
+
+    return GroupPointTransformV1(
+        target_id=target_id,
+        page_id=target_page_id,
+        group_path=projected.group_path,
+        canonical_local_point=current,
+        effective_page_point=projected.effective_page_point,
     )
