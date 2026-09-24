@@ -1,0 +1,27 @@
+name: Editor Nudge V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/editor_nudge_v1.py"
+      - "services/editor-api/test_editor_nudge_v1.py"
+      - "services/editor-api/nudge_plan_v1.py"
+      - "services/editor-api/object_selection_target_v1.py"
+      - "services/editor-api/revision_store.py"
+      - ".github/workflows/editor-nudge-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run single-selection editor nudge tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_editor_nudge_v1
