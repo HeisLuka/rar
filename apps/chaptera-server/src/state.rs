@@ -118,7 +118,10 @@ impl RuntimeDependency for UnconfiguredDependency {
     fn check(&self) -> Result<(), DependencyFailure> {
         Err(DependencyFailure::new(
             "not_configured",
-            format!("producer {} is not connected to the runtime shell", self.gate),
+            format!(
+                "producer {} is not connected to the runtime shell",
+                self.gate
+            ),
         ))
     }
 }
