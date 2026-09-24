@@ -149,7 +149,7 @@ impl InvalidationGraphV1 {
 
         let change = match prior {
             None => PublicationChangeV1::Changed,
-            Some(old) if !computed.output_comparable => PublicationChangeV1::Unknown,
+            Some(_) if !computed.output_comparable => PublicationChangeV1::Unknown,
             Some(old) if old.stage_version != receipt.stage_version => PublicationChangeV1::Unknown,
             Some(old) if old.output_fingerprint == receipt.output_fingerprint => {
                 PublicationChangeV1::Unchanged
