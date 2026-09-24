@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fmt,
     io::{self, Read},
     sync::Arc,
@@ -820,8 +819,18 @@ fn hash_serialized<T: Serialize>(value: &T) -> Result<String, IngressError> {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex_digest(Sha256::digest(bytes))
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = digest.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 struct BoundedReader<'a> {
@@ -903,8 +912,7 @@ impl HashingBoundedReader {
     }
 
     fn sha256_hex(&self) -> String {
-        let digest = self.hasher.clone().finalize();
-        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+        hex_digest(self.hasher.clone().finalize())
     }
 }
 
