@@ -13,6 +13,7 @@ UA="rar-pub-internet-archive/1.0 (public format research)"
 PUBLIKE=re.compile(r"[.]pub$",re.I)
 ZIPLIKE=re.compile(r"[.]zip$",re.I)
 CONTAINER=re.compile(r"(?:[.]iso|[.]cab|[.]7z|[.]rar|[.]tar(?:[.]gz)?|[.]tgz)$",re.I)
+IA_DERIVATIVE_ZIP=re.compile(r"(?:_jp2|_thumb|_text|_hocr|_djvu|_scandata|_page_numbers|_files)[^/]*[.]zip$",re.I)
 
 DEFAULT_QUERIES=[
     'title:"Microsoft Publisher" OR subject:"Microsoft Publisher" OR description:"Microsoft Publisher"',
@@ -66,8 +67,26 @@ def seed_row(identifier: str, item: dict, file: dict) -> dict[str,str]:
         "ia_member_md5":str(file.get("md5") or ""),
         "ia_member_sha1":str(file.get("sha1") or ""),
         "ia_member_format":str(file.get("format") or ""),
+        "ia_member_source":str(file.get("source") or ""),
         "ia_member_mtime":str(file.get("mtime") or ""),
     }
+
+
+def is_pub_or_zip_seed(file: dict) -> bool:
+    name=str(file.get("name") or "")
+    if PUBLIKE.search(name):
+        return True
+    if not ZIPLIKE.search(name):
+        return False
+    if IA_DERIVATIVE_ZIP.search(name):
+        return False
+    source=str(file.get("source") or "").strip().lower()
+    # IA generated/derivative ZIPs are not Publisher payload containers.
+    # Missing source is tolerated for older metadata, but an explicit
+    # non-original source fails closed.
+    if source and source != "original":
+        return False
+    return True
 
 
 def write_csv(rows,path):
@@ -107,7 +126,7 @@ def main():
             meta=get_json(META+quote(ident,safe=""),args.timeout)
             for f in meta.get("files",[]) or []:
                 name=str(f.get("name") or "")
-                if PUBLIKE.search(name) or ZIPLIKE.search(name):
+                if is_pub_or_zip_seed(f):
                     seeds.append(seed_row(ident,item,f))
                 elif CONTAINER.search(name):
                     containers.append(seed_row(ident,item,f))
