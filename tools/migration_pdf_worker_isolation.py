@@ -136,6 +136,15 @@ def _install_network_deny_seccomp() -> None:
     seccomp.seccomp_load.restype = ctypes.c_int
     seccomp.seccomp_release.argtypes = [ctypes.c_void_p]
     seccomp.seccomp_release.restype = None
+    # seccomp_rule_add is variadic, but with arg_cnt=0 this call has exactly
+    # four fixed arguments. Declaring them is essential on 64-bit hosts:
+    # without c_void_p for ctx, ctypes may truncate the pointer and crash.
+    seccomp.seccomp_rule_add.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
     seccomp.seccomp_rule_add.restype = ctypes.c_int
 
     ctx = seccomp.seccomp_init(SCMP_ACT_ALLOW)
