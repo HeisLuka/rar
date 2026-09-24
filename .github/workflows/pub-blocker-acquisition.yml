@@ -270,15 +270,15 @@ jobs:
             fi
           fi
           if [ "$found" -ne 1 ]; then
-            echo "No direct Filters MSI identified; preserving diagnostic inventory." | tee out/filters-msi-not-found.txt
-            exit 2
+            echo "Acquisition succeeded; heuristic Filters extraction is non-closing here. Exact ProductCode extraction is owned by merged rar#61." | tee out/filters-msi-not-found.txt
+          else
+            sha256sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha256.txt
+            sha1sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha1.txt
+            md5sum out/Corel-X4-Filters.msi | tee out/filters-msi-md5.txt
+            stat -c 'size_bytes=%s' out/Corel-X4-Filters.msi | tee out/filters-msi-size.txt
+            msiinfo export out/Corel-X4-Filters.msi File > out/filters-msi-File.txt 2>/dev/null || true
+            grep -Ei 'pub|publisher|cdrpub' out/filters-msi-File.txt > out/filters-msi-pub-hits.txt || true
           fi
-          sha256sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha256.txt
-          sha1sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha1.txt
-          md5sum out/Corel-X4-Filters.msi | tee out/filters-msi-md5.txt
-          stat -c 'size_bytes=%s' out/Corel-X4-Filters.msi | tee out/filters-msi-size.txt
-          msiinfo export out/Corel-X4-Filters.msi File > out/filters-msi-File.txt 2>/dev/null || true
-          grep -Ei 'pub|publisher|cdrpub' out/filters-msi-File.txt > out/filters-msi-pub-hits.txt || true
       - name: Upload exact Corel X4 trial
         if: always()
         uses: actions/upload-artifact@v4
