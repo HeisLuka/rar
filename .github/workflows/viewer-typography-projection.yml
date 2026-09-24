@@ -1,0 +1,146 @@
+name: VIEWER-TYPOGRAPHY-PROJECTION-01
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/viewer-typography-projection.yml"
+      - "tools/viewer-typography-preflight/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEWSLETTER_BLOB: "94900925af5832c493784f3cb51563f838a64df8"
+      BROCHURE_BLOB: "00deec14dc6cff6d8a47b120d6d84e7e20c72166"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded read-only dependency
+        run: python -m pip install "olefile==0.47"
+
+      - name: Fetch pinned Apache POI PUB fixtures by Git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .inputs out
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import pathlib
+          import urllib.request
+
+          fixtures = [
+              ("SampleNewsletter.pub", os.environ["NEWSLETTER_BLOB"]),
+              ("SampleBrochure.pub", os.environ["BROCHURE_BLOB"]),
+          ]
+          for name, blob in fixtures:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/apache/poi/git/blobs/{blob}",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = json.load(response)
+              if payload.get("sha") != blob or payload.get("encoding") != "base64":
+                  raise SystemExit(f"unexpected Git blob response for {name}")
+              raw = base64.b64decode(payload["content"])
+              if not raw.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+                  raise SystemExit(f"{name}: not OLE/CFB")
+              pathlib.Path(".inputs", name).write_bytes(raw)
+          PY
+
+      - name: Decode bounded Quill typography observations
+        run: |
+          python tools/viewer-typography-preflight/decode_stsh1_defaults.py \
+            .inputs/SampleNewsletter.pub \
+            --source-label "apache/poi SampleNewsletter.pub pinned Git blob" \
+            --source-git-blob "$NEWSLETTER_BLOB" \
+            --output out/sample-newsletter.json
+          python tools/viewer-typography-preflight/decode_stsh1_defaults.py \
+            .inputs/SampleBrochure.pub \
+            --source-label "apache/poi SampleBrochure.pub pinned Git blob" \
+            --source-git-blob "$BROCHURE_BLOB" \
+            --output out/sample-brochure.json
+
+      - name: Build fail-closed Viewer typography projection receipt
+        run: |
+          python tools/viewer-typography-preflight/build_projection_receipt.py \
+            --decoded out/sample-newsletter.json \
+            --decoded out/sample-brochure.json \
+            --output out/viewer-typography-projection-receipt.json
+
+      - name: Assert bounded projection boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          receipt = json.loads(Path("out/viewer-typography-projection-receipt.json").read_text())
+          assert receipt["schema"] == "chaptera.viewer-typography-projection-receipt.v1"
+          assert receipt["result"] == "pass"
+          assert len(receipt["fixtures"]) == 2
+          projection = receipt["viewer_projection"]
+          assert projection["default_format_catalog_observed"] is True
+          assert projection["default_format_size_semantics_observed"] is True
+          assert projection["story_or_run_font_ownership_proven"] is False
+          assert projection["painted_single_frame_story_with_proven_typography_count"] == 0
+          assert projection["painted_single_frame_story_typography_coverage"] is None
+          assert projection["font_identity_projected_to_viewer"] is False
+          assert projection["font_size_projected_to_viewer"] is False
+          assert projection["host_font_lookup_used"] is False
+          assert projection["host_font_substitution_used"] is False
+          for fixture in receipt["fixtures"]:
+              assert fixture["quill_font_catalog"]["record_count"] > 0
+              assert fixture["fdpc_observation"]["font_reference_count"] > 0
+              assert fixture["stsh1_default_character_typography"]
+          print("bounded typography preflight passed without inventing Story/run ownership")
+          PY
+
+      - name: Publish source-free summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path("out/viewer-typography-projection-receipt.json").read_text())
+          print("# VIEWER-TYPOGRAPHY-PROJECTION-01")
+          print()
+          for fixture in receipt["fixtures"]:
+              src = fixture["source"]
+              print(f"## {src['file_name']}")
+              print(f"- SHA-256: `{src['sha256']}`")
+              print(f"- Quill FONT records: **{fixture['quill_font_catalog']['record_count']}**")
+              print(f"- FDPC font refs: **{fixture['fdpc_observation']['font_reference_count']}**")
+              print(f"- STSH1 default-character typography rows: **{len(fixture['stsh1_default_character_typography'])}**")
+              print()
+          print("Projected Story/run typography coverage remains **ambiguous / not computable** until the ownership join is proven; proven eligible Story count is **0**.")
+          PY
+
+      - name: Prove raw PUB inputs are not retained
+        run: |
+          if find out -type f \( -iname '*.pub' -o -iname '*.ole' \) | grep -q .; then
+            echo "raw PUB/CFB leaked into retained output" >&2
+            exit 1
+          fi
+          sha256sum out/*.json | tee out/SHA256SUMS.txt
+
+      - name: Upload source-free typography receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-typography-projection-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
