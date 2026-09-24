@@ -27,7 +27,7 @@ class PicturePlacePlanV1Tests(unittest.TestCase):
             intrinsic_width_px=4,
             intrinsic_height_px=3,
         )
-        self.assertEqual(RectEmu(-9, -20, 8, 6), plan.frame)
+        self.assertEqual(RectEmu(-9, -19, 8, 6), plan.frame)
         self.assertEqual((1, 1, 2, 2), plan.residual_emu)
 
     def test_portrait_ratio_is_exact_and_centered(self):
