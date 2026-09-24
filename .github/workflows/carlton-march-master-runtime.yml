@@ -1,0 +1,684 @@
+name: Carlton March exact master projection
+
+on:
+  pull_request:
+    paths:
+      - "crates/pub-master-projection/**"
+      - "crates/pub-model/**"
+      - ".github/workflows/carlton-march-master-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-master:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded runtime dependencies
+        run: python -m pip install "requests==2.32.5" "olefile==0.47" "pypdf==6.1.0"
+
+      - name: Acquire exact March PUB and published PDF
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton-master/private out/carlton-master/sanitized
+          python - <<'PY'
+          import hashlib
+          import json
+          import re
+          from pathlib import Path
+
+          import requests
+
+          PAGE = "https://www.carltonji.org.uk/parents/latest-letters"
+          ROOT = Path("out/carlton-master")
+          PRIVATE = ROOT / "private"
+          specs = {
+              "March 2026.pub": {
+                  "artifact_name": "March-2026.pub",
+                  "expected_id": "5a939344-76a6-4a6a-b30b-7237edac8bfa",
+                  "expected_size": 9_580_032,
+                  "expected_sha256": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+              },
+              "March 2026.pdf": {
+                  "artifact_name": "March-2026.pdf",
+                  "expected_id": None,
+                  "expected_size": None,
+                  "expected_sha256": None,
+              },
+          }
+
+          session = requests.Session()
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Master-Acceptance/1.0)",
+              "Accept": "*/*",
+          })
+          response = session.get(PAGE, timeout=30)
+          response.raise_for_status()
+          raw = response.text
+
+          acquired = {}
+          for public_name, spec in specs.items():
+              needle = '"name":"' + public_name + '"'
+              idx = raw.find(needle)
+              if idx < 0:
+                  raise SystemExit(f"{public_name}: not present in School Jotter hydration state")
+              window = raw[max(0, idx - 800):min(len(raw), idx + 16000)]
+
+              file_match = re.search(
+                  r'"file":\{"id":"([^"]+)","name":"' + re.escape(public_name) + r'"',
+                  window,
+              )
+              if not file_match:
+                  raise SystemExit(f"{public_name}: file id missing")
+              file_id = file_match.group(1)
+              if spec["expected_id"] is not None and file_id != spec["expected_id"]:
+                  raise SystemExit(
+                      f"{public_name}: file id drift {file_id} != {spec['expected_id']}"
+                  )
+
+              size_match = re.search(
+                  r'"name":"' + re.escape(public_name) + r'".*?"size":(\d+)',
+                  window,
+                  flags=re.S,
+              )
+              if not size_match:
+                  raise SystemExit(f"{public_name}: declared size missing")
+              declared_size = int(size_match.group(1))
+              if (
+                  spec["expected_size"] is not None
+                  and declared_size != spec["expected_size"]
+              ):
+                  raise SystemExit(
+                      f"{public_name}: declared size drift "
+                      f"{declared_size} != {spec['expected_size']}"
+                  )
+
+              origin_match = re.search(
+                  r'"url":\{"origin":"((?:\\.|[^"\\])*)"',
+                  window,
+                  flags=re.S,
+              )
+              if not origin_match:
+                  raise SystemExit(f"{public_name}: signed origin URL missing")
+              origin = json.loads('"' + origin_match.group(1) + '"')
+
+              target = PRIVATE / spec["artifact_name"]
+              digest = hashlib.sha256()
+              size = 0
+              with session.get(origin, timeout=(10, 90), stream=True) as download:
+                  download.raise_for_status()
+                  with target.open("wb") as out:
+                      for chunk in download.iter_content(1024 * 1024):
+                          if not chunk:
+                              continue
+                          size += len(chunk)
+                          digest.update(chunk)
+                          out.write(chunk)
+              sha256 = digest.hexdigest()
+              if size != declared_size:
+                  raise SystemExit(
+                      f"{public_name}: downloaded size {size} != declared {declared_size}"
+                  )
+              if (
+                  spec["expected_sha256"] is not None
+                  and sha256 != spec["expected_sha256"]
+              ):
+                  raise SystemExit(
+                      f"{public_name}: sha256 {sha256} != {spec['expected_sha256']}"
+                  )
+              acquired[public_name] = {
+                  "file_id": file_id,
+                  "size": size,
+                  "sha256": sha256,
+                  "artifact_file": target.name,
+              }
+              print(
+                  f"ACQUIRED {public_name}: id={file_id} size={size} sha256={sha256}"
+              )
+
+          (PRIVATE / "acquisition.json").write_text(
+              json.dumps(acquired, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Validate published PDF reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          from pypdf import PdfReader
+
+          ROOT = Path("out/carlton-master")
+          PRIVATE = ROOT / "private"
+          SANITIZED = ROOT / "sanitized"
+          pdf = PRIVATE / "March-2026.pdf"
+          reader = PdfReader(str(pdf))
+          if len(reader.pages) != 3:
+              raise SystemExit(f"published March PDF page_count={len(reader.pages)} != 3")
+
+          def normalize(value):
+              return " ".join(
+                  value.replace("\u2019", "'")
+                  .replace("\u2018", "'")
+                  .split()
+              ).lower()
+
+          needle = "don't forget to visit our website for updates"
+          url_needle = "www.carltonji.org.uk"
+          footer_counts = []
+          url_counts = []
+          for index, page in enumerate(reader.pages):
+              text = normalize(page.extract_text() or "")
+              footer_count = text.count(needle)
+              url_count = text.count(url_needle)
+              footer_counts.append(footer_count)
+              url_counts.append(url_count)
+              if footer_count != 1:
+                  raise SystemExit(
+                      f"published PDF page {index + 1}: footer count {footer_count} != 1"
+                  )
+              if url_count < 1:
+                  raise SystemExit(
+                      f"published PDF page {index + 1}: Carlton URL absent"
+                  )
+
+          acquisition = json.loads((PRIVATE / "acquisition.json").read_text())
+          receipt = {
+              "schema": "chaptera.carlton-march-reference-pdf.v1",
+              "pdf_sha256": acquisition["March 2026.pdf"]["sha256"],
+              "pdf_size": acquisition["March 2026.pdf"]["size"],
+              "page_count": len(reader.pages),
+              "footer_phrase_count_by_page": footer_counts,
+              "carlton_url_min_count_by_page": [min(value, 1) for value in url_counts],
+              "raw_text_emitted": False,
+          }
+          (SANITIZED / "reference-pdf.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "REFERENCE PDF PASS "
+              f"sha256={receipt['pdf_sha256']} pages={receipt['page_count']} "
+              f"footer_counts={footer_counts}"
+          )
+          PY
+
+      - name: Extract exact master relation and master-child Story evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import struct
+          from pathlib import Path
+
+          import olefile
+
+          ROOT = Path("out/carlton-master")
+          PRIVATE = ROOT / "private"
+          SANITIZED = ROOT / "sanitized"
+          pub = PRIVATE / "March-2026.pub"
+
+          with olefile.OleFileIO(str(pub)) as ole:
+              contents = ole.openstream(["Contents"]).read()
+              quill = ole.openstream(["Quill", "QuillSub", "CONTENTS"]).read()
+
+          def u16(data, off):
+              if off + 2 > len(data):
+                  raise ValueError(f"u16 out of bounds at {off}")
+              return struct.unpack_from("<H", data, off)[0]
+
+          def u32(data, off):
+              if off + 4 > len(data):
+                  raise ValueError(f"u32 out of bounds at {off}")
+              return struct.unpack_from("<I", data, off)[0]
+
+          def parse_reference_fields(payload):
+              fields = []
+              p = 0
+              while p < len(payload):
+                  if p + 2 > len(payload):
+                      raise ValueError("truncated directory reference field")
+                  field_id = payload[p]
+                  wire = payload[p + 1]
+                  p += 2
+                  if wire in (0x08, 0x78):
+                      value = None
+                  elif wire in (0x10, 0x18):
+                      value = u16(payload, p)
+                      p += 2
+                  elif wire in (0x20, 0x68, 0x70, 0xB8):
+                      value = u32(payload, p)
+                      p += 4
+                  else:
+                      raise ValueError(
+                          f"unsupported directory reference wire 0x{wire:02x}"
+                      )
+                  fields.append((field_id, wire, value))
+              return fields
+
+          def directory_refs(data):
+              if data[:4] != b"\xe8\xac\x2c\x00":
+                  raise ValueError("not mature 0x2C Contents")
+              trailer = u32(data, 0x1A)
+              trailer_length = u32(data, trailer)
+              trailer_end = trailer + trailer_length
+              p = trailer + 4
+              if data[p:p+2] != b"\x01\x20":
+                  raise ValueError("trailer slot count missing")
+              slot_count = u32(data, p + 2)
+              p += 6
+              if data[p:p+2] != b"\x02\x20":
+                  raise ValueError("trailer max ordinal missing")
+              max_ordinal = u32(data, p + 2)
+              p += 6
+              if max_ordinal + 1 != slot_count:
+                  raise ValueError("slot count/max ordinal mismatch")
+              if data[p:p+2] != b"\x03\x90":
+                  raise ValueError("directory root missing")
+              directory_declared = u32(data, p + 2)
+              directory_start = p + 6
+              directory_end = directory_start + directory_declared - 4
+              if directory_end != trailer_end:
+                  raise ValueError("directory/trailer boundary mismatch")
+              p = directory_start
+              refs = {}
+              for seq_num in range(slot_count):
+                  if data[p] != 0:
+                      raise ValueError(f"directory slot {seq_num}: id != 0")
+                  wire = data[p + 1]
+                  if wire == 0x78:
+                      refs[seq_num] = {
+                          "seq_num": seq_num,
+                          "raw_types": [],
+                          "chunk_offsets": [],
+                          "parent_seq_nums": [],
+                      }
+                      p += 2
+                      continue
+                  if wire != 0x88:
+                      raise ValueError(
+                          f"directory slot {seq_num}: wire 0x{wire:02x} != 0x88"
+                      )
+                  declared = u32(data, p + 2)
+                  payload_start = p + 6
+                  payload_end = p + 2 + declared
+                  fields = parse_reference_fields(data[payload_start:payload_end])
+                  refs[seq_num] = {
+                      "seq_num": seq_num,
+                      "raw_types": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x02 and field_wire == 0x18
+                      ],
+                      "chunk_offsets": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x04 and field_wire == 0xB8
+                      ],
+                      "parent_seq_nums": [
+                          value for field_id, field_wire, value in fields
+                          if field_id == 0x05 and field_wire == 0x68
+                      ],
+                  }
+                  p = payload_end
+              if p != directory_end:
+                  raise ValueError("directory did not end at exact boundary")
+              return refs
+
+          def chunk_for_ref(data, ref):
+              if len(ref["chunk_offsets"]) != 1:
+                  raise ValueError(
+                      f"seq {ref['seq_num']}: expected one chunk offset"
+                  )
+              off = ref["chunk_offsets"][0]
+              declared = u32(data, off)
+              end = off + declared
+              if declared < 4 or end > len(data):
+                  raise ValueError(f"seq {ref['seq_num']}: invalid chunk envelope")
+              return data[off:end]
+
+          def scalar_fields_until_unknown(chunk):
+              fields = []
+              p = 4
+              while p < len(chunk):
+                  if p + 2 > len(chunk):
+                      raise ValueError("truncated chunk field")
+                  field_id = chunk[p]
+                  wire = chunk[p + 1]
+                  p += 2
+                  if wire in (0x08, 0x78):
+                      value = None
+                  elif wire in (0x10, 0x18):
+                      value = u16(chunk, p)
+                      p += 2
+                  elif wire in (0x20, 0x68, 0x70, 0xB8):
+                      value = u32(chunk, p)
+                      p += 4
+                  elif wire == 0x28:
+                      value = None
+                      p += 8
+                  elif wire == 0x38:
+                      value = None
+                      p += 16
+                  elif wire in (0x88, 0x90, 0xA0):
+                      declared = u32(chunk, p)
+                      if declared < 4:
+                          raise ValueError("invalid nested container")
+                      value = None
+                      p += declared
+                  else:
+                      break
+                  fields.append((field_id, wire, value))
+              return fields
+
+          refs = directory_refs(contents)
+          page_refs = sorted(
+              (
+                  ref for ref in refs.values()
+                  if ref["raw_types"] == [0x43]
+              ),
+              key=lambda item: item["seq_num"],
+          )
+          if len(page_refs) != 8:
+              raise SystemExit(f"exact March PAGE count {len(page_refs)} != 8")
+
+          page_records = []
+          exact_edges = []
+          for ref in page_refs:
+              chunk = chunk_for_ref(contents, ref)
+              fields = scalar_fields_until_unknown(chunk)
+              master_fields = [
+                  {"field_id": field_id, "block_type": wire, "value": value}
+                  for field_id, wire, value in fields
+                  if field_id == 0x0D
+              ]
+              page_records.append({
+                  "seq_num": ref["seq_num"],
+                  "raw_type": 0x43,
+                  "master_fields": master_fields,
+              })
+              for field in master_fields:
+                  exact_edges.append(
+                      (ref["seq_num"], field["block_type"], field["value"])
+                  )
+
+          if exact_edges != [
+              (266, 0x68, 263),
+              (361, 0x68, 263),
+              (406, 0x68, 263),
+          ]:
+              raise SystemExit(f"master edge drift: {exact_edges}")
+
+          master_children = sorted(
+              ref["seq_num"]
+              for ref in refs.values()
+              if ref["parent_seq_nums"] == [263] and ref["raw_types"] == [0x01]
+          )
+          if master_children != [378, 380]:
+              raise SystemExit(
+                  f"PAGE263 shape children drift: {master_children} != [378, 380]"
+              )
+
+          child_qsids = {}
+          for seq_num in master_children:
+              fields = scalar_fields_until_unknown(chunk_for_ref(contents, refs[seq_num]))
+              qsids = [
+                  value for field_id, wire, value in fields
+                  if field_id == 0x27 and wire == 0x20
+              ]
+              if len(qsids) != 1:
+                  raise SystemExit(f"shape {seq_num}: expected one Qsid, got {qsids}")
+              child_qsids[seq_num] = qsids[0]
+          if child_qsids != {378: 56, 380: 57}:
+              raise SystemExit(f"master child Qsid drift: {child_qsids}")
+
+          def quill_story_map(data):
+              descriptors = []
+              current = 0x18
+              seen = set()
+              while current != 0xFFFF_FFFF:
+                  if current in seen or current >= len(data):
+                      raise ValueError("invalid Quill descriptor chain")
+                  seen.add(current)
+                  count = u16(data, current + 2)
+                  next_offset = u32(data, current + 4)
+                  p = current + 8
+                  for _ in range(count):
+                      if u16(data, p) != 0x0018:
+                          raise ValueError("invalid Quill descriptor")
+                      descriptors.append({
+                          "name": data[p+2:p+6],
+                          "offset": u32(data, p + 16),
+                          "length": u32(data, p + 20),
+                      })
+                      p += 24
+                  current = next_offset
+
+              def unique(name):
+                  matches = [item for item in descriptors if item["name"] == name]
+                  if len(matches) != 1:
+                      raise ValueError(f"descriptor {name!r}: {len(matches)} matches")
+                  return matches[0]
+
+              syid = unique(b"SYID")
+              strs = unique(b"STRS")
+              text = unique(b"TEXT")
+              count = u32(data, syid["offset"] + 4)
+              ids = [u32(data, syid["offset"] + 8 + 4*i) for i in range(count)]
+              if u32(data, strs["offset"]) != count:
+                  raise ValueError("SYID/STRS count mismatch")
+              service_span = u32(data, strs["offset"] + 4)
+              lengths_start = strs["offset"] + 4 + service_span
+              lengths = [u32(data, lengths_start + 4*i) for i in range(count)]
+              if sum(lengths) * 2 != text["length"]:
+                  raise ValueError("TEXT length mismatch")
+              stories = {}
+              p = text["offset"]
+              for qsid, units in zip(ids, lengths):
+                  raw = data[p:p + units*2]
+                  stories[qsid] = raw.decode("utf-16-le")
+                  p += units*2
+              return stories
+
+          stories = quill_story_map(quill)
+          if stories[56].strip("\r\n\x00 ") != "":
+              raise SystemExit("shape378/Qsid56 is no longer empty")
+          expected_footer = (
+              "Don’t forget to visit our website for updates: "
+              "https://www.carltonji.org.uk/"
+          )
+          normalized_story = " ".join(stories[57].replace("\r", " ").split())
+          if normalized_story != expected_footer:
+              raise SystemExit("shape380/Qsid57 footer text drift")
+
+          acquisition = json.loads((PRIVATE / "acquisition.json").read_text())
+          source_hash = acquisition["March 2026.pub"]["sha256"]
+          source_input = {
+              "source_hash": source_hash,
+              "pages": page_records,
+          }
+          (PRIVATE / "master-source-input.json").write_text(
+              json.dumps(source_input, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          evidence = {
+              "schema": "chaptera.carlton-march-master-source-evidence.v1",
+              "source_sha256": source_hash,
+              "raw_page_count": len(page_refs),
+              "master_edges": [
+                  {
+                      "source_page_seq_num": source,
+                      "field_id": 0x0D,
+                      "wire": wire,
+                      "master_page_seq_num": target,
+                  }
+                  for source, wire, target in exact_edges
+              ],
+              "master_page_seq_num": 263,
+              "master_shape_seq_nums": master_children,
+              "master_shape_story_qsids": {
+                  str(seq): child_qsids[seq] for seq in master_children
+              },
+              "empty_master_story_qsid": 56,
+              "visible_footer_story_qsid": 57,
+              "visible_footer_story_sha256": hashlib.sha256(
+                  normalized_story.encode("utf-8")
+              ).hexdigest(),
+              "raw_story_text_emitted": False,
+          }
+          (SANITIZED / "master-source-evidence.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "SOURCE MASTER PASS "
+              f"pages={len(page_refs)} edges={exact_edges} "
+              f"children={master_children} qsids={child_qsids}"
+          )
+          PY
+
+      - name: Build canonical exact master projection context
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p pub-master-projection --bin master-source-context-producer --             out/carlton-master/private/master-source-input.json             > out/carlton-master/private/master-source-output.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          ROOT = Path("out/carlton-master")
+          PRIVATE = ROOT / "private"
+          SANITIZED = ROOT / "sanitized"
+          output = json.loads((PRIVATE / "master-source-output.json").read_text())
+          context = output["context"]
+          receipt = output["receipt"]
+
+          if context["schema_version"] != "chaptera.pub-projection-context.v1":
+              raise SystemExit("projection context version drift")
+          if context["cmo_relations"] != []:
+              raise SystemExit("master-only context unexpectedly contains Cmo relations")
+          if receipt["relation_count"] != 3:
+              raise SystemExit(
+                  f"master relation_count {receipt['relation_count']} != 3"
+              )
+          pairs = sorted(
+              (
+                  relation["source_page_seq_num"],
+                  relation["master_page_seq_num"],
+              )
+              for relation in receipt["relations"]
+          )
+          if pairs != [(266, 263), (361, 263), (406, 263)]:
+              raise SystemExit(f"canonical master relation drift: {pairs}")
+          if context["master_relations"] != receipt["relations"]:
+              raise SystemExit("context/receipt master relation mismatch")
+
+          sanitized = {
+              "schema": "chaptera.carlton-march-master-runtime.v1",
+              "projection_context_version": context["schema_version"],
+              "relation_count": receipt["relation_count"],
+              "relations": receipt["relations"],
+              "invariants": receipt["invariants"],
+          }
+          (SANITIZED / "master-runtime.json").write_text(
+              json.dumps(sanitized, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          (SANITIZED / "master-projection-context.json").write_text(
+              json.dumps(context, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(f"CANONICAL MASTER CONTEXT PASS pairs={pairs}")
+          PY
+
+      - name: Cross-check source and published reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton-master/sanitized")
+          source = json.loads((root / "master-source-evidence.json").read_text())
+          pdf = json.loads((root / "reference-pdf.json").read_text())
+          runtime = json.loads((root / "master-runtime.json").read_text())
+
+          assert source["master_page_seq_num"] == 263
+          assert runtime["relation_count"] == 3
+          assert sorted(
+              relation["source_page_seq_num"]
+              for relation in runtime["relations"]
+          ) == [266, 361, 406]
+          assert pdf["page_count"] == 3
+          assert pdf["footer_phrase_count_by_page"] == [1, 1, 1]
+          assert source["master_shape_seq_nums"] == [378, 380]
+          assert source["empty_master_story_qsid"] == 56
+          assert source["visible_footer_story_qsid"] == 57
+
+          summary = {
+              "schema": "chaptera.carlton-march-master-acceptance.v1",
+              "source_sha256": source["source_sha256"],
+              "reference_pdf_sha256": pdf["pdf_sha256"],
+              "raw_page_count": source["raw_page_count"],
+              "effective_customer_page_seq_nums": [266, 361, 406],
+              "master_page_seq_num": 263,
+              "master_relation_count": runtime["relation_count"],
+              "master_shape_seq_nums": source["master_shape_seq_nums"],
+              "empty_master_story_qsid": source["empty_master_story_qsid"],
+              "visible_footer_story_qsid": source["visible_footer_story_qsid"],
+              "reference_pdf_page_count": pdf["page_count"],
+              "footer_reference_count_by_page": pdf[
+                  "footer_phrase_count_by_page"
+              ],
+              "semantic_node_clones_created": False,
+              "source_graph_mutated": False,
+              "raw_story_text_emitted": False,
+          }
+          (root / "acceptance.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "CARLTON MASTER ACCEPTANCE PASS "
+              "raw_pages=8 effective_pages=3 master=263 footer=[1,1,1]"
+          )
+          PY
+
+      - name: Upload sanitized exact master receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: carlton-march-master-runtime-receipts
+          path: out/carlton-master/sanitized/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload short-lived exact inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: carlton-march-master-runtime-inputs
+          path: |
+            out/carlton-master/private/March-2026.pub
+            out/carlton-master/private/March-2026.pdf
+            out/carlton-master/private/acquisition.json
+            out/carlton-master/private/master-source-input.json
+            out/carlton-master/private/master-source-output.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
