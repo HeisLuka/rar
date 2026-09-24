@@ -133,8 +133,14 @@ window.readOpfs = async () => {
   }
 };
 
-window.requestPersistence = async () => {
-  if (!navigator.storage?.persist) return { supported: false, granted: null };
-  return { supported: true, granted: await navigator.storage.persist() };
+window.requestPersistence = async (timeoutMs = 1500) => {
+  if (!navigator.storage?.persist) return { supported: false, granted: null, timed_out: false };
+  const timeout = new Promise((resolve) =>
+    setTimeout(() => resolve({ supported: true, granted: null, timed_out: true }), timeoutMs)
+  );
+  const request = Promise.resolve(navigator.storage.persist())
+    .then((granted) => ({ supported: true, granted, timed_out: false }))
+    .catch((error) => ({ supported: true, granted: null, timed_out: false, error: String(error) }));
+  return Promise.race([request, timeout]);
 };
 </script>
