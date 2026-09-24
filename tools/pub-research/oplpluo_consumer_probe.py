@@ -633,6 +633,7 @@ def main():
         v, tables, instructions, by_addr
     )
     rtti, ctor_candidates = constructor_probe(v, instructions)
+    exact_anchors = exact_anchor_report(v, instructions, by_addr)
 
     # Cross-link RTTI method bodies against descriptor/table targets.
     descriptor_values = set(desc_targets.values())
@@ -682,6 +683,7 @@ def main():
         "rtti": rtti,
         "oplpluo_constructor_candidates": ctor_candidates,
         "rtti_method_descriptor_links": method_descriptor_links,
+        "exact_anchor_xrefs": exact_anchors,
     }
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -730,6 +732,17 @@ def main():
             }
         ),
         "rtti_method_descriptor_links": len(method_descriptor_links),
+        "exact_ctor_direct_callers": exact_anchors["oplpluo_ctor"]["direct_callers"],
+        "exact_ctor_data_ref_count": len(exact_anchors["oplpluo_ctor"]["data_refs"]),
+        "predicate_consumer_functions": [
+            {
+                "callsite":x.get("callsite"),
+                "function_start":x.get("function_start"),
+                "direct_callers":x.get("direct_callers",[]),
+                "contains_type_getter":x.get("contains_type_getter"),
+                "contains_predicate":x.get("contains_predicate"),
+            } for x in exact_anchors.get("predicate_consumers",[])
+        ],
     }
 
     summary_path = args.out.with_name("oplpluo-consumer-summary.json")
@@ -771,3 +784,144 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# --- exact-anchor consumer/materialization pass (T451 follow-up) ---
+KNOWN_ANCHORS = {
+    "oplpluo_ctor": 0x2E1A3666,
+    "oplpluo_vtable": 0x2E00E36C,
+    "oplpluo_type_descriptor": 0x2E685500,
+    "page_or_pluo_predicate": 0x2E168721,
+    "object_type_getter": 0x2E0DD76F,
+    "known_consumer_1": 0x2E0E84E8,
+    "known_consumer_2": 0x2E5AA7A8,
+    "common_oty_ctor": 0x2E1142B4,
+}
+
+def _direct_callers(instructions, target):
+    return [x["address"] for x in instructions if target in x["calls"]]
+
+def _all_abs_refs(instructions, target):
+    return [x["address"] for x in instructions if target in x["refs"]]
+
+def _data_refs(v, target):
+    needle = struct.pack("<I", target)
+    rows=[]
+    for off in find_all(v.blob, needle):
+        va=v.off_to_va(off)
+        if va is None:
+            continue
+        sec=v.section_for_va(va)
+        if sec == ".text":
+            continue
+        before=max(0,off-32); after=min(len(v.blob),off+36)
+        dwords=[]
+        start=off-(off%4)
+        for p in range(max(0,start-24), min(len(v.blob)-3,start+32),4):
+            val=v.u32(p)
+            dwords.append({
+                "offset":f"0x{p:X}",
+                "va":None if v.off_to_va(p) is None else f"0x{v.off_to_va(p):08X}",
+                "value":f"0x{val:08X}",
+                "target_section":v.section_for_va(val),
+                "ascii":v.read_ascii_va(val),
+                "utf16":v.read_utf16_va(val),
+            })
+        rows.append({
+            "offset":f"0x{off:X}",
+            "va":f"0x{va:08X}",
+            "section":sec,
+            "window_hex":v.blob[before:after].hex(),
+            "nearby_dwords":dwords,
+        })
+    return rows
+
+def _function_start_near(instructions, idx, max_back=0x180):
+    here=instructions[idx]["address"]
+    for j in range(idx, max(-1,idx-180), -1):
+        if here-instructions[j]["address"] > max_back:
+            break
+        a=instructions[j]
+        if a["mnemonic"]=="push" and a["op_str"]=="ebp":
+            if j+1 < len(instructions):
+                b=instructions[j+1]
+                if b["mnemonic"]=="mov" and b["op_str"].replace(" ","")=="ebp,esp":
+                    return instructions[j]["address"]
+    return None
+
+def exact_anchor_report(v, instructions, by_addr):
+    out={"anchors":{k:f"0x{x:08X}" for k,x in KNOWN_ANCHORS.items()}}
+    for label,target in KNOWN_ANCHORS.items():
+        out[label]={
+            "direct_callers":[f"0x{x:08X}" for x in _direct_callers(instructions,target)],
+            "absolute_text_refs":[f"0x{x:08X}" for x in _all_abs_refs(instructions,target)],
+            "data_refs":_data_refs(v,target),
+        }
+
+    # Reconstruct the two already-proven predicate consumers from the actual call sites.
+    consumers=[]
+    pred=KNOWN_ANCHORS["page_or_pluo_predicate"]
+    for callsite in (KNOWN_ANCHORS["known_consumer_1"],KNOWN_ANCHORS["known_consumer_2"]):
+        idx=by_addr.get(callsite)
+        if idx is None:
+            # These are call instruction addresses in prior evidence; tolerate exact-insn lookup miss by nearest.
+            near=[(abs(x["address"]-callsite),i) for i,x in enumerate(instructions) if abs(x["address"]-callsite)<=8]
+            if near:
+                idx=min(near)[1]
+        if idx is None:
+            consumers.append({"callsite":f"0x{callsite:08X}","error":"instruction_not_found"})
+            continue
+        start=_function_start_near(instructions,idx)
+        body_start = start if start is not None else instructions[max(0,idx-40)]["address"]
+        sidx=by_addr.get(body_start,max(0,idx-40))
+        body=[]
+        for ins in instructions[sidx:min(len(instructions),sidx+260)]:
+            body.append(slim(ins))
+            if ins["mnemonic"].startswith("ret") and ins["address"]>callsite:
+                break
+        callers=[] if start is None else _direct_callers(instructions,start)
+        consumers.append({
+            "callsite":f"0x{callsite:08X}",
+            "function_start":None if start is None else f"0x{start:08X}",
+            "direct_callers":[f"0x{x:08X}" for x in callers],
+            "contains_type_getter":any(KNOWN_ANCHORS["object_type_getter"] in x["calls"] for x in instructions[sidx:min(len(instructions),sidx+260)]),
+            "contains_predicate":any(pred in x["calls"] for x in instructions[sidx:min(len(instructions),sidx+260)]),
+            "body":body,
+        })
+    out["predicate_consumers"]=consumers
+
+    # Constructor body from the independently proven address.
+    ctor=KNOWN_ANCHORS["oplpluo_ctor"]
+    cidx=by_addr.get(ctor)
+    if cidx is not None:
+        body=[]
+        for ins in instructions[cidx:min(len(instructions),cidx+120)]:
+            body.append(slim(ins))
+            if ins["mnemonic"].startswith("ret"):
+                break
+        out["constructor_body"]=body
+    else:
+        out["constructor_body"]=[]
+
+    # One-level upward graph for every recovered consumer function.
+    nodes={}
+    queue=[]
+    for row in consumers:
+        if row.get("function_start"):
+            queue.append(int(row["function_start"],16))
+    queue.append(ctor)
+    seen=set()
+    while queue and len(seen)<32:
+        fn=queue.pop(0)
+        if fn in seen: continue
+        seen.add(fn)
+        calls=_direct_callers(instructions,fn)
+        nodes[f"0x{fn:08X}"]=[f"0x{x:08X}" for x in calls]
+        for cs in calls[:16]:
+            idx=by_addr.get(cs)
+            if idx is not None:
+                parent=_function_start_near(instructions,idx)
+                if parent is not None and parent not in seen:
+                    queue.append(parent)
+    out["upward_call_graph"]=nodes
+    return out
