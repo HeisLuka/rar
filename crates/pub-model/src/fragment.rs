@@ -81,8 +81,7 @@ pub fn capture_rectangle_fragment_v1(
     if shape.transform != ShapeTransformV1::Identity {
         return Err(AuthoringFragmentError::UnsupportedTransform);
     }
-    validate_rect_emu_v1(shape.bounds)
-        .map_err(AuthoringFragmentError::InvalidMaterializedShape)?;
+    validate_rect_emu_v1(shape.bounds).map_err(AuthoringFragmentError::InvalidMaterializedShape)?;
 
     let fill = shape
         .paint
@@ -185,8 +184,7 @@ fn translated_bounds_v1(
 mod tests {
     use super::*;
     use crate::{
-        EntityProvenanceV1, ShapePaintV1, ShapePaintProvenanceV1, SolidFillV1, SolidStrokeV1,
-        Srgb8,
+        EntityProvenanceV1, ShapePaintProvenanceV1, ShapePaintV1, SolidFillV1, SolidStrokeV1, Srgb8,
     };
 
     const SOURCE_ID: &str = "01890f47-0c00-7abc-8def-0123456789ab";
