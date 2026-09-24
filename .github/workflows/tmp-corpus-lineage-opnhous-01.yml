@@ -1,0 +1,169 @@
+name: TEMP CORPUS OPNHOUS lineage execution
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-opnhous-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Rehydrate exact OPNHOUS pair and classify Contents delta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import difflib, hashlib, json, re, time, urllib.parse, urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-corpus-lineage-opnhous/1.0"; SECTOR=2048
+          SPECS={
+            "left":{
+              "sha256":"0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c",
+              "size":11264,"member":"PAGEWIZ/OPNHOUS.PUB",
+              "archive_url":"https://archive.org/download/PUB40CD/PUB_40_CD.ISO",
+              "root_sha256":"cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59",
+              "source_page":"https://archive.org/details/PUB40CD",
+              "additional_exact_media":[
+                {"source_page":"https://archive.org/details/MSPublisher97-EN","root_sha256":"41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab"},
+                {"source_page":"https://archive.org/details/MSPublisher97ThaiEdition","root_sha256":"0e30e5f0817cb94ff78780ac34b386c4c87c475ead40227758c387e985560e4c"}]},
+            "right":{
+              "sha256":"227961e2fba4a6fb814aa2da47e79b19d55ff04e87e49d9c5ceef8d07ce36d0e",
+              "size":11264,"member":"PageWiz/OPNHOUS.PUB",
+              "archive_url":"https://archive.org/download/pub-40-cd/PUB_40_CD.iso",
+              "root_sha256":"3abd372fd3a1def03cf17ca6277533a8a1bcfbe88b56a213f9c389035020a78b",
+              "source_page":"https://archive.org/details/pub-40-cd"}
+          }
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          class ISO:
+            def __init__(self,url):
+              self.url=url; self.cache={}; self.delivery=self._choose()
+            def urls(self):
+              p=urllib.parse.urlparse(self.url); q=p.path.split("/"); ident=q[2]; fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              with urllib.request.urlopen(req,timeout=30) as r: m=json.load(r)
+              out=[]
+              for k in ("d1","d2"):
+                h=str(m.get(k) or ""); d=str(m.get("dir") or "")
+                if h and d: out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]; return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"): raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n: raise ValueError("range size drift")
+              return d
+            def _choose(self):
+              last=None
+              for u in self.urls():
+                for a in range(3):
+                  try:
+                    p=self.rr(u,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001": raise ValueError("bad PVD")
+                    return u
+                  except Exception as e:
+                    last=e
+                    if a<2: time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              last=None
+              for a in range(3):
+                try:return self.rr(self.delivery,start,n)
+                except Exception as e:
+                  last=e
+                  if a<2:time.sleep(2**a)
+              raise last
+            @staticmethod
+            def rec(r):
+              return r[33:33+r[32]].decode("ascii","strict"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              if (e,s) in self.cache:return self.cache[e,s]
+              d=self.read(e*SECTOR,s); out={}; p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[e,s]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR); rl=p[156]; _,e,s,fl=self.rec(p[156:156+rl])
+              for i,x in enumerate([x.upper() for x in path.strip("/").split("/")]):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(path.strip("/").split("/")) and not fl&2:raise ValueError("not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def probe(data):
+            with olefile.OleFileIO(data) as ole:
+              ss={}
+              for parts in ole.listdir(streams=True,storages=False):
+                p="/"+"/".join(parts); ss[p]=ole.openstream(parts).read()
+            c=ss["/Contents"]; marker=f"0x{int.from_bytes(c[2:4],'little'):04X}" if c[:2]==b"\xe8\xac" else "unrecognized"
+            return ss,marker
+          def toks(b):
+            s=set()
+            for m in re.finditer(rb"[\x20-\x7e]{4,}",b):s.add("a:"+sha(m.group(0)))
+            for m in re.finditer(rb"(?:[\x20-\x7e]\x00){4,}",b):s.add("u:"+sha(m.group(0)))
+            return s
+          def delta(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False)
+            ops=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag!="equal":ops.append({"tag":tag,"left_offset":i1,"left_len":i2-i1,"left_sha256":sha(a[i1:i2]),"right_offset":j1,"right_len":j2-j1,"right_sha256":sha(b[j1:j2])})
+            cp=0
+            while cp<min(len(a),len(b)) and a[cp]==b[cp]:cp+=1
+            cs=0
+            while cs<min(len(a),len(b))-cp and a[-1-cs]==b[-1-cs]:cs+=1
+            ta,tb=toks(a),toks(b); u=ta|tb
+            return {"left_len":len(a),"right_len":len(b),"common_prefix":cp,"common_suffix":cs,"sequence_match_ratio":round(sm.ratio(),6),"delta_span_count":len(ops),"delta_spans":ops,"text_token_count_left":len(ta),"text_token_count_right":len(tb),"text_token_overlap":len(ta&tb),"text_token_jaccard":round(len(ta&tb)/len(u),6) if u else 1.0}
+
+          payload={}; deliveries={}
+          for side,s in SPECS.items():
+            iso=ISO(s["archive_url"]); data=iso.member(s["member"])
+            if len(data)!=s["size"] or sha(data)!=s["sha256"]:raise ValueError(side+" exact member drift")
+            payload[side]=data;deliveries[side]=iso.delivery
+          ls,lm=probe(payload["left"]);rs,rm=probe(payload["right"])
+          paths=sorted(set(ls)|set(rs))
+          changed=[p for p in paths if ls.get(p)!=rs.get(p)]
+          unchanged=[p for p in paths if p in ls and p in rs and ls[p]==rs[p]]
+          if changed!=["/Contents"]: raise ValueError(f"unexpected changed streams {changed}")
+          d=delta(ls["/Contents"],rs["/Contents"])
+          compact = d["sequence_match_ratio"]>=0.80 or (d["delta_span_count"]<=32 and d["text_token_jaccard"]>=0.70)
+          conclusion="lineage-supported-compact-contents-delta" if compact else "structural-resemblance-only"
+          receipt={"schema":"chaptera.corpus-lineage-opnhous.v1","files":{},"comparison":{"paths_equal":sorted(ls)==sorted(rs),"changed_streams":changed,"unchanged_streams":unchanged,"contents_family_left":lm,"contents_family_right":rm,"contents_delta":d,"conclusion_class":conclusion},"source_safe":True,"raw_pub_retained":False}
+          for side,s in SPECS.items():
+            receipt["files"][side]={"sha256":s["sha256"],"byte_len":s["size"],"member":s["member"],"source_page":s["source_page"],"root_sha256":s["root_sha256"],"selected_delivery_url":deliveries[side],"additional_exact_media":s.get("additional_exact_media",[])}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2),encoding="utf-8")
+          summary={"schema":"chaptera.corpus-lineage-opnhous-summary.v1","all_exact_members_verified":True,"non_contents_streams_identical":all(p=="/Contents" or p in unchanged for p in paths),"contents_family_left":lm,"contents_family_right":rm,"contents_sequence_match_ratio":d["sequence_match_ratio"],"contents_delta_span_count":d["delta_span_count"],"contents_common_prefix":d["common_prefix"],"contents_common_suffix":d["common_suffix"],"contents_text_token_jaccard":d["text_token_jaccard"],"conclusion_class":conclusion,"source_safe":True}
+          (out/"summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] and s["non_contents_streams_identical"] and s["source_safe"]
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-opnhous-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
