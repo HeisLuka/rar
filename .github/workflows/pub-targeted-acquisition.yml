@@ -106,43 +106,24 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends p7zip-full msitools bchunk
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools mdf2iso
           mkdir -p out/container out/disc out/msi
           url="https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z"
           curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/p2002.7z
           test "$(sha1sum out/p2002.7z | awk '{print $1}')" = "1ebbf5a8c188794e14a5ad2556bb751797034d0c"
           7z x -y out/p2002.7z -oout/container > /dev/null
           find out/container -type f -printf '%s\t%p\n' | sort -nr | tee out/container-files.txt
-          bin="$(find out/container -type f -iname '*.bin' | head -n1 || true)"
-          cue="$(find out/container -type f -iname '*.cue' | head -n1 || true)"
-          if [ -z "$bin" ]; then
-            bin="$(find out/container -type f -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+          mdf="$(find out/container -type f -iname '*.mdf' | head -n1 || true)"
+          mds="$(find out/container -type f -iname '*.mds' | head -n1 || true)"
+          test -n "$mdf"
+          stat -c 'raw_size_bytes=%s' "$mdf" | tee out/raw-size.txt
+          file "$mdf" | tee out/raw-file.txt
+          if [ -n "$mds" ]; then
+            sha256sum "$mds" | tee out/mds-sha256.txt
+            stat -c 'mds_size_bytes=%s' "$mds" | tee out/mds-size.txt
           fi
-          test -n "$bin"
-          stat -c 'raw_size_bytes=%s' "$bin" | tee out/raw-size.txt
-          file "$bin" | tee out/raw-file.txt
-          if [ -n "$cue" ]; then
-            bchunk "$bin" "$cue" out/p2002 > out/bchunk.txt 2>&1
-            iso="$(find out -maxdepth 1 -type f -name 'p2002*.iso' | head -n1)"
-          else
-            python3 - "$bin" <<'PY'
-          import sys
-          from pathlib import Path
-          src=Path(sys.argv[1]); dst=Path("out/p2002.iso")
-          size=src.stat().st_size
-          if size % 2352:
-              raise SystemExit("raw image not 2352-sector aligned")
-          with src.open("rb") as fi, dst.open("wb") as fo:
-              while True:
-                  sec=fi.read(2352)
-                  if not sec:
-                      break
-                  if len(sec)!=2352:
-                      raise SystemExit("short sector")
-                  fo.write(sec[16:16+2048])
-          PY
-            iso="out/p2002.iso"
-          fi
+          mdf2iso "$mdf" out/p2002.iso | tee out/mdf2iso.txt
+          iso="out/p2002.iso"
           test -n "$iso"
           sha256sum "$iso" | tee out/iso-sha256.txt
           sha1sum "$iso" | tee out/iso-sha1.txt
@@ -174,7 +155,8 @@ jobs:
           path: |
             out/container-files.txt
             out/raw-*.txt
-            out/bchunk.txt
+            out/mdf2iso.txt
+            out/mds-*.txt
             out/iso-*.txt
             out/msi-list.txt
             out/vbapb10-msi-hits.txt
