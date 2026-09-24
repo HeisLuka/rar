@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "chaptera.create-shape-intent.v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "document_id", "source_hash", "base_revision_id", "client_operation_id", "command"],
+  "properties": {
+    "protocol_version": {"const": "chaptera.create-shape-intent.v2"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "minLength": 1},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "client_operation_id": {"type": "string", "minLength": 1},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "node_id", "page_id", "destination", "placement", "paint", "expected_order_lane", "insertion_policy"],
+      "properties": {
+        "kind": {"const": "create_shape_v2"},
+        "node_id": {"type": "string", "minLength": 1},
+        "page_id": {"type": "string", "minLength": 1},
+        "destination": {
+          "oneOf": [
+            {"type":"object","additionalProperties":false,"required":["kind","id"],"properties":{"kind":{"const":"page"},"id":{"type":"string","minLength":1}}},
+            {"type":"object","additionalProperties":false,"required":["kind","id"],"properties":{"kind":{"const":"group"},"id":{"type":"string","minLength":1}}}
+          ]
+        },
+        "placement": {
+          "type":"object",
+          "additionalProperties":false,
+          "required":["status","desired_effective_page_rect","destination_local_rect"],
+          "properties":{
+            "status":{"const":"contained"},
+            "desired_effective_page_rect":{"$ref":"#/$defs/rect"},
+            "destination_local_rect":{"$ref":"#/$defs/rect"}
+          }
+        },
+        "paint":{"type":"object"},
+        "expected_order_lane":{"type":"array","items":{"type":"string","minLength":1},"uniqueItems":true},
+        "insertion_policy":{"enum":["append_authored_front","append_block_at_front"]}
+      }
+    }
+  },
+  "$defs": {
+    "rect": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["x","y","width","height"],
+      "properties":{
+        "x":{"type":"integer"},"y":{"type":"integer"},
+        "width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1}
+      }
+    }
+  }
+}
