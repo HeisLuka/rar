@@ -1,0 +1,84 @@
+name: PREFLIGHT-01 fidelity diagnostics
+
+on:
+  pull_request:
+    paths:
+      - "tools/preflight/**"
+      - ".github/workflows/preflight-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Problem fixture diagnostics
+        run: |
+          python tools/preflight/preflight.py             --input tools/preflight/fixtures/problem.json             --out target/preflight/problem.json
+
+      - name: Bounded fix diagnostics
+        run: |
+          python tools/preflight/preflight.py             --input tools/preflight/fixtures/fixed-overflow.json             --out target/preflight/fixed.json
+
+      - name: Verify machine codes, origin scope and bounded resolution
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          problem = json.loads(Path("target/preflight/problem.json").read_text())
+          fixed = json.loads(Path("target/preflight/fixed.json").read_text())
+
+          expected_problem = {
+              "TEXT_OVERFLOW",
+              "RESOURCE_MISSING",
+              "RESOURCE_MODIFIED",
+              "SEMANTIC_OPAQUE",
+              "SEMANTIC_UNSUPPORTED",
+              "OUTPUT_RISK",
+          }
+          problem_codes = {d["code"] for d in problem["diagnostics"]}
+          fixed_codes = {d["code"] for d in fixed["diagnostics"]}
+
+          assert problem_codes == expected_problem, problem_codes
+          assert "TEXT_OVERFLOW" not in fixed_codes, fixed_codes
+          assert fixed_codes == expected_problem - {"TEXT_OVERFLOW"}, fixed_codes
+
+          assert problem["summary"]["diagnostic_count"] == 6
+          assert fixed["summary"]["diagnostic_count"] == 5
+
+          # Human summary is generated from the same normalized code counts.
+          for code, count in problem["summary"]["counts_by_code"].items():
+              assert f"{code}: {count}" in problem["summary"]["human"]
+
+          overflow = [d for d in problem["diagnostics"] if d["code"] == "TEXT_OVERFLOW"]
+          assert len(overflow) == 1
+          assert overflow[0]["origin"] == {
+              "page_id": "page-1",
+              "node_id": "text-1",
+              "story_id": "story-1",
+          }
+
+          unrelated_problem = [
+              d for d in problem["diagnostics"] if d["code"] != "TEXT_OVERFLOW"
+          ]
+          assert unrelated_problem == fixed["diagnostics"]
+          PY
+
+      - name: Determinism check
+        run: |
+          python tools/preflight/preflight.py             --input tools/preflight/fixtures/problem.json             --out target/preflight/problem-second.json
+          cmp target/preflight/problem.json target/preflight/problem-second.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preflight-01-reports
+          path: target/preflight/*.json

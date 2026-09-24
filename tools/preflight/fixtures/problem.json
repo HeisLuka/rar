@@ -1,0 +1,43 @@
+{
+  "schema": "chaptera.preflight.input.v1",
+  "fixture_id": "preflight-problem-v1",
+  "objects": [
+    {
+      "page_id": "page-1",
+      "node_id": "text-1",
+      "story_id": "story-1",
+      "text_overflow": true,
+      "resources": [
+        {
+          "resource_id": "font-1",
+          "kind": "font",
+          "state": "missing"
+        }
+      ],
+      "semantic_state": "opaque",
+      "semantic_feature": "legacy-field",
+      "output_risks": [
+        {
+          "target": "pdf",
+          "risk": "font_substitution"
+        }
+      ]
+    },
+    {
+      "page_id": "page-1",
+      "node_id": "image-1",
+      "resources": [
+        {
+          "resource_id": "image-resource-1",
+          "kind": "image",
+          "state": "modified",
+          "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "actual_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "semantic_state": "unsupported",
+      "semantic_feature": "unsupported-image-effect",
+      "output_risks": []
+    }
+  ]
+}
