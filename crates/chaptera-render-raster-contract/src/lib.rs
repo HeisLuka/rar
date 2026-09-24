@@ -125,7 +125,8 @@ pub fn baseline_contract_v1(
         aa_class: AaClassV1::AnalyticCoverage,
         magnification_filter: SamplingFilterV1::Linear,
         minification_filter: SamplingFilterV1::Linear,
-        mip_policy: "selected_material_mips_are_runtime_representation_not_derivative_identity".into(),
+        mip_policy: "selected_material_mips_are_runtime_representation_not_derivative_identity"
+            .into(),
         stroke_policy: "centerline_coverage_preserve_subpixel_width_no_hairline_inference".into(),
         glyph_quality_class: "settled_device_scale_bucket_v1".into(),
         path_quality_class: "settled_device_scale_tolerance_v1".into(),
@@ -150,7 +151,10 @@ pub fn map_emu_point_to_device(
 }
 
 pub fn normalized_to_integer_center_backend(point: DevicePointV1) -> DevicePointV1 {
-    DevicePointV1 { x: point.x - 0.5, y: point.y - 0.5 }
+    DevicePointV1 {
+        x: point.x - 0.5,
+        y: point.y - 0.5,
+    }
 }
 
 pub fn validate_pixel_center_adapter(
@@ -163,8 +167,7 @@ pub fn validate_pixel_center_adapter(
     } else {
         normalized
     };
-    if (expected.x - backend_native.x).abs() > 1e-9
-        || (expected.y - backend_native.y).abs() > 1e-9
+    if (expected.x - backend_native.x).abs() > 1e-9 || (expected.y - backend_native.y).abs() > 1e-9
     {
         return Err("pixel_center_adapter_mismatch".into());
     }
@@ -173,8 +176,7 @@ pub fn validate_pixel_center_adapter(
 
 pub fn stroke_width_device_px(width_emu: u64, contract: &RenderRasterContractV1) -> f64 {
     let v = &contract.view;
-    width_emu as f64
-        / v.emu_per_css_px as f64
+    width_emu as f64 / v.emu_per_css_px as f64
         * (v.zoom_ppm as f64 / 1_000_000.0)
         * (v.dpr_milli as f64 / 1_000.0)
 }
@@ -190,8 +192,12 @@ pub fn compatibility_v1(
     if !caps.supported_aa.contains(&contract.aa_class) {
         reasons.push("required_aa_class_missing".into());
     }
-    if !caps.supported_filters.contains(&contract.magnification_filter)
-        || !caps.supported_filters.contains(&contract.minification_filter)
+    if !caps
+        .supported_filters
+        .contains(&contract.magnification_filter)
+        || !caps
+            .supported_filters
+            .contains(&contract.minification_filter)
     {
         reasons.push("required_sampling_filter_missing".into());
     }
@@ -270,7 +276,11 @@ mod tests {
     }
 
     fn surface(generation: u64) -> SurfaceTargetV1 {
-        SurfaceTargetV1 { width_px: 1200, height_px: 800, surface_generation: generation }
+        SurfaceTargetV1 {
+            width_px: 1200,
+            height_px: 800,
+            surface_generation: generation,
+        }
     }
 
     #[test]
@@ -320,7 +330,11 @@ mod tests {
         };
         let result = compatibility_v1(&c, &bad);
         assert!(!result.compatible);
-        assert!(result.reasons.contains(&"required_sampling_filter_missing".into()));
+        assert!(
+            result
+                .reasons
+                .contains(&"required_sampling_filter_missing".into())
+        );
     }
 
     #[test]

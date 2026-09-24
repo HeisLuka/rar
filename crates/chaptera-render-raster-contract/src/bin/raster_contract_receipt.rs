@@ -1,5 +1,5 @@
 use chaptera_render_raster_contract::{
-    baseline_contract_v1, raster_cache_key_v1, receipt_v1, SurfaceTargetV1, ViewTransformV1,
+    SurfaceTargetV1, ViewTransformV1, baseline_contract_v1, raster_cache_key_v1, receipt_v1,
 };
 
 fn main() {
