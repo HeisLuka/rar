@@ -177,6 +177,7 @@ class SampleNewsletterMoveSession:
         if not isinstance(operations, list):
             raise ProducerError("project.operations must be an array")
 
+        candidate = SampleNewsletterMoveSession(self.baseline)
         for expected in operations:
             if not isinstance(expected, dict):
                 raise ProducerError("project operation must be an object")
@@ -187,12 +188,15 @@ class SampleNewsletterMoveSession:
             require_exact_keys(expected, {"kind", "node_id", "before", "after"}, "move_node")
             validate_rect(expected["before"], "move_node.before")
             after = validate_rect(expected["after"], "move_node.after")
-            actual = self.move_node_to(expected["node_id"], after["x"], after["y"])
+            actual = candidate.move_node_to(expected["node_id"], after["x"], after["y"])
             if actual != expected:
                 raise ProducerError("canonical operation mismatch during replay")
 
-        if self.project() != project:
+        if candidate.project() != project:
             raise ProducerError("replayed project is not canonical")
+
+        self.current_rect = copy.deepcopy(candidate.current_rect)
+        self.operations = copy.deepcopy(candidate.operations)
 
 
 def handle(payload: dict[str, Any], baseline: dict[str, Any] | None = None) -> dict[str, Any]:
