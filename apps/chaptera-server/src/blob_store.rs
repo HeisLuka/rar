@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fmt,
     io::{self, Read, Write},
     sync::Arc,
@@ -919,16 +918,20 @@ impl Read for HashingOwnedReader {
 }
 
 fn hex_digest(digest: impl AsRef<[u8]>) -> String {
-    digest
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = digest.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         io::{Cursor, Read},
         sync::{
             Mutex,
