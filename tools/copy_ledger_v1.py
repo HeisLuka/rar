@@ -45,9 +45,55 @@ OPTIONAL_COUNT_FIELDS = {
     "retained_bytes_after",
 }
 
+RECEIPT_FIELDS = {
+    "receipt_version",
+    "measurement_class",
+    "producer",
+    "equivalence",
+    "evidence_authority",
+    "events",
+    "summary",
+    "limitations",
+}
+PRODUCER_FIELDS = {"build_sha", "workload_id", "runtime_identity"}
+RUNTIME_FIELDS = {
+    "runtime",
+    "platform",
+    "machine",
+    "runner_os",
+    "runner_arch",
+    "cpu",
+    "allocator",
+}
+EQUIVALENCE_FIELDS = {"semantic_equal", "baseline_identity", "candidate_identity"}
+AUTHORITY_FIELDS = {"real_pub_runtime", "technology_decision_allowed", "blocker"}
+EVENT_FIELDS = {
+    "event_id",
+    "stage_id",
+    "operation",
+    "payload_class",
+    "payload_identity",
+    "copy_class",
+    "reason",
+    "logical_bytes",
+    "materialized_bytes",
+    "shared_bytes",
+    "instances",
+    "semantic_identity_equal",
+    "source_identity",
+    "target_identity",
+    *OPTIONAL_COUNT_FIELDS,
+}
+
 
 class CopyLedgerInvalid(ValueError):
     pass
+
+
+def _require_allowed_fields(row: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(row) - allowed)
+    if unknown:
+        raise CopyLedgerInvalid(f"{label} contains unsupported field(s): {', '.join(unknown)}")
 
 
 def canonical_json(value: Any) -> str:
@@ -76,6 +122,7 @@ def _validate_optional_count(row: dict[str, Any], key: str) -> None:
 def validate_copy_event(row: dict[str, Any]) -> None:
     if not isinstance(row, dict):
         raise CopyLedgerInvalid("copy event must be an object")
+    _require_allowed_fields(row, EVENT_FIELDS, "copy event")
 
     for key in (
         "event_id",
@@ -126,6 +173,7 @@ def validate_copy_event(row: dict[str, Any]) -> None:
 def _validate_runtime_identity(runtime: dict[str, Any]) -> None:
     if not isinstance(runtime, dict) or not runtime:
         raise CopyLedgerInvalid("runtime_identity is required")
+    _require_allowed_fields(runtime, RUNTIME_FIELDS, "runtime_identity")
     if not isinstance(runtime.get("runtime"), str) or not runtime["runtime"]:
         raise CopyLedgerInvalid("runtime_identity.runtime is required")
     if not isinstance(runtime.get("platform"), str) or not runtime["platform"]:
@@ -135,6 +183,7 @@ def _validate_runtime_identity(runtime: dict[str, Any]) -> None:
 def validate_receipt(receipt: dict[str, Any]) -> None:
     if not isinstance(receipt, dict):
         raise CopyLedgerInvalid("receipt must be an object")
+    _require_allowed_fields(receipt, RECEIPT_FIELDS, "receipt")
     if receipt.get("receipt_version") != RECEIPT_VERSION:
         raise CopyLedgerInvalid("receipt_version mismatch")
     if receipt.get("measurement_class") not in MEASUREMENT_CLASSES:
@@ -143,6 +192,7 @@ def validate_receipt(receipt: dict[str, Any]) -> None:
     producer = receipt.get("producer")
     if not isinstance(producer, dict):
         raise CopyLedgerInvalid("producer is required")
+    _require_allowed_fields(producer, PRODUCER_FIELDS, "producer")
     if not isinstance(producer.get("build_sha"), str) or not producer["build_sha"]:
         raise CopyLedgerInvalid("producer.build_sha is required")
     if not isinstance(producer.get("workload_id"), str) or not producer["workload_id"]:
@@ -152,6 +202,7 @@ def validate_receipt(receipt: dict[str, Any]) -> None:
     equivalence = receipt.get("equivalence")
     if not isinstance(equivalence, dict):
         raise CopyLedgerInvalid("equivalence is required")
+    _require_allowed_fields(equivalence, EQUIVALENCE_FIELDS, "equivalence")
     if equivalence.get("semantic_equal") is not True:
         raise CopyLedgerInvalid("semantic/canonical equivalence must be true")
     for key in ("baseline_identity", "candidate_identity"):
@@ -178,12 +229,17 @@ def validate_receipt(receipt: dict[str, Any]) -> None:
     authority = receipt.get("evidence_authority")
     if not isinstance(authority, dict):
         raise CopyLedgerInvalid("evidence_authority is required")
+    _require_allowed_fields(authority, AUTHORITY_FIELDS, "evidence_authority")
     if authority.get("real_pub_runtime") is not real_pub:
         raise CopyLedgerInvalid("real_pub_runtime authority mismatches measurement_class")
     if authority.get("technology_decision_allowed") is not real_pub:
         raise CopyLedgerInvalid(
             "technology_decision_allowed must be true only for real_pub_source_free"
         )
+
+    limitations = receipt.get("limitations", [])
+    if not isinstance(limitations, list) or not all(isinstance(item, str) for item in limitations):
+        raise CopyLedgerInvalid("limitations must be an array of strings")
 
 
 def summarize_events(events: list[dict[str, Any]]) -> dict[str, Any]:

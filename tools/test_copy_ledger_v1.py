@@ -42,6 +42,25 @@ class CopyLedgerTests(unittest.TestCase):
         with self.assertRaises(CopyLedgerInvalid):
             validate_receipt(receipt)
 
+    def test_extra_top_level_field_fails_closed(self):
+        receipt = synthetic_contract_fixture()
+        receipt["source_path"] = "/private/customer.pub"
+        with self.assertRaisesRegex(CopyLedgerInvalid, "unsupported field"):
+            validate_receipt(receipt)
+
+    def test_extra_event_field_fails_closed(self):
+        receipt = synthetic_contract_fixture()
+        receipt["events"][0]["story_text"] = "private"
+        receipt.pop("summary", None)
+        with self.assertRaisesRegex(CopyLedgerInvalid, "unsupported field"):
+            with_summary(receipt)
+
+    def test_extra_nested_producer_field_fails_closed(self):
+        receipt = synthetic_contract_fixture()
+        receipt["producer"]["local_path"] = "/private/runtime"
+        with self.assertRaisesRegex(CopyLedgerInvalid, "unsupported field"):
+            validate_receipt(receipt)
+
     def test_conflicting_logical_size_for_same_identity_fails(self):
         receipt = synthetic_contract_fixture()
         extra = copy.deepcopy(receipt["events"][1])

@@ -6,6 +6,8 @@ on:
       - "tools/copy_ledger_v1.py"
       - "tools/test_copy_ledger_v1.py"
       - "tools/run_copy_ledger_contract.py"
+      - "tools/optimization_receipt_v1.py"
+      - "tools/test_optimization_receipt_v1.py"
       - "docs/copy-ledger-v1.md"
       - ".github/workflows/copy-ledger-v1.yml"
   workflow_dispatch:
@@ -23,6 +25,8 @@ jobs:
           python-version: "3.12"
       - name: Test copy-ledger contract
         run: python tools/test_copy_ledger_v1.py
+      - name: Test shared optimization-spine adapter
+        run: python tools/test_optimization_receipt_v1.py
       - name: Emit synthetic contract receipt
         run: python tools/run_copy_ledger_contract.py
       - uses: actions/upload-artifact@v4
