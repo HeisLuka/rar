@@ -1,0 +1,30 @@
+name: Cloud SQLite V0
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/sqlite_store.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/Cargo.toml"
+      - "docs/sqlite-single-host-v0.md"
+      - ".github/workflows/cloud-sqlite-v0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run clippy
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Run SQLite adapter tests
+        run: cargo test -p chaptera-server sqlite_store::
