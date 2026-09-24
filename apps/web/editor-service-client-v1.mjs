@@ -36,7 +36,7 @@ export class HttpEditorServiceV1 {
   async historyTransition(request) {
     this.historyRequests += 1;
     this.lastHistoryRequest = structuredClone(request);
-    const context = this.#context("history", request.client_operation_id ?? null);
+    const context = this.#context("commit", request.client_operation_id ?? null);
     this.lastHistoryTraceContext = context;
     return this.#json("/v1/commit", {
       method: "POST",
