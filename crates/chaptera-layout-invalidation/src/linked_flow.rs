@@ -231,14 +231,15 @@ pub fn resolve_linked_story_incremental_v1(
     };
 
     if old_chain_matches {
-        if let Some((index, _)) = ordered_frames
-            .iter()
-            .enumerate()
-            .take(actual_start)
-            .find(|(index, frame)| {
-                frame_dependency_fingerprint_v1(frame)
-                    != old.frames[*index].frame_dependency_fingerprint
-            })
+        if let Some((index, _)) =
+            ordered_frames
+                .iter()
+                .enumerate()
+                .take(actual_start)
+                .find(|(index, frame)| {
+                    frame_dependency_fingerprint_v1(frame)
+                        != old.frames[*index].frame_dependency_fingerprint
+                })
         {
             actual_start = index;
             mode = IncrementalExecutionModeV1::FullFallback;
