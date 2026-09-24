@@ -4,9 +4,7 @@ use std::{
     process::ExitCode,
 };
 
-use pub_plccmob_projection::{
-    PlcCmobSourceProjectionInputV1, build_source_projection_output_v1,
-};
+use pub_plccmob_projection::{PlcCmobSourceProjectionInputV1, build_source_projection_output_v1};
 
 fn read_input() -> Result<String, String> {
     if let Some(path) = env::args().nth(1) {
