@@ -9,6 +9,7 @@ mod create_shape;
 mod fragment;
 mod shape_paint;
 mod shape_paint_op;
+mod projection_context;
 
 pub use shape_paint::{
     AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, ShapePaintV1,
@@ -32,4 +33,9 @@ pub use fragment::{
     FragmentSourceProvenanceV1, PasteFragmentResultV1, PasteFragmentV1, PasteIdentityRemapV1,
     RectangleFragmentEntityV1, SINGLE_RECTANGLE_ENTITY_ID_V1, TranslationEmuV1,
     capture_rectangle_fragment_v1, materialize_paste_fragment_v1,
+};
+
+
+pub use projection_context::{
+    CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1,
 };
