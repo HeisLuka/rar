@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, json, os, sys, tempfile
+          import hashlib, json, os, sys, tempfile, time
           from collections import Counter
           from pathlib import Path
 
@@ -68,7 +68,18 @@ jobs:
               for rid in ["pub40cd", target_root]:
                   spec = roots[rid]
                   path = td / f"{rid}.iso"
-                  meta = containers.fetch(spec["url"], path, 120, 320 * 1024 * 1024)
+                  last = None
+                  for attempt in range(3):
+                      try:
+                          meta = containers.fetch(spec["url"], path, 120, 320 * 1024 * 1024)
+                          break
+                      except Exception as exc:
+                          last = exc
+                          path.unlink(missing_ok=True)
+                          if attempt + 1 < 3:
+                              time.sleep(2 ** attempt)
+                  else:
+                      raise last
                   assert meta["sha256"] == spec["sha256"], (rid, meta)
                   archives[rid] = path
 
