@@ -1,0 +1,30 @@
+{
+  "schema_version": "chaptera.cmo-slot-flow-input.v1",
+  "producer": {
+    "implementation": "rar-carlton-march-cmo-slot-flow",
+    "commit_or_build": "rar244-march-q218-fit",
+    "core_integration": true
+  },
+  "source_hash": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+  "target_story_id": "3e10fd6c-52ab-518e-bc83-6cdc0e288988",
+  "target_frame_node_id": "87cee6b6-c769-5649-b929-107fe110ff89",
+  "target_frame_count": 1,
+  "story_marker_count": 1,
+  "host": {
+    "width_emu": 4411989,
+    "height_emu": 2170073
+  },
+  "items": [
+    {
+      "kind": "object_slot",
+      "slot_index": 0,
+      "scalar_index": 0,
+      "source_order": 0,
+      "cmo_id": 1,
+      "carrier_node_id": "ac83b8f2-951d-5c76-a407-f3a17fa25698",
+      "carrier_story_id": "c2981a7f-02d1-5d7d-9b50-6b0e96ff3837",
+      "intrinsic_width_emu": 1947077,
+      "intrinsic_height_emu": 1710156
+    }
+  ]
+}
