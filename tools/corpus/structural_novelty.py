@@ -14,7 +14,8 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 import olefile
 
@@ -50,6 +51,10 @@ def hash_lines(lines) -> str:
 
 
 def download_artifact(repo: str, artifact_id: int, token: str, dest: Path) -> None:
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
     url = f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
     headers = {
         "User-Agent": UA,
@@ -59,7 +64,19 @@ def download_artifact(repo: str, artifact_id: int, token: str, dest: Path) -> No
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = Request(url, headers=headers)
-    with urlopen(req, timeout=60) as resp:
+    opener = build_opener(NoRedirect)
+    try:
+        opener.open(req, timeout=60)
+        raise ValueError("artifact endpoint returned no redirect")
+    except HTTPError as exc:
+        if exc.code not in {301, 302, 303, 307, 308}:
+            raise
+        signed = exc.headers.get("Location")
+        if not signed:
+            raise ValueError("artifact redirect missing Location") from exc
+
+    blob_req = Request(signed, headers={"User-Agent": UA, "Accept": "*/*"})
+    with urlopen(blob_req, timeout=60) as resp:
         data = resp.read(64 * 1024 * 1024 + 1)
     if len(data) > 64 * 1024 * 1024:
         raise ValueError(f"artifact {artifact_id} exceeds 64 MiB cap")
