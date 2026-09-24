@@ -1,0 +1,102 @@
+name: CORPUS-VAC containers
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/pub_container_extract.py'
+      - 'tools/corpus/test_pub_container_extract.py'
+      - '.github/workflows/corpus-vac-containers.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/pub_container_extract.py'
+      - 'tools/corpus/test_pub_container_extract.py'
+      - '.github/workflows/corpus-vac-containers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-vac-containers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mature archive tool
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+      - name: Offline validation
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/pub_container_extract.py tools/corpus/test_pub_container_extract.py
+          python tools/corpus/test_pub_container_extract.py
+          python - <<'PY'
+          import sys,tempfile,zipfile
+          from pathlib import Path
+          sys.path.insert(0,str(Path("tools/corpus").resolve()))
+          import pub_container_extract as c
+          with tempfile.TemporaryDirectory() as td:
+              root=Path(td)
+              z=root/"x.zip"
+              payload=c.harvest_pub.CFB_MAGIC+b"\0"*32+"Microsoft Publisher".encode("utf-16le")+b"\0"*128
+              with zipfile.ZipFile(z,"w") as f:
+                  f.writestr("nested/test.pub",payload)
+              rows=c.list_7z(z,20)
+              assert any(r.get("Path")=="nested/test.pub" for r in rows), rows
+              out=root/"member.pub"
+              c.extract_member(z,"nested/test.pub",out,20,1024*1024)
+              cls,_=c.harvest_pub.classify(out.read_bytes())
+              assert cls=="cfb_publisher_hint",cls
+          PY
+
+  production:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mature archive tool
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+      - name: Refresh public IA non-ZIP container locators
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/internet_archive_pub_seed.py \
+            --rows 50 --pages 6 --max-items 500 --delay 0.2 \
+            --out out/ia_pub_seed.csv \
+            --containers out/ia_containers.csv \
+            --summary out/ia.summary.json
+      - name: Extract Publisher members statically
+        run: |
+          set -euo pipefail
+          python tools/corpus/pub_container_extract.py \
+            --seed out/ia_containers.csv \
+            --out out/container_manifest.json \
+            --max-containers 100 --max-depth 2 \
+            --max-container-bytes 314572800 \
+            --max-member-bytes 104857600 \
+            --max-total-expanded 524288000 \
+            --max-members 300
+      - name: Upload manifests only
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-vacuum-${{ github.run_id }}
+          path: |
+            out/ia.summary.json
+            out/ia_containers.csv
+            out/container_manifest.json
+            out/container_manifest.csv
+            out/container_manifest.summary.json
+          if-no-files-found: error
+          retention-days: 30
