@@ -1,0 +1,40 @@
+name: WEB-SCENE-SCALE-01 synthetic multipage baseline
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/render-benchmark.html"
+      - "apps/web/render-v1.mjs"
+      - "tools/run_web_scene_scale_synthetic.mjs"
+      - ".github/workflows/web-scene-scale-synthetic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scale:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Unit-test render contract
+        run: node --test apps/web/render-v1.test.mjs
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run synthetic multipage full-scene baseline
+        run: node tools/run_web_scene_scale_synthetic.mjs ${{ matrix.browser }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-scene-scale-synthetic-${{ matrix.browser }}
+          path: target/web-scene-scale/${{ matrix.browser }}-receipt.json
+          if-no-files-found: error
