@@ -21,10 +21,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/carlton
-          cat > out/carlton/seed.csv <<'CSV'
-          source_page,direct_url,candidate_filename,quarantine,source_class,expected_sha256,expected_size
+          printf '%s\n' 'source_page,direct_url,candidate_filename,quarantine,source_class,expected_sha256,expected_size' > out/carlton/seed.csv
           printf 'https://www.carltonji.org.uk/parents/latest-letters?_pub_harvest=%s,,March 2026.pub,no,carlton_march_census,bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3,9580032\n' "$(date +%s)" >> out/carlton/seed.csv
-          CSV
           # The public page's SSR state may carry an expired S3 presign; cache-bust the page fetch.
           python scratch/carlton-yab/harvest_pub.py --seed out/carlton/seed.csv --out out/carlton/acquired --max-files -1 --max-bytes 20971520 --timeout 25
           python - <<'PY'
