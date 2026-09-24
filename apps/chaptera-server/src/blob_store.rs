@@ -862,32 +862,34 @@ impl AsyncRead for HashingBoundedReader<'_> {
             )));
         }
 
-        let initialized = buffer.initialize_unfilled_to(allowed);
-        let mut limited = ReadBuf::new(initialized);
-        match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Ready(Ok(())) => {
-                let count = limited.filled().len();
-                if count == 0 {
-                    this.saw_eof = true;
-                    return Poll::Ready(Ok(()));
+        let count = {
+            let initialized = buffer.initialize_unfilled_to(allowed);
+            let mut limited = ReadBuf::new(initialized);
+            match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {
+                    let count = limited.filled().len();
+                    if count == 0 {
+                        this.saw_eof = true;
+                        return Poll::Ready(Ok(()));
+                    }
+                    this.bytes_read = this.bytes_read.checked_add(count as u64).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
+                    })?;
+                    if this.bytes_read > this.max_bytes {
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "blob write exceeds expected length",
+                        )));
+                    }
+                    this.hasher.update(limited.filled());
+                    count
                 }
-                this.bytes_read = this.bytes_read.checked_add(count as u64).ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
-                })?;
-                if this.bytes_read > this.max_bytes {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "blob write exceeds expected length",
-                    )));
-                }
-                this.hasher.update(limited.filled());
-                drop(limited);
-                buffer.advance(count);
-                Poll::Ready(Ok(()))
             }
-        }
+        };
+        buffer.advance(count);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -946,32 +948,34 @@ impl AsyncRead for HashingOwnedReader {
             )));
         }
 
-        let initialized = buffer.initialize_unfilled_to(allowed);
-        let mut limited = ReadBuf::new(initialized);
-        match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Ready(Ok(())) => {
-                let count = limited.filled().len();
-                if count == 0 {
-                    this.saw_eof = true;
-                    return Poll::Ready(Ok(()));
+        let count = {
+            let initialized = buffer.initialize_unfilled_to(allowed);
+            let mut limited = ReadBuf::new(initialized);
+            match Pin::new(&mut *this.inner).poll_read(cx, &mut limited) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {
+                    let count = limited.filled().len();
+                    if count == 0 {
+                        this.saw_eof = true;
+                        return Poll::Ready(Ok(()));
+                    }
+                    this.bytes_read = this.bytes_read.checked_add(count as u64).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
+                    })?;
+                    if this.bytes_read > this.max_bytes {
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "blob read exceeds authorized length",
+                        )));
+                    }
+                    this.hasher.update(limited.filled());
+                    count
                 }
-                this.bytes_read = this.bytes_read.checked_add(count as u64).ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "byte count overflow")
-                })?;
-                if this.bytes_read > this.max_bytes {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "blob read exceeds authorized length",
-                    )));
-                }
-                this.hasher.update(limited.filled());
-                drop(limited);
-                buffer.advance(count);
-                Poll::Ready(Ok(()))
             }
-        }
+        };
+        buffer.advance(count);
+        Poll::Ready(Ok(()))
     }
 }
 
