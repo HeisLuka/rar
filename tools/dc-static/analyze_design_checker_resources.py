@@ -649,6 +649,56 @@ def shared_record_target_headers(pe: pefile.PE, path: Path, record_arrays: list[
     return out
 
 
+def classify_x86_dword_occurrence(path: Path, offset: int) -> dict:
+    """Classify common 32-bit x86 encodings where a DWORD begins at offset."""
+    data = path.read_bytes()
+    start = max(0, offset - 8)
+    end = min(len(data), offset + 12)
+    context = data[start:end]
+    pattern = "unknown_or_data"
+
+    if offset >= 2:
+        prefix2 = data[offset - 2 : offset]
+        if prefix2 == b"\xFF\x15":
+            pattern = "call_abs_mem_ff15"
+        elif prefix2 == b"\xFF\x25":
+            pattern = "jmp_abs_mem_ff25"
+        elif len(prefix2) == 2 and prefix2[0] in {0x8B, 0x89, 0x8D, 0x80, 0x81, 0x83, 0xC7} and (prefix2[1] & 0xC7) == 0x05:
+            pattern = f"abs_disp32_opcode_{prefix2[0]:02x}_{prefix2[1]:02x}"
+
+    if pattern == "unknown_or_data" and offset >= 1:
+        opcode = data[offset - 1]
+        if opcode == 0x68:
+            pattern = "push_imm32_68"
+        elif 0xB8 <= opcode <= 0xBF:
+            pattern = f"mov_reg_imm32_{opcode:02x}"
+        elif opcode == 0xA1:
+            pattern = "mov_eax_moffs32_a1"
+        elif opcode == 0xA3:
+            pattern = "mov_moffs32_eax_a3"
+
+    return {
+        "pattern": pattern,
+        "context_start_offset": start,
+        "dword_offset_in_context": offset - start,
+        "context_hex": context.hex(),
+    }
+
+
+def attach_x86_occurrence_context(path: Path, rows: list[dict]) -> list[dict]:
+    return [
+        {**row, "x86_context": classify_x86_dword_occurrence(path, int(row["offset"]))}
+        for row in rows
+    ]
+
+
+def occurrence_pattern_counts(rows: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        counts[row.get("x86_context", {}).get("pattern", "missing")] += 1
+    return dict(sorted(counts.items()))
+
+
 def imported_iat_raw_occurrences(
     pe: pefile.PE, path: Path, iat_map: dict[int, str]
 ) -> list[dict]:
@@ -1101,6 +1151,9 @@ def main() -> int:
     checker_cluster_base_pointers = cluster_base_pointer_rows(
         pe, pe_path, checker_pointer_tables
     )
+    checker_cluster_base_x86_context = attach_x86_occurrence_context(
+        pe_path, checker_cluster_base_pointers
+    )
     checker_cluster_base_occurrence_instructions = pointer_occurrence_instructions(
         pe, instructions, checker_cluster_base_pointers
     )
@@ -1120,6 +1173,9 @@ def main() -> int:
     )
     loader_iat_raw_occurrences = imported_iat_raw_occurrences(
         pe, pe_path, loader_iat
+    )
+    loader_iat_raw_x86_context = attach_x86_occurrence_context(
+        pe_path, loader_iat_raw_occurrences
     )
     loader_iat_occurrence_instructions = pointer_occurrence_instructions(
         pe, instructions, loader_iat_raw_occurrences
@@ -1176,6 +1232,8 @@ def main() -> int:
             "checker_fixed_stride_records": checker_fixed_records,
             "checker_shared_record_target_headers": checker_shared_target_headers,
             "checker_cluster_base_pointers": checker_cluster_base_pointers,
+            "checker_cluster_base_x86_context": checker_cluster_base_x86_context,
+            "checker_cluster_base_x86_pattern_counts": occurrence_pattern_counts(checker_cluster_base_x86_context),
             "checker_cluster_base_occurrence_instructions": checker_cluster_base_occurrence_instructions,
             "checker_cluster_base_slot_code_refs": checker_cluster_base_slot_code_refs,
             "loader_import_iat": [
@@ -1183,6 +1241,8 @@ def main() -> int:
                 for va, name in sorted(loader_iat.items())
             ],
             "loader_iat_raw_occurrences": loader_iat_raw_occurrences,
+            "loader_iat_raw_x86_context": loader_iat_raw_x86_context,
+            "loader_iat_raw_x86_pattern_counts": occurrence_pattern_counts(loader_iat_raw_x86_context),
             "loader_iat_occurrence_instructions": loader_iat_occurrence_instructions,
             "loader_import_thunks": [
                 {"thunk_va": f"0x{va:08X}", "target": name}
@@ -1248,7 +1308,9 @@ def main() -> int:
         f"- second-order .text occurrences bound to instructions: {sum(1 for row in checker_cluster_base_occurrence_instructions if row['containing_instruction'])}",
         f"- code refs to second-order data slots: {len(checker_cluster_base_slot_code_refs)}",
         f"- loader API imports: {len(loader_iat)}",
+        f"- checker array-base x86 occurrence patterns: {occurrence_pattern_counts(checker_cluster_base_x86_context)}",
         f"- raw .text IAT occurrences: {len(loader_iat_raw_occurrences)}",
+        f"- raw .text IAT x86 patterns: {occurrence_pattern_counts(loader_iat_raw_x86_context)}",
         f"- raw IAT occurrences bound to instructions: {sum(1 for row in loader_iat_occurrence_instructions if row['containing_instruction'])}",
         f"- loader import thunks: {len(loader_thunks)}",
         f"- loader API call sites: {len(loader_calls)}",
@@ -1305,7 +1367,13 @@ def main() -> int:
                 ),
                 "checker_cluster_base_slot_code_refs": len(checker_cluster_base_slot_code_refs),
                 "loader_imports": len(loader_iat),
+                "checker_cluster_base_x86_patterns": occurrence_pattern_counts(
+                    checker_cluster_base_x86_context
+                ),
                 "loader_iat_raw_occurrences": len(loader_iat_raw_occurrences),
+                "loader_iat_raw_x86_patterns": occurrence_pattern_counts(
+                    loader_iat_raw_x86_context
+                ),
                 "loader_iat_occurrences_bound_to_instructions": sum(
                     1 for row in loader_iat_occurrence_instructions
                     if row["containing_instruction"]
