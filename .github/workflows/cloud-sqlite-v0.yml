@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/chaptera-server/src/sqlite_store.rs"
       - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/tests/sqlite_crash_boundary.rs"
       - "apps/chaptera-server/Cargo.toml"
       - "docs/sqlite-single-host-v0.md"
       - ".github/workflows/cloud-sqlite-v0.yml"
@@ -28,3 +29,5 @@ jobs:
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run SQLite adapter tests
         run: 'cargo test -p chaptera-server sqlite_store::'
+      - name: Run process crash durability drill
+        run: cargo test -p chaptera-server --test sqlite_crash_boundary -- --nocapture
