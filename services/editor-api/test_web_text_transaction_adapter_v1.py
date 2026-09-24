@@ -121,6 +121,21 @@ class WebTextTransactionAdapterV1Tests(unittest.TestCase):
             )
         self.assertEqual("invalid_browser_text_intent", caught.exception.code)
 
+    def test_optional_causal_dependency_may_be_omitted(self):
+        base = project_for(core_state("ABC"))
+        request = browser_request(
+            "sha256:" + "b" * 64,
+            start=1,
+            end=2,
+            replacement="X",
+        )
+        request.pop("depends_on_client_operation_id")
+        lowered, _ = lower_browser_story_range_intent_v1(
+            browser_request=request,
+            base_project=base,
+        )
+        self.assertIsNone(lowered["depends_on_client_operation_id"])
+
     def test_server_derives_before_and_normalizes_external_newlines(self):
         base = project_for(core_state("ABC"))
         request = browser_request(
