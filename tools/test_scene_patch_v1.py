@@ -1,9 +1,52 @@
 #!/usr/bin/env python3
 import copy
 import unittest
-from render_scene_v1 import compile_render_scene
-from scene_patch_v1 import diff_render_scenes, apply_patch
+
+from render_bench_v1 import shape_workload
+from render_scene_v1 import compile_render_scene, hash_id
+from scene_patch_v1 import (
+    PRIMITIVE_KINDS,
+    apply_patch,
+    diff_render_scenes,
+)
 from test_render_scene_v1 import SRC
+
+def _legacy_atoms_for_node(scene,node_id):
+    out={kind:[] for kind in PRIMITIVE_KINDS}
+    for kind in PRIMITIVE_KINDS:
+        for atom in scene["primitives"][kind]:
+            if atom.get("node_id")==node_id:
+                out[kind].append(copy.deepcopy(atom))
+    return out
+
+def _legacy_diff_render_scenes(base,target):
+    base_nodes={x["node_id"]:x for x in base["atom_map"]}
+    target_nodes={x["node_id"]:x for x in target["atom_map"]}
+    removed=sorted(set(base_nodes)-set(target_nodes))
+    upserts=[]
+    for node_id in sorted(target_nodes):
+        base_atoms=_legacy_atoms_for_node(base,node_id) if node_id in base_nodes else None
+        target_atoms=_legacy_atoms_for_node(target,node_id)
+        if base_atoms!=target_atoms:
+            upserts.append({"node_id":node_id,"primitives":target_atoms})
+    patch={
+        "patch_version":"chaptera.scene-patch.v1",
+        "base_revision":base["scene_revision"],
+        "target_revision":target["scene_revision"],
+        "base_render_scene_id":base["render_scene_id"],
+        "target_render_scene_id":target["render_scene_id"],
+        "removed_nodes":removed,
+        "upsert_nodes":upserts,
+        "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
+        "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "order_deltas": None if (base["order_authority"],base["paint_seq"])==(target["order_authority"],target["paint_seq"]) else {
+            "order_authority":target["order_authority"],
+            "paint_seq":copy.deepcopy(target["paint_seq"]),
+        },
+        "diagnostics": None if base["diagnostics"]==target["diagnostics"] else copy.deepcopy(target["diagnostics"]),
+    }
+    patch["patch_id"]=hash_id(patch)
+    return patch
 
 class ScenePatchTests(unittest.TestCase):
     def test_one_node_move_is_bounded_and_equivalent_to_full_compile(self):
@@ -22,6 +65,40 @@ class ScenePatchTests(unittest.TestCase):
         applied=apply_patch(base,patch)
         self.assertEqual(full,applied)
         self.assertEqual(-25400,applied["primitives"]["rects"][0]["bounds"]["x"])
+
+    def test_indexed_diff_matches_legacy_patch_semantics(self):
+        before=shape_workload(64,pages=4,off_page=True,label="legacy-equivalence")
+        after=copy.deepcopy(before)
+        after["scene_revision"]="sha256:"+"8"*64
+        after["nodes"][0]["bounds"]["x"]-=127000
+        base=compile_render_scene(before)
+        target=compile_render_scene(after)
+        self.assertEqual(
+            _legacy_diff_render_scenes(base,target),
+            diff_render_scenes(base,target),
+        )
+
+    def test_index_visits_each_primitive_once_per_scene(self):
+        before=shape_workload(137,pages=3,off_page=True,label="index-visits")
+        after=copy.deepcopy(before)
+        after["scene_revision"]="sha256:"+"7"*64
+        after["nodes"][0]["bounds"]["x"]-=127000
+        base=compile_render_scene(before)
+        target=compile_render_scene(after)
+        metrics={}
+        patch=diff_render_scenes(base,target,metrics=metrics)
+        base_primitives=sum(len(base["primitives"][kind]) for kind in PRIMITIVE_KINDS)
+        target_primitives=sum(len(target["primitives"][kind]) for kind in PRIMITIVE_KINDS)
+        self.assertEqual(base_primitives,metrics["base_primitive_visits"])
+        self.assertEqual(target_primitives,metrics["target_primitive_visits"])
+        self.assertEqual(base_primitives+target_primitives,metrics["primitive_visits_total"])
+        self.assertEqual(len(target["atom_map"]),metrics["node_comparisons"])
+        self.assertEqual(1,metrics["changed_node_count"])
+        self.assertGreater(
+            metrics["legacy_repeated_scan_primitive_visits"],
+            metrics["primitive_visits_total"]*50,
+        )
+        self.assertEqual(target,apply_patch(base,patch))
 
     def test_multi_page_interleaved_node_ids_preserve_compiler_order(self):
         before=copy.deepcopy(SRC)
