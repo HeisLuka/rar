@@ -12,7 +12,8 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
-\nfrom authored_stack_v1 import reorder_authored_lane, validate_authored_lane
+
+from authored_stack_v1 import reorder_authored_lane, validate_authored_lane
 
 
 MAX_SAFE_EMU = 9_007_199_254_740_991
