@@ -59,7 +59,7 @@ class PictureResizePlanV1Tests(unittest.TestCase):
         for pointer in (
             PointEmu(0, 150),
             PointEmu(-1, 100),
-            PointEmu(100, 100),
+            PointEmu(100, 0),
         ):
             with self.subTest(pointer=pointer):
                 with self.assertRaises(PictureResizePlanError):
