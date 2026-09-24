@@ -36,7 +36,10 @@ def fetch(url,timeout):
 def filename_from(text,url=""):
     name=Path(urlparse(url).path).name
     if name.casefold().endswith(".pub"): return name
-    m=FILE_RE.search(html.unescape(text or ""))
+    cleaned=re.sub(r"\\s+"," ",html.unescape(text or "")).strip(" .,:;()[]{}")
+    if cleaned.casefold().endswith(".pub") and len(cleaned)<=180:
+        return cleaned
+    m=FILE_RE.search(cleaned)
     return m.group(1).strip(".,;:()[]{}") if m else ""
 
 def link_candidate(href,text):
