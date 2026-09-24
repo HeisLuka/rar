@@ -201,7 +201,6 @@ fn frame_end_scalars(
         .collect()
 }
 
-
 fn shaped_flow_input(
     fixture: &Fixture,
     flow: &chaptera_layout_invalidation::linked_flow::LinkedStoryFlowV1,
@@ -243,8 +242,8 @@ fn shaped_flow_input(
                 })
                 .collect::<Vec<_>>();
 
-            let measured_width = u64::try_from(line.measured_width_emu)
-                .expect("non-negative bounded line width");
+            let measured_width =
+                u64::try_from(line.measured_width_emu).expect("non-negative bounded line width");
             let expected_width = u64::try_from(
                 fixture
                     .benchmark_harness
@@ -277,12 +276,9 @@ fn shaped_flow_input(
         source_hash: fixture.source.sha256.clone(),
         font_size_emu: 250_000,
         line_height_emu: fixture.benchmark_harness.synthetic_line_height_emu,
-        story_overset: flow
-            .frames
-            .last()
-            .is_some_and(|frame| {
-                frame.output_boundary.continuation.terminal == ContinuationTerminalV1::Overset
-            }),
+        story_overset: flow.frames.last().is_some_and(|frame| {
+            frame.output_boundary.continuation.terminal == ContinuationTerminalV1::Overset
+        }),
         lines,
     }
 }
@@ -510,15 +506,18 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
     }
 
     let baseline_receipt = build_receipt_v1(&baseline_shaped).expect("baseline receipt");
-    let incremental_receipt =
-        build_receipt_v1(&incremental_shaped).expect("incremental receipt");
+    let incremental_receipt = build_receipt_v1(&incremental_shaped).expect("incremental receipt");
     let clean_receipt = build_receipt_v1(&clean_shaped).expect("clean receipt");
 
     assert_eq!(incremental_receipt, clean_receipt);
     assert_ne!(baseline_receipt.flow_id, incremental_receipt.flow_id);
     assert_eq!(incremental_receipt.invariants.reshaping_calls, 0);
     assert!(!incremental_receipt.invariants.raw_text_emitted);
-    assert!(incremental_receipt.invariants.story_global_clusters_preserved);
+    assert!(
+        incremental_receipt
+            .invariants
+            .story_global_clusters_preserved
+    );
     assert!(incremental_receipt.invariants.line_order_preserved);
 
     let reused_frame_id =
@@ -538,5 +537,4 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
         frame_line_receipts(&baseline_receipt, &changed_frame_id),
         frame_line_receipts(&incremental_receipt, &changed_frame_id)
     );
-
 }
