@@ -1,0 +1,50 @@
+name: Layout prepared story modelcheck
+
+on:
+  pull_request:
+    paths:
+      - "tools/layout_prepared_story_modelcheck.py"
+      - "tools/validate_layout_prepared_story_receipt.py"
+      - ".github/workflows/layout-prepared-story-modelcheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  modelcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run source-free prepared story modelcheck
+        run: |
+          python tools/layout_prepared_story_modelcheck.py             --output target/layout-prepared-story/layout-prepared-story-receipt.json
+      - name: Validate source-free receipt
+        run: |
+          python tools/validate_layout_prepared_story_receipt.py             target/layout-prepared-story/layout-prepared-story-receipt.json
+      - name: Show receipt summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("target/layout-prepared-story/layout-prepared-story-receipt.json")
+          d = json.loads(p.read_text())
+          print(json.dumps({
+              "schema_version": d["schema_version"],
+              "task": d["task"],
+              "case_count": d["case_count"],
+              "all_equivalent": d["all_equivalent"],
+              "stale_text_rejected": d["stale_text_rejected"],
+              "environment_mismatch_rejected": d["environment_mismatch_rejected"],
+              "canonical_engine_proof": d["scope"]["canonical_engine_proof"],
+          }, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: layout-prepared-story-modelcheck
+          path: target/layout-prepared-story/layout-prepared-story-receipt.json
+          if-no-files-found: error
