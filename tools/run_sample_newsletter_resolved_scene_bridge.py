@@ -107,6 +107,7 @@ def project_for_scene(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     current_graph = apply_project_to_resolved_graph(graph, project)
     scene = project_resolved_graph_scene(current_graph, context={
+        "schema_version": "chaptera.pub-projection-context.v1",
         "master_relations": [],
         "cmo_relations": [],
     })

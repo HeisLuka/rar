@@ -1,0 +1,15 @@
+[package]
+name = "pub-master-projection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-model = { path = "../pub-model" }
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "master-projection-producer"
+path = "src/main.rs"

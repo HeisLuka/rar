@@ -36,5 +36,6 @@ pub use fragment::{
 };
 
 pub use projection_context::{
-    CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1,
+    CmoProjectionRelationV1, MasterProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1,
+    PubProjectionContextV1,
 };
