@@ -14,3 +14,10 @@ The receipt records stable payload identity, logical bytes, materialized/shared 
 The summary is recomputed from event data and reports per-payload-class unique logical bytes, materialized bytes, avoidable duplicate bytes, and a materialization amplification ratio. This is a diagnostic ratio, not a fidelity/performance score.
 
 The checked-in fixture is deliberately `synthetic_contract_fixture` and has `technology_decision_allowed=false`. It proves the public receipt/validator only. ENGINE-COPY-LEDGER-01 remains open until an authorized canonical runtime produces a sanitized `real_pub_source_free` receipt across representative real PUB workloads.
+
+
+## Public-safety and optimization-spine integration
+
+The receipt schema is fail-closed on unexpected fields in the receipt envelope, producer/runtime identity, equivalence/evidence blocks and every materialization event. A local/private producer must extend the versioned schema deliberately rather than attaching source paths, document text, raw bytes or private ad-hoc metadata to a public receipt.
+
+`optimization_receipt_v1.copy_ledger_measurement()` normalizes a validated ledger into the shared `chaptera.optimization.measurement.v1` spine. Copy/materialization optimizations therefore use the same exact workload/runtime compatibility checks, metric-specific regression budgets, correctness/fidelity fence and real-corpus authority rules as other Chaptera optimization work. There is no separate zero-copy score or comparator.
