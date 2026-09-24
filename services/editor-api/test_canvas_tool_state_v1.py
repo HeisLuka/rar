@@ -89,6 +89,23 @@ class CanvasToolStateV1Tests(unittest.TestCase):
                 token="g2",
             )
 
+    def test_reactivating_same_tool_preserves_active_gesture(self):
+        state = activate_canvas_tool_v1(
+            default_canvas_tool_state_v1(),
+            tool=RECTANGLE_CREATE_TOOL_V1,
+        ).state
+        state = start_pointer_gesture_v1(
+            state,
+            tool=RECTANGLE_CREATE_TOOL_V1,
+            token="draw-stays",
+        ).state
+        transition = activate_canvas_tool_v1(
+            state,
+            tool=RECTANGLE_CREATE_TOOL_V1,
+        )
+        self.assertEqual("no_change", transition.action)
+        self.assertEqual(state, transition.state)
+
     def test_switch_tool_cancels_gesture_without_commit(self):
         state = activate_canvas_tool_v1(
             default_canvas_tool_state_v1(),
