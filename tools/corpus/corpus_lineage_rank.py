@@ -76,9 +76,50 @@ def load_rows(cohorts: list[tuple[str, Path]]) -> list[dict]:
     return rows
 
 
+def stream_delta_metrics(left: dict, right: dict) -> dict:
+    left_streams = {str(x.get("path")): x for x in left.get("streams") or []}
+    right_streams = {str(x.get("path")): x for x in right.get("streams") or []}
+    changed = []
+    added = []
+    removed = []
+    for path in sorted(set(left_streams) | set(right_streams)):
+        if path not in left_streams:
+            added.append(path)
+        elif path not in right_streams:
+            removed.append(path)
+        else:
+            a, b = left_streams[path], right_streams[path]
+            if a.get("len") != b.get("len") or a.get("sha256") != b.get("sha256"):
+                changed.append(path)
+    total = len(changed) + len(added) + len(removed)
+    left_len = int(left.get("byte_len") or 0)
+    right_len = int(right.get("byte_len") or 0)
+    denominator = max(left_len, right_len, 1)
+    return {
+        "changed_stream_count": total,
+        "changed_stream_paths": changed,
+        "added_stream_paths": added,
+        "removed_stream_paths": removed,
+        "byte_len_delta": abs(left_len - right_len),
+        "byte_len_relative_delta": round(abs(left_len - right_len) / denominator, 6),
+        "path_fingerprint_equal": (
+            left.get("path_fingerprint_sha256") == right.get("path_fingerprint_sha256")
+        ),
+        "topology_fingerprint_equal": (
+            left.get("topology_fingerprint_sha256")
+            == right.get("topology_fingerprint_sha256")
+        ),
+        "logical_streams_identical": (
+            total == 0 and left_streams.keys() == right_streams.keys()
+        ),
+    }
+
+
 def pair_score(left: dict, right: dict, similarity: float) -> tuple[int, dict, dict]:
     left_name, right_name = best_name(left), best_name(right)
-    exact_name = bool(left_name and right_name and left_name.casefold() == right_name.casefold())
+    exact_name = bool(
+        left_name and right_name and left_name.casefold() == right_name.casefold()
+    )
     same_normalized_stem = bool(
         normalized_stem(left_name)
         and normalized_stem(left_name) == normalized_stem(right_name)
@@ -87,27 +128,48 @@ def pair_score(left: dict, right: dict, similarity: float) -> tuple[int, dict, d
     same_media_id = left_media == right_media
     left_carrier, right_carrier = carrier_pattern(left), carrier_pattern(right)
     carrier_equal = left_carrier == right_carrier
+    delta = stream_delta_metrics(left, right)
+    changed = delta["changed_stream_count"]
+    relative_delta = delta["byte_len_relative_delta"]
 
     breakdown = {
-        "structural_identity": 20,
-        "cross_cohort": 15,
+        "structural_identity": 10,
+        "cross_cohort": 10,
         "distinct_sha": 5 if left["sha256"] != right["sha256"] else 0,
         "filename": (
-            40 if exact_name
-            else 34 if same_normalized_stem
-            else 28 if similarity >= 0.95
-            else 22 if similarity >= 0.85
-            else 16 if similarity >= 0.75
-            else 10
+            25 if exact_name
+            else 22 if same_normalized_stem
+            else 18 if similarity >= 0.95
+            else 14 if similarity >= 0.85
+            else 10 if similarity >= 0.75
+            else 6
         ),
-        "source_media_independence": 12 if not same_media_id else 2,
-        "carrier_evidence": 8 if carrier_equal else 5,
+        "source_media_independence": 10 if not same_media_id else 2,
+        "carrier_evidence": 5 if carrier_equal else 3,
+        "path_identity": 5 if delta["path_fingerprint_equal"] else 0,
+        "topology_identity": 10 if delta["topology_fingerprint_equal"] else 0,
+        "stream_delta_compactness": (
+            20 if changed == 0
+            else 16 if changed == 1
+            else 12 if changed == 2
+            else 8 if changed <= 4
+            else 4 if changed <= 8
+            else 0
+        ),
+        "byte_length_proximity": (
+            5 if relative_delta == 0
+            else 4 if relative_delta < 0.01
+            else 3 if relative_delta < 0.05
+            else 1 if relative_delta < 0.20
+            else 0
+        ),
     }
     flags = {
         "exact_name": exact_name,
         "same_normalized_stem": same_normalized_stem,
         "same_media_id": same_media_id,
         "carrier_equal": carrier_equal,
+        **delta,
     }
     return sum(breakdown.values()), breakdown, flags
 
@@ -156,9 +218,11 @@ def build_candidates(rows: list[dict], cluster_max: int | None) -> list[dict]:
                         **flags,
                         "inference": "lineage_candidate_only",
                         "next_discriminator": (
-                            "version/header + source-media generation; then byte/content delta"
+                            "physical CFB header/FAT/directory/sector-layout diff"
+                            if flags["logical_streams_identical"]
+                            else "exact changed-stream byte diff + source-media generation"
                             if flags["exact_name"]
-                            else "source provenance + byte/content delta before semantic/native testing"
+                            else "source provenance + changed-stream byte diff before semantic/native testing"
                         ),
                     }
                 )
@@ -209,7 +273,7 @@ def connected_families(pairs: list[dict], by_sha: dict[str, dict]) -> list[dict]
         ]
         names = sorted(
             {best_name(by_sha[s]) for s in component if best_name(by_sha[s])},
-            key=str.casefold,
+            key=lambda value: (value.casefold(), value),
         )
         families.append(
             {
@@ -248,6 +312,12 @@ def summarize(rows: list[dict], canonical: list[dict], expanded_only: list[dict]
         "canonical_exact_name_pairs": sum(p["exact_name"] for p in canonical),
         "canonical_same_normalized_stem_pairs": sum(p["same_normalized_stem"] for p in canonical),
         "canonical_carrier_equal_pairs": sum(p["carrier_equal"] for p in canonical),
+        "canonical_logical_streams_identical_pairs": sum(
+            p["logical_streams_identical"] for p in canonical
+        ),
+        "canonical_exact_name_logical_streams_identical_pairs": sum(
+            p["exact_name"] and p["logical_streams_identical"] for p in canonical
+        ),
         "canonical_cohort_pair_counts": {
             "__".join(key): value for key, value in sorted(cohort_pairs.items())
         },
@@ -305,6 +375,10 @@ def self_test() -> int:
             "size_bucket_fingerprint_sha256": fp,
             "carrier_flags": {"contents": carrier},
             "family_hint": "cfb_other",
+            "byte_len": 4096,
+            "path_fingerprint_sha256": "p" * 64,
+            "topology_fingerprint_sha256": "t" * 64,
+            "streams": [{"path": "/Contents", "len": 100, "sha256": "s" * 64}],
         }
 
     rows = [
@@ -315,7 +389,7 @@ def self_test() -> int:
     pairs = build_candidates(rows, CANONICAL_CLUSTER_MAX)
     assert len(pairs) == 1, pairs
     assert pairs[0]["exact_name"] is True
-    assert pairs[0]["rank_score"] == 100
+    assert pairs[0]["rank_score"] == 105
 
     large = [
         row(f"{i:064x}", "a" if i % 2 == 0 else "b", "SAME.PUB", "e" * 64)
@@ -323,6 +397,16 @@ def self_test() -> int:
     ]
     assert build_candidates(large, CANONICAL_CLUSTER_MAX) == []
     assert len(build_candidates(large, None)) > 0
+
+    case_rows = [
+        row("d" * 64, "a", "growth7.pub", "c" * 64),
+        row("e" * 64, "b", "GROWTH7.PUB", "c" * 64),
+    ]
+    case_pairs = build_candidates(case_rows, CANONICAL_CLUSTER_MAX)
+    case_families = connected_families(
+        case_pairs, {r["sha256"]: r for r in case_rows}
+    )
+    assert case_families[0]["names"] == ["GROWTH7.PUB", "growth7.pub"]
     print("corpus lineage rank self-test ok")
     return 0
 
