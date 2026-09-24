@@ -21,7 +21,7 @@ jobs:
       - name: Download exact PUBCONV 12.0.4518.1014 artifact
         uses: actions/download-artifact@v4
         with:
-          name: pubconv-4518-35983938022
+          name: pubconv-x12-30247-35983938022
           path: acquired
           github-token: ${{ github.token }}
           run-id: 35983938022
