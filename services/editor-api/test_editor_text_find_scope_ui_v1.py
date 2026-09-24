@@ -105,16 +105,17 @@ class EditorTextFindScopeUIV1Tests(unittest.TestCase):
     def test_scoped_replace_request_uses_scoped_snapshot_only(self):
         text="one XX one YY one"
         mode=enter_find_in_selection_v1(
-            panel=set_replacement_text_v1(panel(text),"ONE"),
+            panel=panel(text),
             selection=selection(text,4,13),
             domain=domain(text),
             story_text=text,
         )
+        navigated=build_find_navigation_jump_v1(
+            panel=mode.panel,direction="next",navigation_origin=4
+        )[0]
         mode=type(mode)(
             protocol_version=mode.protocol_version,
-            panel=build_find_navigation_jump_v1(
-                panel=mode.panel,direction="next",navigation_origin=4
-            )[0],
+            panel=set_replacement_text_v1(navigated,"ONE"),
             scope=mode.scope,status=mode.status,status_reason=mode.status_reason
         )
         req=build_scoped_replace_request_v1(
