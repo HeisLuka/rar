@@ -543,26 +543,22 @@ fn is_unique_local(ip: Ipv6Addr) -> bool {
 }
 
 #[derive(Clone)]
+enum EnvironmentSource {
+    Process,
+    Fixed(BTreeMap<String, Vec<u8>>),
+}
+
+#[derive(Clone)]
 pub struct SecretResolver {
-    environment: BTreeMap<String, Vec<u8>>,
+    environment: EnvironmentSource,
     credentials_directory: Option<PathBuf>,
 }
 
 impl SecretResolver {
     pub fn from_process() -> Self {
-        let environment = env::vars_os()
-            .filter_map(|(key, value)| {
-                Some((
-                    key.into_string().ok()?,
-                    value.into_string().ok()?.into_bytes(),
-                ))
-            })
-            .collect();
-        let credentials_directory = env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
-
         Self {
-            environment,
-            credentials_directory,
+            environment: EnvironmentSource::Process,
+            credentials_directory: env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from),
         }
     }
 
@@ -571,7 +567,7 @@ impl SecretResolver {
         credentials_directory: Option<PathBuf>,
     ) -> Self {
         Self {
-            environment,
+            environment: EnvironmentSource::Fixed(environment),
             credentials_directory,
         }
     }
@@ -584,17 +580,7 @@ impl SecretResolver {
         validate_secret_ref(mode, reference)?;
 
         match reference {
-            SecretRef::Env { name } => self
-                .environment
-                .get(name)
-                .cloned()
-                .ok_or_else(|| {
-                    ConfigError::new(
-                        "secret_env_missing",
-                        format!("required secret environment variable {name} is missing"),
-                    )
-                })
-                .and_then(SecretValue::new),
+            SecretRef::Env { name } => self.resolve_environment_secret(name),
             SecretRef::File { path } => read_secret_file(mode, path),
             SecretRef::Systemd { name } => {
                 let directory = self.credentials_directory.as_ref().ok_or_else(|| {
@@ -606,6 +592,23 @@ impl SecretResolver {
                 read_secret_file(mode, &directory.join(name))
             }
         }
+    }
+
+    fn resolve_environment_secret(&self, name: &str) -> Result<SecretValue, ConfigError> {
+        let bytes = match &self.environment {
+            EnvironmentSource::Process => env::var_os(name)
+                .and_then(|value| value.into_string().ok())
+                .map(String::into_bytes),
+            EnvironmentSource::Fixed(environment) => environment.get(name).cloned(),
+        }
+        .ok_or_else(|| {
+            ConfigError::new(
+                "secret_env_missing",
+                format!("required secret environment variable {name} is missing"),
+            )
+        })?;
+
+        SecretValue::new(bytes)
     }
 
     pub fn resolve_key_ring(
