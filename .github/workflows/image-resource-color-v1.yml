@@ -1,0 +1,34 @@
+name: Image Resource Color V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/image_resource_color_v1.py"
+      - "services/editor-api/test_image_resource_color_v1.py"
+      - "services/editor-api/run_image_resource_color_receipt.py"
+      - ".github/workflows/image-resource-color-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run bounded PNG/JPEG color metadata tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_image_resource_color_v1
+      - name: Emit source-neutral color disposition receipt
+        working-directory: services/editor-api
+        run: mkdir -p ../../target/image-resource-color && python run_image_resource_color_receipt.py | tee ../../target/image-resource-color/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-resource-color-${{ github.run_id }}
+          path: target/image-resource-color/receipt.json
+          if-no-files-found: error
