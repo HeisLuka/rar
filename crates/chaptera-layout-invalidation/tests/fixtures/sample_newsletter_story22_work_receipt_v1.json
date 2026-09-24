@@ -1,0 +1,28 @@
+{
+  "schema": "chaptera.layout-invalidation-work-receipt.v1",
+  "source_sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+  "story_text_id": 22,
+  "clean_full_recomputed_frame_ids": [
+    "seq-330",
+    "seq-329",
+    "seq-331"
+  ],
+  "incremental_recomputed_frame_ids": [
+    "seq-330",
+    "seq-329"
+  ],
+  "reused_suffix_frame_ids": [
+    "seq-331"
+  ],
+  "clean_full_frame_count": 3,
+  "incremental_recomputed_frame_count": 2,
+  "reused_frame_count": 1,
+  "frame_resolve_work_reduction_permille": 333,
+  "exact_linked_flow_equivalence": true,
+  "exact_shaped_flow_equivalence": true,
+  "exact_fixed_run_equivalence": true,
+  "exact_scene_shard_equivalence": true,
+  "reshaping_calls_after_geometry_edit": 0,
+  "synthetic_typography": true,
+  "publisher_glyph_exact_claim": false
+}
