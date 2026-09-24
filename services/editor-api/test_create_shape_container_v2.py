@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import copy
+import pathlib
+import subprocess
+import sys
 import unittest
 
 from create_shape_container_v2 import (
@@ -92,6 +95,27 @@ def request(base_revision_id, *, destination_kind="page", placement=None, expect
 
 
 class CreateShapeContainerV2Tests(unittest.TestCase):
+    def test_revision_store_direct_loader_can_resolve_v2_siblings(self):
+        revision_store_path = pathlib.Path(__file__).with_name("revision_store.py").resolve()
+        repo_root = revision_store_path.parents[2]
+        code = (
+            "import importlib.util,sys;"
+            f"p={str(revision_store_path)!r};"
+            "s=importlib.util.spec_from_file_location('direct_revision_store_v2',p);"
+            "m=importlib.util.module_from_spec(s);"
+            "sys.modules[s.name]=m;"
+            "s.loader.exec_module(m);"
+            "assert hasattr(m.RevisionKernel,'commit_create_shape_v2')"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=repo_root,
+            env={},
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_page_create_appends_authored_stack_and_keeps_direct_page_parent(self):
         base = project()
         kernel = RevisionKernel()
