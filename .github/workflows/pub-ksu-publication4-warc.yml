@@ -20,6 +20,8 @@ jobs:
       WARC_OFFSET: "124818842"
       WARC_LENGTH: "27828"
       EXPECTED_CC_DIGEST: "5X3P2XRHDFR5DWVVSSDWT6QUQFDMHGJC"
+      EXPECTED_PAYLOAD_SHA256: "116f6aaad41dd5d3d49731b5d8363dbf6503cc13df2aadb7ea7afecf2e34f79f"
+      EXPECTED_PAYLOAD_SIZE: "67584"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
@@ -71,10 +73,20 @@ jobs:
           if not body.startswith(magic):
               raise SystemExit(f"payload is not OLE/CFB: {body[:16].hex()}")
 
-          cc_digest=base64.b32encode(hashlib.sha1(body).digest()).decode().rstrip("=")
-          expected=os.environ["EXPECTED_CC_DIGEST"]
-          if cc_digest != expected:
-              raise SystemExit(f"Common Crawl payload digest mismatch: {cc_digest} != {expected}")
+          body_sha1_b32=base64.b32encode(hashlib.sha1(body).digest()).decode().rstrip("=")
+          expected_cc=os.environ["EXPECTED_CC_DIGEST"]
+          warc_payload_digest=warc.get("warc-payload-digest")
+          if warc_payload_digest and warc_payload_digest.lower().startswith("sha1:"):
+              header_cc=warc_payload_digest.split(":",1)[1].upper()
+              if header_cc != expected_cc:
+                  raise SystemExit(f"WARC-Payload-Digest mismatch: {header_cc} != {expected_cc}")
+
+          body_sha256=hashlib.sha256(body).hexdigest()
+          expected_sha256=os.environ["EXPECTED_PAYLOAD_SHA256"]
+          if body_sha256 != expected_sha256:
+              raise SystemExit(f"Publication4 payload SHA-256 mismatch: {body_sha256} != {expected_sha256}")
+          if len(body) != int(os.environ["EXPECTED_PAYLOAD_SIZE"]):
+              raise SystemExit(f"Publication4 payload size mismatch: {len(body)}")
 
           Path("work/Publication4.pub").write_bytes(body)
           ole=olefile.OleFileIO("work/Publication4.pub")
@@ -89,8 +101,10 @@ jobs:
               "warc_offset":int(os.environ["WARC_OFFSET"]),
               "warc_length":int(os.environ["WARC_LENGTH"]),
               "http_status":status,
-              "common_crawl_payload_digest_sha1_base32":cc_digest,
-              "payload_sha256":hashlib.sha256(body).hexdigest(),
+              "common_crawl_index_digest_sha1_base32":expected_cc,
+              "warc_payload_digest":warc_payload_digest,
+              "raw_http_body_sha1_base32":body_sha1_b32,
+              "payload_sha256":body_sha256,
               "payload_size":len(body),
               "cfb_stream_count":len(streams),
               "publisher_carriers":{
