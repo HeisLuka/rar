@@ -2,11 +2,11 @@
 from __future__ import annotations
 import argparse, html, json, re, time
 from pathlib import Path
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-UA="rar-pub-symbol-sandbox/1.0 (public format research)"
+UA="rar-pub-symbol-sandbox/1.1 (public format research)"
 
 RECORDS=[
 ("2002","MSPUB.EXE","02603be3cc900d167aa4842f64320f8550c44d36cb149e0c824830f502d73fdc","MSPUBO.pdb","3F8AF3342"),
@@ -27,7 +27,10 @@ RECORDS=[
 ("2016","PUBCONV.DLL","404b5d21087b16eac74670f87b792799c33ecdbc1d1ebc5be9429c5db54777b8","pubconv.pdb","7B68ADABF0034D079D0C7003D36390E62"),
 ]
 
+TRIAGE_POSITIVE_CONTROL="a0a02694788266de5797199d0011ce6fcb21a8b65cb13595a760ddfc6ca13ca3"
+HYBRID_POSITIVE_CONTROL="2a84f2d82a4ddc30f3a16e2a93ed7f374119768d60f98bbd67a6d9a4f7377d79"
 SAMPLE_LINK_RE=re.compile(r'href=["\'](/(?:[0-9]{6}-[a-z0-9]+)(?:/[^"\']*)?)["\']',re.I)
+TITLE_RE=re.compile(r"<title[^>]*>(.*?)</title>",re.I|re.S)
 
 def fetch(url,timeout=20):
     q=Request(url,headers={"User-Agent":UA,"Accept":"text/html,application/xhtml+xml"})
@@ -38,7 +41,8 @@ def fetch(url,timeout=20):
             final=r.geturl()
             ctype=r.headers.get("Content-Type","")
         if len(raw)>4*1024*1024: raw=raw[:4*1024*1024]
-        return {"status":status,"final_url":final,"content_type":ctype,"body":raw.decode("utf-8","replace"),"error":None}
+        body=raw.decode("utf-8","replace")
+        return {"status":status,"final_url":final,"content_type":ctype,"body":body,"error":None}
     except HTTPError as e:
         try: raw=e.read(512*1024)
         except Exception: raw=b""
@@ -46,61 +50,113 @@ def fetch(url,timeout=20):
     except Exception as e:
         return {"status":None,"final_url":url,"content_type":"","body":"","error":f"{type(e).__name__}: {e}"}
 
+def title(body):
+    m=TITLE_RE.search(body)
+    return re.sub(r"\s+"," ",html.unescape(m.group(1))).strip() if m else ""
+
+def triage_probe(sha,timeout):
+    url="https://tria.ge/s?q="+quote("sha256:"+sha,safe="")
+    r=fetch(url,timeout); body=html.unescape(r["body"])
+    links=sorted(set(SAMPLE_LINK_RE.findall(body)))
+    markers={
+        "exact_hash_in_body":sha.lower() in body.lower(),
+        "sample_links":links[:20],
+        "reported_token":"Reported" in body,
+        "sample_id_header":"Sample ID" in body,
+        "no_results_token":any(x in body.lower() for x in ["no results","no reports","nothing found"]),
+        "title":title(body),"body_length":len(body),
+    }
+    return url,r,markers
+
+def hybrid_probe(sha,timeout):
+    url="https://www.hybrid-analysis.com/sample/"+sha
+    r=fetch(url,timeout); body=html.unescape(r["body"]); low=body.lower()
+    markers={
+        "exact_hash_in_body":sha.lower() in low,
+        "title":title(body),"body_length":len(body),
+        "antibot_marker":any(x in low for x in ["cloudflare","captcha","access denied","just a moment","cf-chl"]),
+        "analysis_title":"viewing online file analysis results for" in low,
+        "file_details":"file details" in low,
+        "sha256_label":"sha256" in low,
+        "pdb_pathway":"pdb pathway" in low,
+        "no_result_marker":any(x in low for x in ["not found","no analysis","no result"]),
+    }
+    return url,r,markers
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--out",type=Path,required=True)
-    ap.add_argument("--delay",type=float,default=.4)
+    ap.add_argument("--delay",type=float,default=.35)
     ap.add_argument("--timeout",type=float,default=20)
-    a=ap.parse_args()
-    a.out.mkdir(parents=True,exist_ok=True)
+    a=ap.parse_args(); a.out.mkdir(parents=True,exist_ok=True)
+
+    # Controls prove whether the public HTML response can actually distinguish a known-positive item.
+    tu,tr,tm=triage_probe(TRIAGE_POSITIVE_CONTROL,a.timeout)
+    hu,hr,hm=hybrid_probe(HYBRID_POSITIVE_CONTROL,a.timeout)
+    triage_control_ok=bool(tm["sample_links"] and tm["reported_token"])
+    hybrid_control_ok=bool((not hm["antibot_marker"]) and hm["analysis_title"] and hm["file_details"] and hm["sha256_label"])
+
+    controls={
+        "tria_ge":{"sha256":TRIAGE_POSITIVE_CONTROL,"url":tu,"status":tr["status"],"final_url":tr["final_url"],"error":tr["error"],**tm,"control_ok":triage_control_ok},
+        "hybrid_analysis":{"sha256":HYBRID_POSITIVE_CONTROL,"url":hu,"status":hr["status"],"final_url":hr["final_url"],"error":hr["error"],**hm,"control_ok":hybrid_control_ok},
+    }
+    time.sleep(a.delay)
+
     rows=[]
     for gen,module,sha,pdb,identity in RECORDS:
-        triage_url="https://tria.ge/s?q="+quote("sha256:"+sha,safe="")
-        t=fetch(triage_url,a.timeout)
-        tbody=html.unescape(t["body"])
-        t_links=sorted(set(SAMPLE_LINK_RE.findall(tbody)))
-        t_hash_present=sha.lower() in tbody.lower()
-        t_result="MATCH_PAGE" if t_hash_present and t_links else ("HASH_PRESENT_NO_SAMPLE_LINK" if t_hash_present else ("NO_MATCH_VISIBLE" if t["status"]==200 else "ERROR_OR_BLOCKED"))
-        rows.append({
-            "generation":gen,"module":module,"sha256":sha,"pdb":pdb,"codeview_identity":identity,
-            "surface":"tria.ge","query_url":triage_url,"http_status":t["status"],"final_url":t["final_url"],
-            "result":t_result,"exact_hash_in_body":t_hash_present,"sample_links":t_links[:20],
-            "body_has_pdb_name":pdb.lower() in tbody.lower(),"body_has_codeview_identity":identity.lower() in tbody.lower(),
-            "error":t["error"],
-        })
+        tu,tr,tm=triage_probe(sha,a.timeout)
+        if not triage_control_ok:
+            tres="SURFACE_UNCALIBRATED"
+        elif tm["sample_links"] and tm["reported_token"]:
+            tres="MATCH_PAGE"
+        elif tr["status"]==200:
+            tres="NO_MATCH_VISIBLE"
+        else:
+            tres="ERROR_OR_BLOCKED"
+        rows.append({"generation":gen,"module":module,"sha256":sha,"pdb":pdb,"codeview_identity":identity,
+                     "surface":"tria.ge","query_url":tu,"http_status":tr["status"],"final_url":tr["final_url"],
+                     "result":tres,"body_has_pdb_name":pdb.lower() in tr["body"].lower(),
+                     "body_has_codeview_identity":identity.lower() in tr["body"].lower(),"error":tr["error"],**tm})
         time.sleep(a.delay)
 
-        ha_url="https://www.hybrid-analysis.com/sample/"+sha
-        h=fetch(ha_url,a.timeout)
-        hbody=html.unescape(h["body"])
-        h_hash_present=sha.lower() in hbody.lower()
-        anti=any(x in hbody.lower() for x in ["cloudflare","captcha","access denied","just a moment"])
-        h_result="MATCH_PAGE" if h_hash_present and h["status"]==200 else ("ANTIBOT_OR_GATE" if anti else ("NO_PUBLIC_SAMPLE_PAGE" if h["status"] in (404,410) else ("NO_EXACT_HASH_VISIBLE" if h["status"]==200 else "ERROR_OR_BLOCKED")))
-        rows.append({
-            "generation":gen,"module":module,"sha256":sha,"pdb":pdb,"codeview_identity":identity,
-            "surface":"hybrid-analysis.com","query_url":ha_url,"http_status":h["status"],"final_url":h["final_url"],
-            "result":h_result,"exact_hash_in_body":h_hash_present,"sample_links":[],
-            "body_has_pdb_name":pdb.lower() in hbody.lower(),"body_has_codeview_identity":identity.lower() in hbody.lower(),
-            "body_has_pdb_pathway":"pdb pathway" in hbody.lower(),"antibot_marker":anti,"error":h["error"],
-        })
+        hu,hr,hm=hybrid_probe(sha,a.timeout)
+        if not hybrid_control_ok:
+            hres="SURFACE_UNCALIBRATED"
+        elif hm["analysis_title"] and hm["file_details"] and hm["sha256_label"] and hm["exact_hash_in_body"]:
+            hres="MATCH_PAGE"
+        elif hr["status"] in (404,410) or hm["no_result_marker"]:
+            hres="NO_PUBLIC_SAMPLE_PAGE"
+        elif hm["antibot_marker"]:
+            hres="ANTIBOT_OR_GATE"
+        else:
+            hres="NO_MATCH_VISIBLE"
+        rows.append({"generation":gen,"module":module,"sha256":sha,"pdb":pdb,"codeview_identity":identity,
+                     "surface":"hybrid-analysis.com","query_url":hu,"http_status":hr["status"],"final_url":hr["final_url"],
+                     "result":hres,"body_has_pdb_name":pdb.lower() in hr["body"].lower(),
+                     "body_has_codeview_identity":identity.lower() in hr["body"].lower(),"error":hr["error"],**hm})
         time.sleep(a.delay)
 
     positives=[r for r in rows if r["result"]=="MATCH_PAGE"]
     summary={
-        "schema":"pub-symbol-sandbox-hash-probe.v1",
+        "schema":"pub-symbol-sandbox-hash-probe.v2",
         "exact_module_builds":len(RECORDS),
         "surface_queries":len(rows),
+        "controls":controls,
+        "calibrated_surfaces":{"tria.ge":triage_control_ok,"hybrid-analysis.com":hybrid_control_ok},
         "positive_rows":len(positives),
         "positive_builds":len({r["sha256"] for r in positives}),
         "tria_ge_matches":sum(r["surface"]=="tria.ge" and r["result"]=="MATCH_PAGE" for r in rows),
         "hybrid_analysis_matches":sum(r["surface"]=="hybrid-analysis.com" and r["result"]=="MATCH_PAGE" for r in rows),
+        "no_match_visible":sum(r["result"] in ("NO_MATCH_VISIBLE","NO_PUBLIC_SAMPLE_PAGE") for r in rows),
+        "uncalibrated_rows":sum(r["result"]=="SURFACE_UNCALIBRATED" for r in rows),
         "errors_or_blocked":sum(r["result"] in ("ERROR_OR_BLOCKED","ANTIBOT_OR_GATE") for r in rows),
-        "boundary":"Public locator/metadata probe only; no sample or memory-dump bytes downloaded.",
+        "boundary":"Public locator/metadata probe only; positive controls required before any surface result is treated as evidence. No sample or memory-dump bytes downloaded.",
     }
     (a.out/"rows.json").write_text(json.dumps(rows,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
-    (a.out/"summary.json").write_text(json.dumps(summary,indent=2)+"\n",encoding="utf-8")
+    (a.out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     print(json.dumps(summary,indent=2))
     for r in rows:
-        print(r["surface"],r["generation"],r["module"],r["sha256"][:16],r["http_status"],r["result"],",".join(r.get("sample_links",[])[:3]))
+        print(r["surface"],r["generation"],r["module"],r["sha256"][:16],r["http_status"],r["result"],
+              ",".join(r.get("sample_links",[])[:2]),r.get("title","")[:80])
 if __name__=="__main__":
     raise SystemExit(main())
