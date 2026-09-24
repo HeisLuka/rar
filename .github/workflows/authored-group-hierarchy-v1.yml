@@ -1,0 +1,24 @@
+name: Authored Group hierarchy V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/authored_group_hierarchy_v1.py"
+      - "services/editor-api/test_authored_group_hierarchy_v1.py"
+      - ".github/workflows/authored-group-hierarchy-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run authored Group hierarchy validator tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_authored_group_hierarchy_v1
