@@ -65,9 +65,8 @@ jobs:
         with:
           name: corel-x4-filters-${{ github.run_id }}
           path: |
-            out/zip-offset.txt
-            out/payload-file.txt
-            out/payload-list.txt
+            out/zip-python.txt
+            out/filters-zip-path.txt
             out/zip-files.txt
             out/Filters.msi
             out/filters-*.txt
@@ -84,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends p7zip-full msitools
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools bchunk
           mkdir -p out/container out/disc out/msi
           url="https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z"
           curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/p2002.7z
@@ -115,6 +114,10 @@ jobs:
         with:
           name: p2002-msi-help-map-${{ github.run_id }}
           path: |
+            out/container-files.txt
+            out/raw-*.txt
+            out/bchunk.txt
+            out/iso-*.txt
             out/msi-list.txt
             out/vbapb10-msi-hits.txt
             out/raw-vbapb10-hits.txt
