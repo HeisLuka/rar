@@ -1,0 +1,442 @@
+# Korva 1.8.7 static provenance receipt
+
+This report distinguishes positive artifact evidence from absence-based inference.
+
+| Claim/probe | Hit | Evidence note |
+|---|---:|---|
+| Exact .deb SHA-256 | YES | verified by workflow hard assertion |
+| ELF appears not stripped | YES | out/Korva.elf: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=b3cbfaf3b447ac8ea84092e5bfcb8c307e648e2b, not stripped |
+| pagewell_core symbols | YES | demangled symbol table |
+| korva_lib symbols | YES | demangled symbol table |
+| pagewell_core::import_pub | YES | demangled symbol table |
+| import_pub_bytes | YES | symbols/strings |
+| extract_text | YES | symbols/strings |
+| extract_images | YES | symbols/strings |
+| probe_image | YES | symbols/strings |
+| sniff_image | YES | symbols/strings |
+| Quill/QuillSub/CONTENTS | YES | string evidence only until xref/data-flow review |
+| Escher | YES | string evidence only until xref/data-flow review |
+| cfb 0.14.0 marker | YES | embedded string/path fingerprint |
+| libmspub marker | NO | positive hit only; absence is not proof |
+| librevenge marker | NO | positive hit only; absence is not proof |
+| writerperfect marker | NO | positive hit only; absence is not proof |
+| unfair-codec-pub marker | NO | positive hit only; absence is not proof |
+| write_pub symbol/string | NO | absence does not prove no PUB writer |
+| save_pub symbol/string | NO | absence does not prove no PUB writer |
+| export_pub symbol/string | NO | absence does not prove no PUB writer |
+| write_pwl_bytes | YES | symbols/strings |
+| save_pwl | YES | symbols/strings |
+| read_pwl_bytes | YES | symbols/strings |
+| pagewell-document | YES | string evidence |
+| manifest.json | YES | string evidence |
+| document.json | YES | string evidence |
+
+## Interpretation guardrails
+
+- A NO for a symbol/string probe is not proof that the capability is absent.
+- Stream-name strings alone do not prove parsing depth; inspect bounded disassembly and xrefs.
+- Direct in-process CFB parsing does not by itself establish independent parser genealogy.
+- No fidelity benchmark is performed by this workflow.
+
+## Exact identities
+~~~text
+e0a2abde284c4c714262c07afab168659387a797f033a869d0db1b1f4bfa010c  Korva_1.8.7_amd64.deb
+87e10c427ab00d3d9f5bcee78ee0e2acb11063358243975bcc442e905c04ae3d  out/Korva.elf
+out/Korva.elf: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=b3cbfaf3b447ac8ea84092e5bfcb8c307e648e2b, not stripped
+~~~
+
+## ELF NEEDED
+~~~text
+ 0x0000000000000001 (NEEDED)             Shared library: [libgdk-3.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgdk_pixbuf-2.0.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libcairo.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgobject-2.0.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libglib-2.0.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libdbus-1.so.3]
+ 0x0000000000000001 (NEEDED)             Shared library: [libwebkit2gtk-4.1.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgtk-3.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libsoup-3.0.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgio-2.0.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libjavascriptcoregtk-4.1.so.0]
+ 0x0000000000000001 (NEEDED)             Shared library: [libfontconfig.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libm.so.6]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x0000000000000001 (NEEDED)             Shared library: [ld-linux-x86-64.so.2]
+~~~
+
+## Symbol counts
+~~~text
+raw_nm_lines=72597
+demangled_nm_lines=72597
+defined_demangled_symbols=70914
+pagewell_core_hits=1399
+korva_lib_hits=180
+import_pub_hits=23
+~~~
+
+## import_pub symbols
+~~~text
+0000000001c8f890 t core::ptr::drop_glue::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<cfb::internal::entry::Entries<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>, pagewell_core::import_pub::import_pub_bytes::{closure#1}>, pagewell_core::import_pub::import_pub_bytes::{closure#2}>>
+0000000001c91360 t <alloc::vec::Vec<alloc::string::String> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<alloc::string::String, core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<cfb::internal::entry::Entries<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>, pagewell_core::import_pub::import_pub_bytes::{closure#1}>, pagewell_core::import_pub::import_pub_bytes::{closure#2}>>>::from_iter
+0000000001c92290 t <alloc::vec::Vec<&alloc::string::String> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<&alloc::string::String, core::iter::adapters::filter::Filter<core::slice::iter::Iter<alloc::string::String>, pagewell_core::import_pub::extract_text::{closure#1}>>>::from_iter
+0000000001c93da0 t <alloc::vec::Vec<usize> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<usize, core::iter::adapters::map::Map<core::str::iter::CharIndices, pagewell_core::import_pub::longest_fitting_paragraph_prefix::{closure#0}>>>::from_iter
+0000000001c948f0 t <core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<cfb::internal::entry::Entries<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>, pagewell_core::import_pub::import_pub_bytes::{closure#1}>, pagewell_core::import_pub::import_pub_bytes::{closure#2}> as core::iter::traits::iterator::Iterator>::next
+0000000001c96050 t <alloc::vec::Vec<pagewell_core::model::Paragraph> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<pagewell_core::model::Paragraph, core::iter::adapters::map::Map<core::slice::iter::Iter<alloc::string::String>, pagewell_core::import_pub::build_document::{closure#2}>>>::from_iter
+0000000001c9fe60 T <alloc::raw_vec::RawVec<pagewell_core::import_pub::ExtractedImage>>::grow_one
+0000000001d07ad0 t core::ptr::drop_glue::<alloc::vec::Vec<pagewell_core::import_pub::ExtractedImage>>
+0000000001d085f0 t core::ptr::drop_glue::<pagewell_core::import_pub::ExtractedImage>
+0000000001d0b2f0 t pagewell_core::import_pub::import_pub_bytes::{closure#3}
+0000000001d0c540 t pagewell_core::import_pub::import_pub_bytes::{closure#4}
+0000000001d0d720 T pagewell_core::import_pub::probe_image
+0000000001d0d730 t pagewell_core::import_pub::sniff_image
+0000000001d0dcb0 T pagewell_core::import_pub::extract_text
+0000000001d0e9e0 T pagewell_core::import_pub::extract_images
+0000000001d0eee0 T pagewell_core::import_pub::import_pub_bytes
+0000000001d12ba0 t pagewell_core::import_pub::imported_body_fits
+0000000001d13170 t pagewell_core::import_pub::imported_paragraph_fragment
+0000000001d147c0 t <&mut pagewell_core::import_pub::extract_text::{closure#1} as core::ops::function::FnMut<(&&alloc::string::String,)>>::call_mut
+0000000001d149e0 t <&pagewell_core::import_pub::ImportError as core::fmt::Display>::fmt
+0000000001d179e0 t <core::iter::adapters::map::Map<core::slice::iter::Iter<alloc::string::String>, core::iter::traits::iterator::Iterator::max_by_key::key<&alloc::string::String, usize, pagewell_core::import_pub::extract_text::{closure#2}>::{closure#0}> as core::iter::traits::iterator::Iterator>::fold::<(usize, &alloc::string::String), core::iter::traits::iterator::Iterator::max_by::fold<(usize, &alloc::string::String), core::iter::traits::iterator::Iterator::max_by_key::compare<&alloc::string::String, usize>>::{closure#0}>
+0000000001d17b50 t <core::iter::adapters::map::Map<core::slice::iter::Iter<alloc::string::String>, pagewell_core::import_pub::build_document::{closure#2}> as core::iter::traits::iterator::Iterator>::fold::<(), core::iter::traits::iterator::Iterator::for_each::call<pagewell_core::model::Paragraph, <alloc::vec::Vec<pagewell_core::model::Paragraph>>::extend_trusted<core::iter::adapters::map::Map<core::slice::iter::Iter<alloc::string::String>, pagewell_core::import_pub::build_document::{closure#2}>>::{closure#0}>::{closure#0}>
+0000000001d189a0 t <alloc::string::String as core::iter::traits::collect::FromIterator<char>>::from_iter::<core::iter::adapters::map::Map<core::str::iter::Chars, pagewell_core::import_pub::sanitize_line::{closure#0}>>
+~~~
+
+## import_pub_bytes match/range
+~~~text
+0000000001c8f890 t core::ptr::drop_glue::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<cfb::internal::entry::Entries<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>, pagewell_core::import_pub::import_pub_bytes::{closure#1}>, pagewell_core::import_pub::import_pub_bytes::{closure#2}>>
+0000000001c91360 t <alloc::vec::Vec<alloc::string::String> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<alloc::string::String, core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<cfb::internal::entry::Entries<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>, pagewell_core::import_pub::import_pub_bytes::{closure#1}>, pagewell_core::import_pub::import_pub_bytes::{closure#2}>>>::from_iter
+0000000001c948f0 t <core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<cfb::internal::entry::Entries<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>, pagewell_core::import_pub::import_pub_bytes::{closure#1}>, pagewell_core::import_pub::import_pub_bytes::{closure#2}> as core::iter::traits::iterator::Iterator>::next
+0000000001d0b2f0 t pagewell_core::import_pub::import_pub_bytes::{closure#3}
+0000000001d0c540 t pagewell_core::import_pub::import_pub_bytes::{closure#4}
+0000000001d0eee0 T pagewell_core::import_pub::import_pub_bytes
+start=0x1c8f890
+stop=0x1caf890
+~~~
+
+## Needle hits
+~~~text
+===== libmspub =====
+===== librevenge =====
+===== writerperfect =====
+===== LibreOffice =====
+===== unfair-codec-pub =====
+===== Quill/QuillSub/CONTENTS =====
+136642:Quill/QuillSub/CONTENTSEscherDelayStm__import-body-probefatal runtime error: thread local panicked on drop, aborting
+===== Escher =====
+136642:Quill/QuillSub/CONTENTSEscherDelayStm__import-body-probefatal runtime error: thread local panicked on drop, aborting
+===== cfb-0.14.0 =====
+2157:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/entry.rs
+2446:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/minichain.rs
+2523:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/lib.rs
+2976:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/stream_buffer.rs
+3068:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/stream.rs
+3403:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/direntry.rs
+3561:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/directory.rs
+3801:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/chain.rs
+===== cfb 0.14.0 =====
+===== pagewell_core =====
+391741:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model10MasterPageEECsfF3BiZrGFNW_9korva_lib
+391743:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model14ParagraphStyleEECsfF3BiZrGFNW_9korva_lib
+391808:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core7license11LicenseInfoECsfF3BiZrGFNW_9korva_lib
+391809:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core9mailmerge10DataSourceECsfF3BiZrGFNW_9korva_lib
+391870:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model9WrapStyleECsfF3BiZrGFNW_9korva_lib
+391871:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model9FrameKindECsfF3BiZrGFNW_9korva_lib
+391872:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldIBT_NtNtCs5YLEjgKYdI_13pagewell_core5model5FrameEECsfF3BiZrGFNW_9korva_lib
+391873:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model6ScriptECsfF3BiZrGFNW_9korva_lib
+391874:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model10OtNumStyleECsfF3BiZrGFNW_9korva_lib
+391875:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model6VAlignECsfF3BiZrGFNW_9korva_lib
+391876:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model7AutoFitECsfF3BiZrGFNW_9korva_lib
+391877:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model9WarpStyleECsfF3BiZrGFNW_9korva_lib
+391878:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldNtNtCs5YLEjgKYdI_13pagewell_core5model7TextDirECsfF3BiZrGFNW_9korva_lib
+391879:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model9BorderArtEECsfF3BiZrGFNW_9korva_lib
+391880:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model11PatternFillEECsfF3BiZrGFNW_9korva_lib
+391881:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model9ShapeKindEECsfF3BiZrGFNW_9korva_lib
+391882:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model5ColorEECsfF3BiZrGFNW_9korva_lib
+391901:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldIBT_NtNtCs5YLEjgKYdI_13pagewell_core5model10MasterPageEECsfF3BiZrGFNW_9korva_lib
+391902:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldIBT_NtNtCs5YLEjgKYdI_13pagewell_core5model7SectionEECsfF3BiZrGFNW_9korva_lib
+391903:_RINvXs7_NtCsd84S1VT7bJq_10serde_json3serINtB6_8CompoundQINtNtCs6i54tJFfzR_5alloc3vec3VechENtB6_16CompactFormatterENtNtCsaArFF3TVqr_10serde_core3ser15SerializeStruct15serialize_fieldINtNtNtNtBX_11collections5btree3map8BTreeMapNtNtBX_6string6StringNtNtCs5YLEjgKYdI_13pagewell_core5model5AssetEECsfF3BiZrGFNW_9korva_lib
+392941:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model10MasterPageEECsfF3BiZrGFNW_9korva_lib
+392943:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model14ParagraphStyleEECsfF3BiZrGFNW_9korva_lib
+392944:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model4PageEECsfF3BiZrGFNW_9korva_lib
+392946:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model5FrameEECsfF3BiZrGFNW_9korva_lib
+392990:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model10MasterPageECsfF3BiZrGFNW_9korva_lib
+392993:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model14ParagraphStyleECsfF3BiZrGFNW_9korva_lib
+392994:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model4PageECsfF3BiZrGFNW_9korva_lib
+392996:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model5AssetECsfF3BiZrGFNW_9korva_lib
+392997:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model5FrameECsfF3BiZrGFNW_9korva_lib
+392999:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model7DocMetaECsfF3BiZrGFNW_9korva_lib
+393000:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model8DocumentECsfF3BiZrGFNW_9korva_lib
+393086:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQNtNtNtCsd84S1VT7bJq_10serde_json5value2de18SeqRefDeserializerNtB6_9SeqAccess12next_elementNtNtCs5YLEjgKYdI_13pagewell_core5model5ColorECsfF3BiZrGFNW_9korva_lib
+396621:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model3RunEECsfF3BiZrGFNW_9korva_lib
+396622:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model9ParagraphEECsfF3BiZrGFNW_9korva_lib
+396624:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model9TableCellEECsfF3BiZrGFNW_9korva_lib
+396638:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model11TextContentECsfF3BiZrGFNW_9korva_lib
+396640:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model3RunECsfF3BiZrGFNW_9korva_lib
+396641:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model9ParagraphECsfF3BiZrGFNW_9korva_lib
+396642:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model9ShapeSpecECsfF3BiZrGFNW_9korva_lib
+396643:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCs5YLEjgKYdI_13pagewell_core5model9TableSpecECsfF3BiZrGFNW_9korva_lib
+396684:_RINvXNvXNvNtCs5YLEjgKYdI_13pagewell_core5modelsX_1__NtB8_9TableSpecNtNtCsaArFF3TVqr_10serde_core2de11Deserialize11deserializeNtB3_14___FieldVisitorNtB15_7Visitor9visit_strNtNtCsd84S1VT7bJq_10serde_json5error5ErrorECsfF3BiZrGFNW_9korva_lib
+396700:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model7TabStopEECsfF3BiZrGFNW_9korva_lib
+396702:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model11PatternFillEECsfF3BiZrGFNW_9korva_lib
+396703:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model5ColorEECsfF3BiZrGFNW_9korva_lib
+396704:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model8GradientEECsfF3BiZrGFNW_9korva_lib
+396705:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model9BorderArtEECsfF3BiZrGFNW_9korva_lib
+396706:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model9ListStyleEECsfF3BiZrGFNW_9korva_lib
+396707:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs5YLEjgKYdI_13pagewell_core5model9ShapeKindEECsfF3BiZrGFNW_9korva_lib
+396709:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementNtNtCs5YLEjgKYdI_13pagewell_core5model10OtNumStyleECsfF3BiZrGFNW_9korva_lib
+396710:_RINvXs4_NtCsaArFF3TVqr_10serde_core2deQINtNtNtNtCsj2avujvmAQV_5serde7private2de7content15SeqDeserializerNtNtCsd84S1VT7bJq_10serde_json5error5ErrorENtB6_9SeqAccess12next_elementNtNtCs5YLEjgKYdI_13pagewell_core5model11NumberStyleECsfF3BiZrGFNW_9korva_lib
+===== korva_lib =====
+391649:korva_lib.b66d7a5eda8d857e-cgu.07
+391650:_RINvMNtCsTSYF3J30Qz_5tauri5eventNtB3_11EventTarget7labeledReECsfF3BiZrGFNW_9korva_lib
+391657:_RINvMs1_NtCsTSYF3J30Qz_5tauri5eventNtB6_8EmitArgs3newNtNtNtB8_7manager6window15DragDropPayloadECsfF3BiZrGFNW_9korva_lib
+391658:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtNtNtCs9k3SxhrAWiO_3std4sync6poison5mutex10MutexGuardINtNtB4_6option6OptionINtNtCsTSYF3J30Qz_5tauri6window10WindowMenuINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB1X_16EventLoopMessageEEEEECsfF3BiZrGFNW_9korva_lib
+391659:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6result6ResultINtNtNtNtCs9k3SxhrAWiO_3std4sync6poison5mutex10MutexGuardINtNtNtNtB16_11collections4hash3map7HashMapNtNtNtCsTSYF3J30Qz_5tauri5event10event_name9EventNameIB1T_mNtNtB2D_8listener7HandlerEEEINtB12_12TryLockErrorBX_EEECsfF3BiZrGFNW_9korva_lib
+391660:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCsTSYF3J30Qz_5tauri5event8EmitArgsECsfF3BiZrGFNW_9korva_lib
+391663:_RINvMs1_NtNtCsTSYF3J30Qz_5tauri5event8listenerNtB6_9Listeners14emit_js_filterINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtBa_16EventLoopMessageEINtNtNtNtCs9k3SxhrAWiO_3std11collections4hash3map6ValuesNtNtCs6i54tJFfzR_5alloc6string6StringNtNtBa_7webview7WebviewERDG_INtNtNtCsgxBkk5gSRhY_4core3ops8function2FnTRL0_NtB8_11EventTargetEEp6OutputbEL_ECsfF3BiZrGFNW_9korva_lib
+391665:_RINvMs1_NtCsTSYF3J30Qz_5tauri5eventNtB6_8EmitArgs3newINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCsd84S1VT7bJq_10serde_json5value5ValueEECsfF3BiZrGFNW_9korva_lib
+391667:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCsTSYF3J30Qz_5tauri5event11EventTargetECsfF3BiZrGFNW_9korva_lib
+391669:_RINvMs0_NtCsTSYF3J30Qz_5tauri7managerNtB6_10AppManager7emit_toNtNtB6_6window15DragDropPayloadECsfF3BiZrGFNW_9korva_lib
+391671:_RINvMs0_NtCsTSYF3J30Qz_5tauri7managerNtB6_10AppManager7emit_touECsfF3BiZrGFNW_9korva_lib
+391673:_RINvMs0_NtNtCsTSYF3J30Qz_5tauri7manager6windowNtNtBa_6window6Window14emit_to_windowNtB6_15DragDropPayloadECsfF3BiZrGFNW_9korva_lib
+391675:_RINvMs0_NtNtCsTSYF3J30Qz_5tauri7manager6windowNtNtBa_6window6Window14emit_to_windowuECsfF3BiZrGFNW_9korva_lib
+391680:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_3pin3PinINtNtCs6i54tJFfzR_5alloc5boxed3BoxDNtNtNtB4_6future6future6Futurep6OutputINtNtB4_6option6OptionINtNtBW_3vec3VecNtNtNtCseieNbbsYgug_3rfd11file_handle6native10FileHandleEENtNtB4_6marker4SendEL_EEECsfF3BiZrGFNW_9korva_lib
+391685:_RINvMsf_NtCsTSYF3J30Qz_5tauri6windowNtB6_6Window13on_menu_eventINtNtCs6i54tJFfzR_5alloc5boxed3BoxDG_INtNtNtCsgxBkk5gSRhY_4core3ops8function2FnTRL0_By_NtNtB8_4menu9MenuEventEEp6OutputuNtNtB1H_6marker4SendNtB2X_4SyncEL_EECsfF3BiZrGFNW_9korva_lib
+391686:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc5boxed3BoxDG_INtNtNtB4_3ops8function2FnTRL0_NtNtCsTSYF3J30Qz_5tauri6window6WindowNtNtB1L_4menu9MenuEventEEp6OutputuNtNtB4_6marker4SendNtB2S_4SyncEL_EECsfF3BiZrGFNW_9korva_lib
+391693:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtCscKm2W3L9m4f_17tauri_runtime_wry27DispatcherMainThreadContextNtCsTSYF3J30Qz_5tauri16EventLoopMessageEECsfF3BiZrGFNW_9korva_lib
+391694:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCskJmzkf6cgjN_4glib20main_context_channel6SenderTNtNtNtNtCs1NOeIjPAFNP_3tao13platform_impl8platform6window8WindowIdNtB1v_13WindowRequestEEECsfF3BiZrGFNW_9korva_lib
+391697:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_3pin3PinINtNtCs6i54tJFfzR_5alloc5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendNtB1H_4SyncEL_EEECsfF3BiZrGFNW_9korva_lib
+391700:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_4cell10UnsafeCellINtNtB4_6option6OptionINtNtB4_6result6ResultuINtNtCs6i54tJFfzR_5alloc5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_EEEEECsfF3BiZrGFNW_9korva_lib
+391702:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionINtNtB4_6result8IntoIterNtNtCs9k3SxhrAWiO_3std2fs8DirEntryEEECsfF3BiZrGFNW_9korva_lib
+391704:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtB12_6string6StringEEECsfF3BiZrGFNW_9korva_lib
+391705:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCsbkFr4WnX1zu_11tauri_utils6config15FileAssociationEEECsfF3BiZrGFNW_9korva_lib
+391707:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtNtCsbkFr4WnX1zu_11tauri_utils3acl8resolved15ResolvedCommandEEECsfF3BiZrGFNW_9korva_lib
+391709:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionINtNtCs6i54tJFfzR_5alloc5boxed3BoxDG_INtNtNtB4_3ops8function2FnTRL0_NtNtCsTSYF3J30Qz_5tauri6window6WindowNtNtB27_4menu9MenuEventEEp6OutputuNtNtB4_6marker4SendNtB3e_4SyncEL_EEECsfF3BiZrGFNW_9korva_lib
+391711:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config10NsisConfigEECsfF3BiZrGFNW_9korva_lib
+391713:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config12FrontendDistEECsfF3BiZrGFNW_9korva_lib
+391714:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config12HeaderConfigEECsfF3BiZrGFNW_9korva_lib
+391715:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config12HeaderSourceEECsfF3BiZrGFNW_9korva_lib
+391717:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config14TrayIconConfigEECsfF3BiZrGFNW_9korva_lib
+391718:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config23CustomSignCommandConfigEECsfF3BiZrGFNW_9korva_lib
+391719:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6option6OptionNtNtCsbkFr4WnX1zu_11tauri_utils6config3CspEECsfF3BiZrGFNW_9korva_lib
+391720:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtCsbkFr4WnX1zu_11tauri_utils6config6ConfigECsfF3BiZrGFNW_9korva_lib
+391721:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtNtNtCsTSYF3J30Qz_5tauri3ipc9authority16RuntimeAuthorityECsfF3BiZrGFNW_9korva_lib
+391722:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueNtCsbkFr4WnX1zu_11tauri_utils11PackageInfoECsfF3BiZrGFNW_9korva_lib
+391724:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6result6ResultNtNtCs9k3SxhrAWiO_3std2fs7ReadDirNtNtNtB4_2io5error5ErrorEECsfF3BiZrGFNW_9korva_lib
+391725:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6result6ResultNtNtCs9k3SxhrAWiO_3std2fs8DirEntryNtNtNtB4_2io5error5ErrorEECsfF3BiZrGFNW_9korva_lib
+391727:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtB4_6result6ResultNtNtCs9k3SxhrAWiO_3std4time10SystemTimeNtNtNtB4_2io5error5ErrorEECsfF3BiZrGFNW_9korva_lib
+391729:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecINtNtBG_5boxed3BoxDG0_INtNtNtB4_3ops8function2FnTRL1_NtNtCsTSYF3J30Qz_5tauri6window6WindowRL0_NtNtB22_3app11WindowEventEEp6OutputuNtNtB4_6marker4SendNtB3f_4SyncEL_EEECsfF3BiZrGFNW_9korva_lib
+391731:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecINtNtBG_5boxed3BoxDG0_INtNtNtB4_3ops8function2FnTRL1_NtNtCsTSYF3J30Qz_5tauri7webview7WebviewRL0_NtNtB22_3app12WebviewEventEEp6OutputuNtNtB4_6marker4SendNtB3i_4SyncEL_EEECsfF3BiZrGFNW_9korva_lib
+391733:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecINtNtBG_5boxed3BoxDG_INtNtNtB4_3ops8function2FnTRL0_NtNtCsTSYF3J30Qz_5tauri3app9AppHandleNtNtB21_4menu9MenuEventEEp6OutputuNtNtB4_6marker4SendNtB38_4SyncEL_EEECsfF3BiZrGFNW_9korva_lib
+391735:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecINtNtBG_5boxed3BoxDINtNtNtB4_3ops8function6FnOnceuEp6OutputuNtNtB4_6marker4SendEL_EEECsfF3BiZrGFNW_9korva_lib
+391737:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecINtNtNtCsdZmhZSo6km0_4http6header3map10ExtraValueNtNtB1c_5value11HeaderValueEEECsfF3BiZrGFNW_9korva_lib
+391739:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtCsfF3BiZrGFNW_9korva_lib20PublisherArchiveFileEEB19_
+391740:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtBG_6string6StringEECsfF3BiZrGFNW_9korva_lib
+391741:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model10MasterPageEECsfF3BiZrGFNW_9korva_lib
+391743:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs5YLEjgKYdI_13pagewell_core5model14ParagraphStyleEECsfF3BiZrGFNW_9korva_lib
+391744:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs9k3SxhrAWiO_3std2fs8DirEntryEECsfF3BiZrGFNW_9korva_lib
+391746:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCs9k3SxhrAWiO_3std4path7PathBufEECsfF3BiZrGFNW_9korva_lib
+391747:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtCs6i54tJFfzR_5alloc3vec3VecNtNtCsTSYF3J30Qz_5tauri7webview7WebviewEECsfF3BiZrGFNW_9korva_lib
+===== import_pub_bytes =====
+425025:_RINvNtCsgxBkk5gSRhY_4core3ptr9drop_glueINtNtNtNtB4_4iter8adapters3map3MapINtNtBG_6filter6FilterINtNtNtCsfM791NbO66W_3cfb8internal5entry7EntriesINtNtNtB4_2io6cursor6CursorINtNtCs6i54tJFfzR_5alloc3vec3VechEEENCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub16import_pub_bytess_0ENCB3k_s0_0EEB3o_
+425039:_RNvXs0_NtNtNtCsgxBkk5gSRhY_4core4iter8adapters3mapINtB5_3MapINtNtB7_6filter6FilterINtNtNtCsfM791NbO66W_3cfb8internal5entry7EntriesINtNtNtBb_2io6cursor6CursorINtNtCs6i54tJFfzR_5alloc3vec3VechEEENCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub16import_pub_bytess_0ENCB37_s0_0ENtNtNtB9_6traits8iterator8Iterator4nextB3b_
+425584:_RNCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub16import_pub_bytess1_0B5_
+425588:_RNCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub16import_pub_bytess2_0B5_
+460533:_RNvXNtNtCs6i54tJFfzR_5alloc3vec21spec_from_iter_nestedINtB4_3VecNtNtB6_6string6StringEINtB2_18SpecFromIterNestedB10_INtNtNtNtCsgxBkk5gSRhY_4core4iter8adapters3map3MapINtNtB1V_6filter6FilterINtNtNtCsfM791NbO66W_3cfb8internal5entry7EntriesINtNtNtB1Z_2io6cursor6CursorIBR_hEEENCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub16import_pub_bytess_0ENCB4p_s0_0EE9from_iterB4t_
+461260:_RNvNtCs5YLEjgKYdI_13pagewell_core10import_pub16import_pub_bytes
+===== extract_text =====
+460538:_RNvXNtNtCs6i54tJFfzR_5alloc3vec21spec_from_iter_nestedINtB4_3VecRNtNtB6_6string6StringEINtB2_18SpecFromIterNestedB10_INtNtNtNtCsgxBkk5gSRhY_4core4iter8adapters6filter6FilterINtNtNtB20_5slice4iter4IterB11_ENCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub12extract_texts_0EE9from_iterB3n_
+460539:_RNvXs1_NtNtNtCsgxBkk5gSRhY_4core3ops8function5implsQNCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub12extract_texts_0INtB7_5FnMutTRRNtNtCs6i54tJFfzR_5alloc6string6StringEE8call_mutBU_
+461265:_RNvNtCs5YLEjgKYdI_13pagewell_core10import_pub12extract_text
+461268:_RINvXs0_NtNtNtCsgxBkk5gSRhY_4core4iter8adapters3mapINtB6_3MapINtNtNtBc_5slice4iter4IterNtNtCs6i54tJFfzR_5alloc6string6StringENCINvNvNtNtNtBa_6traits8iterator8Iterator10max_by_key3keyRB1n_jNCNvNtCs5YLEjgKYdI_13pagewell_core10import_pub12extract_texts0_0E0EB26_4foldTjB2U_ENCINvNvB26_6max_by4foldB4e_INvB24_7compareB2U_jEE0EB36_
+===== extract_images =====
+461269:_RNvNtCs5YLEjgKYdI_13pagewell_core10import_pub14extract_images
+===== probe_image =====
+1098:probe_image_byte
+79135:assertion failed: edge.height == self.node.height - 1assertion failed: self.height > 0poisoned plugin store0imagewebviewassertion failed: src.len() == dst.len()FileAccessModescopedPickerModemediavideoProgressBarStatusnormalindeterminatepausederrorinternally tagged enum UserAttentionTypeUserAttentionTypeInformationalResizeDirectionNorthNorthEastNorthWestSouthSouthEastSouthWestConfigrequireLiteralLeadingDotx_offsetsy_offsetsfont_resourcefont_familysynthetic_boldwidthheightbackgroundbackground_gradgroupssource_idrotcxcyopacityitemsc0c1anglestylefgbgopstrokestroke_widthradiuspattexbevelsoft_edgeellipsex1y1x2y2polygonpointsassetflip_xflip_yclip_polyglyphsxysize_ptitalicunderlinestrikethroughcolorhighlightalignkerningshapedkmlczDownloadEventeventStartedridcurrentVersionversionrawJsonCookieraw_cookiedomainexpireswindow_labellabelcontentLengthchunkLength-:.+Zoffset_secondoffset_hourtauri_plugin_opener::Opener<tauri_runtime_wry::Wry<tauri::EventLoopMessage>>tauri::path::desktop::PathResolver<tauri_runtime_wry::Wry<tauri::EventLoopMessage>>tauri_plugin_http::Httptauri::menu::plugin::MenuChannels}***open_documentsave_documentdocexport_pdfcropMarksregistrationexport_archive_pdfsourcePathpack_and_goprint_pdfbuild_scenenew_from_templateidlist_publisher_archivemail_mergecsvPathparse_xlsxbytesparse_rich_textload_imageprobe_image_bytessave_imageverify_licenselicenseconfirm_quitappcalled `Result::unwrap()` on an `Err` valueassertion failed: old_right_len + count <= CAPACITYassertion failed: old_left_len >= countassertion failed: old_left_len + count <= CAPACITYassertion failed: old_right_len >= counttauri::apppoisoned menu mutexinternal error: entered unreachable code: empty internal nodeArc counter overflowassertion failed: edge.height == self.height - 1fatal runtime error: thread local panicked on drop, aborting
+434862:_RNvCsfF3BiZrGFNW_9korva_lib17probe_image_bytes
+435201:_RNvNtCs5YLEjgKYdI_13pagewell_core10import_pub11probe_image
+===== sniff_image =====
+425598:_RNvNtCs5YLEjgKYdI_13pagewell_core10import_pub11sniff_image
+===== write_pub =====
+===== save_pub =====
+===== export_pub =====
+===== write_pwl_bytes =====
+460699:_RNvNtCs5YLEjgKYdI_13pagewell_core4save15write_pwl_bytes
+===== save_pwl =====
+435220:_RNvNtCs5YLEjgKYdI_13pagewell_core4save8save_pwl
+===== read_pwl_bytes =====
+460696:_RNvNtCs5YLEjgKYdI_13pagewell_core4save14read_pwl_bytes
+===== pagewell-document =====
+84543:EOCD comment exceeds file boundaryEOCD comment length exceeds u16::MAXEOCD64 extends beyond EOCD64 locatorLow EOCD64 record size  Invalid EOCD64: inconsistent number of filesCould not find EOCD64Multi-disk ZIP files are not supportedNo CDFH foundInvalid CDFH offset in EOCDInvalid EOCD comment lengthCould not find EOCDLarge file option has not been setAttempted to update a nonexistent ZIP64 extra fieldinternal error: entered unreachable codeInvalid EOCD64: inconsistent lengthInvalid EOCD64: inconsistency with Locator dataformatformat_versionappapp_versionxl/worksheets/missing document.jsonno worksheet found in .xlsxinternal error: entered unreachable code: invalid Once stateassertion failed: line > 0advancing io slices beyond their lengthadvancing IoSlice beyond its lengthZipWriter was already closedUnsupported compression levelAES encryption is enabled through FileOptions::with_aes_encryptionUnsupported compressionShould have switched to stored and unencrypted beforehanddocument.jsondocument.json too largepagewell-documentmanifest.jsonisxl/sharedStrings.xmlxl/worksheets/sheet1.xml}}tvltcrrowrPhsinumber of read bytes exceeds limitNothingHeaderChunkBeginChunkCompletePixelDimensionsFrameControlImageDataPartialChunkGrayscaleRgbIndexedGrayscaleAlphaOneTwoEightSixteenfailed to write whole buffer
+===== manifest.json =====
+84543:EOCD comment exceeds file boundaryEOCD comment length exceeds u16::MAXEOCD64 extends beyond EOCD64 locatorLow EOCD64 record size  Invalid EOCD64: inconsistent number of filesCould not find EOCD64Multi-disk ZIP files are not supportedNo CDFH foundInvalid CDFH offset in EOCDInvalid EOCD comment lengthCould not find EOCDLarge file option has not been setAttempted to update a nonexistent ZIP64 extra fieldinternal error: entered unreachable codeInvalid EOCD64: inconsistent lengthInvalid EOCD64: inconsistency with Locator dataformatformat_versionappapp_versionxl/worksheets/missing document.jsonno worksheet found in .xlsxinternal error: entered unreachable code: invalid Once stateassertion failed: line > 0advancing io slices beyond their lengthadvancing IoSlice beyond its lengthZipWriter was already closedUnsupported compression levelAES encryption is enabled through FileOptions::with_aes_encryptionUnsupported compressionShould have switched to stored and unencrypted beforehanddocument.jsondocument.json too largepagewell-documentmanifest.jsonisxl/sharedStrings.xmlxl/worksheets/sheet1.xml}}tvltcrrowrPhsinumber of read bytes exceeds limitNothingHeaderChunkBeginChunkCompletePixelDimensionsFrameControlImageDataPartialChunkGrayscaleRgbIndexedGrayscaleAlphaOneTwoEightSixteenfailed to write whole buffer
+===== document.json =====
+84543:EOCD comment exceeds file boundaryEOCD comment length exceeds u16::MAXEOCD64 extends beyond EOCD64 locatorLow EOCD64 record size  Invalid EOCD64: inconsistent number of filesCould not find EOCD64Multi-disk ZIP files are not supportedNo CDFH foundInvalid CDFH offset in EOCDInvalid EOCD comment lengthCould not find EOCDLarge file option has not been setAttempted to update a nonexistent ZIP64 extra fieldinternal error: entered unreachable codeInvalid EOCD64: inconsistent lengthInvalid EOCD64: inconsistency with Locator dataformatformat_versionappapp_versionxl/worksheets/missing document.jsonno worksheet found in .xlsxinternal error: entered unreachable code: invalid Once stateassertion failed: line > 0advancing io slices beyond their lengthadvancing IoSlice beyond its lengthZipWriter was already closedUnsupported compression levelAES encryption is enabled through FileOptions::with_aes_encryptionUnsupported compressionShould have switched to stored and unencrypted beforehanddocument.jsondocument.json too largepagewell-documentmanifest.jsonisxl/sharedStrings.xmlxl/worksheets/sheet1.xml}}tvltcrrowrPhsinumber of read bytes exceeds limitNothingHeaderChunkBeginChunkCompletePixelDimensionsFrameControlImageDataPartialChunkGrayscaleRgbIndexedGrayscaleAlphaOneTwoEightSixteenfailed to write whole buffer
+===== .kva =====
+2065:.kva
+84553:  <name>.kva        The editable Korva document (open it in Korva).
+===== Tauri =====
+950:Tauri-Invoke-Key~J?d6
+1220:deny-set-checkeddataStoreIdentifTauri-Channel-Idnew_from_templat
+2636:#' within your Tauri configuration: 
+4017:split always has at least 1 itemparsing should validate bracketsunable to create thread with 8MiB stackthe generated Tauri `Context` panicked during creation
+78617:restartfetchfetch_cancelfailed to park threadFailed to `Enter::block_on`versionidentifierdefault_window_iconbundle_typesupports_multiple_windowsnewappendprependinsertremoveremove_atitemsgetcreate_defaultis_enabledset_enabledset_acceleratorset_as_windows_menu_for_nsappset_as_help_menu_for_nsappis_checkedset_checkedresolve_directoryresolvenormalizedirnameextnameis_absoluteclosetext/plainprocessappridcacheoptionshandleridenabledacceleratorcheckeddirectorypathsextwidthheightcalled `Result::unwrap()` on an `Err` valuetauri/...2.11.2from_bytes is only supported if the `image-ico` or `image-png` Cargo features are enabledfrom_path is only supported if the `image-ico` or `image-png` Cargo features are enabledhttp://no.url.provided.localStaticchildDynamicRuntimeWindowLabelAlreadyExistsWebviewLabelAlreadyExistsCannotReparentWebviewWindowAssetNotFoundIoInvalidIconInvalidArgsSetupPluginInitializationInvalidUrlJoinErrorInvalidWebviewUrlGlobPatternInvalidWindowHandleFailedToReceiveMessageBadMenuIconNoExtensionNoBasenameCurrentDirUnknownPathWindowNotFoundBadResourceIdAnyhowWebviewNotFoundUnstableFeatureNotSupportedCannotDeserializeScopeRawHandleErrorCsprngInvokeKeya Display implementation returned an error unexpectedlyErrorTauriFsFailedServiceUnknownNameHasNoOwnerNoReplyIOErrorBadAddressNotSupportedLimitsExceededAccessDeniedAuthFailedTimeoutNoNetworkAddressInUseDisconnectedFileNotFoundFileExistsUnknownMethodUnknownObjectUnknownPropertyMatchRuleNotFoundSpawnExecFailedSpawnForkFailedSpawnChildSignaledSpawnFailedSpawnFailedToSetupSpawnConfigInvalidSpawnServiceNotValidSpawnServiceNotFoundSpawnPermissionsInvalidSpawnNoMemoryUnixProcessIdUnknownInvalidFileContentSELinuxSecurityContextUnknownAdtAuditDataUnknownObjectPathInUseInconsistentMessageNotContainerU8I16U16I32U32I64U64F64StrSignatureObjectPathVariantFdArraykeyvalueStructureEmptyHostIdnaErrorInvalidPortInvalidIpv4AddressInvalidIpv6AddressInvalidDomainCharacterRelativeUrlWithoutBaseSetHostOnCannotBeABaseUrldescription() is deprecated; use Display	
+78630:a character literal was not validunexpected trailing characters; the end of input was expectedthe `Parsed` struct did not include enough information to construct the typeinternal error: entered unreachable code: invalid Once stateNotAChildOfThisMenuNotInitializedAlreadyInitializedAcceleratorParseErrorFromUtf8ErrorbyteserrorStaticchildDynamicLayout__app-acl__StructureArrayContainerUtf8Errorvalid_up_toerror_lena Display implementation returned an error unexpectedlyErrorlayoutTauriIoUnknownProgramNameForbiddenPathForbiddenUrlUnsupportedPlatformFailedToConvertPathToFileUrlValue dropped on a different thread than where it was createdPoisonErrorReservedNameU8I16U16I32U32I64U64F64StrSignatureObjectPathVariantFdkeyvalueMessageInputOutputIncorrectTypePaddingNot0UnknownFdMissingFramingOffsetIncompatibleFormatSignatureMismatchOutOfBoundsSignatureParseEmptyStructureInvalidObjectPath()description() is deprecated; use Display
+78632:_root_appvalid plugin__TAURI_CHANNEL__/:// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+78639:eventeventId// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+78646:linux// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+78766:poisoned WebContext storeTAURI_WEBVIEW_AUTOMATIONtauri_runtime_wrycannot handle RequestExit on the main threadcannot handle `WindowMessage::Close` on the main threadcannot handle `WindowMessage::Destroy` on the main threadsize overflows MAX_SIZEObject.defineProperty(window, 'ipc', { value: Object.freeze({ postMessage: function(x) { window.webkit.messageHandlers['ipc'].postMessage(x) } }) })assertion failed: validate_scale_factor(scale_factor)tauri://localhostpoisoned webview managerlinux// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+78800:data URLs are not supported without the `webview-data-url` feature.poisoned plugin store// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+78816:// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+78882:          'Tauri IPC found an isolation iframe, but it had the wrong origin'
+78889:        'Tauri "Isolation" Pattern could not find the Isolation iframe window'
+78946:              'Tauri "Isolation" Pattern found an invalid isolation message payload',
+78959:            'Tauri IPC found a Tauri Pattern, but it was an error. Check for other log messages to find the cause.'
+78964:            'Tauri IPC did not find a Tauri Pattern that it understood.'
+78995:        Object.defineProperty(window, 'isTauri', {
+79019:static str is invalid nameunable to serialize response error string to jsoninvalid IPC request URLapplication/octet-streammissing Tauri-Invoke-Key headerOriginmissing Origin headerTauri-Callbackmissing Tauri-Callback headerTauri-Errormissing Tauri-Error headerTauri error header value must be a numeric stringTauri error header value must be a stringTauri callback header value must be a numeric stringTauri callback header value must be a stringOrigin header value must be a stringTauri invoke key header value must be a stringunknown content typetauri://drag-entertauri://drag-overtauri://drag-droptauri://drag-leaveinternal error: entered unreachable codeiddescriptionlabelReleaseManifestPlatformurlsignatureRequestOptionsheaderscustomProtocolIpcBlockederrorversionnotesplatformsInnerRemoteReleasethe `url` field was not set on the updater responsethe `signature` field was not set on the updater responsetauri_plugin_updater::UpdaterStatetauri::scope::Scopestauri::ipc::channel::ChannelDataIpcQueuetauri::menu::plugin::MenuChannels}failed to spawn thread*text/plainfailed to acquire webview referenceonly POST and OPTIONS are allowedTauri-Responseoktauri://window-createdFailed to initialize gtk backend!gtk-application-prefer-dark-themetao::platform_impl::platform::event_loopcalled `Result::unwrap()` on an `Err` valueValue accessed from different thread than where it was created/defaultcrosshairpointerarrownot-allowedcontext-menuvertical-textaliasno-dropall-scrollzoom-inne-resizenw-resizese-resizesw-resizeew-resizens-resizenesw-resizenwse-resizecol-resizerow-resizehttpstauri://webview-created// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+79023:// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+79117:// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+79129:a Display implementation returned an error unexpectedlyBoolErrormessageErrorsending on a disconnected channelTauriPathForbiddenInvalidPathUrlUnsafePathBufValue dropped on a different thread than where it was createdGlibErrorGlibBoolErrorMissingManagerX11DisplayNotFoundXlibErrorInitScriptErrorRpcScriptErrorReceiverErrorSenderErrorMessageSenderHttpErrorProxyEndpointCreationFailedWindowHandleErrorUnsupportedWindowHandleUtf8ErrorNotMainThreadCustomProtocolTaskInvalidUrlSchemeRegisterErrorDuplicateCustomProtocolContextDuplicateCustomProtocolpoisoned window resources tableDynamicStaticEmptyHostIdnaErrorInvalidPortInvalidIpv4AddressInvalidIpv6AddressInvalidDomainCharacterRelativeUrlWithoutBaseSetHostOnCannotBeABaseUrlSendErrorsending on a closed channel()description() is deprecated; use Display
+79145: could not be decoded, please check if it is a valid base64 string. The signature must be the contents of the `.sig` file generated by the Tauri bundler, as a string.
+82608:failed to get random bytescalled `Result::unwrap()` on an `Err` valueassertion failed: removed_resource.is_none()// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+82648:linuxplugin:__TAURI_CHANNEL__|fetch// Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+82674:      headers.set('Tauri-Callback', callback)
+82675:      headers.set('Tauri-Error', error)
+82676:      headers.set('Tauri-Invoke-Key', __TAURI_INVOKE_KEY__)
+82684:            response.headers.get('Tauri-Response') === 'ok' ? callback : error
+82701:              'IPC custom protocol failed, Tauri will now use the postMessage interface instead',
+82890:mid > lena Display implementation returned an error unexpectedlyAccess-Control-Allow-HeadersAccess-Control-Allow-MethodsAccess-Control-Expose-HeadersAccess-Control-Max-AgeCross-Origin-Embedder-PolicyCross-Origin-Opener-PolicyCross-Origin-Resource-PolicyPermission-PolicyService-Worker-AllowedTiming-Allow-OriginX-Content-Type-OptionsTauri-Custom-HeaderError
+317749:Tauri ApI
+326066:Tauri ApH
+399484:_RINvMs7_NtCsTSYF3J30Qz_5tauri3appNtB6_9AppHandle6pluginINtNtB8_6plugin11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB8_16EventLoopMessageEEECsfF3BiZrGFNW_9korva_lib
+434188:_RNvXs2_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEENtNtNtCsgxBkk5gSRhY_4core3ops4drop4Drop4dropCsfF3BiZrGFNW_9korva_lib
+434189:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E10extend_apiCsfF3BiZrGFNW_9korva_lib
+434190:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E10initializeCsfF3BiZrGFNW_9korva_lib
+434191:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E12on_page_loadCsfF3BiZrGFNW_9korva_lib
+434192:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E13on_navigationCsfF3BiZrGFNW_9korva_lib
+434193:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E14window_createdCsfF3BiZrGFNW_9korva_lib
+434194:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E15webview_createdCsfF3BiZrGFNW_9korva_lib
+434195:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E21initialization_scriptCsfF3BiZrGFNW_9korva_lib
+434196:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E23initialization_script_2CsfF3BiZrGFNW_9korva_lib
+434197:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEEINtB5_6PluginBQ_E8on_eventCsfF3BiZrGFNW_9korva_lib
+434198:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs3TImJ0B6QoQ_19tauri_plugin_opener6config6ConfigEEINtB5_6PluginBQ_E10initializeCsfF3BiZrGFNW_9korva_lib
+434199:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageENtNtCseWIP7OSRHM5_20tauri_plugin_updater6config6ConfigEINtB5_6PluginBQ_E10initializeCsfF3BiZrGFNW_9korva_lib
+434257:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs3TImJ0B6QoQ_19tauri_plugin_opener6config6ConfigEEINtB5_6PluginBQ_E21initialization_scriptCsfF3BiZrGFNW_9korva_lib
+434258:_RNvXs3_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageENtNtCseWIP7OSRHM5_20tauri_plugin_updater6config6ConfigEINtB5_6PluginBQ_E21initialization_scriptCsfF3BiZrGFNW_9korva_lib
+434259:_RNvXs2_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageEINtNtCsgxBkk5gSRhY_4core6option6OptionNtNtCs3TImJ0B6QoQ_19tauri_plugin_opener6config6ConfigEENtNtNtB1X_3ops4drop4Drop4dropCsfF3BiZrGFNW_9korva_lib
+434260:_RNvXs2_NtCsTSYF3J30Qz_5tauri6pluginINtB5_11TauriPluginINtCscKm2W3L9m4f_17tauri_runtime_wry3WryNtB7_16EventLoopMessageENtNtCseWIP7OSRHM5_20tauri_plugin_updater6config6ConfigENtNtNtCsgxBkk5gSRhY_4core3ops4drop4Drop4dropCsfF3BiZrGFNW_9korva_lib
+===== tauri =====
+1110:tauri_utils::Envsynthetic_italic
+1141:set_webview_positauri://localhosDLE_TYPE_VAR_APPdeny-set-visibleaccept-first-mouwwwwwwwwwwwwwwww
+1370:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/webview/plugin.rs
+1404:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/resources/mod.rs
+1485:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/async_runtime.rs
+1536:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/mod.rs
+1543:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/protocol.rs
+1624:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/mod.rs
+1625:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-http-2.5.9/src/commands.rs
+1626:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-updater-2.10.1/src/lib.rs
+1653:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/image/mod.rs
+1777:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/plugin.rs
+1778:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-updater-2.10.1/src/updater.rs
+1783:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/app.rs
+1850:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-updater-2.10.1/src/commands.rs
+1887:y" as a valid key for accelerator, if you feel like it should be, please report this to https://github.com/tauri-apps/muda
+1923:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/event/listener.rs
+1924:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-dialog-2.7.1/src/desktop.rs
+2002:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/window/plugin.rs
+2004:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/authority.rs
+2010:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/scope/fs.rs
+2012:tauri_
+2040:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/process.rs
+2071:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/lib.rs
+2075:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/app/plugin.rs
+2208:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-utils-2.9.2/src/config.rs
+2389:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/menu.rs
+2390:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-dialog-2.7.1/src/commands.rs
+2460:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-opener-2.5.4/src/commands.rs
+2466:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-2.11.2/src/lib.rs
+2634:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/window.rs
+2641:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/state.rs
+2732:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/menu/plugin.rs
+2739:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/menu/submenu.rs
+2775:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-utils-2.9.2/src/platform.rs
+2813:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/window/mod.rs
+2906:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-dialog-2.7.1/src/lib.rs
+2907:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-opener-2.5.4/src/lib.rs
+3093:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/path/plugin.rs
+3171:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/webview/mod.rs
+3258:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/webview.rs
+3261:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/menu/mod.rs
+3379:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/format_callback.rs
+3464:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-utils-2.9.2/src/lib.rs
+3499:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-http-2.5.9/src/lib.rs
+3597:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-2.11.2/src/undecorated_resizing.rs
+3643:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/protocol/tauri.rs
+3645:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/event/plugin.rs
+3694:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-utils-2.9.2/src/acl/value.rs
+3736:/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/channel.rs
+===== rustc 1.98.1 =====
+===== LLD 22.1.8 =====
+391597:Linker: LLD 22.1.8 (/checkout/src/llvm-project/llvm 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04)
+~~~
+
+## Crate/version path hits
+~~~text
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/chain.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/directory.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/direntry.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/entry.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/minichain.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/stream.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/internal/stream_buffer.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.14.0/src/lib.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.7.3/src/internal/chain.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.7.3/src/internal/directory.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfb-0.7.3/src/internal/direntry.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/app.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/app/plugin.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/async_runtime.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/event/listener.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/event/plugin.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/image/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/authority.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/channel.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/command.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/format_callback.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/ipc/protocol.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/lib.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/menu.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/webview.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/manager/window.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/menu/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/menu/plugin.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/menu/submenu.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/path/plugin.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/plugin.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/process.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/protocol/tauri.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/resources/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/scope/fs.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/state.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/webview/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/webview/plugin.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/window/mod.rs
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/window/plugin.rs
+~~~
+
+## Tool versions
+~~~text
+date_utc=2026-09-24T03:06:57Z
+Linux runnervmlun5p 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+Debian 'dpkg-deb' package archive backend version 1.22.6 (amd64).
+GNU readelf (GNU Binutils for Ubuntu) 2.42
+GNU nm (GNU Binutils for Ubuntu) 2.42
+GNU objdump (GNU Binutils for Ubuntu) 2.42
+GNU strings (GNU Binutils for Ubuntu) 2.42
+file-5.45
+~~~
