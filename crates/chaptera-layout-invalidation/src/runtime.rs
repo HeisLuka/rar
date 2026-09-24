@@ -166,8 +166,7 @@ pub fn resolve_line_regions_v1(
         }
     }
 
-    let row_count_i64 =
-        (frame.height_emu + frame.line_height_emu - 1) / frame.line_height_emu;
+    let row_count_i64 = (frame.height_emu + frame.line_height_emu - 1) / frame.line_height_emu;
     let row_count = u32::try_from(row_count_i64).map_err(|_| RegionErrorV1::RowCountOverflow)?;
     let mut bands = Vec::with_capacity(row_count as usize);
 
@@ -234,11 +233,7 @@ pub fn resolve_line_regions_v1(
     })
 }
 
-fn subtract_interval_set(
-    intervals: &[IntervalV1],
-    cut_x0: i64,
-    cut_x1: i64,
-) -> Vec<IntervalV1> {
+fn subtract_interval_set(intervals: &[IntervalV1], cut_x0: i64, cut_x1: i64) -> Vec<IntervalV1> {
     let mut output = Vec::new();
     for interval in intervals {
         if cut_x1 <= interval.x0_emu || cut_x0 >= interval.x1_emu {
@@ -332,8 +327,8 @@ pub fn resolve_story_flow_v1(
             break;
         }
 
-        let interval = choose_interval(&band.intervals, policy)
-            .ok_or(FlowErrorV1::NoUsableInterval {
+        let interval =
+            choose_interval(&band.intervals, policy).ok_or(FlowErrorV1::NoUsableInterval {
                 row_index: band.row_index,
             })?;
         let capacity = interval.width_emu();
@@ -402,12 +397,9 @@ pub fn resolve_story_flow_v1(
         push_u32(&mut output, line.scalar_start);
         push_u32(&mut output, line.scalar_end);
         push_i64(&mut output, line.measured_width_emu);
-        for scalar in scalars
-            .iter()
-            .filter(|scalar| {
-                scalar.scalar_start >= line.scalar_start && scalar.scalar_end <= line.scalar_end
-            })
-        {
+        for scalar in scalars.iter().filter(|scalar| {
+            scalar.scalar_start >= line.scalar_start && scalar.scalar_end <= line.scalar_end
+        }) {
             output.extend_from_slice(&scalar.semantic_fingerprint);
         }
     }
@@ -598,12 +590,7 @@ mod tests {
         fingerprint_v1("shape-policy-v1", &[b"fixed"])
     }
 
-    fn unit(
-        unit_id: &str,
-        start: u32,
-        widths: &[i64],
-        labels: &[&str],
-    ) -> PreparedMetricsUnitV1 {
+    fn unit(unit_id: &str, start: u32, widths: &[i64], labels: &[&str]) -> PreparedMetricsUnitV1 {
         let metrics = widths
             .iter()
             .zip(labels)
@@ -674,23 +661,36 @@ mod tests {
             unit("u2", 3, &[20, 20, 20], &["D", "E ", "F"]),
         ];
 
+        let prepared_outputs_before = prepared
+            .iter()
+            .map(|unit| unit.output_fingerprint)
+            .collect::<Vec<_>>();
         let wide_region = resolve_line_regions_v1(&frame(100), &[]).expect("wide region");
         let narrow_region = resolve_line_regions_v1(&frame(60), &[]).expect("narrow region");
 
         let wide_flow =
             resolve_story_flow_v1("s1", &prepared, &wide_region, IntervalPolicyV1::LargestOnly)
                 .expect("wide flow");
-        let narrow_flow =
-            resolve_story_flow_v1("s1", &prepared, &narrow_region, IntervalPolicyV1::LargestOnly)
-                .expect("narrow flow");
+        let narrow_flow = resolve_story_flow_v1(
+            "s1",
+            &prepared,
+            &narrow_region,
+            IntervalPolicyV1::LargestOnly,
+        )
+        .expect("narrow flow");
 
         assert_ne!(
             wide_region.output_fingerprint,
             narrow_region.output_fingerprint
         );
         assert_ne!(wide_flow.output_fingerprint, narrow_flow.output_fingerprint);
-        assert_eq!(prepared[0].output_fingerprint, prepared[0].output_fingerprint);
-        assert_eq!(prepared[1].output_fingerprint, prepared[1].output_fingerprint);
+        assert_eq!(
+            prepared
+                .iter()
+                .map(|unit| unit.output_fingerprint)
+                .collect::<Vec<_>>(),
+            prepared_outputs_before
+        );
         assert_eq!(wide_flow.lines.len(), 2);
         assert_eq!(narrow_flow.lines.len(), 2);
         assert_ne!(wide_flow.lines, narrow_flow.lines);
@@ -722,7 +722,10 @@ mod tests {
         assert_ne!(before_u1.output_fingerprint, after_u1.output_fingerprint);
         assert_eq!(before_u2.output_fingerprint, after_u2.output_fingerprint);
         assert_eq!(region.output_fingerprint, region.output_fingerprint);
-        assert_ne!(before_flow.output_fingerprint, after_flow.output_fingerprint);
+        assert_ne!(
+            before_flow.output_fingerprint,
+            after_flow.output_fingerprint
+        );
     }
 
     #[test]
@@ -734,15 +737,12 @@ mod tests {
             x1_emu: 200,
             y1_emu: 40,
         };
-        let first = resolve_line_regions_v1(&frame(100), std::slice::from_ref(&obstacle))
-            .expect("first");
-        let second = resolve_line_regions_v1(&frame(120), std::slice::from_ref(&obstacle))
-            .expect("second");
+        let first =
+            resolve_line_regions_v1(&frame(100), std::slice::from_ref(&obstacle)).expect("first");
+        let second =
+            resolve_line_regions_v1(&frame(120), std::slice::from_ref(&obstacle)).expect("second");
 
-        assert_ne!(
-            first.dependency_fingerprint,
-            second.dependency_fingerprint
-        );
+        assert_ne!(first.dependency_fingerprint, second.dependency_fingerprint);
         assert_eq!(first.output_fingerprint, second.output_fingerprint);
     }
 
@@ -754,20 +754,14 @@ mod tests {
         ];
         let frame = frame(80);
         let region = resolve_line_regions_v1(&frame, &[]).expect("region");
-        let flow =
-            resolve_story_flow_v1("s1", &prepared, &region, IntervalPolicyV1::LargestOnly)
-                .expect("flow");
+        let flow = resolve_story_flow_v1("s1", &prepared, &region, IntervalPolicyV1::LargestOnly)
+            .expect("flow");
 
         let mut graph = InvalidationGraphV1::default();
         for prepared_unit in &prepared {
             graph
                 .publish(ComputedArtifactV1 {
-                    receipt: prepared_receipt_v1(
-                        prepared_unit,
-                        "r1",
-                        "layout-env",
-                        env("font-a"),
-                    ),
+                    receipt: prepared_receipt_v1(prepared_unit, "r1", "layout-env", env("font-a")),
                     expected_upstream: vec![],
                     output_comparable: true,
                 })
@@ -797,7 +791,11 @@ mod tests {
                 story_id: "s1".into(),
                 unit_id: unit_id.into(),
             };
-            assert!(graph.artifact_consumers_of(&prepared_key).contains(&flow_key));
+            assert!(
+                graph
+                    .artifact_consumers_of(&prepared_key)
+                    .contains(&flow_key)
+            );
         }
         let region_key = ArtifactKeyV1::LineRegion {
             frame_id: "f1".into(),
@@ -816,16 +814,10 @@ mod tests {
         };
         let first_frame = frame(100);
         let second_frame = frame(120);
-        let first = resolve_line_regions_v1(
-            &first_frame,
-            std::slice::from_ref(&obstacle),
-        )
-        .expect("first");
-        let second = resolve_line_regions_v1(
-            &second_frame,
-            std::slice::from_ref(&obstacle),
-        )
-        .expect("second");
+        let first =
+            resolve_line_regions_v1(&first_frame, std::slice::from_ref(&obstacle)).expect("first");
+        let second = resolve_line_regions_v1(&second_frame, std::slice::from_ref(&obstacle))
+            .expect("second");
 
         let mut graph = InvalidationGraphV1::default();
         graph
