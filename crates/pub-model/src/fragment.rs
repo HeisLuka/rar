@@ -62,7 +62,6 @@ pub struct PasteFragmentResultV1 {
 pub enum AuthoringFragmentError {
     UnsupportedShapeKind,
     UnsupportedTransform,
-    EntityMustBeAuthorCreated,
     MissingExplicitFill,
     MissingExplicitStroke,
     PaintMustBeAuthorCreated,
@@ -92,9 +91,6 @@ pub fn capture_rectangle_fragment_v1(
     }
     if shape.transform != ShapeTransformV1::Identity {
         return Err(AuthoringFragmentError::UnsupportedTransform);
-    }
-    if shape.provenance != crate::EntityProvenanceV1::AuthorCreated {
-        return Err(AuthoringFragmentError::EntityMustBeAuthorCreated);
     }
     validate_rect_emu_v1(shape.bounds).map_err(AuthoringFragmentError::InvalidMaterializedShape)?;
 
@@ -727,16 +723,6 @@ mod tests {
         assert_eq!(
             materialize_paste_fragment_set_v1(&reversed),
             Err(AuthoringFragmentError::FragmentSetIdentityMapMismatch)
-        );
-    }
-
-    #[test]
-    fn rust_capture_rejects_source_backed_entity_provenance() {
-        let mut shape = source_shape();
-        shape.provenance = crate::EntityProvenanceV1::SourceBacked;
-        assert_eq!(
-            capture_rectangle_fragment_v1(&shape),
-            Err(AuthoringFragmentError::EntityMustBeAuthorCreated)
         );
     }
 
