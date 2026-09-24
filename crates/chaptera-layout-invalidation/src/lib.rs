@@ -1,6 +1,8 @@
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+pub mod runtime;
+
 pub type FingerprintV1 = [u8; 32];
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -43,6 +45,12 @@ pub struct DependencyEdgeV1 {
     pub observed_fingerprint: FingerprintV1,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ArtifactDependencyV1 {
+    pub upstream: ArtifactKeyV1,
+    pub kind: DependencyKindV1,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactReceiptV1 {
     pub artifact: ArtifactKeyV1,
@@ -51,6 +59,7 @@ pub struct ArtifactReceiptV1 {
     pub output_fingerprint: FingerprintV1,
     pub stage_version: String,
     pub dependencies: Vec<DependencyEdgeV1>,
+    pub artifact_dependencies: Vec<ArtifactDependencyV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +96,7 @@ pub struct PublicationResultV1 {
 pub struct InvalidationGraphV1 {
     artifacts: HashMap<ArtifactKeyV1, ArtifactReceiptV1>,
     reverse: BTreeMap<DependencyNodeV1, BTreeSet<ArtifactKeyV1>>,
+    reverse_artifacts: BTreeMap<ArtifactKeyV1, BTreeSet<ArtifactKeyV1>>,
 }
 
 impl InvalidationGraphV1 {
@@ -96,6 +106,13 @@ impl InvalidationGraphV1 {
 
     pub fn consumers_of(&self, source: &DependencyNodeV1) -> BTreeSet<ArtifactKeyV1> {
         self.reverse.get(source).cloned().unwrap_or_default()
+    }
+
+    pub fn artifact_consumers_of(&self, upstream: &ArtifactKeyV1) -> BTreeSet<ArtifactKeyV1> {
+        self.reverse_artifacts
+            .get(upstream)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn dependency_fingerprint_matches(
@@ -134,15 +151,31 @@ impl InvalidationGraphV1 {
                     }
                 }
             }
+            for dep in &prior.artifact_dependencies {
+                if let Some(consumers) = self.reverse_artifacts.get_mut(&dep.upstream) {
+                    consumers.remove(&key);
+                    if consumers.is_empty() {
+                        self.reverse_artifacts.remove(&dep.upstream);
+                    }
+                }
+            }
         }
 
         let mut receipt = computed.receipt;
         receipt.dependencies.sort();
         receipt.dependencies.dedup();
+        receipt.artifact_dependencies.sort();
+        receipt.artifact_dependencies.dedup();
 
         for dep in &receipt.dependencies {
             self.reverse
                 .entry(dep.source.clone())
+                .or_default()
+                .insert(key.clone());
+        }
+        for dep in &receipt.artifact_dependencies {
+            self.reverse_artifacts
+                .entry(dep.upstream.clone())
                 .or_default()
                 .insert(key.clone());
         }
@@ -207,6 +240,7 @@ mod tests {
             output_fingerprint: fp("output-v1", output),
             stage_version: "stage-v1".to_owned(),
             dependencies: deps,
+            artifact_dependencies: vec![],
         }
     }
 
