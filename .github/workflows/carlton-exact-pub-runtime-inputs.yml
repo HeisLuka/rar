@@ -1,0 +1,329 @@
+name: Carlton exact PUB runtime inputs
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded acquisition dependencies
+        run: python -m pip install "requests==2.32.5" "olefile==0.47"
+
+      - name: Acquire exact Carlton PUBs from School Jotter hydration state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton/exact out/carlton/discovery
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import re
+          from pathlib import Path
+
+          import requests
+
+          PAGE = "https://www.carltonji.org.uk/parents/latest-letters"
+          ROOT = Path("out/carlton")
+          EXACT = ROOT / "exact"
+          DISC = ROOT / "discovery"
+
+          specs = {
+              "March 2026.pub": {
+                  "artifact_name": "March-2026.pub",
+                  "expected_id": "5a939344-76a6-4a6a-b30b-7237edac8bfa",
+                  "size": 9_580_032,
+                  "sha256": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+              },
+              "December 2025.pub": {
+                  "artifact_name": "December-2025.pub",
+                  "expected_id": "f7d0fadd-c2a9-4a8c-940b-c81844d0bc29",
+                  "size": 9_988_608,
+                  "sha256": "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e",
+              },
+          }
+
+          session = requests.Session()
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/2.0)",
+              "Accept": "*/*",
+          })
+
+          response = session.get(PAGE, timeout=30)
+          response.raise_for_status()
+          raw = response.text
+          (DISC / "latest-letters.html").write_text(raw, encoding="utf-8")
+
+          found = {}
+          for public_name, spec in specs.items():
+              needle = '"name":"' + public_name + '"'
+              idx = raw.find(needle)
+              if idx < 0:
+                  raise SystemExit(f"{public_name}: not present in hydration state")
+
+              window = raw[max(0, idx - 600): min(len(raw), idx + 14000)]
+
+              file_match = re.search(
+                  r'"file":\{"id":"([^"]+)","name":"' + re.escape(public_name) + r'"',
+                  window,
+              )
+              if not file_match:
+                  raise SystemExit(f"{public_name}: file id not found")
+              file_id = file_match.group(1)
+              if file_id != spec["expected_id"]:
+                  raise SystemExit(
+                      f"{public_name}: file id drift {file_id} != {spec['expected_id']}"
+                  )
+
+              size_match = re.search(
+                  r'"name":"' + re.escape(public_name) + r'".*?"size":(\d+)',
+                  window,
+                  flags=re.S,
+              )
+              if not size_match:
+                  raise SystemExit(f"{public_name}: declared size missing")
+              declared_size = int(size_match.group(1))
+              if declared_size != spec["size"]:
+                  raise SystemExit(
+                      f"{public_name}: declared size drift {declared_size} != {spec['size']}"
+                  )
+
+              origin_match = re.search(
+                  r'"url":\{"origin":"((?:\\.|[^"\\])*)"',
+                  window,
+                  flags=re.S,
+              )
+              if not origin_match:
+                  raise SystemExit(f"{public_name}: signed origin URL missing")
+              origin = json.loads('"' + origin_match.group(1) + '"')
+
+              print(
+                  f"{public_name}: id={file_id} declared_size={declared_size} "
+                  f"origin_host={requests.utils.urlparse(origin).hostname}"
+              )
+
+              target = EXACT / spec["artifact_name"]
+              h = hashlib.sha256()
+              size = 0
+              with session.get(origin, timeout=(10, 90), stream=True) as download:
+                  download.raise_for_status()
+                  with target.open("wb") as out:
+                      for chunk in download.iter_content(1024 * 1024):
+                          if not chunk:
+                              continue
+                          size += len(chunk)
+                          if size > spec["size"]:
+                              raise SystemExit(f"{public_name}: download exceeded expected size")
+                          h.update(chunk)
+                          out.write(chunk)
+
+              digest = h.hexdigest()
+              if size != spec["size"]:
+                  raise SystemExit(f"{public_name}: size {size} != {spec['size']}")
+              if digest != spec["sha256"]:
+                  raise SystemExit(f"{public_name}: sha256 {digest} != {spec['sha256']}")
+
+              found[public_name] = {
+                  "file_id": file_id,
+                  "size": size,
+                  "sha256": digest,
+                  "artifact_file": target.name,
+                  "source_page": PAGE,
+              }
+              print(f"VERIFIED {public_name}: size={size} sha256={digest}")
+
+          (EXACT / "manifest.json").write_text(
+              json.dumps(
+                  {
+                      "schema": "chaptera.carlton-exact-pub-inputs.v2",
+                      "source_page": PAGE,
+                      "files": found,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Verify exact source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -c %s out/carlton/exact/March-2026.pub)" = "9580032"
+          test "$(sha256sum out/carlton/exact/March-2026.pub | awk '{print $1}')" = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
+          test "$(stat -c %s out/carlton/exact/December-2025.pub)" = "9988608"
+          test "$(sha256sum out/carlton/exact/December-2025.pub | awk '{print $1}')" = "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e"
+
+      - name: Extract root Contents and Quill Contents separately
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          import olefile
+
+          root = Path("out/carlton/exact")
+          for pub in [root / "March-2026.pub", root / "December-2025.pub"]:
+              label = pub.stem
+              with olefile.OleFileIO(str(pub)) as ole:
+                  stream_paths = ole.listdir(streams=True, storages=False)
+                  manifest = {
+                      "source_file": pub.name,
+                      "streams": ["/".join(parts) for parts in stream_paths],
+                      "contents": [],
+                  }
+                  for parts in stream_paths:
+                      if parts[-1].lower() != "contents":
+                          continue
+                      data = ole.openstream(parts).read()
+                      ole_path = "/".join(parts)
+                      if parts == ["Contents"]:
+                          artifact_name = f"{label}-Main-Contents.bin"
+                      else:
+                          safe = "-".join(parts).replace(" ", "_")
+                          artifact_name = f"{label}-{safe}.bin"
+                      out = root / artifact_name
+                      out.write_bytes(data)
+                      manifest["contents"].append({
+                          "ole_path": ole_path,
+                          "size": len(data),
+                          "sha256": hashlib.sha256(data).hexdigest(),
+                          "artifact_file": artifact_name,
+                      })
+                  if not any(x["ole_path"] == "Contents" for x in manifest["contents"]):
+                      raise SystemExit(f"{pub}: root Contents stream missing")
+                  (root / f"{label}-cfb-manifest.json").write_text(
+                      json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                      encoding="utf-8",
+                  )
+                  print(pub.name, manifest["contents"])
+          PY
+
+      - name: Locate exact PlcCmob wire in root Contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import struct
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          specs = [
+              ("March-2026", 9, 232),
+              ("December-2025", 21, 520),
+          ]
+
+          def validate(raw, n):
+              if len(raw) != 16 + 24 * n:
+                  return None
+              if raw[0:2] != b"\x01\x20":
+                  return None
+              if struct.unpack_from("<I", raw, 2)[0] != n:
+                  return None
+              if raw[6:8] != b"\x02\xA0":
+                  return None
+              if struct.unpack_from("<I", raw, 8)[0] != len(raw) - 8:
+                  return None
+              rows = []
+              for i in range(n):
+                  off = 16 + 24 * i
+                  if raw[off:off+2] != b"\x00\x88":
+                      return None
+                  if struct.unpack_from("<I", raw, off + 2)[0] != 22:
+                      return None
+                  if raw[off+6:off+8] != b"\x01\x20":
+                      return None
+                  if raw[off+12:off+14] != b"\x02\x20":
+                      return None
+                  if raw[off+18:off+20] != b"\x03\x68":
+                      return None
+                  rows.append({
+                      "source_order": i,
+                      "cmo_id": struct.unpack_from("<I", raw, off + 8)[0],
+                      "target_qsid": struct.unpack_from("<I", raw, off + 14)[0],
+                      "carrier_ohpo": struct.unpack_from("<I", raw, off + 20)[0],
+                  })
+              return rows
+
+          all_results = {}
+          for label, n, expected_size in specs:
+              data = (root / f"{label}-Main-Contents.bin").read_bytes()
+              prefix = b"\x01\x20" + struct.pack("<I", n) + b"\x02\xA0"
+              candidates = []
+              start = 0
+              while True:
+                  pos = data.find(prefix, start)
+                  if pos < 0:
+                      break
+                  raw = data[pos:pos + expected_size]
+                  rows = validate(raw, n)
+                  candidates.append({
+                      "offset": pos,
+                      "valid": rows is not None,
+                      "rows": rows,
+                      "sha256": hashlib.sha256(raw).hexdigest() if len(raw) == expected_size else None,
+                  })
+                  start = pos + 1
+              valid = [x for x in candidates if x["valid"]]
+              print(label, "prefix_candidates=", len(candidates), "valid=", len(valid))
+              for item in valid:
+                  print(label, "VALID", item)
+              all_results[label] = {"candidates": candidates}
+              if len(valid) == 1:
+                  pos = valid[0]["offset"]
+                  raw = data[pos:pos + expected_size]
+                  (root / f"{label}-PlcCmob.bin").write_bytes(raw)
+                  (root / f"{label}-PlcCmob.hex").write_text(raw.hex() + "\n", encoding="ascii")
+
+          (root / "plccmob-wire-scan.json").write_text(
+              json.dumps(all_results, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact runtime inputs
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-exact-pub-runtime-inputs
+          path: |
+            out/carlton/exact/March-2026.pub
+            out/carlton/exact/December-2025.pub
+            out/carlton/exact/*-Contents.bin
+            out/carlton/exact/*-cfb-manifest.json
+            out/carlton/exact/manifest.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload acquisition diagnostics
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: carlton-exact-acquisition-diagnostics
+          path: |
+            out/carlton/discovery/**
+            out/carlton/exact/manifest.json
+          if-no-files-found: warn
+          retention-days: 1
