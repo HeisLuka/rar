@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/protocol/scene/v1/delta.schema.json",
+  "title": "Chaptera BrowserSceneDeltaV1",
+  "description": "Reserved optional optimization. V0 producers may omit delta support and send full snapshots only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "base_revision_id",
+    "target_revision_id",
+    "base_snapshot_id",
+    "target_snapshot_id",
+    "layout_environment_id",
+    "upserts",
+    "removals",
+    "diagnostics"
+  ],
+  "properties": {
+    "protocol_version": { "const": "chaptera.scene.delta.v1" },
+    "document_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "base_revision_id": { "$ref": "#/$defs/hashId" },
+    "target_revision_id": { "$ref": "#/$defs/hashId" },
+    "base_snapshot_id": { "$ref": "#/$defs/hashId" },
+    "target_snapshot_id": { "$ref": "#/$defs/hashId" },
+    "layout_environment_id": { "$ref": "#/$defs/hashId" },
+    "upserts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entity", "id", "value"],
+        "properties": {
+          "entity": {
+            "type": "string",
+            "enum": [
+              "page",
+              "node",
+              "story",
+              "story_frame",
+              "paint",
+              "resource",
+              "capability"
+            ]
+          },
+          "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "value": { "type": "object" }
+        }
+      }
+    },
+    "removals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entity", "id"],
+        "properties": {
+          "entity": {
+            "type": "string",
+            "enum": [
+              "page",
+              "node",
+              "story",
+              "story_frame",
+              "paint",
+              "resource",
+              "capability"
+            ]
+          },
+          "id": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message_key"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+          "code": { "type": "string", "minLength": 1, "maxLength": 96 },
+          "origin_node_id": { "type": ["string", "null"] },
+          "message_key": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

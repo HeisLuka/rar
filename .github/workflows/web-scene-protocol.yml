@@ -1,0 +1,43 @@
+name: Web scene protocol V1
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/scene/**"
+      - "docs/web-editor-scene-protocol-v1.md"
+      - "tools/scene_v1.py"
+      - "tools/adapt_viewer_scene_v1.py"
+      - "tools/test_scene_adapter.py"
+      - "tools/validate_scene_protocol.py"
+      - ".github/workflows/web-scene-protocol.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install schema validator
+        run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Validate deterministic snapshot fixtures
+        run: python tools/validate_scene_protocol.py
+
+      - name: Validate source-free Viewer adapter
+        run: python tools/test_scene_adapter.py
+
+      - name: Upload synthetic protocol receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-scene-protocol-v1-synthetic-receipts
+          path: |
+            target/scene-protocol/
+            target/scene-adapter/

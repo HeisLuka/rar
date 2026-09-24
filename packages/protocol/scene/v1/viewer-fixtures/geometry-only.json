@@ -1,0 +1,149 @@
+{
+  "schema_version": "0.1",
+  "document": {
+    "schema_version": "0.1",
+    "source": {
+      "format": "pub",
+      "format_version": "0x2c",
+      "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "byte_len": 123456
+    },
+    "pages": [
+      {
+        "index": 2,
+        "id": "10000000-0000-4000-8000-000000000002",
+        "width_emu": 10058400,
+        "height_emu": 7772400
+      },
+      {
+        "index": 1,
+        "id": "10000000-0000-4000-8000-000000000001",
+        "width_emu": 7772400,
+        "height_emu": 10058400
+      }
+    ],
+    "stories": [
+      {
+        "id": "30000000-0000-4000-8000-000000000001",
+        "text": "Source-free Viewer story"
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "viewer.page_extent.equivalent_source_records",
+        "severity": "info",
+        "message": "Equivalent source records agree."
+      },
+      {
+        "code": "viewer.visual.geometry_only",
+        "severity": "fidelity_warning",
+        "message": "Geometry is available while richer paint remains partial."
+      }
+    ]
+  },
+  "scene": {
+    "environment": {
+      "engine_revision": "viewer-geometry-v0.1",
+      "font_set_fingerprint": "fonts:not-consumed:geometry-only",
+      "resource_fingerprint": "resources:not-consumed:geometry-only"
+    },
+    "surfaces": [
+      {
+        "origin": "10000000-0000-4000-8000-000000000001",
+        "size": {
+          "width": 7772400,
+          "height": 10058400
+        },
+        "bleed": null,
+        "margins": null
+      },
+      {
+        "origin": "10000000-0000-4000-8000-000000000002",
+        "size": {
+          "width": 10058400,
+          "height": 7772400
+        },
+        "bleed": null,
+        "margins": null
+      }
+    ],
+    "nodes": [
+      {
+        "origin": "20000000-0000-4000-8000-000000000002",
+        "parent_origin": "20000000-0000-4000-8000-000000000001",
+        "bounds": {
+          "x": -12700,
+          "y": 500000,
+          "width": 1200000,
+          "height": 600000
+        },
+        "transform": {
+          "a": "1",
+          "b": "0",
+          "c": "0",
+          "d": "1",
+          "tx": 0,
+          "ty": 0
+        }
+      },
+      {
+        "origin": "20000000-0000-4000-8000-000000000001",
+        "parent_origin": "10000000-0000-4000-8000-000000000001",
+        "bounds": {
+          "x": 900000,
+          "y": 900000,
+          "width": 5000000,
+          "height": 4000000
+        },
+        "transform": {
+          "a": "1",
+          "b": "0",
+          "c": "0",
+          "d": "1",
+          "tx": 0,
+          "ty": 0
+        }
+      },
+      {
+        "origin": "20000000-0000-4000-8000-000000000003",
+        "parent_origin": "10000000-0000-4000-8000-000000000002",
+        "bounds": {
+          "x": 100000,
+          "y": 200000,
+          "width": 800000,
+          "height": 900000
+        },
+        "transform": {
+          "a": "1",
+          "b": "0",
+          "c": "0",
+          "d": "1",
+          "tx": 12700,
+          "ty": 0
+        }
+      }
+    ],
+    "origin_mapping": [
+      {
+        "authoring_origin": "20000000-0000-4000-8000-000000000001",
+        "resolved_node_origin": "20000000-0000-4000-8000-000000000001"
+      },
+      {
+        "authoring_origin": "20000000-0000-4000-8000-000000000002",
+        "resolved_node_origin": "20000000-0000-4000-8000-000000000002"
+      },
+      {
+        "authoring_origin": "20000000-0000-4000-8000-000000000003",
+        "resolved_node_origin": "20000000-0000-4000-8000-000000000003"
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "story_text_layout_not_implemented",
+        "severity": "fidelity_warning",
+        "origin": "30000000-0000-4000-8000-000000000001",
+        "message": "Text layout is not resolved."
+      }
+    ]
+  }
+}
