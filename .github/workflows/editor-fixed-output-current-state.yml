@@ -1,0 +1,26 @@
+name: Editor fixed-output current state V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/editor_fixed_output_current_state_v1.py"
+      - "tools/test_editor_fixed_output_current_state_v1.py"
+      - "tools/resolved_graph_scene_bridge_v1.py"
+      - "tools/fixed_pdf_shaped_flow_bridge_v1.py"
+      - "services/editor-api/story_range_v1.py"
+      - ".github/workflows/editor-fixed-output-current-state.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run current Editor fixed-output assembly tests
+        run: python tools/test_editor_fixed_output_current_state_v1.py -v
