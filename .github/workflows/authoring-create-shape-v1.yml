@@ -1,0 +1,56 @@
+name: Authoring CreateShape V1
+
+on:
+  pull_request:
+    paths:
+      - "crates/pub-model/**"
+      - "crates/pub-paint-bridge/**"
+      - "services/editor-api/create_shape_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_create_shape.py"
+      - "packages/protocol/authoring-create-shape/v1/**"
+      - ".github/workflows/authoring-create-shape-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install schema validator
+        run: python -m pip install jsonschema
+      - name: Run CreateShape revision/core tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_create_shape
+      - name: Validate public CreateShape intent schema
+        run: |
+          python - <<'PY'
+          import json
+          import jsonschema
+          from pathlib import Path
+
+          schema = json.loads(Path("packages/protocol/authoring-create-shape/v1/create-shape-intent.schema.json").read_text())
+          jsonschema.Draft202012Validator.check_schema(schema)
+          PY
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test workspace
+        run: cargo test --workspace

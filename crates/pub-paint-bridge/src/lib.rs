@@ -152,9 +152,9 @@ pub fn project_editable_export_shape_paint_v1(paint: &ShapePaintV1) -> EditableE
 mod tests {
     use super::*;
     use pub_model::{
-        AuthorityClassV1, ReadConfidenceV1, SetFillV1, SetStrokeV1, ShapePaintOperationV1,
-        ShapePaintProvenanceV1, SourceRoleV1, apply_shape_paint_operation_v1,
-        author_created_shape_paint_v1,
+        AuthorityClassV1, CreateShapeV1, ReadConfidenceV1, RectEmuV1, SetFillV1, SetStrokeV1,
+        ShapePaintOperationV1, ShapePaintProvenanceV1, SourceRoleV1,
+        apply_shape_paint_operation_v1, author_created_shape_paint_v1, create_shape_entity_v1,
     };
 
     fn source_ref() -> SourceRefV1 {
@@ -338,6 +338,60 @@ mod tests {
             }
         );
         assert_eq!(authored.provenance, ShapePaintProvenanceV1::AuthorCreated);
+    }
+
+    #[test]
+    fn created_rectangle_immediately_projects_canonical_paint_downstream() {
+        let paint = author_created_shape_paint_v1(
+            Some(SolidFillV1 {
+                visible: true,
+                color: Srgb8 {
+                    r: 0x21,
+                    g: 0x32,
+                    b: 0x43,
+                },
+            }),
+            Some(SolidStrokeV1 {
+                visible: true,
+                color: Srgb8 {
+                    r: 0x54,
+                    g: 0x65,
+                    b: 0x76,
+                },
+                width_emu: 19_050,
+            }),
+        )
+        .expect("paint");
+        let entity = create_shape_entity_v1(&CreateShapeV1 {
+            node_id: "01890f47-0c00-7abc-8def-0123456789ab".to_owned(),
+            page_id: "page:1".to_owned(),
+            bounds: RectEmuV1 {
+                x: 10,
+                y: 20,
+                width: 300,
+                height: 200,
+            },
+            paint: paint.clone(),
+        })
+        .expect("created rectangle");
+
+        let viewer = project_viewer_node_paint_v1(&entity.paint).expect("viewer paint");
+        assert_eq!(viewer.solid_fill_rgb, Some([0x21, 0x32, 0x43]));
+        assert_eq!(
+            viewer.solid_line,
+            Some(ViewerSolidLineV1 {
+                rgb: [0x54, 0x65, 0x76],
+                width_emu: 19_050,
+            })
+        );
+        assert_eq!(
+            project_layout_shape_paint_v1(&entity.paint).fill,
+            paint.fill
+        );
+        assert_eq!(
+            project_editable_export_shape_paint_v1(&entity.paint).stroke,
+            paint.stroke
+        );
     }
 
     #[test]
