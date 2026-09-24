@@ -4,6 +4,7 @@ members = [
   "crates/pub-model",
   "crates/chaptera-layout-projection",
   "crates/chaptera-layout-invalidation",
+  "crates/chaptera-image-decode-contract",
   "crates/pub-master-projection",
   "crates/pub-fixed-flow-adapter",
   "crates/pub-line-placement",
