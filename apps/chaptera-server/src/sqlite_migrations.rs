@@ -39,6 +39,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "jobs",
         sql: include_str!("../migrations/0003_jobs.sql"),
     },
+    Migration {
+        version: 4,
+        name: "revision_stream",
+        sql: include_str!("../migrations/0004_revision_stream.sql"),
+    },
 ];
 
 #[derive(Clone)]
@@ -285,8 +290,8 @@ mod tests {
         let report = runtime.status().await.unwrap();
 
         assert_eq!(report.applied_version, 0);
-        assert_eq!(report.supported_version, 3);
-        assert_eq!(report.pending_versions, vec![1, 2, 3]);
+        assert_eq!(report.supported_version, 4);
+        assert_eq!(report.pending_versions, vec![1, 2, 3, 4]);
         cleanup(&path);
     }
 
@@ -297,7 +302,7 @@ mod tests {
         let runtime = SqliteMigrationRuntime::new(&path).unwrap();
 
         let first = runtime.up().await.unwrap();
-        assert_eq!(first.applied_version, 3);
+        assert_eq!(first.applied_version, 4);
         assert!(first.pending_versions.is_empty());
 
         let second = runtime.up().await.unwrap();
@@ -311,6 +316,7 @@ mod tests {
             "resource_bindings",
             "jobs",
             "job_effects",
+            "revision_edges",
         ] {
             let exists: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
