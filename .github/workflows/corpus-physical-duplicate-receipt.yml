@@ -1,0 +1,32 @@
+name: CORPUS physical duplicate receipt
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json.gz'
+      - 'tools/corpus/validate_logical_duplicate_receipt.py'
+      - '.github/workflows/corpus-physical-duplicate-receipt.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json.gz'
+      - 'tools/corpus/validate_logical_duplicate_receipt.py'
+      - '.github/workflows/corpus-physical-duplicate-receipt.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate exact duplicate locator receipt
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/validate_logical_duplicate_receipt.py
+          python tools/corpus/validate_logical_duplicate_receipt.py
