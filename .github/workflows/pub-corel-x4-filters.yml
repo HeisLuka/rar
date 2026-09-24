@@ -1,0 +1,208 @@
+name: PUB Corel X4 Filters archaeology
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pub-corel-x4-filters.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pub-corel-x4-filters
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inert extraction tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full msitools binutils file
+
+      - name: Download exact acquired Corel X4 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: corel-x4-trial-35983938022
+          path: acquired
+          github-token: ${{ github.token }}
+          run-id: 35983938022
+
+      - name: Verify exact installer identity
+        shell: bash
+        env:
+          EXPECTED_SHA256: "2f8e777984730bea9453306e535cc0a96fc4d3d907ac311fcdbbd13bd165fda7"
+          EXPECTED_SHA1: "9b1232bb63cf1257c447146da8e059297fcffa35"
+        run: |
+          set -euo pipefail
+          installer="$(find acquired -type f -name 'CorelDRAWGraphicsSuiteX4Installer_EN.exe' -print -quit)"
+          test -n "$installer"
+          test "$(sha256sum "$installer" | awk '{print $1}')" = "$EXPECTED_SHA256"
+          test "$(sha1sum "$installer" | awk '{print $1}')" = "$EXPECTED_SHA1"
+          mkdir -p out
+          printf '%s\n' "$installer" > out/installer-path.txt
+          sha256sum "$installer" > out/installer-sha256.txt
+          sha1sum "$installer" > out/installer-sha1.txt
+          stat -c 'size_bytes=%s' "$installer" > out/installer-size.txt
+          file "$installer" > out/installer-file.txt
+
+      - name: Extract installer without execution
+        run: |
+          set -euo pipefail
+          installer="$(cat out/installer-path.txt)"
+          mkdir -p extracted
+          7z x -y -oextracted "$installer" > out/7z-extract.log 2>&1 || {
+            rc=$?
+            tail -n 200 out/7z-extract.log
+            exit "$rc"
+          }
+          find extracted -type f -printf '%P\t%s\n' | sort > out/extracted-files.tsv
+          find extracted -type f -iname '*.msi' -printf '%p\n' | sort > out/msi-paths.txt
+          test -s out/msi-paths.txt
+
+      - name: Identify Filters MSI by exact ProductCode
+        shell: bash
+        env:
+          FILTERS_PRODUCT_CODE: "{7F05E704-30A6-421A-97A7-8EEB1C7FF017}"
+        run: |
+          set -euo pipefail
+          mkdir -p out/msi
+          found=""
+          while IFS= read -r msi; do
+            [ -n "$msi" ] || continue
+            key="$(printf '%s' "$msi" | sha256sum | cut -c1-16)"
+            base="out/msi/$key"
+            mkdir -p "$base"
+            printf '%s\n' "$msi" > "$base/path.txt"
+            sha256sum "$msi" > "$base/sha256.txt"
+            msiinfo export "$msi" Property > "$base/Property.idt" 2>"$base/property.stderr" || true
+            msiinfo export "$msi" File > "$base/File.idt" 2>"$base/file.stderr" || true
+            msiinfo export "$msi" Component > "$base/Component.idt" 2>"$base/component.stderr" || true
+            if grep -Fqi "$FILTERS_PRODUCT_CODE" "$base/Property.idt"; then
+              found="$msi"
+              printf '%s\n' "$msi" > out/filters-msi-path.txt
+              cp "$base/Property.idt" out/filters-Property.idt
+              cp "$base/File.idt" out/filters-File.idt
+              cp "$base/Component.idt" out/filters-Component.idt
+              sha256sum "$msi" > out/filters-msi-sha256.txt
+              stat -c 'size_bytes=%s' "$msi" > out/filters-msi-size.txt
+              break
+            fi
+          done < out/msi-paths.txt
+
+          if [ -z "$found" ]; then
+            echo "Exact Filters ProductCode not found in extracted MSI Property tables." > out/filters-not-found.txt
+            grep -RaiE '7F05E704|Filters|PUB|Publisher|IEPUB' out/msi > out/msi-search.txt || true
+            exit 2
+          fi
+
+      - name: Extract Filters MSI and inventory PUB candidates
+        run: |
+          set -euo pipefail
+          msi="$(cat out/filters-msi-path.txt)"
+          mkdir -p filters-tree
+          msiextract -C filters-tree "$msi" > out/msiextract.log 2>&1 || {
+            rc=$?
+            cat out/msiextract.log
+            exit "$rc"
+          }
+
+          find filters-tree -type f -printf '%P\t%s\n' | sort > out/filters-tree.tsv
+          grep -Ei '(^|[^A-Za-z])(pub|publisher|iepub|cdrpub)|\.flt($|[^A-Za-z])' out/filters-File.idt > out/file-table-pub-candidates.txt || true
+
+          python3 - <<'PY'
+          import hashlib, json, re, subprocess
+          from pathlib import Path
+
+          root=Path("filters-tree")
+          candidates=[]
+          name_re=re.compile(r"(pub|publisher|iepub|cdrpub)",re.I)
+          content_needles=[b"microsoft publisher",b"mspublisher",b"publisher",b".pub"]
+
+          for p in root.rglob("*"):
+              if not p.is_file():
+                  continue
+              by_name=bool(name_re.search(p.name))
+              try:
+                  data=p.read_bytes() if p.stat().st_size <= 64*1024*1024 else b""
+              except Exception:
+                  continue
+              low=data.lower() if data else b""
+              by_content=any(n in low for n in content_needles) if low else False
+              if not (by_name or by_content):
+                  continue
+              digest=hashlib.sha256(data if data else p.read_bytes()).hexdigest()
+              item={
+                  "path":str(p.relative_to(root)),
+                  "size":p.stat().st_size,
+                  "sha256":digest,
+                  "name_match":by_name,
+                  "content_match":by_content,
+              }
+              try:
+                  item["file"]=subprocess.check_output(["file","-b",str(p)],text=True).strip()
+              except Exception:
+                  item["file"]=""
+              candidates.append(item)
+
+          Path("out/pub-candidates.json").write_text(
+              json.dumps(candidates,indent=2,ensure_ascii=False),encoding="utf-8"
+          )
+          print(json.dumps(candidates,indent=2,ensure_ascii=False))
+          PY
+
+          while IFS=$'\t' read -r rel size; do
+            [ -n "$rel" ] || continue
+            path="filters-tree/$rel"
+            if file "$path" | grep -qiE 'PE32|MS-DOS executable'; then
+              safe="$(printf '%s' "$rel" | tr '/\\ :' '____' | tr -cd 'A-Za-z0-9._-')"
+              strings -a -n 5 "$path" | grep -iE 'publisher|mspub|\.pub|iepub|cdrpub' > "out/${safe}.strings.txt" || true
+              objdump -p "$path" > "out/${safe}.objdump-p.txt" 2>&1 || true
+              sha256sum "$path" > "out/${safe}.sha256.txt"
+            fi
+          done < out/filters-tree.tsv
+
+      - name: Build bounded classification receipt
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          out=Path("out")
+          candidates=[]
+          p=out/"pub-candidates.json"
+          if p.exists():
+              candidates=json.loads(p.read_text(encoding="utf-8"))
+
+          summary={
+              "schema":"rar-corel-x4-pub-filter-v1",
+              "source_run_id":35983938022,
+              "source_artifact_id":10801580707,
+              "installer_sha256":"2f8e777984730bea9453306e535cc0a96fc4d3d907ac311fcdbbd13bd165fda7",
+              "filters_product_code":"{7F05E704-30A6-421A-97A7-8EEB1C7FF017}",
+              "filters_msi_found":(out/"filters-msi-path.txt").exists(),
+              "candidate_count":len(candidates),
+              "candidates":candidates,
+              "boundary":"Static inert extraction only; candidate naming/strings do not by themselves prove parser lineage or semantic fidelity.",
+          }
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+
+      - name: Upload evidence receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corel-x4-filters-analysis-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
