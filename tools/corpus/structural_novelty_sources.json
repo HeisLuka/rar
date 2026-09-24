@@ -1,0 +1,14 @@
+{
+  "schema": "rar-corpus-novelty-sources/v1",
+  "repository": "HeisLuka/rar",
+  "sources": [
+    {"name":"common_crawl","artifact_id":10801347100,"expected_complete_cfb":370},
+    {"name":"wayback","artifact_id":10801683740,"expected_complete_cfb":70},
+    {"name":"internet_archive","artifact_id":10801684167,"expected_complete_cfb":39},
+    {"name":"container_first_wave","artifact_id":10789500808,"expected_complete_cfb":425,"defer_rehydrate":true},
+    {"name":"govdocs1","artifact_id":10788840886,"expected_complete_cfb":1},
+    {"name":"forum_support","artifact_id":10801453513,"expected_complete_cfb":2},
+    {"name":"github_history","artifact_id":10799384286,"expected_complete_cfb":29},
+    {"name":"positive_domain","artifact_id":10800300307,"expected_complete_cfb":21}
+  ]
+}
