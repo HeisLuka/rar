@@ -25,11 +25,10 @@ def seconds_between(start, end):
 
 def normalize_step_name(name):
     value=(name or "").strip().lower()
-    value=re.sub(r"\\s+"," ",value)
-    value=re.sub(r"\\b(v|version)\\s*\\d+(?:\\.\\d+)*\\b","<version>",value)
-    value=re.sub(r"\\d{6,}","<id>",value)
+    value=re.sub(r"\s+"," ",value)
+    value=re.sub(r"\b(v|version)\s*\d+(?:\.\d+)*\b","<version>",value)
+    value=re.sub(r"\d{6,}","<id>",value)
     return value
-
 def categorize_step(name):
     n=(name or "").lower()
     if "checkout" in n:
