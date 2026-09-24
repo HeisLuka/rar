@@ -19,7 +19,8 @@
     "revision_receipt_validator": "tools/validate_revision_producer_receipt.py",
     "browser_receipt_schema": "apps/web/acceptance/browser-acceptance-receipt.schema.json",
     "viewer_receipt_schema": "apps/web/acceptance/viewer-geometry-receipt.schema.json",
-    "viewer_receipt_validator": "tools/validate_viewer_geometry_receipt.py"
+    "viewer_receipt_validator": "tools/validate_viewer_geometry_receipt.py",
+    "browser_receipt_validator": "tools/validate_browser_acceptance_receipt.py"
   },
   "closure_rule": "all_real_receipts_required"
 }

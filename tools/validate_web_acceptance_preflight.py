@@ -16,6 +16,8 @@ from adapt_viewer_scene_v1 import adapt_viewer_geometry
 from validate_revision_producer_receipt import validate_schema as validate_revision_schema
 from validate_revision_producer_receipt import validate_semantics as validate_revision_semantics
 from validate_viewer_geometry_receipt import validate_schema as validate_viewer_schema
+from validate_browser_acceptance_receipt import validate_schema as validate_browser_schema
+from validate_browser_acceptance_receipt import validate_semantics as validate_browser_semantics
 
 
 def load_json(path):
@@ -112,18 +114,13 @@ def main():
     browser = None
     if browser_path.exists():
         browser = load_json(browser_path)
-        validate_json_schema(BROWSER_SCHEMA, browser)
+        validate_browser_schema(browser)
         if browser["fixture"]["sha256"] != fixture["sha256"]:
             raise AssertionError("browser receipt fixture mismatch")
         if revision is None or scene_snapshot is None:
             blockers.append("browser_receipt_cannot_close_without_canonical_receipts")
         else:
-            if browser["initial_revision_id"] != revision["baseline"]["revision_id"]:
-                raise AssertionError("browser initial revision is not canonical baseline")
-            if browser["accepted_revision_id"] != revision["accepted"]["revision_id"]:
-                raise AssertionError("browser accepted revision is not canonical accepted revision")
-            if browser["scene_snapshot_ids"]["initial"] != scene_snapshot["snapshot_id"]:
-                raise AssertionError("browser initial scene snapshot does not match real Viewer adapter")
+            validate_browser_semantics(browser, revision, scene_snapshot)
             validated["browser_acceptance"] = True
     else:
         blockers.append("missing_real_browser_acceptance_receipt")

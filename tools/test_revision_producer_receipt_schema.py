@@ -14,7 +14,7 @@ from validate_revision_producer_receipt import (
 DOCUMENT_ID = "10000000-0000-4000-8000-000000000001"
 NODE_ID = "30000000-0000-4000-8000-000000000001"
 OP_ID = "90000000-0000-4000-8000-000000000001"
-SOURCE_HASH = "a" * 64
+SOURCE_HASH = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
 
 
 def valid_receipt():
@@ -132,6 +132,14 @@ class RevisionProducerReceiptSchemaTests(unittest.TestCase):
         receipt = valid_receipt()
         validate_schema(receipt)
         validate_semantics(receipt)
+
+    def test_move_node_size_change_fails_semantics(self):
+        receipt = valid_receipt()
+        receipt["accepted"]["canonical_operation"]["after"]["width"] += 1
+        receipt["resulting_project"]["operations"][-1]["after"]["width"] += 1
+        receipt["replayed_project"]["operations"][-1]["after"]["width"] += 1
+        with self.assertRaises(AssertionError):
+            validate_semantics(receipt)
 
     def test_unknown_request_private_field_fails_closed(self):
         receipt = valid_receipt()

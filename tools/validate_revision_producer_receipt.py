@@ -102,6 +102,8 @@ def validate_semantics(receipt):
         raise AssertionError("canonical before-state is missing")
     if after.get("x") != cmd.get("x_emu") or after.get("y") != cmd.get("y_emu"):
         raise AssertionError("canonical after-position does not match accepted intent")
+    if before.get("width") != after.get("width") or before.get("height") != after.get("height"):
+        raise AssertionError("bounded MoveNode must preserve width/height")
 
     if resulting.get("source_hash") != source_hash or replayed.get("source_hash") != source_hash:
         raise AssertionError("source hash changed")
