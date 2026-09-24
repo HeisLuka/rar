@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{
-    Acquire, Connection, Row, SqliteConnection, raw_sql,
+    Connection, Row, SqliteConnection, raw_sql,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
 };
 
@@ -305,12 +305,9 @@ struct AppliedMigration {
     checksum_sha256: String,
 }
 
-async fn load_and_validate_applied<'e, E>(
-    executor: E,
-) -> Result<Vec<AppliedMigration>, MigrationError>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
-{
+async fn load_and_validate_applied(
+    connection: &mut SqliteConnection,
+) -> Result<Vec<AppliedMigration>, MigrationError> {
     let rows = sqlx::query(
         r#"
         SELECT version, name, checksum_sha256
@@ -318,7 +315,7 @@ where
         ORDER BY version ASC
         "#,
     )
-    .fetch_all(executor)
+    .fetch_all(connection)
     .await
     .map_err(sqlite_error)?;
 
