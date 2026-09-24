@@ -1,0 +1,176 @@
+name: Aspose.PUB 19.10.1 managed fingerprint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pub-aspose-19-10-1-fingerprint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fingerprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bounded managed-binary tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mono-utils unzip binutils file
+
+      - name: Download exact acquired Aspose.PUB 19.10.1 package
+        uses: actions/download-artifact@v4
+        with:
+          name: aspose-pub-19.10.1-35983335476
+          path: acquired
+          github-token: ${{ github.token }}
+          run-id: 35983335476
+
+      - name: Verify package and extract managed assembly
+        shell: bash
+        env:
+          EXPECTED_ZIP_SHA256: "3df0b0193ff82d797982078a1505257baaea15d9b4a94492a0766d15597d9694"
+        run: |
+          set -euo pipefail
+          mkdir -p out/tree
+          pkg="$(find acquired -type f -name 'Aspose.PUB-19.10.1-dlls.zip' -print -quit)"
+          test -n "$pkg"
+          test "$(sha256sum "$pkg" | awk '{print $1}')" = "$EXPECTED_ZIP_SHA256"
+          sha256sum "$pkg" > out/package-sha256.txt
+          sha1sum "$pkg" > out/package-sha1.txt
+          md5sum "$pkg" > out/package-md5.txt
+          stat -c 'size_bytes=%s' "$pkg" > out/package-size.txt
+          unzip -q "$pkg" -d out/tree
+          find out/tree -type f -printf '%P\t%s\n' | sort > out/package-files.tsv
+          dll="$(find out/tree -type f -iname 'Aspose.PUB.dll' -print | sort | head -n1)"
+          test -n "$dll"
+          cp "$dll" out/Aspose.PUB.dll
+          sha256sum out/Aspose.PUB.dll > out/assembly-sha256.txt
+          sha1sum out/Aspose.PUB.dll > out/assembly-sha1.txt
+          md5sum out/Aspose.PUB.dll > out/assembly-md5.txt
+          stat -c 'size_bytes=%s' out/Aspose.PUB.dll > out/assembly-size.txt
+          file out/Aspose.PUB.dll > out/assembly-file.txt
+
+      - name: Extract CLR dependency and type surface
+        run: |
+          set -euo pipefail
+          monodis --assembly out/Aspose.PUB.dll > out/assembly.txt
+          monodis --assemblyref out/Aspose.PUB.dll > out/assemblyref.txt
+          monodis --moduleref out/Aspose.PUB.dll > out/moduleref.txt
+          monodis --manifest out/Aspose.PUB.dll > out/manifest.txt
+          monodis --typedef out/Aspose.PUB.dll > out/typedef.txt
+          monodis --method out/Aspose.PUB.dll > out/method.txt
+          monodis --pinvoke out/Aspose.PUB.dll > out/pinvoke.txt 2>out/pinvoke.stderr || true
+          strings -a -n 4 out/Aspose.PUB.dll > out/strings-ascii.txt
+          strings -el -n 4 out/Aspose.PUB.dll > out/strings-utf16.txt
+          grep -iE 'Quill|Escher|TextZone|FDPC|PLC|Shape|Publisher|Microsoft Publisher|MSPUB|PUBF|Contents|Envelope|BStore|Blip|OfficeArt|Story|TextFrame|Fill|Line|ColorScheme|FontScheme'             out/strings-ascii.txt out/strings-utf16.txt > out/parser-vocabulary-hits.txt || true
+
+      - name: Classify package native payloads and produce receipt
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, re, subprocess
+          from pathlib import Path
+
+          root=Path("out/tree")
+          assembly=Path("out/Aspose.PUB.dll")
+
+          def text(path):
+              try:
+                  return Path(path).read_text(encoding="utf-8",errors="replace")
+              except Exception:
+                  return ""
+
+          refs=[]
+          ar=text("out/assemblyref.txt")
+          for line in ar.splitlines():
+              m=re.search(r"Name=(.+)$",line.strip())
+              if m: refs.append(m.group(1).strip())
+
+          module_refs=[]
+          mr=text("out/moduleref.txt")
+          for line in mr.splitlines():
+              if line.strip() and not line.lower().startswith("module"):
+                  module_refs.append(line.strip())
+
+          pinvoke=[x.strip() for x in text("out/pinvoke.txt").splitlines() if x.strip()]
+
+          native=[]
+          managed=[]
+          for p in root.rglob("*"):
+              if not p.is_file():
+                  continue
+              try:
+                  desc=subprocess.check_output(["file","-b",str(p)],text=True,stderr=subprocess.DEVNULL).strip()
+              except Exception:
+                  desc=""
+              rel=str(p.relative_to(root))
+              if "PE32" in desc or "ELF" in desc or "Mach-O" in desc:
+                  row={"path":rel,"size":p.stat().st_size,"file":desc}
+                  if "Mono/.Net assembly" in desc or ".Net assembly" in desc:
+                      managed.append(row)
+                  else:
+                      native.append(row)
+
+          vocab={}
+          hay=(text("out/strings-ascii.txt")+"\n"+text("out/strings-utf16.txt")).lower()
+          for term in ["quill","escher","textzone","fdpc","plc","microsoft publisher","mspub",
+                       "officeart","bstorage","blip","story","textframe","colorscheme","fontscheme"]:
+              vocab[term]=hay.count(term.lower())
+
+          receipt={
+              "schema":"rar-aspose-pub-19.10.1-static-fingerprint-v1",
+              "source_run_id":35983335476,
+              "source_artifact_id":10801415708,
+              "package_sha256":"3df0b0193ff82d797982078a1505257baaea15d9b4a94492a0766d15597d9694",
+              "assembly_sha256":hashlib.sha256(assembly.read_bytes()).hexdigest(),
+              "assembly_size":assembly.stat().st_size,
+              "assembly_refs":sorted(set(refs)),
+              "module_refs":module_refs,
+              "pinvoke_rows":pinvoke,
+              "managed_pe_payloads":managed,
+              "native_payloads":native,
+              "vocabulary_counts":vocab,
+              "direct_native_dependency_present":bool(module_refs or pinvoke or native),
+              "boundary":"Static package/CLR fingerprint only. Shared vocabulary or absence of native dependencies does not by itself prove independent source lineage or semantic equivalence with libmspub."
+          }
+          Path("out/aspose-fingerprint.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps({
+              "assembly_sha256":receipt["assembly_sha256"],
+              "assembly_size":receipt["assembly_size"],
+              "assembly_refs":receipt["assembly_refs"],
+              "module_ref_count":len(module_refs),
+              "pinvoke_row_count":len(pinvoke),
+              "native_payload_count":len(native),
+              "managed_payload_count":len(managed),
+              "vocabulary_counts":vocab,
+              "direct_native_dependency_present":receipt["direct_native_dependency_present"],
+          },indent=2,ensure_ascii=False))
+          PY
+
+      - name: Upload source-free fingerprint receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspose-pub-19.10.1-fingerprint-${{ github.run_id }}
+          path: |
+            out/aspose-fingerprint.json
+            out/package-*.txt
+            out/assembly-*.txt
+            out/assembly.txt
+            out/assemblyref.txt
+            out/moduleref.txt
+            out/manifest.txt
+            out/typedef.txt
+            out/method.txt
+            out/pinvoke.txt
+            out/pinvoke.stderr
+            out/parser-vocabulary-hits.txt
+            out/package-files.tsv
+          if-no-files-found: error
+          retention-days: 30
