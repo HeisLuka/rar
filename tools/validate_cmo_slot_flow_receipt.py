@@ -58,8 +58,11 @@ def validate_semantics(receipt):
             raise AssertionError("Cmo source order was not preserved")
         if slot["scalar_index"] <= last_scalar:
             raise AssertionError("slot scalar order was not preserved")
-        if slot["used_height_before_emu"] != prior_height:
-            raise AssertionError("slot vertical cursor has a gap or overlap")
+        expected_before = prior_height + slot["preceding_text_height_emu"]
+        if slot["used_height_before_emu"] != expected_before:
+            raise AssertionError(
+                "slot vertical cursor does not account exactly for intervening shaped-line height"
+            )
         if (
             slot["used_height_after_emu"]
             != slot["used_height_before_emu"] + slot["intrinsic_height_emu"]
