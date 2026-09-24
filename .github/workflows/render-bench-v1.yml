@@ -34,9 +34,9 @@ jobs:
       - name: Normalize benchmark into optimization measurement snapshot
         run: python tools/run_optimization_spine_contract.py
       - name: Unit-test texture residency contract
-        run: python -m unittest tools/test_texture_residency_v1.py
+        run: PYTHONPATH=tools python -m unittest tools/test_texture_residency_v1.py
       - name: Run texture residency fake-adapter receipt
-        run: mkdir -p target/texture-residency && python tools/run_texture_residency_bench.py | tee target/texture-residency/receipt.json
+        run: mkdir -p target/texture-residency && PYTHONPATH=tools python tools/run_texture_residency_bench.py | tee target/texture-residency/receipt.json
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
