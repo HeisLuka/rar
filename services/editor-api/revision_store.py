@@ -90,6 +90,7 @@ class DocumentState:
 
 
 AuthoritativeExecutor = Callable[[dict, dict], Tuple[dict, dict, list]]
+AuthoritativeHistoryExecutor = Callable[[dict, str], Tuple[dict, list]]
 
 
 class RevisionKernel:
@@ -192,6 +193,127 @@ class RevisionKernel:
             request_validator=self._validate_story_range_request_shape,
             canonical_validator=self._validate_canonical_story_range,
         )
+
+    def commit_history_transition(
+        self,
+        request: dict,
+        executor: AuthoritativeHistoryExecutor,
+    ) -> dict:
+        """Commit authoritative undo/redo as a fresh immutable revision.
+
+        The browser supplies only the history intent. The authoritative executor
+        owns the actual EditorSession undo/redo transition and returns the
+        resulting canonical EditorProject. A history transition may therefore
+        reuse a prior state_id while still receiving a fresh revision_id.
+        """
+        self._validate_history_request_shape(request)
+        document_id = request["document_id"]
+        client_operation_id = request["client_operation_id"]
+        request_digest = hash_id(request)
+        idem_key = (document_id, client_operation_id)
+
+        prior = self._idempotency.get(idem_key)
+        if prior is not None:
+            prior_hash, prior_result = prior
+            if prior_hash != request_digest:
+                return self._rejected(
+                    request,
+                    code="idempotency_conflict",
+                    current_revision_id=self._documents.get(document_id).current_revision_id
+                    if document_id in self._documents
+                    else None,
+                    retryable=False,
+                )
+            return copy.deepcopy(prior_result)
+
+        if document_id not in self._documents:
+            result = self._rejected(
+                request,
+                code="invalid_command",
+                current_revision_id=None,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
+
+        doc = self._documents[document_id]
+        if request["source_hash"] != doc.source_hash:
+            result = self._rejected(
+                request,
+                code="source_hash_mismatch",
+                current_revision_id=doc.current_revision_id,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
+
+        if request["base_revision_id"] != doc.current_revision_id:
+            result = self._rejected(
+                request,
+                code="stale_revision",
+                current_revision_id=doc.current_revision_id,
+                retryable=True,
+            )
+            self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+            return result
+
+        base = self._revisions[doc.current_revision_id]
+        transition_kind = request["command"]["kind"]
+        resulting_project, consequences = executor(
+            copy.deepcopy(base.project),
+            transition_kind,
+        )
+        self._validate_project_source(resulting_project, doc.source_hash)
+
+        sid = state_id(document_id, doc.source_hash, resulting_project)
+        transition_digest = hash_id(
+            {
+                "protocol_version": "chaptera.history-transition.v1",
+                "kind": transition_kind,
+                "base_revision_id": base.revision_id,
+                "base_state_id": base.state_id,
+                "resulting_state_id": sid,
+            }
+        )
+        rid = revision_id(
+            document_id,
+            doc.source_hash,
+            base.revision_id,
+            sid,
+            transition_kind,
+            transition_digest,
+        )
+        record = RevisionRecord(
+            document_id=document_id,
+            source_hash=doc.source_hash,
+            revision_id=rid,
+            state_id=sid,
+            parent_revision_id=base.revision_id,
+            project_schema_version=resulting_project["schema_version"],
+            project_hash=project_hash(resulting_project),
+            transition_kind=transition_kind,
+            transition_hash=transition_digest,
+            project=copy.deepcopy(resulting_project),
+        )
+
+        self._revisions[rid] = record
+        doc.current_revision_id = rid
+
+        result = {
+            "protocol_version": "chaptera.history-transition-accepted.v1",
+            "document_id": document_id,
+            "source_hash": doc.source_hash,
+            "base_revision_id": base.revision_id,
+            "revision_id": rid,
+            "state_id": sid,
+            "client_operation_id": client_operation_id,
+            "transition_kind": transition_kind,
+            "project_schema_version": resulting_project["schema_version"],
+            "consequences": copy.deepcopy(consequences),
+            "scene_refresh": "full_snapshot",
+        }
+        self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+        return result
 
     def _commit_command(
         self,
@@ -327,6 +449,16 @@ class RevisionKernel:
             "message_key": f"revision.{code}",
             "retryable": retryable,
         }
+
+    @staticmethod
+    def _validate_history_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.history-transition-intent.v1":
+            raise ValueError("V1 history transition protocol_version is required")
+        command = request.get("command")
+        if not isinstance(command, dict) or set(command) != {"kind"}:
+            raise ValueError("history transition contains non-intent/authoritative fields")
+        if command.get("kind") not in {"undo", "redo"}:
+            raise ValueError("V1 history transition must be undo or redo")
 
     @staticmethod
     def _validate_move_request_shape(request: dict) -> None:
