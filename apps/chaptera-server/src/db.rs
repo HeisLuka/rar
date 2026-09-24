@@ -1,21 +1,25 @@
+use async_trait::async_trait;
+
 use crate::runtime_error::RuntimeError;
 
+#[async_trait]
 pub trait MigrationRuntime: Send + Sync {
-    fn status(&self) -> Result<(), RuntimeError>;
-    fn up(&self) -> Result<(), RuntimeError>;
+    async fn status(&self) -> Result<(), RuntimeError>;
+    async fn up(&self) -> Result<(), RuntimeError>;
 }
 
 pub struct UnconfiguredMigrationRuntime;
 
+#[async_trait]
 impl MigrationRuntime for UnconfiguredMigrationRuntime {
-    fn status(&self) -> Result<(), RuntimeError> {
+    async fn status(&self) -> Result<(), RuntimeError> {
         Err(RuntimeError::new(
             "migration_runtime_not_configured",
             "CLOUD-MIGRATION-01 is not connected to the runtime shell",
         ))
     }
 
-    fn up(&self) -> Result<(), RuntimeError> {
+    async fn up(&self) -> Result<(), RuntimeError> {
         Err(RuntimeError::new(
             "migration_runtime_not_configured",
             "CLOUD-MIGRATION-01 is not connected to the runtime shell",
