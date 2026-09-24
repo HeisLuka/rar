@@ -38,6 +38,12 @@ class TextIngressV1Tests(unittest.TestCase):
         self.assertEqual(0, value.scalar_len)
         self.assertEqual(0, value.paragraph_boundary_count)
 
+    def test_plain_text_without_newline_does_not_gain_terminal_cr(self):
+        value = normalize_external_text_v1("plain")
+        self.assertEqual("plain", value.text)
+        self.assertFalse(value.text.endswith("\r"))
+        self.assertEqual(5, value.scalar_len)
+
     def test_unicode_is_preserved_without_normalization(self):
         precomposed = normalize_external_text_v1("é")
         decomposed = normalize_external_text_v1("e\u0301")
