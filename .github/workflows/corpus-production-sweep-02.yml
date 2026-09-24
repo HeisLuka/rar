@@ -1,0 +1,134 @@
+name: CORPUS production sweep 02
+
+on:
+  push:
+    branches: [corpus-production-sweep-02]
+    paths:
+      - '.github/workflows/corpus-production-sweep-02.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  common-crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install discovery deps
+        run: python -m pip install --disable-pip-version-check duckdb==1.4.1 pytz==2025.2
+      - name: Discover bounded global candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/cc/discovery
+          python tools/corpus/commoncrawl_global_pub_seed.py \
+            --crawl-count 3 --min-year 2018 \
+            --max-parquet-files 10 --max-candidates-per-crawl 120 --batch-size 5 \
+            --out out/cc/discovery/seed.csv \
+            --summary out/cc/discovery/summary.json
+          cat out/cc/discovery/summary.json
+      - name: Harvest bounded Common Crawl candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/cc/discovery/seed.csv --out out/cc/harvest \
+            --max-files 300 --timeout 20 --max-bytes 104857600 --per-host-delay 0.05
+      - name: Summarize CC yield and remove raw payloads
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/cc/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "schema":"rar-production-sweep-02-common-crawl",
+            "manifest_rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "cc_crawls":sorted({r.get("cc_crawl","") for r in rows if r.get("cc_crawl")}),
+            "source_hosts":len({r.get("cc_source_host","") for r in rows if r.get("cc_source_host")}),
+          }
+          Path("out/cc/yield.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/cc/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-sweep-02-common-crawl
+          path: |
+            out/cc/discovery/**
+            out/cc/harvest/manifest.json
+            out/cc/harvest/manifest.csv
+            out/cc/yield.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  wayback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover bounded Wayback candidates
+        run: |
+          set -euo pipefail
+          mkdir -p out/wayback/discovery
+          python tools/corpus/wayback_pub_seed.py \
+            --seed tools/corpus/public_legacy_seed.csv \
+            --seed tools/corpus/smoke_seed.csv \
+            --max-domains 40 --exact-limit 15 --domain-limit 200 --delay 0.5 \
+            --out out/wayback/discovery/seed.csv \
+            --summary out/wayback/discovery/summary.json
+          cat out/wayback/discovery/summary.json
+      - name: Harvest bounded Wayback candidates
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/wayback/discovery/seed.csv --out out/wayback/harvest \
+            --max-files 250 --timeout 25 --max-bytes 104857600 --per-host-delay 0.15
+      - name: Summarize Wayback yield and remove raw payloads
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          p=Path("out/wayback/harvest/manifest.json")
+          rows=json.loads(p.read_text()) if p.exists() else []
+          summary={
+            "schema":"rar-production-sweep-02-wayback",
+            "manifest_rows":len(rows),
+            "unique_sha256":len({r.get("sha256") for r in rows if r.get("sha256")}),
+            "fetch_status":dict(Counter(r.get("fetch_status","") for r in rows)),
+            "classification":dict(Counter(r.get("classification","") for r in rows)),
+            "original_urls":len({r.get("wayback_original_url","") for r in rows if r.get("wayback_original_url")}),
+          }
+          Path("out/wayback/yield.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/wayback/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-sweep-02-wayback
+          path: |
+            out/wayback/discovery/**
+            out/wayback/harvest/manifest.json
+            out/wayback/harvest/manifest.csv
+            out/wayback/yield.json
+          if-no-files-found: warn
+          retention-days: 30
