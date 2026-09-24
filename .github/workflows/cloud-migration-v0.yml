@@ -1,0 +1,133 @@
+name: CLOUD-MIGRATION-01 schema migration gate
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/**"
+      - "apps/chaptera-server/src/db.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/migrate.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "docs/cloud-schema-migration-v0.md"
+      - ".github/workflows/cloud-migration-v0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+
+      - name: Run migration tests
+        run: cargo test -p chaptera-server schema_migration::
+
+      - name: Run full Chaptera server tests
+        run: cargo test -p chaptera-server
+
+      - name: Build operator binary
+        env:
+          CHAPTERA_BUILD_GIT_SHA: ${{ github.sha }}
+        run: cargo build -p chaptera-server
+
+      - name: Exercise operator migration surface
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          binary="./target/debug/chaptera"
+          db="$RUNNER_TEMP/chaptera-migration.sqlite"
+          export CHAPTERA_SQLITE_PATH="$db"
+
+          mkdir -p target/cloud-migration-01
+
+          "$binary" migrate status > target/cloud-migration-01/status-before.json
+          test ! -e "$db"
+
+          "$binary" migrate up > target/cloud-migration-01/up.json
+          "$binary" migrate status > target/cloud-migration-01/status-current.json
+
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sqlite3
+
+          root = pathlib.Path("target/cloud-migration-01")
+          before = json.loads((root / "status-before.json").read_text())
+          up = json.loads((root / "up.json").read_text())
+          current = json.loads((root / "status-current.json").read_text())
+
+          assert before["state"] == "pending"
+          assert before["current_version"] == 0
+          assert before["pending_versions"] == [1, 2, 3, 4, 5]
+
+          assert up["state"] == "current"
+          assert up["current_version"] == 5
+          assert up["applied_versions"] == [1, 2, 3, 4, 5]
+
+          assert current == up
+
+          db = os.environ["CHAPTERA_SQLITE_PATH"]
+          with sqlite3.connect(db) as conn:
+              conn.execute(
+                  "UPDATE chaptera_schema_migrations "
+                  "SET checksum_sha256='tampered' WHERE version=2"
+              )
+              conn.commit()
+          PY
+
+          set +e
+          "$binary" migrate status             > target/cloud-migration-01/status-tampered.out             2> target/cloud-migration-01/status-tampered.err
+          tampered_rc=$?
+          set -e
+          test "$tampered_rc" -ne 0
+
+          TAMPERED_RC="$tampered_rc" GITHUB_SHA="${{ github.sha }}" python - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path("target/cloud-migration-01")
+          receipt = {
+              "schema": "chaptera.cloud-migration-01.receipt.v1",
+              "task": "CLOUD-MIGRATION-01",
+              "git_sha": os.environ["GITHUB_SHA"],
+              "public_safe": True,
+              "operator_surface": [
+                  "chaptera migrate status",
+                  "chaptera migrate up",
+              ],
+              "before": json.loads((root / "status-before.json").read_text()),
+              "after": json.loads((root / "status-current.json").read_text()),
+              "checksum_tamper_rejected": int(os.environ["TAMPERED_RC"]) != 0,
+              "automatic_startup_migration": False,
+              "single_owner_lock": "BEGIN IMMEDIATE",
+              "rollback_policy": "restore compatible DB unless a cross-schema binary window is explicitly declared",
+          }
+          (root / "receipt.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-migration-01-receipt
+          path: target/cloud-migration-01/
+          if-no-files-found: error
