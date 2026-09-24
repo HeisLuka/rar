@@ -32,3 +32,5 @@ jobs:
           git add apps/chaptera-server/src/job_queue.rs apps/chaptera-server/src/lib.rs
           git commit -m "CLOUD-ASYNC-RUNTIME-01: apply rustfmt"
           git push origin HEAD:cloud-async-runtime-01-core
+
+# trigger after default-branch registration
