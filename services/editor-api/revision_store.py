@@ -212,6 +212,21 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_delete_node(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_delete_node_request_shape,
+            canonical_validator=self._validate_canonical_delete_node,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_story_range(
         self,
         request: dict,
@@ -533,6 +548,59 @@ class RevisionKernel:
         depends = request.get("depends_on_client_operation_id")
         if depends is not None and (not isinstance(depends, str) or len(depends) < 8):
             raise ValueError("depends_on_client_operation_id is invalid")
+
+    @staticmethod
+    def _validate_delete_node_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.delete-node-intent.v1":
+            raise ValueError("V1 DeleteNode protocol_version is required")
+        command = request.get("command")
+        allowed = {
+            "kind",
+            "node_id",
+            "expected_state_id",
+            "expected_parent_id",
+            "expected_child_index",
+        }
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "delete_node"
+            or set(command) != allowed
+        ):
+            raise ValueError("DeleteNode contains non-intent/authoritative fields")
+        for field in ("node_id", "expected_parent_id"):
+            value = command.get(field)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"DeleteNode {field} is required")
+        expected_state_id = command.get("expected_state_id")
+        if (
+            not isinstance(expected_state_id, str)
+            or not expected_state_id.startswith("sha256:")
+            or len(expected_state_id) != 71
+            or any(ch not in "0123456789abcdef" for ch in expected_state_id[7:])
+        ):
+            raise ValueError("DeleteNode expected_state_id must be sha256:<lowercase hex>")
+        index = command.get("expected_child_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ValueError("DeleteNode expected_child_index must be a non-negative integer")
+
+    @staticmethod
+    def _validate_canonical_delete_node(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "delete_node":
+            raise ValueError("authoritative executor returned non-DeleteNode operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical DeleteNode targets a different node")
+        if operation.get("parent_id") != command.get("expected_parent_id"):
+            raise ValueError("canonical DeleteNode parent differs from expected precondition")
+        if operation.get("child_index") != command.get("expected_child_index"):
+            raise ValueError("canonical DeleteNode child index differs from expected precondition")
+        before_entity = operation.get("before_entity")
+        if not isinstance(before_entity, dict):
+            raise ValueError("authoritative executor must derive canonical before_entity")
+        before_state_id = hash_id(before_entity)
+        if before_state_id != command.get("expected_state_id"):
+            raise ValueError("canonical DeleteNode entity state differs from expected precondition")
+        if operation.get("before_state_id") != before_state_id:
+            raise ValueError("canonical DeleteNode before_state_id is not bound to before_entity")
 
     @staticmethod
     def _validate_text_frame_columns_state(state: dict, label: str) -> None:
