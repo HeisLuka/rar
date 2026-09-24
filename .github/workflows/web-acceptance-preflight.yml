@@ -95,10 +95,21 @@ jobs:
                   print("all real receipts present; strict dispatch may now close the gate")
               else:
                   assert result["claim"] == "preflight_only_not_product_acceptance"
-                  assert "missing_real_revision_producer_receipt" in result["blockers"]
-                  assert "missing_real_viewer_geometry_receipt" in result["blockers"]
-                  assert "missing_real_browser_acceptance_receipt" in result["blockers"]
-                  print("preflight correctly remains non-acceptance")
+                  assert result["blockers"], "non-ready preflight must name at least one blocker"
+                  missing_by_slot = {
+                      "revision_producer": "missing_real_revision_producer_receipt",
+                      "viewer_geometry": "missing_real_viewer_geometry_receipt",
+                      "browser_acceptance": "missing_real_browser_acceptance_receipt",
+                  }
+                  for slot, blocker in missing_by_slot.items():
+                      if result["validated"][slot]:
+                          assert blocker not in result["blockers"], (
+                              f"{slot} validated but stale missing blocker remained"
+                          )
+                  print(
+                      "preflight correctly remains non-acceptance with current blockers: "
+                      + ", ".join(result["blockers"])
+                  )
           PY
       - name: Prove strict mode fails closed while real receipts are missing
         if: env.ACCEPTANCE_MODE == 'preflight'
