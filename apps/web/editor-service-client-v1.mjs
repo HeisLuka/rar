@@ -7,10 +7,13 @@ export class HttpEditorServiceV1 {
     }
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.commitRequests = 0;
+    this.historyRequests = 0;
     this.lastRequest = null;
+    this.lastHistoryRequest = null;
     this.observability = observability;
     this.lastTraceContext = null;
     this.lastCommitTraceContext = null;
+    this.lastHistoryTraceContext = null;
   }
 
   async currentScene() {
@@ -28,6 +31,18 @@ export class HttpEditorServiceV1 {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(request),
     }, context, "browser.commit_http");
+  }
+
+  async historyTransition(request) {
+    this.historyRequests += 1;
+    this.lastHistoryRequest = structuredClone(request);
+    const context = this.#context("history", request.client_operation_id ?? null);
+    this.lastHistoryTraceContext = context;
+    return this.#json("/v1/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }, context, "browser.history_http");
   }
 
   async sceneForRevision(revisionId) {
