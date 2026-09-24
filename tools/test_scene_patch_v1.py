@@ -6,7 +6,9 @@ from render_bench_v1 import shape_workload
 from render_scene_v1 import compile_render_scene, hash_id
 from scene_patch_v1 import (
     PRIMITIVE_KINDS,
+    ScenePatchApplyPoisoned,
     apply_patch,
+    apply_patch_in_place,
     diff_render_scenes,
 )
 from test_render_scene_v1 import SRC
@@ -48,6 +50,25 @@ def _legacy_diff_render_scenes(base,target):
     patch["patch_id"]=hash_id(patch)
     return patch
 
+def _assert_pure_and_in_place(testcase,base,target,patch):
+    base_before=copy.deepcopy(base)
+    pure_metrics={}
+    pure=apply_patch(base,patch,metrics=pure_metrics)
+    testcase.assertEqual(base_before,base)
+    testcase.assertEqual(target,pure)
+    testcase.assertTrue(pure_metrics["full_scene_deepcopy"])
+
+    working=copy.deepcopy(base)
+    hot_metrics={}
+    hot=apply_patch_in_place(working,patch,metrics=hot_metrics)
+    testcase.assertIs(working,hot)
+    testcase.assertEqual(target,hot)
+    testcase.assertFalse(hot_metrics["full_scene_deepcopy"])
+    testcase.assertEqual(
+        sum(len(base["primitives"][kind]) for kind in PRIMITIVE_KINDS),
+        hot_metrics["primitive_filter_visits"],
+    )
+
 class ScenePatchTests(unittest.TestCase):
     def test_one_node_move_is_bounded_and_equivalent_to_full_compile(self):
         before_src=copy.deepcopy(SRC)
@@ -62,9 +83,8 @@ class ScenePatchTests(unittest.TestCase):
         self.assertEqual(["20000000-0000-4000-8000-000000000001"],[x["node_id"] for x in patch["upsert_nodes"]])
         self.assertEqual([],patch["removed_nodes"])
         self.assertLess(len(str(patch)),len(str(full)))
-        applied=apply_patch(base,patch)
-        self.assertEqual(full,applied)
-        self.assertEqual(-25400,applied["primitives"]["rects"][0]["bounds"]["x"])
+        _assert_pure_and_in_place(self,base,full,patch)
+        self.assertEqual(-25400,full["primitives"]["rects"][0]["bounds"]["x"])
 
     def test_indexed_diff_matches_legacy_patch_semantics(self):
         before=shape_workload(64,pages=4,off_page=True,label="legacy-equivalence")
@@ -100,14 +120,42 @@ class ScenePatchTests(unittest.TestCase):
         )
         self.assertEqual(target,apply_patch(base,patch))
 
+    def test_wrong_base_rejects_before_in_place_mutation(self):
+        before=shape_workload(32,pages=2,label="wrong-base")
+        after=copy.deepcopy(before)
+        after["scene_revision"]="sha256:"+"6"*64
+        after["nodes"][0]["bounds"]["x"]+=127000
+        base=compile_render_scene(before)
+        target=compile_render_scene(after)
+        patch=diff_render_scenes(base,target)
+        patch["base_render_scene_id"]="sha256:"+"f"*64
+        working=copy.deepcopy(base)
+        original=copy.deepcopy(working)
+        with self.assertRaisesRegex(ValueError,"base render scene mismatch"):
+            apply_patch_in_place(working,patch)
+        self.assertEqual(original,working)
+
+    def test_target_identity_failure_poisoning_is_explicit(self):
+        before=shape_workload(32,pages=2,label="poison")
+        after=copy.deepcopy(before)
+        after["scene_revision"]="sha256:"+"5"*64
+        after["nodes"][0]["bounds"]["x"]+=127000
+        base=compile_render_scene(before)
+        target=compile_render_scene(after)
+        patch=diff_render_scenes(base,target)
+        patch["target_render_scene_id"]="sha256:"+"e"*64
+        working=copy.deepcopy(base)
+        with self.assertRaises(ScenePatchApplyPoisoned):
+            apply_patch_in_place(working,patch)
+        self.assertNotEqual(base,working)
+        self.assertNotEqual(patch["target_render_scene_id"],working["render_scene_id"])
+
     def test_multi_page_interleaved_node_ids_preserve_compiler_order(self):
         before=copy.deepcopy(SRC)
         before["pages"].append({
             "page_id":"10000000-0000-4000-8000-000000000003",
             "order":2,"width_emu":9144000,"height_emu":6858000,
         })
-        # Interleave a lower lexical NodeId onto a later page so atom-id sorting
-        # would differ from canonical page/paint order.
         before["nodes"].append({
             "node_id":"10000000-0000-4000-8000-000000000099",
             "page_id":"10000000-0000-4000-8000-000000000003",
@@ -121,7 +169,7 @@ class ScenePatchTests(unittest.TestCase):
         base=compile_render_scene(before)
         full=compile_render_scene(after)
         patch=diff_render_scenes(base,full)
-        self.assertEqual(full,apply_patch(base,patch))
+        _assert_pure_and_in_place(self,base,full,patch)
 
     def test_diagnostic_and_order_authority_changes_patch(self):
         after=copy.deepcopy(SRC)
@@ -133,7 +181,7 @@ class ScenePatchTests(unittest.TestCase):
         patch=diff_render_scenes(base,full)
         self.assertIsNotNone(patch["order_deltas"])
         self.assertIsNotNone(patch["diagnostics"])
-        self.assertEqual(full,apply_patch(base,patch))
+        _assert_pure_and_in_place(self,base,full,patch)
 
     def test_resource_table_change_patches_without_node_recompile(self):
         after=copy.deepcopy(SRC)
@@ -144,7 +192,7 @@ class ScenePatchTests(unittest.TestCase):
         patch=diff_render_scenes(base,full)
         self.assertEqual([],patch["upsert_nodes"])
         self.assertTrue(patch["resource_deltas"])
-        self.assertEqual(full,apply_patch(base,patch))
+        _assert_pure_and_in_place(self,base,full,patch)
 
 if __name__=="__main__":
     unittest.main()
