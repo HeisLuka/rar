@@ -132,6 +132,8 @@ jobs:
           clusters=defaultdict(list)
           content_clusters=defaultdict(list)
           for r in a:
+              if not r["parse_ok"]:
+                  continue
               clusters[r["cfb_topology_sha256"]].append(r["sha256"])
               content_clusters[r["cfb_stream_digest_sha256"]].append(r["sha256"])
 
@@ -143,6 +145,9 @@ jobs:
               "attempted_sha256":len(a),
               "parse_ok":sum(r["parse_ok"] for r in a),
               "parse_failed":sum(not r["parse_ok"] for r in a),
+              "parse_failure_classes":dict(Counter(
+                  (r["parse_error"] or "").split(":",1)[-1] for r in a if not r["parse_ok"]
+              )),
               "exact_topology_clusters":len(clusters),
               "duplicate_topology_clusters":sum(len(v)>1 for v in clusters.values()),
               "exact_stream_digest_clusters":len(content_clusters),
