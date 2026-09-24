@@ -4,6 +4,9 @@ from render_scene_v1 import hash_id
 
 PRIMITIVE_KINDS = ("rects","images","glyph_runs")
 
+class ScenePatchApplyPoisoned(AssertionError):
+    """The renderer-owned compiled state must be discarded after this failure."""
+
 def _empty_atom_buckets():
     return {kind:[] for kind in PRIMITIVE_KINDS}
 
@@ -100,23 +103,35 @@ def diff_render_scenes(base, target, metrics=None):
 
     return patch
 
-def apply_patch(base, patch):
-    if base["render_scene_id"]!=patch["base_render_scene_id"]:
+def _require_base_identity(scene, patch):
+    if scene["render_scene_id"]!=patch["base_render_scene_id"]:
         raise ValueError("base render scene mismatch")
-    out=copy.deepcopy(base)
 
+def _apply_patch_mutating(out, patch, metrics=None):
+    """Mutate a renderer-owned disposable RenderScene after base validation.
+
+    The caller owns failure recovery. If final target identity validation fails,
+    this object is poisoned and must be discarded/recompiled.
+    """
     removed=set(patch["removed_nodes"])
     upsert_ids={u["node_id"] for u in patch["upsert_nodes"]}
     affected=removed|upsert_ids
 
+    primitive_filter_visits=0
+    upsert_atom_copies=0
     for kind in PRIMITIVE_KINDS:
+        previous=out["primitives"][kind]
+        primitive_filter_visits+=len(previous)
         out["primitives"][kind]=[
-            atom for atom in out["primitives"][kind]
+            atom for atom in previous
             if atom.get("node_id") not in affected
         ]
         for upsert in patch["upsert_nodes"]:
-            out["primitives"][kind].extend(copy.deepcopy(upsert["primitives"][kind]))
+            atoms=upsert["primitives"][kind]
+            upsert_atom_copies+=len(atoms)
+            out["primitives"][kind].extend(copy.deepcopy(atoms))
 
+    atom_map_filter_visits=len(out["atom_map"])
     out["atom_map"]=[
         x for x in out["atom_map"] if x["node_id"] not in affected
     ]
@@ -141,7 +156,9 @@ def apply_patch(base, patch):
     # detail. Reconstruct each table from the target paint sequence rather than
     # sorting by atom_id, which diverges on interleaved multi-page NodeIds.
     paint_rank={atom_id:index for index,atom_id in enumerate(out["paint_seq"])}
+    reorder_atoms=0
     for kind in PRIMITIVE_KINDS:
+        reorder_atoms+=len(out["primitives"][kind])
         out["primitives"][kind].sort(
             key=lambda atom:(paint_rank.get(atom["atom_id"], 2**63-1), atom["atom_id"])
         )
@@ -149,6 +166,41 @@ def apply_patch(base, patch):
     out["scene_revision"]=patch["target_revision"]
     out.pop("render_scene_id",None)
     out["render_scene_id"]=hash_id(out)
+
+    if metrics is not None:
+        metrics.update({
+            "primitive_filter_visits":primitive_filter_visits,
+            "atom_map_filter_visits":atom_map_filter_visits,
+            "upsert_atom_copies":upsert_atom_copies,
+            "reorder_atoms":reorder_atoms,
+            "affected_node_count":len(affected),
+        })
+
     if out["render_scene_id"]!=patch["target_render_scene_id"]:
-        raise AssertionError("patched RenderScene does not equal target identity")
+        raise ScenePatchApplyPoisoned(
+            "patched RenderScene does not equal target identity; discard renderer state"
+        )
     return out
+
+def apply_patch(base, patch, metrics=None):
+    """Pure compatibility/oracle apply.
+
+    The input base is never mutated. This intentionally pays for a full deep copy.
+    """
+    _require_base_identity(base,patch)
+    out=copy.deepcopy(base)
+    if metrics is not None:
+        metrics["full_scene_deepcopy"]=True
+    return _apply_patch_mutating(out,patch,metrics=metrics)
+
+def apply_patch_in_place(scene, patch, metrics=None):
+    """Hot renderer path for an exclusively owned disposable RenderScene.
+
+    Wrong-base identity is rejected before mutation. Any later
+    ScenePatchApplyPoisoned error means the scene may have been mutated and must
+    be discarded. Never pass authoring/layout authority state to this function.
+    """
+    _require_base_identity(scene,patch)
+    if metrics is not None:
+        metrics["full_scene_deepcopy"]=False
+    return _apply_patch_mutating(scene,patch,metrics=metrics)
