@@ -1,0 +1,28 @@
+name: Layout paragraph alignment V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/pub-line-placement/**"
+      - ".github/workflows/layout-paragraph-align-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check crate
+        run: cargo check -p pub-line-placement --all-targets
+      - name: Lint crate
+        run: cargo clippy -p pub-line-placement --all-targets -- -D warnings
+      - name: Test crate
+        run: cargo test -p pub-line-placement
