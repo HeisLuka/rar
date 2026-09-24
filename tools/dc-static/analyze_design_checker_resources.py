@@ -207,7 +207,7 @@ def section_for_offset(pe: pefile.PE, offset: int) -> str | None:
         start = int(section.PointerToRawData)
         end = start + int(section.SizeOfRawData)
         if start <= offset < end:
-            return section.Name.rstrip(b"\\x00").decode("ascii", errors="replace")
+            return section.Name.rstrip(bytes([0])).decode("ascii", errors="replace")
     return None
 
 
@@ -468,7 +468,7 @@ def decode_checker_fixed_records(
             continue
 
         records: list[dict] = []
-        executable_pointer_fields = 0
+        text_section_pointer_fields = 0
         field_kind_counts: list[dict[str, int]] = [defaultdict(int) for _ in range(4)]
         field_section_counts: list[dict[str, int]] = [defaultdict(int) for _ in range(4)]
         for offset in offsets:
@@ -482,7 +482,7 @@ def decode_checker_fixed_records(
                 if classified.get("section"):
                     field_section_counts[field_index][classified["section"]] += 1
                 if field_index > 0 and classified.get("section") == ".text":
-                    executable_pointer_fields += 1
+                    text_section_pointer_fields += 1
                 fields.append({"index": field_index, **classified})
             first = by_offset[offset]
             records.append(
@@ -503,7 +503,7 @@ def decode_checker_fixed_records(
                 "end_offset": offsets[-1] + record_size - 1,
                 "start_rva": records[0]["rva"] if records else None,
                 "end_rva": records[-1]["rva"] if records else None,
-                "executable_pointer_fields_after_name": executable_pointer_fields,
+                "text_section_pointer_fields_after_name": text_section_pointer_fields,
                 "field_kind_counts": [
                     {"field_index": i, "counts": dict(sorted(counts.items()))}
                     for i, counts in enumerate(field_kind_counts)
@@ -646,6 +646,41 @@ def shared_record_target_headers(pe: pefile.PE, path: Path, record_arrays: list[
                         "dwords": dwords,
                     }
                 )
+    return out
+
+
+def imported_iat_raw_occurrences(
+    pe: pefile.PE, path: Path, iat_map: dict[int, str]
+) -> list[dict]:
+    """Find raw little-endian IAT VA occurrences and retain executable-section locations."""
+    data = path.read_bytes()
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for iat_va, name in sorted(iat_map.items()):
+        needle = struct.pack("<I", iat_va & 0xFFFFFFFF)
+        start = 0
+        while True:
+            offset = data.find(needle, start)
+            if offset < 0:
+                break
+            start = offset + 1
+            section = section_for_offset(pe, offset)
+            if section != ".text":
+                continue
+            try:
+                rva = int(pe.get_rva_from_offset(offset))
+            except Exception:
+                rva = None
+            out.append(
+                {
+                    "target": name,
+                    "iat_va": f"0x{iat_va:08X}",
+                    "offset": offset,
+                    "section": section,
+                    "rva": f"0x{rva:08X}" if rva is not None else None,
+                    "va": f"0x{image_base + rva:08X}" if rva is not None else None,
+                }
+            )
     return out
 
 
@@ -1083,6 +1118,12 @@ def main() -> int:
             "FreeLibrary",
         },
     )
+    loader_iat_raw_occurrences = imported_iat_raw_occurrences(
+        pe, pe_path, loader_iat
+    )
+    loader_iat_occurrence_instructions = pointer_occurrence_instructions(
+        pe, instructions, loader_iat_raw_occurrences
+    )
     loader_thunks = import_thunk_map(pe, instructions, loader_iat)
     loader_calls = imported_call_sites(pe, instructions, loader_iat, loader_thunks)
     loader_checker_proximity = loader_proximity(
@@ -1141,6 +1182,8 @@ def main() -> int:
                 {"iat_va": f"0x{va:08X}", "name": name}
                 for va, name in sorted(loader_iat.items())
             ],
+            "loader_iat_raw_occurrences": loader_iat_raw_occurrences,
+            "loader_iat_occurrence_instructions": loader_iat_occurrence_instructions,
             "loader_import_thunks": [
                 {"thunk_va": f"0x{va:08X}", "target": name}
                 for va, name in sorted(loader_thunks.items())
@@ -1199,12 +1242,14 @@ def main() -> int:
         f"- checker pointer clusters (>=2 identifiers): {len(checker_pointer_tables)}",
         f"- checker pointer clusters with code refs: {sum(1 for row in checker_pointer_table_refs if row['refs'])}",
         f"- fixed 16-byte checker record arrays: {len(checker_fixed_records)}",
-        f"- executable pointer fields after name: {sum(row['executable_pointer_fields_after_name'] for row in checker_fixed_records)}",
+        f"- executable pointer fields after name: {sum(row['text_section_pointer_fields_after_name'] for row in checker_fixed_records)}",
         f"- shared fixed-record VA targets decoded: {len(checker_shared_target_headers)}",
         f"- second-order pointers to checker array bases: {len(checker_cluster_base_pointers)}",
         f"- second-order .text occurrences bound to instructions: {sum(1 for row in checker_cluster_base_occurrence_instructions if row['containing_instruction'])}",
         f"- code refs to second-order data slots: {len(checker_cluster_base_slot_code_refs)}",
         f"- loader API imports: {len(loader_iat)}",
+        f"- raw .text IAT occurrences: {len(loader_iat_raw_occurrences)}",
+        f"- raw IAT occurrences bound to instructions: {sum(1 for row in loader_iat_occurrence_instructions if row['containing_instruction'])}",
         f"- loader import thunks: {len(loader_thunks)}",
         f"- loader API call sites: {len(loader_calls)}",
         f"- loader calls with nearby checker hits: {sum(1 for row in loader_checker_proximity if row['nearby_checker_hits'])}",
@@ -1248,8 +1293,8 @@ def main() -> int:
                     1 for row in checker_pointer_table_refs if row["refs"]
                 ),
                 "checker_fixed_record_arrays": len(checker_fixed_records),
-                "checker_executable_pointer_fields_after_name": sum(
-                    row["executable_pointer_fields_after_name"]
+                "checker_text_section_pointer_fields_after_name": sum(
+                    row["text_section_pointer_fields_after_name"]
                     for row in checker_fixed_records
                 ),
                 "checker_shared_record_targets": len(checker_shared_target_headers),
@@ -1260,6 +1305,11 @@ def main() -> int:
                 ),
                 "checker_cluster_base_slot_code_refs": len(checker_cluster_base_slot_code_refs),
                 "loader_imports": len(loader_iat),
+                "loader_iat_raw_occurrences": len(loader_iat_raw_occurrences),
+                "loader_iat_occurrences_bound_to_instructions": sum(
+                    1 for row in loader_iat_occurrence_instructions
+                    if row["containing_instruction"]
+                ),
                 "loader_import_thunks": len(loader_thunks),
                 "loader_call_sites": len(loader_calls),
                 "loader_calls_with_checker_proximity": sum(
