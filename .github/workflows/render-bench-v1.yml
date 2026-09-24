@@ -9,6 +9,9 @@ on:
       - "tools/scene_patch_v1.py"
       - "tools/optimization_receipt_v1.py"
       - "tools/run_optimization_spine_contract.py"
+      - "tools/buffer_residency_v1.py"
+      - "tools/test_buffer_residency_v1.py"
+      - "tools/run_buffer_residency_benchmark.py"
       - "docs/render-bench-v1.md"
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
@@ -30,6 +33,16 @@ jobs:
         run: python tools/run_render_bench_contract.py
       - name: Normalize benchmark into optimization measurement snapshot
         run: python tools/run_optimization_spine_contract.py
+      - name: Unit-test buffer residency contract
+        working-directory: tools
+        run: python test_buffer_residency_v1.py
+      - name: Run buffer residency benchmark
+        run: mkdir -p target/buffer-residency && PYTHONPATH=tools python tools/run_buffer_residency_benchmark.py | tee target/buffer-residency/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: buffer-residency-${{ github.run_id }}
+          path: target/buffer-residency/receipt.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
