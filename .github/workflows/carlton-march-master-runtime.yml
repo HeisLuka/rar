@@ -493,12 +493,29 @@ jobs:
                       (ref["seq_num"], field["block_type"], field["value"])
                   )
 
-          if exact_edges != [
+          expected_edges = [
+              (266, 0x68, 263),
+              (269, 0x68, 263),
+              (272, 0x68, 263),
+              (275, 0x68, 263),
+              (279, 0x68, 263),
+              (361, 0x68, 263),
+              (406, 0x68, 263),
+          ]
+          if exact_edges != expected_edges:
+              raise SystemExit(f"master edge drift: {exact_edges}")
+          customer_page_seq_nums = [266, 361, 406]
+          customer_edges = [
+              edge for edge in exact_edges if edge[0] in customer_page_seq_nums
+          ]
+          if customer_edges != [
               (266, 0x68, 263),
               (361, 0x68, 263),
               (406, 0x68, 263),
           ]:
-              raise SystemExit(f"master edge drift: {exact_edges}")
+              raise SystemExit(
+                  f"customer master subset drift: {customer_edges}"
+              )
 
           master_children = sorted(
               ref["seq_num"]
@@ -606,6 +623,10 @@ jobs:
                   }
                   for source, wire, target in exact_edges
               ],
+              "persisted_master_relation_count": len(exact_edges),
+              "effective_customer_page_seq_nums": customer_page_seq_nums,
+              "effective_customer_master_relation_count": len(customer_edges),
+              "page_role_filter_applied_by_master_task": False,
               "master_page_seq_num": 263,
               "master_shape_seq_nums": master_children,
               "master_shape_story_qsids": {
@@ -624,7 +645,8 @@ jobs:
           )
           print(
               "SOURCE MASTER PASS "
-              f"pages={len(page_refs)} edges={exact_edges} "
+              f"pages={len(page_refs)} persisted_edges={exact_edges} "
+              f"customer_subset={customer_edges} "
               f"children={master_children} qsids={child_qsids}"
           )
           PY
@@ -650,9 +672,9 @@ jobs:
               raise SystemExit("projection context version drift")
           if context["cmo_relations"] != []:
               raise SystemExit("master-only context unexpectedly contains Cmo relations")
-          if receipt["relation_count"] != 3:
+          if receipt["relation_count"] != 7:
               raise SystemExit(
-                  f"master relation_count {receipt['relation_count']} != 3"
+                  f"master relation_count {receipt['relation_count']} != 7"
               )
           pairs = sorted(
               (
@@ -661,16 +683,35 @@ jobs:
               )
               for relation in receipt["relations"]
           )
-          if pairs != [(266, 263), (361, 263), (406, 263)]:
+          expected_pairs = [
+              (266, 263),
+              (269, 263),
+              (272, 263),
+              (275, 263),
+              (279, 263),
+              (361, 263),
+              (406, 263),
+          ]
+          if pairs != expected_pairs:
               raise SystemExit(f"canonical master relation drift: {pairs}")
+          customer_pairs = [
+              pair for pair in pairs if pair[0] in (266, 361, 406)
+          ]
+          if customer_pairs != [(266, 263), (361, 263), (406, 263)]:
+              raise SystemExit(
+                  f"canonical customer master subset drift: {customer_pairs}"
+              )
           if context["master_relations"] != receipt["relations"]:
               raise SystemExit("context/receipt master relation mismatch")
 
           sanitized = {
               "schema": "chaptera.carlton-march-master-runtime.v1",
               "projection_context_version": context["schema_version"],
-              "relation_count": receipt["relation_count"],
+              "persisted_relation_count": receipt["relation_count"],
               "relations": receipt["relations"],
+              "effective_customer_page_seq_nums": [266, 361, 406],
+              "effective_customer_relation_count": 3,
+              "page_role_filter_applied_by_master_task": False,
               "invariants": receipt["invariants"],
           }
           (SANITIZED / "master-runtime.json").write_text(
@@ -681,7 +722,10 @@ jobs:
               json.dumps(context, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
-          print(f"CANONICAL MASTER CONTEXT PASS pairs={pairs}")
+          print(
+              f"CANONICAL MASTER CONTEXT PASS persisted_pairs={pairs} "
+              f"customer_subset={customer_pairs}"
+          )
           PY
 
       - name: Cross-check source and published reference
@@ -698,11 +742,14 @@ jobs:
           runtime = json.loads((root / "master-runtime.json").read_text())
 
           assert source["master_page_seq_num"] == 263
-          assert runtime["relation_count"] == 3
+          assert source["persisted_master_relation_count"] == 7
+          assert source["effective_customer_page_seq_nums"] == [266, 361, 406]
+          assert runtime["persisted_relation_count"] == 7
+          assert runtime["effective_customer_relation_count"] == 3
           assert sorted(
               relation["source_page_seq_num"]
               for relation in runtime["relations"]
-          ) == [266, 361, 406]
+          ) == [266, 269, 272, 275, 279, 361, 406]
           assert pdf["page_count"] == 3
           assert pdf["footer_phrase_count_by_page"] == [1, 1, 1]
           assert source["master_shape_seq_nums"] == [378, 380]
@@ -716,7 +763,11 @@ jobs:
               "raw_page_count": source["raw_page_count"],
               "effective_customer_page_seq_nums": [266, 361, 406],
               "master_page_seq_num": 263,
-              "master_relation_count": runtime["relation_count"],
+              "persisted_master_relation_count": runtime["persisted_relation_count"],
+              "effective_customer_master_relation_count": runtime[
+                  "effective_customer_relation_count"
+              ],
+              "page_role_filter_applied_by_master_task": False,
               "master_shape_seq_nums": source["master_shape_seq_nums"],
               "empty_master_story_qsid": source["empty_master_story_qsid"],
               "visible_footer_story_qsid": source["visible_footer_story_qsid"],
@@ -734,7 +785,8 @@ jobs:
           )
           print(
               "CARLTON MASTER ACCEPTANCE PASS "
-              "raw_pages=8 effective_pages=3 master=263 footer=[1,1,1]"
+              "raw_pages=8 persisted_master_edges=7 "
+              "effective_customer_pages=3 master=263 footer=[1,1,1]"
           )
           PY
 
