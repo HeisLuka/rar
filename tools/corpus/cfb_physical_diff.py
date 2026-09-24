@@ -52,7 +52,8 @@ class CFB:
    for p in range(0,self.ss,128):
     r=q[p:p+128];typ=r[66]
     if typ not in (0,1,2,5):raise ValueError('dir type')
-    out.append({'i':idx,'name':name(r[:64],u16(r,64)),'type':typ,'color':r[67],'left':u32(r,68),'right':u32(r,72),'child':u32(r,76),'clsid':r[80:96].hex(),'state':u32(r,96),'ctime':u64(r,100),'mtime':u64(r,108),'start':u32(r,116),'size':u64(r,120),'raw':base+p});idx+=1
+    low=u32(r,120);high=u32(r,124);effective=low if self.ss==512 else low+(high<<32)
+    out.append({'i':idx,'name':name(r[:64],u16(r,64)),'type':typ,'color':r[67],'left':u32(r,68),'right':u32(r,72),'child':u32(r,76),'clsid':r[80:96].hex(),'state':u32(r,96),'ctime':u64(r,100),'mtime':u64(r,108),'start':u32(r,116),'size':effective,'size_low':low,'size_high':high,'raw':base+p});idx+=1
   return out
  def schain(self,e):
   if not e['size']:return []
@@ -72,7 +73,7 @@ class CFB:
   for s in self.fatsecs:self.msec(s,'fat_sector')
   for s in self.minisecs:self.msec(s,'minifat_sector')
   for s in self.dirsecs:self.msec(s,'directory_sector')
-  fields=[(0,64,'name'),(64,66,'name_length'),(66,67,'type'),(67,68,'color'),(68,72,'left'),(72,76,'right'),(76,80,'child'),(80,96,'clsid'),(96,100,'state'),(100,108,'ctime'),(108,116,'mtime'),(116,120,'start'),(120,128,'size')]
+  fields=[(0,64,'name'),(64,66,'name_length'),(66,67,'type'),(67,68,'color'),(68,72,'left'),(72,76,'right'),(76,80,'child'),(80,96,'clsid'),(96,100,'state'),(100,108,'ctime'),(108,116,'mtime'),(116,120,'start'),(120,124,'size_low'),(124,128,'size_high')]
   for e in self.dirs:
    for a,z,x in fields:self.mark(e['raw']+a,e['raw']+z,f"directory[{e['i']}].{x}")
   for s in self.rootchain:self.msec(s,'root_ministream_container')
@@ -150,6 +151,8 @@ def selftest():
  a,b=minimal(0),minimal(1);x,y=CFB(a),CFB(b);d=[i for i,(p,q) in enumerate(zip(a,b)) if p!=q];assert d==[736] and x.lab[d[0]]==y.lab[d[0]]=='directory[1].state'
  fake=CFB.__new__(CFB);fake.nsec=10;fake.fat=[END]*10;mini=[FREE]*32;mini[20]=21;mini[21]=END
  assert fake.chain(20,mini,'mini-regression')==[20,21]
+ legacy=bytearray(minimal(0));struct.pack_into('<I',legacy,640+124,0xffffffff);z=CFB(bytes(legacy))
+ assert z.dirs[1]['size']==4096 and z.dirs[1]['size_high']==0xffffffff
  print('cfb physical diff self-test ok');return 0
 def main():
  p=argparse.ArgumentParser();s=p.add_subparsers(dest='cmd',required=True);c=s.add_parser('compare');c.add_argument('--left',type=Path,required=True);c.add_argument('--right',type=Path,required=True);c.add_argument('--name',default='');c.add_argument('--out',type=Path,required=True);s.add_parser('self-test');a=p.parse_args()
