@@ -1,0 +1,14 @@
+[package]
+name = "pub-plccmob-projection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "plccmob-projection-producer"
+path = "src/main.rs"

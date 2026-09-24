@@ -1,0 +1,44 @@
+{
+  "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "producer": {
+    "implementation": "rar-pub-plccmob-projection",
+    "commit_or_build": "synthetic-ci",
+    "core_integration": true
+  },
+  "opl_docq_field": {
+    "field_id": 5,
+    "block_type": 112,
+    "value": 900
+  },
+  "plccmob_chunk": {
+    "seq_num": 900,
+    "raw_type": 112,
+    "hex": "01200200000002a038000000000000000088160000000120070000000220310000000368b90100000088160000000120090000000220310000000368be010000"
+  },
+  "carriers": [
+    {
+      "carrier_ohpo": 441,
+      "carrier_cmo_id": 7,
+      "carrier_node_id": "10000000-0000-4000-8000-000000000001",
+      "carrier_story_id": "20000000-0000-4000-8000-000000000001",
+      "source_parent_id": "page:279",
+      "effective_parent_id": "page:279"
+    },
+    {
+      "carrier_ohpo": 446,
+      "carrier_cmo_id": 9,
+      "carrier_node_id": "10000000-0000-4000-8000-000000000002",
+      "carrier_story_id": null,
+      "source_parent_id": "page:279",
+      "effective_parent_id": "page:279"
+    }
+  ],
+  "targets": [
+    {
+      "target_qsid": 49,
+      "target_story_id": "30000000-0000-4000-8000-000000000001",
+      "target_frame_node_id": "40000000-0000-4000-8000-000000000001",
+      "object_marker_count": 2
+    }
+  ]
+}

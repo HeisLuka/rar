@@ -3,6 +3,7 @@ members = [
   "apps/chaptera-server",
   "crates/pub-model",
   "crates/pub-paint-bridge",
+  "crates/pub-plccmob-projection",
 ]
 resolver = "2"
 
