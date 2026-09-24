@@ -24,55 +24,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Resolve and fetch official Aspose.PUB 19.10.1 DLL package
+      - name: Fetch official Aspose.PUB 19.10.1 DLL package
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p out
-          page="https://releases.aspose.com/pub/net/new-releases/aspose.pub-for-.net-19.10.1-dlls-only/"
-          curl -fL --retry 3 --retry-delay 2 --max-time 120 "$page" -o out/page.html
-          python3 - <<'PY'
-          from html.parser import HTMLParser
-          from urllib.parse import urljoin
-          from pathlib import Path
-          base="https://releases.aspose.com/pub/net/new-releases/aspose.pub-for-.net-19.10.1-dlls-only/"
-          class P(HTMLParser):
-              def __init__(self):
-                  super().__init__(); self.hrefs=[]
-              def handle_starttag(self, tag, attrs):
-                  if tag.lower()=="a":
-                      d=dict(attrs)
-                      if d.get("href"): self.hrefs.append(urljoin(base,d["href"]))
-          p=P(); p.feed(Path("out/page.html").read_text(errors="replace"))
-          c=[]
-          for u in p.hrefs:
-              lo=u.lower()
-              if any(x in lo for x in [".zip",".msi","download","downloads"]):
-                  if u not in c: c.append(u)
-          Path("out/candidates.txt").write_text("\n".join(c)+"\n")
-          print("\n".join(c))
-          PY
-          found=0
-          while IFS= read -r url; do
-            [ -n "$url" ] || continue
-            echo "TRY $url" | tee -a out/fetch.log
-            if curl -fL --retry 2 --retry-delay 2 --max-time 900 "$url" -o out/candidate.bin.tmp; then
-              ctype="$(file -b --mime-type out/candidate.bin.tmp || true)"
-              size="$(stat -c %s out/candidate.bin.tmp)"
-              printf 'url=%s\ncontent_type=%s\nsize=%s\n' "$url" "$ctype" "$size" | tee out/selected.txt
-              if [ "$size" -gt 1000000 ] && [ "$ctype" != "text/html" ]; then
-                mv out/candidate.bin.tmp out/Aspose.PUB-19.10.1-dlls.bin
-                found=1
-                break
-              fi
-            fi
-          done < out/candidates.txt
-          test "$found" -eq 1
-          sha256sum out/Aspose.PUB-19.10.1-dlls.bin | tee out/sha256.txt
-          sha1sum out/Aspose.PUB-19.10.1-dlls.bin | tee out/sha1.txt
-          md5sum out/Aspose.PUB-19.10.1-dlls.bin | tee out/md5.txt
-          file out/Aspose.PUB-19.10.1-dlls.bin | tee out/file.txt
-          stat -c 'size_bytes=%s' out/Aspose.PUB-19.10.1-dlls.bin | tee out/size.txt
+          tagid='/pub/net/new-releases/aspose.pub-for-.net-19.10.1-(dlls-only)/1746707ea91249a6a5fe68a839f0042c%20%20'
+          printf '%s\n' "$tagid" > out/tagid.txt
+          url="$(curl -fsSL --retry 3 --retry-delay 2 \
+            -X POST -F "tagid=$tagid" \
+            https://releases.admin.aspose.com/download-release)"
+          printf '%s\n' "$url" | tee out/resolved-url.txt
+          test -n "$url"
+          curl -fL --retry 3 --retry-delay 2 --max-time 1200 "$url" -o out/Aspose.PUB-19.10.1-dlls.zip
+          test "$(stat -c %s out/Aspose.PUB-19.10.1-dlls.zip)" -gt 30000000
+          sha256sum out/Aspose.PUB-19.10.1-dlls.zip | tee out/sha256.txt
+          sha1sum out/Aspose.PUB-19.10.1-dlls.zip | tee out/sha1.txt
+          md5sum out/Aspose.PUB-19.10.1-dlls.zip | tee out/md5.txt
+          stat -c 'size_bytes=%s' out/Aspose.PUB-19.10.1-dlls.zip | tee out/size.txt
+          file out/Aspose.PUB-19.10.1-dlls.zip | tee out/file.txt
+          unzip -l out/Aspose.PUB-19.10.1-dlls.zip > out/zip-list.txt
       - name: Upload Aspose acquisition
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,6 +76,27 @@ jobs:
           stat -c 'size_bytes=%s' out/X12-30247.exe | tee out/size.txt
           file out/X12-30247.exe | tee out/file.txt
           test "$(stat -c %s out/X12-30247.exe)" -eq 233139240
+      - name: Extract and verify exact PUBCONV.DLL
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full
+          mkdir -p out/extracted
+          7z x -y out/X12-30247.exe -oout/extracted >/tmp/7z-pubconv.log 2>&1 || {
+            cat /tmp/7z-pubconv.log
+            exit 1
+          }
+          find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
+          dll="$(find out/extracted -type f -iname 'PUBCONV.DLL' | head -n1)"
+          test -n "$dll"
+          cp "$dll" out/PUBCONV.DLL
+          test "$(stat -c %s out/PUBCONV.DLL)" -eq 590144
+          sha256sum out/PUBCONV.DLL | tee out/pubconv-dll-sha256.txt
+          sha1sum out/PUBCONV.DLL | tee out/pubconv-dll-sha1.txt
+          md5sum out/PUBCONV.DLL | tee out/pubconv-dll-md5.txt
+          file out/PUBCONV.DLL | tee out/pubconv-dll-file.txt
+          stat -c 'size_bytes=%s' out/PUBCONV.DLL | tee out/pubconv-dll-size.txt
       - name: Upload exact X12-30247 package
         if: always()
         uses: actions/upload-artifact@v4
@@ -136,6 +128,37 @@ jobs:
           md5sum out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/md5.txt
           stat -c 'size_bytes=%s' out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/size.txt
           file out/CorelDRAWGraphicsSuiteX4Installer_EN.exe | tee out/file.txt
+      - name: Extract Corel X4 and identify Filters MSI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools
+          mkdir -p out/extracted out/msi-scan
+          7z x -y out/CorelDRAWGraphicsSuiteX4Installer_EN.exe -oout/extracted >/tmp/7z-corel.log 2>&1 || {
+            cat /tmp/7z-corel.log
+            exit 1
+          }
+          find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
+          found=0
+          while IFS= read -r msi; do
+            base="$(basename "$msi")"
+            prop="out/msi-scan/${base}.Property.txt"
+            msiinfo export "$msi" Property > "$prop" 2>/dev/null || continue
+            if grep -qi '7F05E704-30A6-421A-97A7-8EEB1C7FF017' "$prop"; then
+              cp "$msi" out/Corel-X4-Filters.msi
+              printf '%s\n' "$msi" | tee out/filters-msi-path.txt
+              found=1
+              break
+            fi
+          done < <(find out/extracted -type f -iname '*.msi' | sort)
+          test "$found" -eq 1
+          sha256sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha256.txt
+          sha1sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha1.txt
+          md5sum out/Corel-X4-Filters.msi | tee out/filters-msi-md5.txt
+          stat -c 'size_bytes=%s' out/Corel-X4-Filters.msi | tee out/filters-msi-size.txt
+          msiinfo export out/Corel-X4-Filters.msi File > out/filters-msi-File.txt 2>/dev/null || true
+          grep -Ei 'pub|publisher|cdrpub' out/filters-msi-File.txt > out/filters-msi-pub-hits.txt || true
       - name: Upload exact Corel X4 trial
         if: always()
         uses: actions/upload-artifact@v4
@@ -210,6 +233,110 @@ jobs:
           path: out/**
           retention-days: 30
 
+
+  publisher-2002-exact-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Resolve Internet Archive item and fetch exact Publisher 2002 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          ident='X08-20172'
+          curl -fL --retry 3 --max-time 120 "https://archive.org/metadata/$ident" -o out/metadata.json
+          python3 - <<'PY' > out/selected-file.txt
+          import json
+          d=json.load(open("out/metadata.json"))
+          files=d.get("files",[])
+          cand=[]
+          for f in files:
+              name=f.get("name","")
+              size=int(f.get("size") or 0)
+              lo=name.lower()
+              if lo.endswith((".iso",".img",".bin",".mdf")):
+                  cand.append((size,name,f.get("sha1"),f.get("md5")))
+          cand.sort(reverse=True)
+          if not cand:
+              raise SystemExit("no disc image")
+          print(cand[0][1])
+          print(cand[0][0])
+          print(cand[0][2] or "")
+          print(cand[0][3] or "")
+          PY
+          image="$(sed -n '1p' out/selected-file.txt)"
+          expected_size="$(sed -n '2p' out/selected-file.txt)"
+          expected_sha1="$(sed -n '3p' out/selected-file.txt)"
+          expected_md5="$(sed -n '4p' out/selected-file.txt)"
+          printf 'identifier=%s\nfile=%s\nexpected_size=%s\nexpected_sha1=%s\nexpected_md5=%s\n' "$ident" "$image" "$expected_size" "$expected_sha1" "$expected_md5" | tee out/selection.txt
+          url="https://archive.org/download/$ident/$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$image")"
+          printf '%s\n' "$url" > out/source-url.txt
+          curl -fL --retry 4 --retry-delay 5 --max-time 3600 "$url" -o out/publisher2002-media.bin
+          test "$(stat -c %s out/publisher2002-media.bin)" -eq "$expected_size"
+          sha256sum out/publisher2002-media.bin | tee out/sha256.txt
+          sha1sum out/publisher2002-media.bin | tee out/sha1.txt
+          md5sum out/publisher2002-media.bin | tee out/md5.txt
+          if [ -n "$expected_sha1" ]; then test "$(sha1sum out/publisher2002-media.bin | awk '{print $1}')" = "$expected_sha1"; fi
+          if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2002-media.bin | awk '{print $1}')" = "$expected_md5"; fi
+          file out/publisher2002-media.bin | tee out/file.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-2002-exact-media-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publisher-2000-trial-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Fetch known coverdisc containing Microsoft Publisher 2000 Trial
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          ident='k-cd-2000-07'
+          curl -fL --retry 3 --max-time 120 "https://archive.org/metadata/$ident" -o out/metadata.json
+          python3 - <<'PY' > out/selected-file.txt
+          import json
+          d=json.load(open("out/metadata.json"))
+          cand=[]
+          for f in d.get("files",[]):
+              name=f.get("name","")
+              size=int(f.get("size") or 0)
+              if name.lower().endswith((".iso",".img",".bin")):
+                  cand.append((size,name,f.get("sha1"),f.get("md5")))
+          cand.sort(reverse=True)
+          if not cand:
+              raise SystemExit("no disc image")
+          print(cand[0][1]); print(cand[0][0]); print(cand[0][2] or ""); print(cand[0][3] or "")
+          PY
+          image="$(sed -n '1p' out/selected-file.txt)"
+          expected_size="$(sed -n '2p' out/selected-file.txt)"
+          expected_sha1="$(sed -n '3p' out/selected-file.txt)"
+          expected_md5="$(sed -n '4p' out/selected-file.txt)"
+          printf 'identifier=%s\nfile=%s\nexpected_size=%s\nexpected_sha1=%s\nexpected_md5=%s\nprovenance=third-party magazine coverdisc containing Microsoft Publisher 2000 Trial\n' "$ident" "$image" "$expected_size" "$expected_sha1" "$expected_md5" | tee out/selection.txt
+          url="https://archive.org/download/$ident/$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$image")"
+          printf '%s\n' "$url" > out/source-url.txt
+          curl -fL --retry 4 --retry-delay 5 --max-time 4200 "$url" -o out/publisher2000-trial-coverdisc.bin
+          test "$(stat -c %s out/publisher2000-trial-coverdisc.bin)" -eq "$expected_size"
+          sha256sum out/publisher2000-trial-coverdisc.bin | tee out/sha256.txt
+          sha1sum out/publisher2000-trial-coverdisc.bin | tee out/sha1.txt
+          md5sum out/publisher2000-trial-coverdisc.bin | tee out/md5.txt
+          if [ -n "$expected_sha1" ]; then test "$(sha1sum out/publisher2000-trial-coverdisc.bin | awk '{print $1}')" = "$expected_sha1"; fi
+          if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2000-trial-coverdisc.bin | awk '{print $1}')" = "$expected_md5"; fi
+          file out/publisher2000-trial-coverdisc.bin | tee out/file.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-2000-trial-candidate-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   historical-discovery:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -225,7 +352,7 @@ jobs:
           queries = {
             "publisher2000_trial": '"Microsoft Publisher 2000" AND (trial OR "trial cd")',
             "publisher2002_trial": '"Publisher 2002" AND (trial OR X08-20172 OR X08-06831)',
-            "publisher2003_trial": '"Publisher 2003" AND (SKU119 OR X10-13869 OR X09-55389)',
+            "publisher2003_trial": '("Publisher 2003" OR "Microsoft Office Publisher 2003") AND (trial OR SKU119 OR "099-91827" OR X10-13869 OR X09-55389 OR OFFICE11)',
             "vbapb10_chm": '"VBAPB10.CHM"',
             "keyview_mspubsr": '"mspubsr.dll"',
             "pub2id": '"Pub2ID" AND (installer OR updater OR plugin)',
