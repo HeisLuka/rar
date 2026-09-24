@@ -1,0 +1,27 @@
+name: CLOUD-PROJECT-LIFECYCLE architecture modelcheck
+
+on:
+  pull_request:
+    paths:
+      - "tools/run_cloud_project_lifecycle_modelcheck.py"
+      - ".github/workflows/cloud-project-lifecycle-modelcheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  modelcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Explore lifecycle state space and generation policies
+        run: python tools/run_cloud_project_lifecycle_modelcheck.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-project-lifecycle-modelcheck
+          path: target/cloud-project-lifecycle-modelcheck/receipt.json
+          if-no-files-found: error
