@@ -71,9 +71,13 @@ def main():
     ap.add_argument("--out",type=Path,required=True)
     ap.add_argument("--delay",type=float,default=.25)
     ap.add_argument("--limit",type=int,default=50)
+    ap.add_argument("--timeout",type=float,default=12)
+    ap.add_argument("--retries",type=int,default=0)
+    ap.add_argument("--retry-errors-only",action="store_true")
     a=ap.parse_args()
+    records=[r for r in RECORDS if (not a.retry_errors_only or r[3] in RETRY_IDS)]
     rows=[]; receipts=[]; errors=[]
-    for gen,module,pdb,index in RECORDS:
+    for gen,module,pdb,index in records:
         for scheme in ("http",):
             for pdbname in [pdb]:
                 prefix=f"{scheme}://msdl.microsoft.com/download/symbols/{pdbname}/{index}/"
@@ -83,7 +87,7 @@ def main():
                     ("collapse","digest"),("limit",str(a.limit)),("gzip","false")
                 ]
                 try:
-                    found,qurl=req(params)
+                    found,qurl=req(params,a.timeout,a.retries)
                     receipts.append({"generation":gen,"module":module,"pdb":pdb,"identity":index,"query_prefix":prefix,"query_url":qurl,"status":"ok","captures":len(found)})
                     for r in found:
                         rows.append({"generation":gen,"module":module,"pdb":pdb,"identity":index,"query_prefix":prefix,**r})
@@ -108,13 +112,13 @@ def main():
     hitids=sorted({r["identity"] for r in rows})
     summary={
         "schema":"pub-symbol-wayback-cdx.v1",
-        "exact_codeview_identities":len(RECORDS),
+        "exact_codeview_identities":len(records),
         "query_count":len(receipts)+len(errors),
         "successful_queries":len(receipts),
         "error_queries":len(errors),
         "capture_rows":len(rows),
         "identities_with_capture":len(hitids),
-        "identities_without_capture":len(RECORDS)-len(hitids),
+        "identities_without_capture":len(records)-len(hitids),
         "hit_identities":hitids,
         "boundary":"CDX locator census only; no PDB bytes downloaded or published",
     }
