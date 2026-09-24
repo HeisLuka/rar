@@ -1,0 +1,20 @@
+name: Rar public boundary guard
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-repo-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check changed paths
+        env:
+          PUBLIC_BOUNDARY_BASE: origin/${{ github.base_ref }}
+          PUBLIC_BOUNDARY_HEAD: HEAD
+        run: python tools/check_public_boundary.py
