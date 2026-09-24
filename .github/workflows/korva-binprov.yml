@@ -8,7 +8,7 @@ on:
       - ".github/workflows/korva-binprov.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   analyze:
@@ -22,6 +22,9 @@ jobs:
       URL: "https://github.com/kai63001/korva-releases/releases/download/v1.8.7/Korva_1.8.7_amd64.deb"
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Prepare tools
         shell: bash
         run: |
@@ -303,3 +306,35 @@ PY
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+
+      - name: Publish compact evidence receipt to repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          DEST="research/korva/1.8.7"
+          mkdir -p "$DEST"
+          cp out/reports/SUMMARY.md "$DEST/SUMMARY.md"
+          cp out/reports/deb-sha256.txt "$DEST/deb-sha256.txt"
+          cp out/reports/elf-sha256.txt "$DEST/elf-sha256.txt"
+          cp out/reports/elf-file.txt "$DEST/elf-file.txt"
+          cp out/reports/elf-needed.txt "$DEST/elf-needed.txt"
+          cp out/reports/symbol-counts.txt "$DEST/symbol-counts.txt"
+          cp out/reports/import-pub-symbols.txt "$DEST/import-pub-symbols.txt"
+          cp out/reports/import-pub-bytes-symbol-match.txt "$DEST/import-pub-bytes-symbol-match.txt"
+          cp out/reports/import-pub-bytes-range.txt "$DEST/import-pub-bytes-range.txt"
+          cp out/reports/needle-hits.txt "$DEST/needle-hits.txt"
+          cp out/reports/crate-version-path-hits.txt "$DEST/crate-version-path-hits.txt"
+          cp out/reports/tool-versions.txt "$DEST/tool-versions.txt"
+          cp out/reports/deb-control.txt "$DEST/deb-control.txt"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DEST"
+
+          if git diff --cached --quiet; then
+            echo "No compact evidence changes to commit."
+          else
+            git commit -m "research: record Korva 1.8.7 static provenance receipt"
+            git push
+          fi
