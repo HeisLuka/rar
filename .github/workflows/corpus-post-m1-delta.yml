@@ -1,0 +1,28 @@
+name: Corpus post-M1 delta receipt
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/corpus/receipts/corpus-post-m1-delta-2026-09-24.*"
+      - "tools/corpus/validate_post_m1_delta.py"
+      - ".github/workflows/corpus-post-m1-delta.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/corpus/receipts/corpus-post-m1-delta-2026-09-24.*"
+      - "tools/corpus/validate_post_m1_delta.py"
+      - ".github/workflows/corpus-post-m1-delta.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/corpus/validate_post_m1_delta.py
