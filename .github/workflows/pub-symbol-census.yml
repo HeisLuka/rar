@@ -1,0 +1,193 @@
+name: PUB Symbol Server Census
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pub-symbol-census.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  symbol-census:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Acquire exact Publisher 2010 package and expand
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pwsh -NoProfile -File tools/dc-static/acquire_mspub14.ps1 -OutRoot out/pub-symbol-census
+
+      - name: Extract RSDS identities and probe Microsoft Symbol Store
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          import csv, hashlib, json, os, struct, time, urllib.error, urllib.request, uuid
+          from pathlib import Path
+
+          ROOT = Path("out/pub-symbol-census")
+          LAYERS = ROOT / "layers"
+          PUBLIC = ROOT / "public"
+          PUBLIC.mkdir(parents=True, exist_ok=True)
+          TARGETS = {"MSPUB.EXE","MORPH9.DLL","PTXT9.DLL","PUBCONV.DLL","PRTF9.DLL","PUBTRAP.DLL"}
+          SYMBOL_ROOT = "https://msdl.microsoft.com/download/symbols"
+
+          def sha256(path):
+              h=hashlib.sha256()
+              with open(path,"rb") as f:
+                  for b in iter(lambda:f.read(1024*1024),b""): h.update(b)
+              return h.hexdigest()
+
+          def rva_to_off(rva, sections):
+              for va,vsz,raw,rsz in sections:
+                  span=max(vsz,rsz)
+                  if va <= rva < va+span:
+                      return raw + (rva-va)
+              return None
+
+          def parse_rsds(path):
+              data=path.read_bytes()
+              if len(data)<0x100 or data[:2]!=b"MZ":
+                  return []
+              peoff=struct.unpack_from("<I",data,0x3c)[0]
+              if data[peoff:peoff+4]!=b"PE\0\0":
+                  return []
+              coff=peoff+4
+              nsec=struct.unpack_from("<H",data,coff+2)[0]
+              optsz=struct.unpack_from("<H",data,coff+16)[0]
+              opt=coff+20
+              magic=struct.unpack_from("<H",data,opt)[0]
+              dd=opt+(96 if magic==0x10b else 112 if magic==0x20b else 0)
+              if not dd:
+                  return []
+              debug_rva,debug_size=struct.unpack_from("<II",data,dd+6*8)
+              sec_off=opt+optsz
+              sections=[]
+              for i in range(nsec):
+                  s=sec_off+i*40
+                  vsz=struct.unpack_from("<I",data,s+8)[0]
+                  va=struct.unpack_from("<I",data,s+12)[0]
+                  rsz=struct.unpack_from("<I",data,s+16)[0]
+                  raw=struct.unpack_from("<I",data,s+20)[0]
+                  sections.append((va,vsz,raw,rsz))
+              doff=rva_to_off(debug_rva,sections)
+              if doff is None:
+                  return []
+              out=[]
+              for p in range(doff, min(doff+debug_size,len(data)-27), 28):
+                  typ=struct.unpack_from("<I",data,p+12)[0]
+                  size=struct.unpack_from("<I",data,p+16)[0]
+                  ptr=struct.unpack_from("<I",data,p+24)[0]
+                  if typ!=2 or ptr<=0 or ptr+size>len(data):
+                      continue
+                  blob=data[ptr:ptr+size]
+                  if blob[:4]==b"RSDS" and len(blob)>=25:
+                      guid=uuid.UUID(bytes_le=blob[4:20])
+                      age=struct.unpack_from("<I",blob,20)[0]
+                      pdb=blob[24:].split(b"\0",1)[0].decode("utf-8","replace")
+                      out.append({"kind":"RSDS","guid":str(guid),"age":age,"pdb_path":pdb,"pdb_name":Path(pdb.replace("\\","/")).name})
+                  elif blob[:4]==b"NB10" and len(blob)>=17:
+                      sig,age=struct.unpack_from("<II",blob,8)
+                      pdb=blob[16:].split(b"\0",1)[0].decode("utf-8","replace")
+                      out.append({"kind":"NB10","signature":f"{sig:08X}","age":age,"pdb_path":pdb,"pdb_name":Path(pdb.replace("\\","/")).name})
+              return out
+
+          def probe(url):
+              req=urllib.request.Request(url,method="GET",headers={"User-Agent":"pub-symbol-census/1","Range":"bytes=0-0"})
+              try:
+                  with urllib.request.urlopen(req,timeout=20) as r:
+                      return int(getattr(r,"status",200)), r.headers.get("Content-Length"), r.geturl()
+              except urllib.error.HTTPError as e:
+                  return int(e.code), e.headers.get("Content-Length"), url
+              except Exception as e:
+                  return None, None, f"{type(e).__name__}: {e}"
+
+          files=[]
+          seen=set()
+          for p in LAYERS.rglob("*"):
+              if not p.is_file() or p.name.upper() not in TARGETS:
+                  continue
+              h=sha256(p)
+              key=(p.name.upper(),h)
+              if key in seen: continue
+              seen.add(key)
+              rows=parse_rsds(p)
+              base={"module":p.name.upper(),"sha256":h,"size":p.stat().st_size,"relative_path":str(p.relative_to(LAYERS)).replace("\\","/")}
+              if not rows:
+                  files.append({**base,"codeview":"NO_CODEVIEW","symbol_result":"NO_CODEVIEW"})
+                  continue
+              for cv in rows:
+                  row={**base,**cv,"codeview":cv["kind"]}
+                  candidates=[]
+                  if cv["kind"]=="RSDS":
+                      ident=uuid.UUID(cv["guid"]).hex.upper()+format(cv["age"],"X")
+                  else:
+                      ident=cv["signature"]+format(cv["age"],"X")
+                  pdb=cv["pdb_name"]
+                  compressed=pdb[:-1]+"_" if pdb else pdb
+                  for name in dict.fromkeys([pdb,pdb.lower(),compressed,compressed.lower()]):
+                      if not name: continue
+                      u=f"{SYMBOL_ROOT}/{pdb}/{ident}/{name}"
+                      status,cl,final=probe(u)
+                      candidates.append({"url":u,"http_status":status,"content_length":cl,"final":final})
+                      if status in (200,206):
+                          break
+                      time.sleep(0.15)
+                  hit=next((x for x in candidates if x["http_status"] in (200,206)),None)
+                  row["symbol_index"]=ident
+                  row["symbol_result"]="SYMBOL_PRESENT" if hit else "CODEVIEW_PRESENT_SYMBOL_NOT_FOUND"
+                  row["symbol_hit"]=hit
+                  row["probes"]=candidates
+                  files.append(row)
+
+          summary={
+              "schema":"pub-symbol-census.v1",
+              "source_package":"publisher2010-kb3114395-fullfile-x86-glb.exe",
+              "source_package_sha256":"9bf8c3771b133781b29ffe24a913d62fd9a009a8c5da46a80e192805759063d8",
+              "symbol_store":SYMBOL_ROOT,
+              "module_records":len(files),
+              "unique_module_hashes":len({(r["module"],r["sha256"]) for r in files}),
+              "codeview_present":sum(r.get("codeview") not in (None,"NO_CODEVIEW") for r in files),
+              "symbol_present":sum(r.get("symbol_result")=="SYMBOL_PRESENT" for r in files),
+              "symbol_missing":sum(r.get("symbol_result")=="CODEVIEW_PRESENT_SYMBOL_NOT_FOUND" for r in files),
+              "no_codeview":sum(r.get("symbol_result")=="NO_CODEVIEW" for r in files),
+              "records":files,
+          }
+          (PUBLIC/"symbol-census.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          with (PUBLIC/"symbol-census.tsv").open("w",newline="",encoding="utf-8") as f:
+              w=csv.writer(f,delimiter="\t")
+              w.writerow(["module","sha256","size","codeview","pdb_name","guid","age","symbol_index","symbol_result","hit_url"])
+              for r in files:
+                  w.writerow([r.get("module"),r.get("sha256"),r.get("size"),r.get("codeview"),r.get("pdb_name"),r.get("guid") or r.get("signature"),r.get("age"),r.get("symbol_index"),r.get("symbol_result"),(r.get("symbol_hit") or {}).get("url","")])
+          lines=["# PUB Symbol Server Census","",f"- Unique module hashes: {summary['unique_module_hashes']}",f"- CodeView present: {summary['codeview_present']}",f"- Symbols present: {summary['symbol_present']}",f"- Symbols not found: {summary['symbol_missing']}",f"- No CodeView: {summary['no_codeview']}",""]
+          for r in files:
+              lines.append(f"- {r['module']} {r['sha256'][:16]}: {r.get('pdb_name','-')} {r.get('guid',r.get('signature','-'))} age={r.get('age','-')} -> {r['symbol_result']}")
+          (PUBLIC/"summary.md").write_text("\n".join(lines)+"\n",encoding="utf-8")
+          print("\n".join(lines))
+          '@ | Set-Content -Encoding UTF8 out/pub-symbol-census/probe_symbols.py
+          python out/pub-symbol-census/probe_symbols.py
+
+      - name: Publish summary
+        shell: pwsh
+        run: |
+          Get-Content out/pub-symbol-census/public/summary.md | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Guard evidence boundary
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem out/pub-symbol-census/public -Recurse -File | Where-Object { $_.Extension -match '^\.(exe|dll|pdb|pd_|cab|msp|msi)$' }
+          if ($bad) { $bad | Format-Table | Out-String | Write-Error; exit 4 }
+
+      - name: Upload derived symbol metadata only
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-symbol-census-${{ github.run_id }}
+          path: out/pub-symbol-census/public/**
+          if-no-files-found: error
+          retention-days: 90
