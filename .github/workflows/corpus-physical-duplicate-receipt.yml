@@ -45,7 +45,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
-          if git diff --quiet -- tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json; then
+          if [ -z "$(git status --porcelain -- tools/corpus/receipts/logical-stream-duplicate-locators-2026-09-24.json)" ]; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
