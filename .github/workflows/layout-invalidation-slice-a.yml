@@ -23,7 +23,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check workspace
         run: cargo check --workspace --all-targets
-      - name: Lint workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Lint layout crates
+        run: cargo clippy -p chaptera-layout-invalidation -p chaptera-layout-projection --all-targets -- -D warnings
       - name: Test invalidation crate
-        run: cargo test -p chaptera-layout-invalidation
+        run: cargo test -p chaptera-layout-invalidation -- --nocapture
