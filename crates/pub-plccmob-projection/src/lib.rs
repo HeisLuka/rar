@@ -264,30 +264,52 @@ pub enum PlcCmobProjectionError {
 impl fmt::Display for PlcCmobProjectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Truncated { at, need, available } => write!(
+            Self::Truncated {
+                at,
+                need,
+                available,
+            } => write!(
                 f,
                 "truncated PlcCmob block at {at}: need {need} bytes, have {available}"
             ),
-            Self::WrongField { context, expected, actual } => write!(
+            Self::WrongField {
+                context,
+                expected,
+                actual,
+            } => write!(
                 f,
                 "{context}: expected field 0x{expected:02x}, got 0x{actual:02x}"
             ),
             Self::DuplicateField { context, field_id } => {
                 write!(f, "{context}: duplicate field 0x{field_id:02x}")
             }
-            Self::WrongWire { context, expected, actual } => write!(
+            Self::WrongWire {
+                context,
+                expected,
+                actual,
+            } => write!(
                 f,
                 "{context}: expected wire 0x{expected:02x}, got 0x{actual:02x}"
             ),
-            Self::DeclaredLengthMismatch { context, expected, actual } => write!(
+            Self::DeclaredLengthMismatch {
+                context,
+                expected,
+                actual,
+            } => write!(
                 f,
                 "{context}: declared length {actual} != expected {expected}"
             ),
             Self::MalformedPayloadLength { payload_len } => {
-                write!(f, "PlcCmob entry payload length {payload_len} is not a multiple of 24")
+                write!(
+                    f,
+                    "PlcCmob entry payload length {payload_len} is not a multiple of 24"
+                )
             }
             Self::EntryCountMismatch { declared, actual } => {
-                write!(f, "PlcCmob declared count {declared} != actual row count {actual}")
+                write!(
+                    f,
+                    "PlcCmob declared count {declared} != actual row count {actual}"
+                )
             }
             Self::InvalidHexLength => write!(f, "PlcCmob hex input has odd length"),
             Self::InvalidHexByte { index } => write!(f, "invalid hex byte at input index {index}"),
@@ -301,7 +323,10 @@ impl fmt::Display for PlcCmobProjectionError {
                 f,
                 "OplDocq locator wire mismatch: expected 0x{expected:02x}, got 0x{actual:02x}"
             ),
-            Self::LocatorHandleMismatch { field_value, chunk_seq_num } => write!(
+            Self::LocatorHandleMismatch {
+                field_value,
+                chunk_seq_num,
+            } => write!(
                 f,
                 "OplDocq OhPlccmob handle {field_value} != supplied PlcCmob chunk seqNum {chunk_seq_num}"
             ),
@@ -348,16 +373,20 @@ impl fmt::Display for PlcCmobProjectionError {
 impl Error for PlcCmobProjectionError {}
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, PlcCmobProjectionError> {
-    let end = offset.checked_add(4).ok_or(PlcCmobProjectionError::Truncated {
-        at: offset,
-        need: 4,
-        available: bytes.len().saturating_sub(offset),
-    })?;
-    let slice = bytes.get(offset..end).ok_or(PlcCmobProjectionError::Truncated {
-        at: offset,
-        need: 4,
-        available: bytes.len().saturating_sub(offset),
-    })?;
+    let end = offset
+        .checked_add(4)
+        .ok_or(PlcCmobProjectionError::Truncated {
+            at: offset,
+            need: 4,
+            available: bytes.len().saturating_sub(offset),
+        })?;
+    let slice = bytes
+        .get(offset..end)
+        .ok_or(PlcCmobProjectionError::Truncated {
+            at: offset,
+            need: 4,
+            available: bytes.len().saturating_sub(offset),
+        })?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
@@ -368,13 +397,14 @@ fn expect_tag(
     expected_wire: u8,
     context: &'static str,
 ) -> Result<(), PlcCmobProjectionError> {
-    let pair = bytes.get(offset..offset.saturating_add(2)).ok_or(
-        PlcCmobProjectionError::Truncated {
-            at: offset,
-            need: 2,
-            available: bytes.len().saturating_sub(offset),
-        },
-    )?;
+    let pair =
+        bytes
+            .get(offset..offset.saturating_add(2))
+            .ok_or(PlcCmobProjectionError::Truncated {
+                at: offset,
+                need: 2,
+                available: bytes.len().saturating_sub(offset),
+            })?;
     if pair[0] != expected_field {
         return Err(PlcCmobProjectionError::WrongField {
             context,
@@ -420,9 +450,11 @@ pub fn parse_confirmed_mature_plc_cmob(
         "PlcCmob.Rgcmob",
     )?;
     let array_declared_length = read_u32_le(bytes, 8)?;
-    let expected_array_declared_length = u32::try_from(bytes.len().saturating_sub(8))
-        .map_err(|_| PlcCmobProjectionError::MalformedPayloadLength {
-            payload_len: bytes.len(),
+    let expected_array_declared_length =
+        u32::try_from(bytes.len().saturating_sub(8)).map_err(|_| {
+            PlcCmobProjectionError::MalformedPayloadLength {
+                payload_len: bytes.len(),
+            }
         })?;
     if array_declared_length != expected_array_declared_length {
         return Err(PlcCmobProjectionError::DeclaredLengthMismatch {
@@ -477,10 +509,8 @@ pub fn parse_confirmed_mature_plc_cmob(
         let mut seen = BTreeSet::new();
         let mut values = [0u32; 3];
 
-        for (idx, ((expected_field, expected_wire, context), field_offset)) in field_specs
-            .into_iter()
-            .zip(field_offsets)
-            .enumerate()
+        for (idx, ((expected_field, expected_wire, context), field_offset)) in
+            field_specs.into_iter().zip(field_offsets).enumerate()
         {
             let pair = bytes.get(field_offset..field_offset + 2).ok_or(
                 PlcCmobProjectionError::Truncated {
@@ -559,9 +589,10 @@ pub fn decode_hex(value: &str) -> Result<Vec<u8>, PlcCmobProjectionError> {
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);
     for i in (0..bytes.len()).step_by(2) {
-        let high = hex_nibble(bytes[i]).ok_or(PlcCmobProjectionError::InvalidHexByte { index: i })?;
-        let low =
-            hex_nibble(bytes[i + 1]).ok_or(PlcCmobProjectionError::InvalidHexByte { index: i + 1 })?;
+        let high =
+            hex_nibble(bytes[i]).ok_or(PlcCmobProjectionError::InvalidHexByte { index: i })?;
+        let low = hex_nibble(bytes[i + 1])
+            .ok_or(PlcCmobProjectionError::InvalidHexByte { index: i + 1 })?;
         out.push((high << 4) | low);
     }
     Ok(out)
@@ -726,11 +757,12 @@ pub fn build_projection_receipt_v1(
     let mut relation_counts = BTreeMap::<u32, usize>::new();
 
     for entry in &parsed.entries {
-        let carrier = carriers
-            .get(&entry.carrier_ohpo)
-            .ok_or(PlcCmobProjectionError::UnresolvedOhpo {
-                carrier_ohpo: entry.carrier_ohpo,
-            })?;
+        let carrier =
+            carriers
+                .get(&entry.carrier_ohpo)
+                .ok_or(PlcCmobProjectionError::UnresolvedOhpo {
+                    carrier_ohpo: entry.carrier_ohpo,
+                })?;
         if carrier.carrier_cmo_id != entry.cmo_id {
             return Err(PlcCmobProjectionError::CarrierCmoIdMismatch {
                 carrier_ohpo: entry.carrier_ohpo,
@@ -739,11 +771,11 @@ pub fn build_projection_receipt_v1(
             });
         }
 
-        let target = targets
-            .get(&entry.target_qsid)
-            .ok_or(PlcCmobProjectionError::UnresolvedTargetQsid {
+        let target = targets.get(&entry.target_qsid).ok_or(
+            PlcCmobProjectionError::UnresolvedTargetQsid {
                 target_qsid: entry.target_qsid,
-            })?;
+            },
+        )?;
 
         relations.push(PlcCmobRelationReceiptV1 {
             source_order: entry.source_order,
@@ -878,9 +910,7 @@ mod tests {
                     carrier_ohpo: 441,
                     carrier_cmo_id: 7,
                     carrier_node_id: "10000000-0000-4000-8000-000000000001".to_owned(),
-                    carrier_story_id: Some(
-                        "20000000-0000-4000-8000-000000000001".to_owned(),
-                    ),
+                    carrier_story_id: Some("20000000-0000-4000-8000-000000000001".to_owned()),
                     source_parent_id: "page:279".to_owned(),
                     effective_parent_id: "page:279".to_owned(),
                 },
@@ -896,9 +926,7 @@ mod tests {
             targets: vec![TargetSourceV1 {
                 target_qsid: 49,
                 target_story_id: "30000000-0000-4000-8000-000000000001".to_owned(),
-                target_frame_node_id: Some(
-                    "40000000-0000-4000-8000-000000000001".to_owned(),
-                ),
+                target_frame_node_id: Some("40000000-0000-4000-8000-000000000001".to_owned()),
                 object_marker_count: 2,
             }],
         }
@@ -914,8 +942,8 @@ mod tests {
         assert_eq!(one.entries[0].target_qsid, 218);
         assert_eq!(one.entries[0].carrier_ohpo, 319);
 
-        let two = parse_confirmed_mature_plc_cmob(&fixture(&[(7, 49, 441), (9, 49, 446)]))
-            .expect("N=2");
+        let two =
+            parse_confirmed_mature_plc_cmob(&fixture(&[(7, 49, 441), (9, 49, 446)])).expect("N=2");
         assert_eq!(two.declared_count, 2);
         assert_eq!(two.entries.len(), 2);
         assert_eq!(two.entries[1].source_order, 1);
@@ -1010,7 +1038,10 @@ mod tests {
     fn successful_join_emits_existing_source_free_receipt_shape() {
         let receipt = build_projection_receipt_v1(&valid_input()).expect("receipt");
         assert_eq!(receipt.receipt_version, RECEIPT_VERSION_V1);
-        assert_eq!(receipt.projection_context_version, PROJECTION_CONTEXT_VERSION_V1);
+        assert_eq!(
+            receipt.projection_context_version,
+            PROJECTION_CONTEXT_VERSION_V1
+        );
         assert_eq!(receipt.plc_cmob.declared_count, 2);
         assert_eq!(receipt.plc_cmob.row_count, 2);
         assert_eq!(receipt.plc_cmob.raw_size, 64);

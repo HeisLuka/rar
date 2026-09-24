@@ -1,4 +1,8 @@
-use std::{env, fs, io::{self, Read}, process::ExitCode};
+use std::{
+    env, fs,
+    io::{self, Read},
+    process::ExitCode,
+};
 
 use pub_plccmob_projection::{PlcCmobProjectionInputV1, build_projection_receipt_v1};
 
@@ -18,10 +22,10 @@ fn run() -> Result<(), String> {
     let raw = read_input()?;
     let input: PlcCmobProjectionInputV1 =
         serde_json::from_str(&raw).map_err(|error| format!("invalid input JSON: {error}"))?;
-    let receipt =
-        build_projection_receipt_v1(&input).map_err(|error| format!("projection rejected: {error}"))?;
-    let output =
-        serde_json::to_string_pretty(&receipt).map_err(|error| format!("serialize receipt: {error}"))?;
+    let receipt = build_projection_receipt_v1(&input)
+        .map_err(|error| format!("projection rejected: {error}"))?;
+    let output = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| format!("serialize receipt: {error}"))?;
     println!("{output}");
     Ok(())
 }
