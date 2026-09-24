@@ -1,0 +1,85 @@
+{
+  "schema_version": "chaptera.cmo-slot-flow-input.v1",
+  "producer": {
+    "implementation": "rar-carlton-march-cmo-slot-flow",
+    "commit_or_build": "rar244-march-q49-lower-bound",
+    "core_integration": true
+  },
+  "source_hash": "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+  "target_story_id": "9ec067e2-2962-5923-85b9-7470503a2181",
+  "target_frame_node_id": "4e554b11-a364-5e15-ba52-9d1ecda18b5f",
+  "target_frame_count": 1,
+  "story_marker_count": 6,
+  "host": {
+    "width_emu": 2145323,
+    "height_emu": 1793030
+  },
+  "items": [
+    {
+      "kind": "object_slot",
+      "slot_index": 0,
+      "scalar_index": 0,
+      "source_order": 3,
+      "cmo_id": 7,
+      "carrier_node_id": "b98be77a-5dc8-5134-9998-0d2738c1b077",
+      "carrier_story_id": "86f4e1e1-2d6e-54c4-b732-4ff49dde3737",
+      "intrinsic_width_emu": 2002380,
+      "intrinsic_height_emu": 1469908
+    },
+    {
+      "kind": "object_slot",
+      "slot_index": 1,
+      "scalar_index": 3,
+      "source_order": 4,
+      "cmo_id": 9,
+      "carrier_node_id": "a6672853-7405-5712-8fc0-b08e5c0481c3",
+      "carrier_story_id": "c1d9bdc7-ff70-5c23-8de3-02de1f786a85",
+      "intrinsic_width_emu": 7626802,
+      "intrinsic_height_emu": 331221
+    },
+    {
+      "kind": "object_slot",
+      "slot_index": 2,
+      "scalar_index": 5,
+      "source_order": 5,
+      "cmo_id": 12,
+      "carrier_node_id": "68dc2777-89fd-532d-995b-f0b78b3e5424",
+      "carrier_story_id": "97f2a0dd-c174-51fe-926f-67e4d6d984a3",
+      "intrinsic_width_emu": 7626802,
+      "intrinsic_height_emu": 331221
+    },
+    {
+      "kind": "object_slot",
+      "slot_index": 3,
+      "scalar_index": 7,
+      "source_order": 6,
+      "cmo_id": 13,
+      "carrier_node_id": "85110268-e6b9-5512-aed8-8b8f654024e5",
+      "carrier_story_id": "2b468ee1-8da8-513d-a610-854e0474a7ab",
+      "intrinsic_width_emu": 7626802,
+      "intrinsic_height_emu": 331221
+    },
+    {
+      "kind": "object_slot",
+      "slot_index": 4,
+      "scalar_index": 9,
+      "source_order": 7,
+      "cmo_id": 15,
+      "carrier_node_id": "e31c5b86-ecd2-51e5-8cc0-ef34a86281c2",
+      "carrier_story_id": "d0c642d5-19f5-554e-9602-e13957175f96",
+      "intrinsic_width_emu": 7626802,
+      "intrinsic_height_emu": 331221
+    },
+    {
+      "kind": "object_slot",
+      "slot_index": 5,
+      "scalar_index": 11,
+      "source_order": 8,
+      "cmo_id": 16,
+      "carrier_node_id": "84606b44-693d-5c23-bff1-84239779d9ab",
+      "carrier_story_id": "ddec363b-9db1-50c8-a509-effa0ed30f03",
+      "intrinsic_width_emu": 7626802,
+      "intrinsic_height_emu": 331221
+    }
+  ]
+}
