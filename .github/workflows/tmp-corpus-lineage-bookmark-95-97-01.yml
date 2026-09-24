@@ -1,0 +1,273 @@
+name: TEMP CORPUS BOOKMARK 95-97 lineage
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-bookmark-95-97-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install independent parser
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y libmspub-tools
+          dpkg-query -W -f='\${Package} \${Version}\n' libmspub-tools libmspub-0.1-1
+      - name: Verify four-node lineage
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import difflib, hashlib, json, os, subprocess, tempfile, time, urllib.parse, urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-bookmark-lineage/1.0"; SECTOR=2048
+          NODES={
+            "pub95":{
+              "sha256":"0d4c2e9e6a84a39f212f71c95591e17eb62ebaac7026427a4f84f6d1e636f5d5",
+              "size":22528,"member":"PAGEWIZ/BOOKMARK.PUB",
+              "url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+              "source_page":"https://archive.org/details/microsoft-home-collection-1993-1995-"
+            },
+            "pub97_en":{
+              "sha256":"8a706ca56ce5d2853b9469a666cd769bab4c62d6fb56d8d7872ff9a322394367",
+              "size":22528,"member":"PAGEWIZ/BOOKMARK.PUB",
+              "url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+              "source_page":"https://archive.org/details/MSPublisher97-EN"
+            },
+            "pub97_th":{
+              "sha256":"257cc10d2c2a831162ada772455e36f52b0524266d66ce973b90ad9d055aa52b",
+              "size":22528,"member":"PAGEWIZ/BOOKMARK.PUB",
+              "url":"https://archive.org/download/MSPublisher97ThaiEdition/Publisher97Thai.iso",
+              "source_page":"https://archive.org/details/MSPublisher97ThaiEdition"
+            },
+            "pub97_pub40":{
+              "sha256":"f3825b8d486afac915dd4c7ac5a203364a3ff469260a83cc3eecbff570802518",
+              "size":22528,"member":"PAGEWIZ/BOOKMARK.PUB",
+              "url":"https://archive.org/download/PUB40CD/PUB_40_CD.ISO",
+              "source_page":"https://archive.org/details/PUB40CD"
+            }
+          }
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+
+          class ISO:
+            def __init__(self,url):self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              with urllib.request.urlopen(req,timeout=30) as r:m=json.load(r)
+              d=str(m.get("dir") or "");out=[]
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"];return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError("range length drift")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              last=None
+              for a in range(3):
+                try:return self.rr(self.delivery,start,n)
+                except Exception as e:
+                  last=e
+                  if a<2:time.sleep(2**a)
+              raise last
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","strict"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              if (e,s) in self.cache:return self.cache[e,s]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[e,s]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
+              for i,x in enumerate([x.upper() for x in path.strip("/").split("/")]):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(path.strip("/").split("/")) and not fl&2:raise ValueError("not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def stream_map(pub):
+            with olefile.OleFileIO(pub) as ole:
+              return {"/"+"/".join(p):ole.openstream(p).read() for p in ole.listdir(streams=True,storages=False)}
+
+          def controls(t):
+            return {
+              "shape_0c":[i+1 for i,x in enumerate(t) if x==0x0c],
+              "crlf":[i+2 for i in range(len(t)-1) if t[i:i+2]==b"\r\n"],
+              "cell_0f":[i for i,x in enumerate(t) if x==0x0f]
+            }
+
+          def indexed_page(c,index,kind):
+            page=c[index*0x200:(index+1)*0x200]
+            if len(page)!=0x200:return {"valid":False,"error":"short"}
+            n=page[-1]
+            if kind=="char":
+              if n>64 or 4*(n+1)+n>511:return {"valid":False,"n":n,"error":"header"}
+              base=u32(page,0);abspos=[u32(page,4*i) for i in range(n+1)]
+              pos=[x-base for x in abspos[1:]];style=list(page[4*(n+1):4*(n+1)+n])
+            else:
+              if n>64 or 5*n>511:return {"valid":False,"n":n,"error":"header"}
+              pos=[u32(page,4*i) for i in range(n)];style=list(page[4*n:5*n])
+            return {"valid":True,"n":n,"positions":pos,"style_offsets":style,"page_sha256":sha(page)}
+
+          def directory(c):
+            off=u32(c,0x16)
+            if off+2>len(c):return {"valid":False,"offset":off}
+            n=u16(c,off);rows=[]
+            if not (1<=n<=128) or off+2+n*10>len(c):return {"valid":False,"offset":off,"n":n}
+            for i in range(n):
+              p=off+2+i*10
+              service=u16(c,p);oid=u16(c,p+2);parent=u16(c,p+4);chunk=u32(c,p+6)
+              if chunk+2>len(c):return {"valid":False,"offset":off,"n":n,"valid_rows":len(rows)}
+              rows.append({"service":service,"id":oid,"parent":parent,"marker":u16(c,chunk),"chunk_offset":chunk})
+            return {"valid":True,"offset":off,"n":n,"canonical":sorted((r["service"],r["id"],r["parent"],r["marker"]) for r in rows)}
+
+          def parse_contents(c):
+            if c[:2]!=b"\xe8\xac" or u16(c,2)!=0x22:raise ValueError("not old22")
+            cv=u16(c,4);sig=c[0x0c:0x0e].hex()
+            gen={("7d00",300):"Publisher95",("8800",300):"Publisher97",("c002",200):"Publisher2.0"}.get((sig,cv),"unknown")
+            root=u32(c,0x12);m=root+14;ts=u32(c,m);te=u32(c,m+4)
+            i0,i1,i2,i3=[u16(c,m+x) for x in (8,10,12,14)]
+            t=c[ts:te]
+            return {
+              "generation":gen,"secondary_signature":sig,"content_version":cv,
+              "text_start":ts,"text_end":te,"text_len":len(t),"text_sha256":sha(t),"controls":controls(t),
+              "property_indexes":{"char":i0,"paragraph":i1,"cell":i2,"end":i3},
+              "char_page":indexed_page(c,i0,"char"),"paragraph_page":indexed_page(c,i1,"paragraph"),"cell_page":indexed_page(c,i2,"cell"),
+              "directory":directory(c)
+            }
+
+          def tool(cmd,outfile=None):
+            p=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+            out=Path(outfile).read_bytes() if outfile and Path(outfile).exists() else p.stdout
+            return {"returncode":p.returncode,"stdout_len":len(p.stdout),"stdout_sha256":sha(p.stdout),"stderr_len":len(p.stderr),"stderr_sha256":sha(p.stderr),"output_len":len(out),"output_sha256":sha(out)}
+
+          def content_delta(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False)
+            return {"left_len":len(a),"right_len":len(b),"ratio":round(sm.ratio(),6)}
+
+          rows={};raw={}
+          with tempfile.TemporaryDirectory(prefix="bookmark-lineage-") as td0:
+            td=Path(td0)
+            for name,s in NODES.items():
+              iso=ISO(s["url"]);pub=iso.member(s["member"])
+              if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(name+" exact member drift")
+              path=td/(name+".pub");path.write_bytes(pub)
+              streams=stream_map(pub);c=streams["/Contents"];pc=parse_contents(c)
+              xo=str(td/(name+".xhtml"))
+              rows[name]={
+                "sha256":s["sha256"],"source_page":s["source_page"],"delivery_url":iso.delivery,
+                "streams":{k:{"len":len(v),"sha256":sha(v)} for k,v in sorted(streams.items())},
+                "contents":pc,
+                "pub2raw":tool(["pub2raw",str(path)]),
+                "pub2xhtml":tool(["pub2xhtml",str(path),xo],xo)
+              }
+              raw[name]=streams
+
+          expected={"pub95":"Publisher95","pub97_en":"Publisher97","pub97_th":"Publisher97","pub97_pub40":"Publisher97"}
+          clean={}
+          for n,r in rows.items():
+            clean[n]=(r["pub2xhtml"]["returncode"]==0 and r["contents"]["generation"]==expected[n] and r["contents"]["char_page"]["valid"] and r["contents"]["paragraph_page"]["valid"] and r["contents"]["directory"]["valid"])
+
+          comparisons={}
+          names=list(rows)
+          for i,a in enumerate(names):
+            for b in names[i+1:]:
+              sa,sb=raw[a],raw[b]
+              paths=sorted(set(sa)|set(sb))
+              changed=[p for p in paths if sa.get(p)!=sb.get(p)]
+              ca,cb=rows[a]["contents"],rows[b]["contents"]
+              comparisons[a+"->"+b]={
+                "changed_streams":changed,
+                "contents_delta":content_delta(sa["/Contents"],sb["/Contents"]),
+                "text_equal":ca["text_sha256"]==cb["text_sha256"],
+                "controls_equal":ca["controls"]==cb["controls"],
+                "property_indexes_equal":ca["property_indexes"]==cb["property_indexes"],
+                "char_positions_equal":ca["char_page"].get("positions")==cb["char_page"].get("positions"),
+                "paragraph_positions_equal":ca["paragraph_page"].get("positions")==cb["paragraph_page"].get("positions"),
+                "canonical_directory_equal":ca["directory"].get("canonical")==cb["directory"].get("canonical")
+              }
+
+          clean_all=all(clean.values())
+          cross=[comparisons["pub95->"+x] for x in ("pub97_en","pub97_th","pub97_pub40")]
+          if clean_all and all(x["text_equal"] and x["canonical_directory_equal"] for x in cross):
+            classification="same-template-cross-generation-lineage-supported"
+          elif clean_all and all(x["text_equal"] for x in cross):
+            classification="same-text-cross-generation-lineage-object-graph-delta"
+          elif clean_all:
+            classification="parser-clean-cross-generation-family-needs-semantic-discriminator"
+          else:
+            classification="fail-closed-malformed-node-present"
+
+          summary={
+            "schema":"chaptera.bookmark-95-97-lineage-summary.v1",
+            "all_exact_members_verified":True,
+            "clean_nodes":clean,
+            "generation_hints":{n:r["contents"]["generation"] for n,r in rows.items()},
+            "signatures":{n:[r["contents"]["secondary_signature"],r["contents"]["content_version"]] for n,r in rows.items()},
+            "parse_returncodes":{n:r["pub2xhtml"]["returncode"] for n,r in rows.items()},
+            "text_sha256":{n:r["contents"]["text_sha256"] for n,r in rows.items()},
+            "comparisons":comparisons,
+            "classification":classification,
+            "source_safe":True
+          }
+          receipt={"schema":"chaptera.bookmark-95-97-lineage.v1","rows":rows,"summary":summary,"raw_pub_retained":False,"source_safe":True}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-bookmark-95-97-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
