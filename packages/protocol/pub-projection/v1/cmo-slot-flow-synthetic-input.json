@@ -1,0 +1,41 @@
+{
+  "schema_version": "chaptera.cmo-slot-flow-input.v1",
+  "producer": {
+    "implementation": "rar-cmo-slot-flow",
+    "commit_or_build": "synthetic-v1",
+    "core_integration": true
+  },
+  "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "target_story_id": "20000000-0000-4000-8000-000000000001",
+  "target_frame_node_id": "30000000-0000-4000-8000-000000000001",
+  "target_frame_count": 1,
+  "story_marker_count": 2,
+  "host": {
+    "width_emu": 1000,
+    "height_emu": 1000
+  },
+  "items": [
+    {
+      "kind": "object_slot",
+      "slot_index": 0,
+      "scalar_index": 0,
+      "source_order": 7,
+      "cmo_id": 7,
+      "carrier_node_id": "40000000-0000-4000-8000-000000000001",
+      "carrier_story_id": "50000000-0000-4000-8000-000000000001",
+      "intrinsic_width_emu": 900,
+      "intrinsic_height_emu": 600
+    },
+    {
+      "kind": "object_slot",
+      "slot_index": 1,
+      "scalar_index": 3,
+      "source_order": 9,
+      "cmo_id": 9,
+      "carrier_node_id": "40000000-0000-4000-8000-000000000002",
+      "carrier_story_id": null,
+      "intrinsic_width_emu": 900,
+      "intrinsic_height_emu": 500
+    }
+  ]
+}
