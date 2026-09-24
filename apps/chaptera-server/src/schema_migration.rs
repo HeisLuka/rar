@@ -2,7 +2,6 @@ use std::{
     env,
     fmt,
     path::{Path, PathBuf},
-    str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -426,8 +425,8 @@ async fn connect(
     busy_timeout: Duration,
     create_if_missing: bool,
 ) -> Result<SqliteConnection, MigrationError> {
-    let options = SqliteConnectOptions::from_str(&path.to_string_lossy())
-        .map_err(sqlite_error)?
+    let options = SqliteConnectOptions::new()
+        .filename(path)
         .create_if_missing(create_if_missing)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
