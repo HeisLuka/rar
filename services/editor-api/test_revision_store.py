@@ -323,6 +323,200 @@ class StoryRangeCommitTests(unittest.TestCase):
             self.kernel.commit_story_range(req, self.executor)
 
 
+
+class FakeImageCropExecutor:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, base_project, command):
+        self.calls += 1
+        node_id = command["node_id"]
+        picture = base_project["picture_frames"][node_id]
+        if not picture["supported"]:
+            raise ValueError("unsupported_picture_class")
+        before = copy.deepcopy(picture["crop"])
+        if before != command["expected_before"]:
+            raise ValueError("stale_image_crop")
+        after = copy.deepcopy(command["after"])
+        operation = {
+            "kind": "set_image_crop",
+            "node_id": node_id,
+            "before": before,
+            "after": after,
+        }
+        project = copy.deepcopy(base_project)
+        project["operations"] = list(project["operations"]) + [copy.deepcopy(operation)]
+        project["picture_frames"] = copy.deepcopy(project["picture_frames"])
+        project["picture_frames"][node_id]["crop"] = copy.deepcopy(after)
+        return operation, project, [
+            {"key": "image.crop", "state": "supported", "note": None}
+        ]
+
+
+class ImageCropCommitTests(unittest.TestCase):
+    NODE_ID = "picture:1"
+    BEFORE = {"left": 10, "top": 20, "right": 30, "bottom": 40}
+    AFTER = {"left": 11, "top": 22, "right": 33, "bottom": 44}
+
+    def setUp(self):
+        self.kernel = RevisionKernel()
+        self.project = {
+            "schema_version": "pub-editor-v0.4",
+            "source_hash": SOURCE_HASH,
+            "operations": [],
+            "picture_frames": {
+                self.NODE_ID: {
+                    "frame": {"x": 1, "y": 2, "width": 300, "height": 200},
+                    "asset": "a" * 64,
+                    "crop": copy.deepcopy(self.BEFORE),
+                    "supported": True,
+                }
+            },
+        }
+        self.baseline = self.kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=self.project,
+        )
+        self.executor = FakeImageCropExecutor()
+
+    def crop_request(self, op_id, *, before=None, after=None, base=None):
+        return {
+            "protocol_version": "chaptera.image-crop-intent.v1",
+            "document_id": DOCUMENT_ID,
+            "source_hash": SOURCE_HASH,
+            "base_revision_id": base or self.baseline.revision_id,
+            "client_operation_id": op_id,
+            "command": {
+                "kind": "set_image_crop",
+                "node_id": self.NODE_ID,
+                "expected_before": copy.deepcopy(before or self.BEFORE),
+                "after": copy.deepcopy(after or self.AFTER),
+            },
+        }
+
+    def test_crop_commit_changes_only_crop_axis(self):
+        result = self.kernel.commit_image_crop(
+            self.crop_request("crop-op-00000001"),
+            self.executor,
+        )
+        self.assertEqual("chaptera.commit-accepted.v1", result["protocol_version"])
+        self.assertEqual("set_image_crop", result["canonical_operation"]["kind"])
+        current = self.kernel.current_revision(DOCUMENT_ID).project
+        before_picture = self.project["picture_frames"][self.NODE_ID]
+        after_picture = current["picture_frames"][self.NODE_ID]
+        self.assertEqual(before_picture["frame"], after_picture["frame"])
+        self.assertEqual(before_picture["asset"], after_picture["asset"])
+        self.assertEqual(self.AFTER, after_picture["crop"])
+        self.assertEqual(self.BEFORE, result["canonical_operation"]["before"])
+        self.assertEqual(self.AFTER, result["canonical_operation"]["after"])
+        self.assertEqual(1, self.executor.calls)
+
+    def test_crop_exact_retry_is_idempotent(self):
+        req = self.crop_request("crop-op-00000002")
+        first = self.kernel.commit_image_crop(copy.deepcopy(req), self.executor)
+        second = self.kernel.commit_image_crop(copy.deepcopy(req), self.executor)
+        self.assertEqual(first, second)
+        self.assertEqual(1, self.executor.calls)
+
+    def test_revision_stale_base_rejected_before_executor(self):
+        first = self.kernel.commit_image_crop(
+            self.crop_request("crop-op-00000003"),
+            self.executor,
+        )
+        calls = self.executor.calls
+        stale = self.kernel.commit_image_crop(
+            self.crop_request(
+                "crop-op-00000004",
+                before=self.AFTER,
+                after={"left": 12, "top": 23, "right": 34, "bottom": 45},
+            ),
+            self.executor,
+        )
+        self.assertEqual("stale_revision", stale["code"])
+        self.assertEqual(first["revision_id"], stale["current_revision_id"])
+        self.assertEqual(calls, self.executor.calls)
+
+    def test_same_id_different_crop_conflicts_without_execution(self):
+        op_id = "crop-op-00000005"
+        self.kernel.commit_image_crop(self.crop_request(op_id), self.executor)
+        calls = self.executor.calls
+        conflict = self.kernel.commit_image_crop(
+            self.crop_request(
+                op_id,
+                after={"left": 12, "top": 22, "right": 33, "bottom": 44},
+            ),
+            self.executor,
+        )
+        self.assertEqual("idempotency_conflict", conflict["code"])
+        self.assertEqual(calls, self.executor.calls)
+
+    def test_stale_expected_before_fails_closed_without_revision_move(self):
+        baseline_revision = self.baseline.revision_id
+        with self.assertRaisesRegex(ValueError, "stale_image_crop"):
+            self.kernel.commit_image_crop(
+                self.crop_request(
+                    "crop-op-00000006",
+                    before={"left": 9, "top": 20, "right": 30, "bottom": 40},
+                ),
+                self.executor,
+            )
+        self.assertEqual(
+            baseline_revision,
+            self.kernel.current_revision(DOCUMENT_ID).revision_id,
+        )
+
+    def test_same_crop_noop_rejected_before_executor(self):
+        with self.assertRaisesRegex(ValueError, "no-op"):
+            self.kernel.commit_image_crop(
+                self.crop_request(
+                    "crop-op-00000007",
+                    after=self.BEFORE,
+                ),
+                self.executor,
+            )
+        self.assertEqual(0, self.executor.calls)
+
+    def test_unsupported_picture_gate_rejects_before_executor(self):
+        def reject_unsupported(_command):
+            raise ValueError("unsupported_picture_class")
+
+        with self.assertRaisesRegex(ValueError, "unsupported_picture_class"):
+            self.kernel.commit_image_crop(
+                self.crop_request("crop-op-00000008"),
+                self.executor,
+                pre_execute_validator=reject_unsupported,
+            )
+        self.assertEqual(0, self.executor.calls)
+        self.assertEqual(
+            self.baseline.revision_id,
+            self.kernel.current_revision(DOCUMENT_ID).revision_id,
+        )
+
+    def test_browser_cannot_supply_extra_authoritative_crop_fields(self):
+        req = self.crop_request("crop-op-00000009")
+        req["command"]["crop_authority"] = "native_crop_v1"
+        with self.assertRaisesRegex(ValueError, "non-intent"):
+            self.kernel.commit_image_crop(req, self.executor)
+        self.assertEqual(0, self.executor.calls)
+
+    def test_executor_cannot_change_target_or_crop_payload(self):
+        def bad_executor(base_project, command):
+            op, project, consequences = self.executor(base_project, command)
+            op["after"]["right"] += 1
+            return op, project, consequences
+
+        with self.assertRaisesRegex(ValueError, "after-state"):
+            self.kernel.commit_image_crop(
+                self.crop_request("crop-op-00000010"),
+                bad_executor,
+            )
+        self.assertEqual(
+            self.baseline.revision_id,
+            self.kernel.current_revision(DOCUMENT_ID).revision_id,
+        )
+
+
 class FakeHistoryExecutor:
     def __init__(self, *, baseline_project, moved_project):
         self.baseline_project = copy.deepcopy(baseline_project)
