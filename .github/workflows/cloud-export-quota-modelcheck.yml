@@ -1,0 +1,43 @@
+name: Cloud export + quota architecture modelcheck
+
+on:
+  pull_request:
+    paths:
+      - "tools/run_cloud_export_job_model.py"
+      - "tools/run_cloud_quota_backpressure_model.py"
+      - ".github/workflows/cloud-export-quota-modelcheck.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Model-check Cloud export job lifecycle
+        run: python tools/run_cloud_export_job_model.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-export-job-model
+          path: target/cloud-export-quota/export-job.json
+          if-no-files-found: error
+
+  quota-backpressure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Model-check quota reservations and backpressure
+        run: python tools/run_cloud_quota_backpressure_model.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-quota-backpressure-model
+          path: target/cloud-export-quota/quota-backpressure.json
+          if-no-files-found: error
