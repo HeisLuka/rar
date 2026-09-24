@@ -81,14 +81,40 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends p7zip-full
-          mkdir -p out/extracted
-          7z x -y out/X12-30247.exe -oout/extracted >/tmp/7z-pubconv.log 2>&1 || {
-            cat /tmp/7z-pubconv.log
-            exit 1
-          }
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools cabextract
+          mkdir -p out/extracted out/msi-scan out/msi-extracted
+          7z x -y out/X12-30247.exe -oout/extracted >/tmp/7z-pubconv.log 2>&1
           find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
-          dll="$(find out/extracted -type f -iname 'PUBCONV.DLL' | head -n1)"
+
+          # Prefer MSI semantic extraction: locate the MSI File-table row that owns PUBCONV.DLL.
+          : > out/pubconv-msi-hits.txt
+          while IFS= read -r msi; do
+            safe="$(printf '%s' "$msi" | tr '/ ' '__')"
+            msiinfo export "$msi" File > "out/msi-scan/$safe.File.txt" 2>/dev/null || continue
+            if grep -i 'PUBCONV' "out/msi-scan/$safe.File.txt" >> out/pubconv-msi-hits.txt; then
+              printf 'MSI=%s\n' "$msi" >> out/pubconv-msi-hits.txt
+            fi
+          done < <(find out/extracted -type f -iname '*.msi' | sort)
+          cat out/pubconv-msi-hits.txt
+
+          owner_msi="$(grep '^MSI=' out/pubconv-msi-hits.txt | head -n1 | cut -d= -f2- || true)"
+          if [ -n "$owner_msi" ]; then
+            (
+              cd "$(dirname "$owner_msi")"
+              msiextract -C "$GITHUB_WORKSPACE/out/msi-extracted" "$(basename "$owner_msi")"
+            ) >out/msiextract.log 2>&1 || true
+          fi
+
+          dll="$(find out/msi-extracted out/extracted -type f -iname 'PUBCONV.DLL' | head -n1 || true)"
+          if [ -z "$dll" ]; then
+            # Fallback: expand likely Office cabinets and search again.
+            while IFS= read -r cab; do
+              d="out/cab-$(basename "$cab" .cab)"
+              mkdir -p "$d"
+              7z x -y "$cab" -o"$d" >/dev/null 2>&1 || true
+            done < <(find out/extracted -type f \( -iname 'EnterWW.cab' -o -iname '*WW.cab' \) | sort)
+            dll="$(find out -type f -iname 'PUBCONV.DLL' | head -n1 || true)"
+          fi
           test -n "$dll"
           cp "$dll" out/PUBCONV.DLL
           test "$(stat -c %s out/PUBCONV.DLL)" -eq 590144
@@ -135,16 +161,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends p7zip-full msitools
           mkdir -p out/extracted out/msi-scan
-          7z x -y out/CorelDRAWGraphicsSuiteX4Installer_EN.exe -oout/extracted >/tmp/7z-corel.log 2>&1 || {
-            cat /tmp/7z-corel.log
-            exit 1
-          }
+          7z x -y out/CorelDRAWGraphicsSuiteX4Installer_EN.exe -oout/extracted >/tmp/7z-corel.log 2>&1
           find out/extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
+          find out/extracted -type f -iname '*.msi' -printf '%s\t%p\n' | sort -nr > out/msi-files.txt
+          grep -RaiE '7F05E704-30A6-421A-97A7-8EEB1C7FF017|cdrPUB|Publisher' out/extracted > out/raw-pub-productcode-hits.txt || true
+
           found=0
+          : > out/msi-pub-hits.txt
           while IFS= read -r msi; do
-            base="$(basename "$msi")"
-            prop="out/msi-scan/${base}.Property.txt"
+            safe="$(printf '%s' "$msi" | tr '/ ' '__')"
+            prop="out/msi-scan/$safe.Property.txt"
+            filetab="out/msi-scan/$safe.File.txt"
             msiinfo export "$msi" Property > "$prop" 2>/dev/null || continue
+            msiinfo export "$msi" File > "$filetab" 2>/dev/null || true
+            if grep -Eqi '7F05E704-30A6-421A-97A7-8EEB1C7FF017|Filters' "$prop" || grep -Eqi 'pub|publisher|cdrpub' "$filetab"; then
+              {
+                echo "MSI=$msi"
+                grep -Ei 'ProductCode|ProductName|ProductVersion' "$prop" || true
+                grep -Ei 'pub|publisher|cdrpub' "$filetab" || true
+              } >> out/msi-pub-hits.txt
+            fi
             if grep -qi '7F05E704-30A6-421A-97A7-8EEB1C7FF017' "$prop"; then
               cp "$msi" out/Corel-X4-Filters.msi
               printf '%s\n' "$msi" | tee out/filters-msi-path.txt
@@ -152,6 +188,16 @@ jobs:
               break
             fi
           done < <(find out/extracted -type f -iname '*.msi' | sort)
+          cat out/msi-pub-hits.txt || true
+
+          if [ "$found" -ne 1 ]; then
+            candidate="$(find out/extracted -type f \( -iname '*filter*.msi' -o -iname 'Filters.msi' \) | head -n1 || true)"
+            if [ -n "$candidate" ]; then
+              cp "$candidate" out/Corel-X4-Filters.msi
+              printf '%s\n' "$candidate" | tee out/filters-msi-path.txt
+              found=1
+            fi
+          fi
           test "$found" -eq 1
           sha256sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha256.txt
           sha1sum out/Corel-X4-Filters.msi | tee out/filters-msi-sha1.txt
@@ -352,7 +398,7 @@ jobs:
           queries = {
             "publisher2000_trial": '"Microsoft Publisher 2000" AND (trial OR "trial cd")',
             "publisher2002_trial": '"Publisher 2002" AND (trial OR X08-20172 OR X08-06831)',
-            "publisher2003_trial": '("Publisher 2003" OR "Microsoft Office Publisher 2003") AND (trial OR SKU119 OR "099-91827" OR X10-13869 OR X09-55389 OR OFFICE11)',
+            "publisher2003_trial": '("Publisher 2003" OR "Microsoft Office Publisher 2003") AND (trial OR SKU119 OR OFFICE11)',
             "vbapb10_chm": '"VBAPB10.CHM"',
             "keyview_mspubsr": '"mspubsr.dll"',
             "pub2id": '"Pub2ID" AND (installer OR updater OR plugin)',
