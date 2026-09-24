@@ -94,7 +94,7 @@ def main():
     tu,tr,tm=triage_probe(TRIAGE_POSITIVE_CONTROL,a.timeout)
     hu,hr,hm=hybrid_probe(HYBRID_POSITIVE_CONTROL,a.timeout)
     triage_control_ok=bool(tm["sample_links"] and tm["reported_token"])
-    hybrid_control_ok=bool((not hm["antibot_marker"]) and hm["analysis_title"] and hm["file_details"] and hm["sha256_label"])
+    hybrid_control_ok=bool(hm["exact_hash_in_body"] and "score " in hm["title"].lower() and "/100" in hm["title"].lower())
 
     controls={
         "tria_ge":{"sha256":TRIAGE_POSITIVE_CONTROL,"url":tu,"status":tr["status"],"final_url":tr["final_url"],"error":tr["error"],**tm,"control_ok":triage_control_ok},
