@@ -1,0 +1,29 @@
+name: Editor Document Text Find Replace UI V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/editor_document_text_find_replace_ui_v1.py"
+      - "services/editor-api/test_editor_document_text_find_replace_ui_v1.py"
+      - "services/editor-api/document_text_find_v1.py"
+      - "services/editor-api/document_text_replace_all_v1.py"
+      - "services/editor-api/text_programmatic_jump_v1.py"
+      - "services/editor-api/text_selection_state_v1.py"
+      - "services/editor-api/text_edit_session_v1.py"
+      - ".github/workflows/editor-document-text-find-replace-ui-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run publication-wide Find Replace UI tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_editor_document_text_find_replace_ui_v1 test_document_text_find_v1 test_document_text_replace_all_v1
