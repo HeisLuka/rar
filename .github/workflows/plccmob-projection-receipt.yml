@@ -3,6 +3,8 @@ name: PlcCmob projection receipt V1
 on:
   pull_request:
     paths:
+      - "Cargo.toml"
+      - "crates/pub-plccmob-projection/**"
       - "packages/protocol/pub-projection/**"
       - "tools/validate_plccmob_projection_receipt.py"
       - "tools/test_plccmob_projection_receipt.py"
@@ -18,6 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -25,5 +31,23 @@ jobs:
       - name: Install schema validator
         run: python -m pip install "jsonschema==4.23.0"
 
+      - name: Check bounded Rust core formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check bounded Rust core
+        run: cargo check -p pub-plccmob-projection --all-targets
+
+      - name: Lint bounded Rust core
+        run: cargo clippy -p pub-plccmob-projection --all-targets -- -D warnings
+
+      - name: Test bounded Rust core
+        run: cargo test -p pub-plccmob-projection
+
       - name: Run PlcCmob source-free contract tests
         run: python tools/test_plccmob_projection_receipt.py -v
+
+      - name: Produce sanitized synthetic receipt through Rust core
+        run: cargo run -q -p pub-plccmob-projection --bin plccmob-projection-producer -- packages/protocol/pub-projection/v1/plccmob-synthetic-input.json > /tmp/plccmob-receipt.json
+
+      - name: Validate Rust-produced receipt against public schema
+        run: python tools/validate_plccmob_projection_receipt.py /tmp/plccmob-receipt.json
