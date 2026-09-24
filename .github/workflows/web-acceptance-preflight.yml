@@ -12,6 +12,8 @@ on:
       - "tools/adapt_viewer_scene_v1.py"
       - "tools/validate_revision_producer_receipt.py"
       - "tools/test_revision_producer_receipt_schema.py"
+      - "tools/build_revision_producer_receipt.py"
+      - "tools/test_build_revision_producer_receipt.py"
       - "packages/protocol/scene/v1/**"
       - "packages/protocol/revision/v1/**"
       - "docs/web-editor-acceptance-preflight-v1.md"
@@ -45,6 +47,8 @@ jobs:
         run: python tools/test_viewer_geometry_receipt_schema.py
       - name: Prove revision producer receipt allowlist fails closed
         run: python tools/test_revision_producer_receipt_schema.py
+      - name: Prove local revision receipt builder reuses kernel semantics
+        run: python tools/test_build_revision_producer_receipt.py
       - name: Prove browser acceptance binds canonical revision and Scene chain
         run: python tools/test_browser_acceptance_binding.py
       - name: Fetch pinned Apache POI SampleNewsletter.pub Git blob
