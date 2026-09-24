@@ -42,7 +42,6 @@ jobs:
             --max-files -1 \
             --timeout 30 \
             --max-bytes 157286400 \
-            --max-archive-member-bytes 104857600 \
             --max-archive-total-bytes 314572800 \
             --max-archive-members 500 \
             --per-host-delay 0.1
