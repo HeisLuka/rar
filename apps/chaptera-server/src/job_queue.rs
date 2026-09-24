@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    fmt,
-    path::Path,
-    time::Duration,
-};
+use std::{collections::BTreeMap, fmt, path::Path, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -68,7 +63,10 @@ impl JobKind {
             "snapshot" => Ok(Self::Snapshot),
             "projection" => Ok(Self::Projection),
             "blob_gc" => Ok(Self::BlobGc),
-            _ => Err(JobQueueError::new("invalid_job_kind", "persisted job kind is invalid")),
+            _ => Err(JobQueueError::new(
+                "invalid_job_kind",
+                "persisted job kind is invalid",
+            )),
         }
     }
 }
@@ -101,7 +99,10 @@ impl JobStatus {
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
-            _ => Err(JobQueueError::new("invalid_job_status", "persisted job status is invalid")),
+            _ => Err(JobQueueError::new(
+                "invalid_job_status",
+                "persisted job status is invalid",
+            )),
         }
     }
 
@@ -191,14 +192,23 @@ impl SqliteJobQueue {
         busy_timeout: Duration,
     ) -> Result<Self, JobQueueError> {
         if max_connections == 0 || max_connections > 16 {
-            return Err(JobQueueError::new("invalid_pool_size", "job queue pool must use 1..=16 connections"));
+            return Err(JobQueueError::new(
+                "invalid_pool_size",
+                "job queue pool must use 1..=16 connections",
+            ));
         }
         if busy_timeout.is_zero() || busy_timeout > Duration::from_secs(30) {
-            return Err(JobQueueError::new("invalid_busy_timeout", "busy timeout must be >0 and <=30 seconds"));
+            return Err(JobQueueError::new(
+                "invalid_busy_timeout",
+                "busy timeout must be >0 and <=30 seconds",
+            ));
         }
         let path = path.as_ref();
         if path.as_os_str().is_empty() {
-            return Err(JobQueueError::new("invalid_database_path", "database path must be non-empty"));
+            return Err(JobQueueError::new(
+                "invalid_database_path",
+                "database path must be non-empty",
+            ));
         }
 
         let options = SqliteConnectOptions::new()
@@ -260,10 +270,12 @@ impl SqliteJobQueue {
             .execute(&self.pool)
             .await
             .map_err(sqlite_error)?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS jobs_expired_lease ON jobs(status, lease_expires_at_ms)")
-            .execute(&self.pool)
-            .await
-            .map_err(sqlite_error)?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS jobs_expired_lease ON jobs(status, lease_expires_at_ms)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS job_effects (
@@ -311,16 +323,33 @@ impl SqliteJobQueue {
 
         match result {
             Ok(done) if done.rows_affected() == 1 => Ok(EnqueueOutcome::Enqueued(
-                self.get(&request.job_id).await?.expect("inserted job must exist"),
+                self.get(&request.job_id)
+                    .await?
+                    .expect("inserted job must exist"),
             )),
-            Ok(_) => Err(JobQueueError::new("enqueue_no_effect", "enqueue did not create a row")),
+            Ok(_) => Err(JobQueueError::new(
+                "enqueue_no_effect",
+                "enqueue did not create a row",
+            )),
             Err(_) => {
                 let existing = self
-                    .find_idempotent(&request.tenant_id, request.job_kind, &request.idempotency_key)
+                    .find_idempotent(
+                        &request.tenant_id,
+                        request.job_kind,
+                        &request.idempotency_key,
+                    )
                     .await?
-                    .ok_or_else(|| JobQueueError::new("enqueue_failed", "enqueue failed without idempotent row"))?;
+                    .ok_or_else(|| {
+                        JobQueueError::new(
+                            "enqueue_failed",
+                            "enqueue failed without idempotent row",
+                        )
+                    })?;
                 if existing.request_hash != request_hash {
-                    return Err(JobQueueError::new("idempotency_conflict", "idempotency key reused with different request"));
+                    return Err(JobQueueError::new(
+                        "idempotency_conflict",
+                        "idempotency key reused with different request",
+                    ));
                 }
                 Ok(EnqueueOutcome::Existing(existing))
             }
@@ -343,13 +372,15 @@ impl SqliteJobQueue {
         kind: JobKind,
         key: &str,
     ) -> Result<Option<JobRecord>, JobQueueError> {
-        let row = sqlx::query("SELECT * FROM jobs WHERE tenant_id = ? AND job_kind = ? AND idempotency_key = ?")
-            .bind(tenant_id.as_bytes())
-            .bind(kind.as_str())
-            .bind(key.as_bytes())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(sqlite_error)?;
+        let row = sqlx::query(
+            "SELECT * FROM jobs WHERE tenant_id = ? AND job_kind = ? AND idempotency_key = ?",
+        )
+        .bind(tenant_id.as_bytes())
+        .bind(kind.as_str())
+        .bind(key.as_bytes())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
         row.map(decode_job).transpose()
     }
 
@@ -362,19 +393,30 @@ impl SqliteJobQueue {
     ) -> Result<Option<Lease>, JobQueueError> {
         require_owner(owner)?;
         if lease_ms <= 0 || lease_ms > 300_000 {
-            return Err(JobQueueError::new("invalid_lease", "lease must be >0 and <=300000 ms"));
+            return Err(JobQueueError::new(
+                "invalid_lease",
+                "lease must be >0 and <=300000 ms",
+            ));
         }
         if allowed_kinds.is_empty() {
             return Ok(None);
         }
 
         let mut conn = self.pool.acquire().await.map_err(sqlite_error)?;
-        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(sqlite_error)?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .map_err(sqlite_error)?;
 
-        let result = self.claim_one_in_transaction(&mut conn, owner, now_ms, lease_ms, allowed_kinds).await;
+        let result = self
+            .claim_one_in_transaction(&mut conn, owner, now_ms, lease_ms, allowed_kinds)
+            .await;
         match result {
             Ok(value) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(sqlite_error)?;
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(sqlite_error)?;
                 Ok(value)
             }
             Err(error) => {
@@ -393,7 +435,9 @@ impl SqliteJobQueue {
         allowed_kinds: &[JobKind],
     ) -> Result<Option<Lease>, JobQueueError> {
         let kinds: Vec<&str> = allowed_kinds.iter().map(|kind| kind.as_str()).collect();
-        let placeholders = std::iter::repeat_n("?", kinds.len()).collect::<Vec<_>>().join(",");
+        let placeholders = std::iter::repeat_n("?", kinds.len())
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!(
             "SELECT * FROM jobs WHERE job_kind IN ({placeholders}) AND attempt < max_attempts AND ((status = 'queued' AND available_at_ms <= ?) OR (status = 'running' AND lease_expires_at_ms IS NOT NULL AND lease_expires_at_ms <= ?)) ORDER BY available_at_ms ASC, created_at_ms ASC, job_id ASC LIMIT 1"
         );
@@ -457,7 +501,10 @@ impl SqliteJobQueue {
         .map_err(sqlite_error)?;
 
         if done.rows_affected() != 1 {
-            return Err(JobQueueError::new("claim_race", "claim candidate changed before ownership update"));
+            return Err(JobQueueError::new(
+                "claim_race",
+                "claim candidate changed before ownership update",
+            ));
         }
 
         let job = sqlx::query("SELECT * FROM jobs WHERE job_id = ?")
@@ -485,7 +532,10 @@ impl SqliteJobQueue {
     ) -> Result<JobRecord, JobQueueError> {
         require_owner(owner)?;
         if lease_ms <= 0 || lease_ms > 300_000 {
-            return Err(JobQueueError::new("invalid_lease", "lease must be >0 and <=300000 ms"));
+            return Err(JobQueueError::new(
+                "invalid_lease",
+                "lease must be >0 and <=300000 ms",
+            ));
         }
         let expires = now_ms
             .checked_add(lease_ms)
@@ -502,12 +552,21 @@ impl SqliteJobQueue {
         .await
         .map_err(sqlite_error)?;
         if done.rows_affected() != 1 {
-            return Err(JobQueueError::new("stale_lease", "heartbeat rejected for stale or expired lease"));
+            return Err(JobQueueError::new(
+                "stale_lease",
+                "heartbeat rejected for stale or expired lease",
+            ));
         }
-        self.get(job_id).await?.ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))
+        self.get(job_id)
+            .await?
+            .ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))
     }
 
-    pub async fn request_cancel(&self, job_id: &str, now_ms: i64) -> Result<JobRecord, JobQueueError> {
+    pub async fn request_cancel(
+        &self,
+        job_id: &str,
+        now_ms: i64,
+    ) -> Result<JobRecord, JobQueueError> {
         let done = sqlx::query(
             "UPDATE jobs SET cancel_requested_at_ms=COALESCE(cancel_requested_at_ms, ?) WHERE job_id=? AND status IN ('queued','running')",
         )
@@ -517,9 +576,14 @@ impl SqliteJobQueue {
         .await
         .map_err(sqlite_error)?;
         if done.rows_affected() == 0 {
-            return self.get(job_id).await?.ok_or_else(|| JobQueueError::new("job_not_found", "job does not exist"));
+            return self
+                .get(job_id)
+                .await?
+                .ok_or_else(|| JobQueueError::new("job_not_found", "job does not exist"));
         }
-        self.get(job_id).await?.ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))
+        self.get(job_id)
+            .await?
+            .ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))
     }
 
     pub async fn fail(
@@ -532,7 +596,9 @@ impl SqliteJobQueue {
         require_code(terminal_code)?;
         let current = self.require_live_lease(lease, now_ms).await?;
         if current.cancel_requested_at_ms.is_some() {
-            let job = self.finish(lease, now_ms, JobStatus::Cancelled, "cancel_requested").await?;
+            let job = self
+                .finish(lease, now_ms, JobStatus::Cancelled, "cancel_requested")
+                .await?;
             return Ok(FailureOutcome::Cancelled(job));
         }
 
@@ -555,13 +621,19 @@ impl SqliteJobQueue {
             .await
             .map_err(sqlite_error)?;
             if done.rows_affected() != 1 {
-                return Err(JobQueueError::new("stale_lease", "retry update lost lease ownership"));
+                return Err(JobQueueError::new(
+                    "stale_lease",
+                    "retry update lost lease ownership",
+                ));
             }
-            return Ok(FailureOutcome::Requeued(self.get(&current.job_id).await?.unwrap()));
+            return Ok(FailureOutcome::Requeued(
+                self.get(&current.job_id).await?.unwrap(),
+            ));
         }
 
         Ok(FailureOutcome::Failed(
-            self.finish(lease, now_ms, JobStatus::Failed, terminal_code).await?,
+            self.finish(lease, now_ms, JobStatus::Failed, terminal_code)
+                .await?,
         ))
     }
 
@@ -573,11 +645,17 @@ impl SqliteJobQueue {
     ) -> Result<PublishOutcome, JobQueueError> {
         require_ident(effect_key, "effect_key")?;
         if effect_key.len() > MAX_EFFECT_KEY_BYTES {
-            return Err(JobQueueError::new("invalid_effect_key", "effect key too long"));
+            return Err(JobQueueError::new(
+                "invalid_effect_key",
+                "effect key too long",
+            ));
         }
 
         let mut conn = self.pool.acquire().await.map_err(sqlite_error)?;
-        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(sqlite_error)?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .map_err(sqlite_error)?;
         let result = async {
             let row = sqlx::query("SELECT * FROM jobs WHERE job_id=?")
                 .bind(lease.job.job_id.as_bytes())
@@ -643,7 +721,10 @@ impl SqliteJobQueue {
 
         match result {
             Ok(value) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await.map_err(sqlite_error)?;
+                sqlx::query("COMMIT")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(sqlite_error)?;
                 Ok(value)
             }
             Err(error) => {
@@ -661,7 +742,10 @@ impl SqliteJobQueue {
         terminal_code: &str,
     ) -> Result<JobRecord, JobQueueError> {
         if !matches!(status, JobStatus::Failed | JobStatus::Cancelled) {
-            return Err(JobQueueError::new("invalid_terminal_status", "finish supports failed/cancelled only"));
+            return Err(JobQueueError::new(
+                "invalid_terminal_status",
+                "finish supports failed/cancelled only",
+            ));
         }
         let done = sqlx::query(
             "UPDATE jobs SET status=?, finished_at_ms=?, terminal_code=?, lease_owner=NULL, lease_expires_at_ms=NULL WHERE job_id=? AND status='running' AND lease_owner=? AND lease_generation=?",
@@ -676,13 +760,25 @@ impl SqliteJobQueue {
         .await
         .map_err(sqlite_error)?;
         if done.rows_affected() != 1 {
-            return Err(JobQueueError::new("stale_lease", "terminal update lost lease ownership"));
+            return Err(JobQueueError::new(
+                "stale_lease",
+                "terminal update lost lease ownership",
+            ));
         }
-        self.get(&lease.job.job_id).await?.ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))
+        self.get(&lease.job.job_id)
+            .await?
+            .ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))
     }
 
-    async fn require_live_lease(&self, lease: &Lease, now_ms: i64) -> Result<JobRecord, JobQueueError> {
-        let current = self.get(&lease.job.job_id).await?.ok_or_else(|| JobQueueError::new("job_not_found", "job does not exist"))?;
+    async fn require_live_lease(
+        &self,
+        lease: &Lease,
+        now_ms: i64,
+    ) -> Result<JobRecord, JobQueueError> {
+        let current = self
+            .get(&lease.job.job_id)
+            .await?
+            .ok_or_else(|| JobQueueError::new("job_not_found", "job does not exist"))?;
         assert_live_lease(&current, lease, now_ms)?;
         Ok(current)
     }
@@ -694,19 +790,28 @@ impl SqliteJobQueue {
             .map_err(sqlite_error)?;
         let mut counts = BTreeMap::new();
         for row in rows {
-            counts.insert(row.try_get::<String, _>("status").map_err(sqlite_error)?, row.try_get::<i64, _>("n").map_err(sqlite_error)?);
+            counts.insert(
+                row.try_get::<String, _>("status").map_err(sqlite_error)?,
+                row.try_get::<i64, _>("n").map_err(sqlite_error)?,
+            );
         }
-        let due_queued = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs WHERE status='queued' AND available_at_ms<=?")
-            .bind(now_ms)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(sqlite_error)?;
+        let due_queued = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM jobs WHERE status='queued' AND available_at_ms<=?",
+        )
+        .bind(now_ms)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
         let expired_running = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs WHERE status='running' AND lease_expires_at_ms IS NOT NULL AND lease_expires_at_ms<=?")
             .bind(now_ms)
             .fetch_one(&self.pool)
             .await
             .map_err(sqlite_error)?;
-        Ok(QueueMetrics { counts, due_queued, expired_running })
+        Ok(QueueMetrics {
+            counts,
+            due_queued,
+            expired_running,
+        })
     }
 }
 
@@ -714,9 +819,14 @@ fn assert_live_lease(current: &JobRecord, lease: &Lease, now_ms: i64) -> Result<
     if current.status != JobStatus::Running
         || current.lease_owner.as_deref() != Some(lease.lease_owner.as_str())
         || current.lease_generation != lease.lease_generation
-        || current.lease_expires_at_ms.is_none_or(|expiry| expiry <= now_ms)
+        || current
+            .lease_expires_at_ms
+            .is_none_or(|expiry| expiry <= now_ms)
     {
-        return Err(JobQueueError::new("stale_lease", "worker no longer owns live lease"));
+        return Err(JobQueueError::new(
+            "stale_lease",
+            "worker no longer owns live lease",
+        ));
     }
     Ok(())
 }
@@ -726,23 +836,43 @@ fn validate_enqueue(request: &EnqueueRequest) -> Result<(), JobQueueError> {
     require_ident(&request.tenant_id, "tenant_id")?;
     require_ident(&request.idempotency_key, "idempotency_key")?;
     if request.idempotency_key.len() > MAX_IDEMPOTENCY_BYTES {
-        return Err(JobQueueError::new("invalid_idempotency_key", "idempotency key too long"));
+        return Err(JobQueueError::new(
+            "invalid_idempotency_key",
+            "idempotency key too long",
+        ));
     }
     if request.payload_schema_version <= 0 {
-        return Err(JobQueueError::new("invalid_payload_schema", "payload schema version must be positive"));
+        return Err(JobQueueError::new(
+            "invalid_payload_schema",
+            "payload schema version must be positive",
+        ));
     }
     if request.payload.is_empty() || request.payload.len() > MAX_PAYLOAD_BYTES {
-        return Err(JobQueueError::new("invalid_payload_size", "job payload must be bounded and non-empty"));
+        return Err(JobQueueError::new(
+            "invalid_payload_size",
+            "job payload must be bounded and non-empty",
+        ));
     }
     if request.max_attempts <= 0 || request.max_attempts > 32 {
-        return Err(JobQueueError::new("invalid_max_attempts", "max attempts must be 1..=32"));
+        return Err(JobQueueError::new(
+            "invalid_max_attempts",
+            "max attempts must be 1..=32",
+        ));
     }
     Ok(())
 }
 
 fn require_ident(value: &str, label: &str) -> Result<(), JobQueueError> {
-    if value.is_empty() || value.len() > 256 || !value.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.:@/-".contains(&b)) {
-        return Err(JobQueueError::new("invalid_identity", format!("invalid {label}")));
+    if value.is_empty()
+        || value.len() > 256
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.:@/-".contains(&b))
+    {
+        return Err(JobQueueError::new(
+            "invalid_identity",
+            format!("invalid {label}"),
+        ));
     }
     Ok(())
 }
@@ -750,7 +880,10 @@ fn require_ident(value: &str, label: &str) -> Result<(), JobQueueError> {
 fn require_owner(value: &str) -> Result<(), JobQueueError> {
     require_ident(value, "lease_owner")?;
     if value.len() > MAX_OWNER_BYTES {
-        return Err(JobQueueError::new("invalid_lease_owner", "lease owner too long"));
+        return Err(JobQueueError::new(
+            "invalid_lease_owner",
+            "lease owner too long",
+        ));
     }
     Ok(())
 }
@@ -784,13 +917,16 @@ fn decode_job(row: sqlx::sqlite::SqliteRow) -> Result<JobRecord, JobQueueError> 
         row.try_get::<Vec<u8>, _>(name).map_err(sqlite_error)
     };
     let text_from_bytes = |name: &str| -> Result<String, JobQueueError> {
-        String::from_utf8(bytes(name)?).map_err(|_| JobQueueError::new("corrupt_job_row", format!("{name} is not UTF-8")))
+        String::from_utf8(bytes(name)?)
+            .map_err(|_| JobQueueError::new("corrupt_job_row", format!("{name} is not UTF-8")))
     };
     Ok(JobRecord {
         job_id: text_from_bytes("job_id")?,
         tenant_id: text_from_bytes("tenant_id")?,
         job_kind: JobKind::parse(&row.try_get::<String, _>("job_kind").map_err(sqlite_error)?)?,
-        payload_schema_version: row.try_get("payload_schema_version").map_err(sqlite_error)?,
+        payload_schema_version: row
+            .try_get("payload_schema_version")
+            .map_err(sqlite_error)?,
         payload: bytes("payload")?,
         request_hash: text_from_bytes("request_hash")?,
         status: JobStatus::parse(&row.try_get::<String, _>("status").map_err(sqlite_error)?)?,
@@ -800,7 +936,9 @@ fn decode_job(row: sqlx::sqlite::SqliteRow) -> Result<JobRecord, JobQueueError> 
         lease_owner: row.try_get("lease_owner").map_err(sqlite_error)?,
         lease_generation: row.try_get("lease_generation").map_err(sqlite_error)?,
         lease_expires_at_ms: row.try_get("lease_expires_at_ms").map_err(sqlite_error)?,
-        cancel_requested_at_ms: row.try_get("cancel_requested_at_ms").map_err(sqlite_error)?,
+        cancel_requested_at_ms: row
+            .try_get("cancel_requested_at_ms")
+            .map_err(sqlite_error)?,
         idempotency_key: text_from_bytes("idempotency_key")?,
         created_at_ms: row.try_get("created_at_ms").map_err(sqlite_error)?,
         started_at_ms: row.try_get("started_at_ms").map_err(sqlite_error)?,
@@ -831,9 +969,12 @@ mod tests {
 
     async fn queue() -> (SqliteJobQueue, PathBuf) {
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!("chaptera-job-{}-{n}.sqlite", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("chaptera-job-{}-{n}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let queue = SqliteJobQueue::open(&path, 4, Duration::from_secs(2)).await.unwrap();
+        let queue = SqliteJobQueue::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         (queue, path)
     }
 
@@ -870,12 +1011,29 @@ mod tests {
     async fn claim_is_atomic_and_stale_generation_cannot_publish() {
         let (queue, path) = queue().await;
         queue.enqueue(req("job-1", "idem-1")).await.unwrap();
-        let first = queue.claim_one("worker-a", 200, 100, &[JobKind::Export]).await.unwrap().unwrap();
-        assert!(queue.claim_one("worker-b", 210, 100, &[JobKind::Export]).await.unwrap().is_none());
+        let first = queue
+            .claim_one("worker-a", 200, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            queue
+                .claim_one("worker-b", 210, 100, &[JobKind::Export])
+                .await
+                .unwrap()
+                .is_none()
+        );
 
-        let second = queue.claim_one("worker-b", 301, 100, &[JobKind::Export]).await.unwrap().unwrap();
+        let second = queue
+            .claim_one("worker-b", 301, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
         assert!(second.lease_generation > first.lease_generation);
-        let stale = queue.publish_success(&first, 302, "export:1").await.unwrap_err();
+        let stale = queue
+            .publish_success(&first, 302, "export:1")
+            .await
+            .unwrap_err();
         assert_eq!(stale.code, "stale_lease");
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -885,10 +1043,20 @@ mod tests {
     async fn heartbeat_extends_only_live_owned_lease() {
         let (queue, path) = queue().await;
         queue.enqueue(req("job-1", "idem-1")).await.unwrap();
-        let lease = queue.claim_one("worker-a", 200, 100, &[JobKind::Export]).await.unwrap().unwrap();
-        let live = queue.heartbeat("job-1", "worker-a", lease.lease_generation, 250, 100).await.unwrap();
+        let lease = queue
+            .claim_one("worker-a", 200, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
+        let live = queue
+            .heartbeat("job-1", "worker-a", lease.lease_generation, 250, 100)
+            .await
+            .unwrap();
         assert_eq!(live.lease_expires_at_ms, Some(350));
-        let error = queue.heartbeat("job-1", "worker-b", lease.lease_generation, 260, 100).await.unwrap_err();
+        let error = queue
+            .heartbeat("job-1", "worker-b", lease.lease_generation, 260, 100)
+            .await
+            .unwrap_err();
         assert_eq!(error.code, "stale_lease");
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -901,14 +1069,29 @@ mod tests {
         request.max_attempts = 2;
         queue.enqueue(request).await.unwrap();
 
-        let first = queue.claim_one("worker-a", 200, 100, &[JobKind::Export]).await.unwrap().unwrap();
+        let first = queue
+            .claim_one("worker-a", 200, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
         let requeued = queue.fail(&first, 210, true, "transient").await.unwrap();
-        let FailureOutcome::Requeued(job) = requeued else { panic!("expected requeue") };
+        let FailureOutcome::Requeued(job) = requeued else {
+            panic!("expected requeue")
+        };
         assert!(job.available_at_ms > 210);
 
-        let second = queue.claim_one("worker-a", job.available_at_ms, 100, &[JobKind::Export]).await.unwrap().unwrap();
-        let failed = queue.fail(&second, job.available_at_ms + 1, true, "transient").await.unwrap();
-        let FailureOutcome::Failed(job) = failed else { panic!("expected terminal failure") };
+        let second = queue
+            .claim_one("worker-a", job.available_at_ms, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
+        let failed = queue
+            .fail(&second, job.available_at_ms + 1, true, "transient")
+            .await
+            .unwrap();
+        let FailureOutcome::Failed(job) = failed else {
+            panic!("expected terminal failure")
+        };
         assert_eq!(job.status, JobStatus::Failed);
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -918,13 +1101,22 @@ mod tests {
     async fn cancellation_wins_before_publish_barrier() {
         let (queue, path) = queue().await;
         queue.enqueue(req("job-1", "idem-1")).await.unwrap();
-        let lease = queue.claim_one("worker-a", 200, 100, &[JobKind::Export]).await.unwrap().unwrap();
+        let lease = queue
+            .claim_one("worker-a", 200, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
         queue.request_cancel("job-1", 220).await.unwrap();
 
-        let error = queue.publish_success(&lease, 230, "export:1").await.unwrap_err();
+        let error = queue
+            .publish_success(&lease, 230, "export:1")
+            .await
+            .unwrap_err();
         assert_eq!(error.code, "cancel_requested");
         let outcome = queue.fail(&lease, 230, false, "ignored").await.unwrap();
-        let FailureOutcome::Cancelled(job) = outcome else { panic!("expected cancellation") };
+        let FailureOutcome::Cancelled(job) = outcome else {
+            panic!("expected cancellation")
+        };
         assert_eq!(job.status, JobStatus::Cancelled);
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -934,12 +1126,25 @@ mod tests {
     async fn publication_is_idempotent_and_duplicate_delivery_cannot_double_publish() {
         let (queue, path) = queue().await;
         queue.enqueue(req("job-1", "idem-1")).await.unwrap();
-        let lease = queue.claim_one("worker-a", 200, 100, &[JobKind::Export]).await.unwrap().unwrap();
-        let first = queue.publish_success(&lease, 220, "export:stable-effect").await.unwrap();
+        let lease = queue
+            .claim_one("worker-a", 200, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
+        let first = queue
+            .publish_success(&lease, 220, "export:stable-effect")
+            .await
+            .unwrap();
         assert!(matches!(first, PublishOutcome::Published(_)));
-        let second = queue.publish_success(&lease, 230, "export:stable-effect").await.unwrap();
+        let second = queue
+            .publish_success(&lease, 230, "export:stable-effect")
+            .await
+            .unwrap();
         assert!(matches!(second, PublishOutcome::AlreadyPublished(_)));
-        let conflict = queue.publish_success(&lease, 230, "export:different-effect").await.unwrap_err();
+        let conflict = queue
+            .publish_success(&lease, 230, "export:different-effect")
+            .await
+            .unwrap_err();
         assert_eq!(conflict.code, "effect_identity_conflict");
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -949,11 +1154,21 @@ mod tests {
     async fn restart_reclaims_expired_lease_from_same_database() {
         let (queue, path) = queue().await;
         queue.enqueue(req("job-1", "idem-1")).await.unwrap();
-        let first = queue.claim_one("worker-a", 200, 50, &[JobKind::Export]).await.unwrap().unwrap();
+        let first = queue
+            .claim_one("worker-a", 200, 50, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
         queue.close().await;
 
-        let reopened = SqliteJobQueue::open(&path, 4, Duration::from_secs(2)).await.unwrap();
-        let second = reopened.claim_one("worker-b", 251, 100, &[JobKind::Export]).await.unwrap().unwrap();
+        let reopened = SqliteJobQueue::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let second = reopened
+            .claim_one("worker-b", 251, 100, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
         assert!(second.lease_generation > first.lease_generation);
         reopened.close().await;
         let _ = std::fs::remove_file(path);
