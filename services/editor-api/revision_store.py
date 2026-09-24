@@ -62,6 +62,33 @@ except ModuleNotFoundError:
 
 
 try:
+    from create_shape_container_v2 import validate_create_shape_v2_intent
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _create_shape_v2_path = pathlib.Path(__file__).with_name("create_shape_container_v2.py")
+    _create_shape_v2_spec = importlib.util.spec_from_file_location(
+        "chaptera_create_shape_container_v2",
+        _create_shape_v2_path,
+    )
+    if _create_shape_v2_spec is None or _create_shape_v2_spec.loader is None:
+        raise ImportError("cannot load create_shape_container_v2 sibling module")
+    _create_shape_v2_module = importlib.util.module_from_spec(_create_shape_v2_spec)
+    sys.modules[_create_shape_v2_spec.name] = _create_shape_v2_module
+    _create_shape_v2_sibling_dir = str(_create_shape_v2_path.parent)
+    _create_shape_v2_added_path = _create_shape_v2_sibling_dir not in sys.path
+    if _create_shape_v2_added_path:
+        sys.path.insert(0, _create_shape_v2_sibling_dir)
+    try:
+        _create_shape_v2_spec.loader.exec_module(_create_shape_v2_module)
+    finally:
+        if _create_shape_v2_added_path:
+            sys.path.remove(_create_shape_v2_sibling_dir)
+    validate_create_shape_v2_intent = _create_shape_v2_module.validate_create_shape_v2_intent
+
+
+try:
     from create_shape_v1 import (
         validate_create_shape_intent_v1,
         validate_creation_paint_v1,
@@ -382,6 +409,18 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_create_shape_request_shape,
             canonical_validator=self._validate_canonical_create_shape,
+        )
+
+    def commit_create_shape_v2(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_create_shape_v2_request_shape,
+            canonical_validator=self._validate_canonical_create_shape_v2,
         )
 
     def commit_paste_fragment(
@@ -1274,6 +1313,65 @@ class RevisionKernel:
         if request.get("protocol_version") != "chaptera.create-shape-intent.v1":
             raise ValueError("V1 CreateShape protocol_version is required")
         validate_create_shape_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_create_shape_v2_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.create-shape-intent.v2":
+            raise ValueError("V2 CreateShape protocol_version is required")
+        validate_create_shape_v2_intent(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_create_shape_v2(command: dict, operation: dict) -> None:
+        expected_keys = {
+            "kind", "node_id", "page_id", "destination", "parent_id",
+            "shape_kind", "bounds", "desired_effective_page_rect", "transform",
+            "paint", "provenance", "order_before", "order_after",
+            "insertion_policy",
+        }
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != expected_keys
+            or operation.get("kind") != "create_shape_v2"
+        ):
+            raise ValueError("authoritative executor returned malformed CreateShapeV2 operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical CreateShapeV2 NodeId differs from accepted intent")
+        if operation.get("page_id") != command.get("page_id"):
+            raise ValueError("canonical CreateShapeV2 page differs from accepted intent")
+        if operation.get("destination") != command.get("destination"):
+            raise ValueError("canonical CreateShapeV2 destination differs from accepted intent")
+        if operation.get("parent_id") != command.get("destination", {}).get("id"):
+            raise ValueError("canonical CreateShapeV2 parent differs from accepted destination")
+        if operation.get("shape_kind") != "rectangle":
+            raise ValueError("canonical CreateShapeV2 must create ordinary rectangle")
+        if operation.get("transform") != {"kind": "identity"}:
+            raise ValueError("canonical CreateShapeV2 transform must be identity")
+        if operation.get("provenance") != {"kind": "author_created"}:
+            raise ValueError("canonical CreateShapeV2 provenance must be author_created")
+        validate_uuid7_node_id_v1(operation.get("node_id"))
+        validate_rect_emu_v1(operation.get("bounds"), "canonical CreateShapeV2 bounds")
+        placement = command.get("placement", {})
+        if operation.get("bounds") != placement.get("destination_local_rect"):
+            raise ValueError("canonical CreateShapeV2 local bounds differ from placement")
+        if operation.get("desired_effective_page_rect") != placement.get("desired_effective_page_rect"):
+            raise ValueError("canonical CreateShapeV2 effective bounds differ from placement")
+        if operation.get("order_before") != command.get("expected_order_lane"):
+            raise ValueError("canonical CreateShapeV2 order_before differs from precondition")
+        expected_after = list(command.get("expected_order_lane", [])) + [command.get("node_id")]
+        if operation.get("order_after") != expected_after:
+            raise ValueError("canonical CreateShapeV2 order_after violates append-front policy")
+        if operation.get("insertion_policy") != command.get("insertion_policy"):
+            raise ValueError("canonical CreateShapeV2 insertion policy differs from intent")
+        paint = operation.get("paint")
+        if not isinstance(paint, dict) or set(paint) != {"fill", "stroke", "provenance"}:
+            raise ValueError("canonical CreateShapeV2 paint must contain fill/stroke/provenance")
+        if paint.get("provenance") != {"kind": "author_created"}:
+            raise ValueError("canonical CreateShapeV2 paint provenance must be author_created")
+        validate_creation_paint_v1({"fill": paint.get("fill"), "stroke": paint.get("stroke")})
+        if paint.get("fill") != command.get("paint", {}).get("fill"):
+            raise ValueError("canonical CreateShapeV2 fill differs from accepted intent")
+        if paint.get("stroke") != command.get("paint", {}).get("stroke"):
+            raise ValueError("canonical CreateShapeV2 stroke differs from accepted intent")
 
     @staticmethod
     def _validate_canonical_create_shape(command: dict, operation: dict) -> None:
