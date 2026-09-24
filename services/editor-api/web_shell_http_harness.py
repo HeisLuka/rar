@@ -133,7 +133,10 @@ class HarnessState:
             "chaptera.commit-accepted.v1",
             "chaptera.history-transition-accepted.v1",
         }:
-            record = self.kernel.current_revision(self.document_id)
+            record = self.kernel.read_revision(
+                document_id=self.document_id,
+                revision_id=result["revision_id"],
+            )
             self.scenes[result["revision_id"]] = self._scene_from_project(
                 record.project,
                 result["revision_id"],
