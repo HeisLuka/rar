@@ -65,10 +65,13 @@ async function waitForApi(child) {
   throw new Error("HTTP harness did not become ready: " + String(lastError));
 }
 
-async function postCommit(request) {
+async function postCommit(request, principalId = "synthetic-editor") {
   const response = await fetch(API_BASE + "/v1/commit", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-chaptera-principal-id": principalId,
+    },
     body: JSON.stringify(request),
   });
   const value = await response.json();
@@ -203,6 +206,45 @@ async function main() {
     }
     if (!initial.loss_text.startsWith("Export IDML:")) {
       throw new Error("export loss disclosure missing");
+    }
+
+    const forgedViewerRequest = {
+      protocol_version: "chaptera.commit-request.v1",
+      document_id: initial.document_id,
+      source_hash: initial.source_hash,
+      base_revision_id: initial.revision_id,
+      client_operation_id: "viewer-forged-move-" + RUN_INDEX,
+      command: {
+        kind: "move_node_to",
+        node_id: initial.node_id,
+        x_emu: 12700,
+        y_emu: 25400,
+      },
+    };
+    const forgedViewerResponse = await fetch(API_BASE + "/v1/commit", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-chaptera-principal-id": "synthetic-viewer",
+      },
+      body: JSON.stringify(forgedViewerRequest),
+    });
+    const forgedViewerBody = await forgedViewerResponse.json();
+    if (
+      forgedViewerResponse.status !== 403 ||
+      forgedViewerBody.code !== "capability_denied"
+    ) {
+      throw new Error(
+        "forged Viewer mutation did not fail closed: " +
+        JSON.stringify({ status: forgedViewerResponse.status, body: forgedViewerBody })
+      );
+    }
+    const afterViewerProbe = await harnessState();
+    if (
+      afterViewerProbe.current_revision_id !== initial.revision_id ||
+      afterViewerProbe.executor_calls !== 0
+    ) {
+      throw new Error("forged Viewer mutation reached semantic execution");
     }
 
     const startX = initial.host.x + initial.bounds.x + initial.bounds.width / 2;
@@ -444,6 +486,9 @@ async function main() {
       history_executor_calls: afterHistoryRetry.history_executor_calls,
       exact_retry_same_revision: exactRetry.revision_id === browserFinal.shell.revision_id,
       stale_base_rejected: stale.code === "stale_revision",
+      forged_viewer_mutation_rejected:
+        forgedViewerResponse.status === 403 &&
+        forgedViewerBody.code === "capability_denied",
       undo_redo_cross_http_commit_transport:
         history.undo.protocol_version === "chaptera.history-transition-accepted.v1" &&
         history.redo.protocol_version === "chaptera.history-transition-accepted.v1",
