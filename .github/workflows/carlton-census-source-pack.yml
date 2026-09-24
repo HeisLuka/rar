@@ -15,9 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Build standalone census runner
+        run: cargo build --manifest-path scratch/carlton-yab/Cargo.toml --release -p carlton-census-runner
       - uses: actions/upload-artifact@v4
         with:
           name: carlton-census-source-pack
-          path: scratch/carlton-yab
+          path: |
+            scratch/carlton-yab
+            scratch/carlton-yab/target/release/carlton-census-runner
           if-no-files-found: error
           retention-days: 7
