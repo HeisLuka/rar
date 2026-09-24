@@ -1,0 +1,23 @@
+name: Carlton census source pack
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/carlton-census-source-pack.yml'
+      - 'scratch/carlton-yab/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: carlton-census-source-pack
+          path: scratch/carlton-yab
+          if-no-files-found: error
+          retention-days: 7
