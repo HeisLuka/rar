@@ -167,6 +167,21 @@ class RevisionKernel:
             canonical_validator=self._validate_canonical_move,
         )
 
+    def commit_resize(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_resize_request_shape,
+            canonical_validator=self._validate_canonical_resize,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_replace_image(
         self,
         request: dict,
@@ -504,6 +519,45 @@ class RevisionKernel:
                 raise ValueError("browser EMU must be a JavaScript-safe integer")
 
     @staticmethod
+    def _validate_resize_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.resize-node-intent.v1":
+            raise ValueError("V1 ResizeNode protocol_version is required")
+        command = request.get("command")
+        if not isinstance(command, dict) or command.get("kind") != "resize_node_to":
+            raise ValueError("V1 ResizeNode requires resize_node_to command intent")
+        allowed = {"kind", "node_id", "x_emu", "y_emu", "width_emu", "height_emu"}
+        if set(command) != allowed:
+            raise ValueError("resize_node_to contains non-intent/authoritative fields")
+        node_id = command.get("node_id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("resize_node_to node_id is required")
+        for field in ("x_emu", "y_emu"):
+            value = command.get(field)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < MIN_SAFE_EMU
+                or value > MAX_SAFE_EMU
+            ):
+                raise ValueError("resize origin EMU must be a JavaScript-safe integer")
+        for field in ("width_emu", "height_emu"):
+            value = command.get(field)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+                or value > MAX_SAFE_EMU
+            ):
+                raise ValueError("resize size EMU must be a positive JavaScript-safe integer")
+        if (
+            command["x_emu"] + command["width_emu"] > MAX_SAFE_EMU
+            or command["x_emu"] + command["width_emu"] < MIN_SAFE_EMU
+            or command["y_emu"] + command["height_emu"] > MAX_SAFE_EMU
+            or command["y_emu"] + command["height_emu"] < MIN_SAFE_EMU
+        ):
+            raise ValueError("resize bounds overflow the V1 JavaScript-safe EMU range")
+
+    @staticmethod
     def _validate_story_range_request_shape(request: dict) -> None:
         if request.get("protocol_version") != "chaptera.story-range-intent.v1":
             raise ValueError("V1 Story range protocol_version is required")
@@ -689,6 +743,52 @@ class RevisionKernel:
                 or after.get("width", 0) <= 0 or after.get("height", 0) <= 0:
             raise ValueError("canonical MoveNode rectangles must have positive width/height")
 
+
+    @staticmethod
+    def _validate_canonical_resize(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "resize_node":
+            raise ValueError("authoritative executor returned non-ResizeNode operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical ResizeNode targets a different node")
+        before = operation.get("before")
+        after = operation.get("after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise ValueError("authoritative executor must derive exact ResizeNode before/after")
+        expected_after = {
+            "x": command.get("x_emu"),
+            "y": command.get("y_emu"),
+            "width": command.get("width_emu"),
+            "height": command.get("height_emu"),
+        }
+        if after != expected_after:
+            raise ValueError("canonical ResizeNode after-bounds do not match accepted intent")
+        for label, rect in (("before", before), ("after", after)):
+            if set(rect) != {"x", "y", "width", "height"}:
+                raise ValueError(f"canonical ResizeNode {label} bounds are malformed")
+            for field in ("x", "y", "width", "height"):
+                value = rect[field]
+                if (
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < MIN_SAFE_EMU
+                    or value > MAX_SAFE_EMU
+                ):
+                    raise ValueError(
+                        f"canonical ResizeNode {label}.{field} is outside the V1 JavaScript-safe EMU range"
+                    )
+            if rect["width"] <= 0 or rect["height"] <= 0:
+                raise ValueError("canonical ResizeNode rectangles must have positive width/height")
+            if (
+                rect["x"] + rect["width"] > MAX_SAFE_EMU
+                or rect["x"] + rect["width"] < MIN_SAFE_EMU
+                or rect["y"] + rect["height"] > MAX_SAFE_EMU
+                or rect["y"] + rect["height"] < MIN_SAFE_EMU
+            ):
+                raise ValueError("canonical ResizeNode bounds overflow the V1 JavaScript-safe EMU range")
+        if before == after:
+            raise ValueError("canonical ResizeNode no-op is not admitted")
+        if before["width"] == after["width"] and before["height"] == after["height"]:
+            raise ValueError("canonical ResizeNode cannot encode a pure move")
 
     @staticmethod
     def _validate_canonical_story_range(command: dict, operation: dict) -> None:
