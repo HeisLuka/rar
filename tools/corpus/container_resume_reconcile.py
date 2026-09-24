@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 
 HEX64 = re.compile(r"[0-9a-f]{64}")
-SCHEMA = "chaptera.container-resume-reconcile.v1"
+SCHEMA = "chaptera.container-resume-reconcile.v2"
 
 
 def sha256_file(path: Path) -> str:
@@ -97,15 +97,35 @@ def reconcile(
         observations = container_by_sha[sha]
         provenance = []
         for row in observations:
+            container_url = (
+                row.get("container_url")
+                or row.get("source_url")
+                or row.get("parent_url")
+                or row.get("url")
+            )
+            root_sha256 = (
+                row.get("root_sha256")
+                or row.get("parent_sha256")
+                or row.get("container_sha256")
+            )
             provenance.append(
                 {
-                    "source_url": row.get("source_url")
-                    or row.get("parent_url")
-                    or row.get("url"),
+                    # Compatibility aliases retained for v1 consumers.
+                    "source_url": container_url,
+                    "parent_sha256": root_sha256,
+                    # Canonical v2 container locator chain.
+                    "source_page": row.get("source_page"),
+                    "container_url": container_url,
+                    "container_final_url": row.get("container_final_url"),
+                    "container_filename": row.get("container_filename"),
+                    "root_sha256": root_sha256,
+                    "root_size_bytes": row.get("root_size_bytes"),
+                    "container_depth": row.get("container_depth"),
+                    "parent_member": row.get("parent_member"),
+                    "parent_member_sha256": row.get("parent_member_sha256"),
                     "archive_member": row.get("archive_member")
                     or row.get("member_path"),
-                    "parent_sha256": row.get("parent_sha256")
-                    or row.get("container_sha256"),
+                    "size_bytes": row.get("size_bytes"),
                 }
             )
         delta_rows.append(
