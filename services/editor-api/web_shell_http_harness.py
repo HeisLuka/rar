@@ -56,6 +56,12 @@ class HarnessState:
             principal_id="synthetic-editor",
             role="editor",
         )
+        self.authz.set_role(
+            tenant_id=self.tenant_id,
+            document_id=self.document_id,
+            principal_id="synthetic-viewer",
+            role="viewer",
+        )
         self.gateway = AuthorizedRevisionGateway(
             kernel=self.kernel,
             authz=self.authz,
