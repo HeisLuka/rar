@@ -1,0 +1,27 @@
+name: Text Visual Line Navigation V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/text_visual_line_navigation_v1.py"
+      - "services/editor-api/test_text_visual_line_navigation_v1.py"
+      - "services/editor-api/resolved_text_caret_map_v1.py"
+      - "services/editor-api/text_selection_state_v1.py"
+      - "services/editor-api/story_edit_domain_v1.py"
+      - ".github/workflows/text-visual-line-navigation-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run visual-line navigation tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_text_visual_line_navigation_v1 test_resolved_text_caret_map_v1 test_text_selection_state_v1
