@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/corpus-vac-expanded-novelty-probe.yml'
+      - 'tools/corpus/harvest_pub.py'
   workflow_dispatch:
 
 permissions:
