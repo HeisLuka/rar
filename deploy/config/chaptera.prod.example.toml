@@ -1,0 +1,28 @@
+# Illustrative public-safe shape only.
+# CLOUD-SECRETS-CONFIG-01 owns the final typed keys and secret injection model.
+# Never place credentials, signing keys, session secrets, presigned URLs,
+# customer data, or private object-store tokens in this file.
+
+environment = "prod"
+listen = "127.0.0.1:8080"
+public_origin = "https://cloud.example.invalid"
+
+[sqlite]
+path = "/var/lib/chaptera/chaptera.sqlite"
+journal_mode = "wal"
+synchronous = "full"
+busy_timeout_ms = 5000
+pool_max = 4
+
+[worker]
+heavy_concurrency = 1
+light_concurrency = 2
+
+[storage]
+provider = "s3-compatible"
+quarantine_namespace = "chaptera-quarantine"
+private_namespace = "chaptera-private"
+
+[limits]
+worker_spool_bytes = 4294967296
+min_free_disk_bytes = 1073741824
