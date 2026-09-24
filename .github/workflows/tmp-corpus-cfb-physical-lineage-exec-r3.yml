@@ -102,7 +102,7 @@ jobs:
               broad.update(result["broad_category_counts"])
               exact.update(result["exact_category_counts"])
               for row in result["directory_metadata_diffs"]:
-                  directory_fields.update(row["changed_fields"])
+                  directory_fields.update(row["changed_fields"].keys())
               signature = json.dumps({
                   "broad_categories": sorted(result["broad_category_counts"]),
                   "fat_table_changed": bool(result["fat_table_diff_entries"]),
