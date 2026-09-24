@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/text/v1/story-range-intent.schema.json",
+  "title": "Chaptera StoryRangeIntentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "source_hash",
+    "base_revision_id",
+    "client_operation_id",
+    "command"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.story-range-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "client_operation_id": {"type": "string", "minLength": 8, "maxLength": 160},
+    "depends_on_client_operation_id": {
+      "type": ["string", "null"],
+      "minLength": 8,
+      "maxLength": 160
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "story_id",
+        "start_scalar",
+        "end_scalar",
+        "replacement_text"
+      ],
+      "properties": {
+        "kind": {"const": "replace_story_range"},
+        "story_id": {"type": "string", "minLength": 1},
+        "start_scalar": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "end_scalar": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "replacement_text": {"type": "string", "maxLength": 1048576}
+      }
+    }
+  }
+}
