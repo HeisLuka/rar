@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::prepared_paragraph::{
-    PreparedParagraphBindingV1, PreparedStoryIndexV1,
-};
+use crate::prepared_paragraph::{PreparedParagraphBindingV1, PreparedStoryIndexV1};
 use crate::runtime::{IntervalPolicyV1, LineRegionV1};
 use crate::{FingerprintV1, fingerprint_v1};
 
@@ -102,10 +100,19 @@ pub struct IncrementalLinkedStoryFlowV1 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkedFlowErrorV1 {
     MissingFrames,
-    DuplicateFrameId { frame_id: String },
-    RegionFrameMismatch { frame_id: String, region_frame_id: String },
-    InvalidHeadCount { count: usize },
-    MissingLinkedFrame { frame_id: String },
+    DuplicateFrameId {
+        frame_id: String,
+    },
+    RegionFrameMismatch {
+        frame_id: String,
+        region_frame_id: String,
+    },
+    InvalidHeadCount {
+        count: usize,
+    },
+    MissingLinkedFrame {
+        frame_id: String,
+    },
     BrokenPreviousLink {
         frame_id: String,
         expected_previous: String,
@@ -113,12 +120,16 @@ pub enum LinkedFlowErrorV1 {
     },
     CycleOrDisconnectedChain,
     StoryIdMismatch,
-    RequestedStartFrameMissing { frame_id: String },
+    RequestedStartFrameMissing {
+        frame_id: String,
+    },
     MissingMetricAtCursor {
         paragraph_id: String,
         scalar: u32,
     },
-    CursorOutsidePreparedStory { scalar: u32 },
+    CursorOutsidePreparedStory {
+        scalar: u32,
+    },
 }
 
 pub fn resolve_linked_story_full_v1(
@@ -205,8 +216,7 @@ pub fn resolve_linked_story_incremental_v1(
             .zip(&ordered_frames)
             .all(|(old_frame, new_frame)| old_frame.frame_id == new_frame.frame_id);
 
-    let environment_matches =
-        old.layout_environment_fingerprint == layout_environment_fingerprint;
+    let environment_matches = old.layout_environment_fingerprint == layout_environment_fingerprint;
     let policy_matches = old.flow_policy_fingerprint == flow_policy_fingerprint;
 
     let mut actual_start = if old_chain_matches && environment_matches && policy_matches {
@@ -296,9 +306,7 @@ pub fn resolve_linked_story_incremental_v1(
             && old
                 .frames
                 .get(index)
-                .is_some_and(|old_frame| {
-                    resolved.output_boundary == old_frame.output_boundary
-                });
+                .is_some_and(|old_frame| resolved.output_boundary == old_frame.output_boundary);
 
         assembled.push(resolved);
 
@@ -356,8 +364,7 @@ fn resolve_one_frame_v1(
             let paragraph = paragraph_at_cursor(prepared, cursor)
                 .ok_or(LinkedFlowErrorV1::CursorOutsidePreparedStory { scalar: cursor })?;
 
-            if cursor == paragraph.content_scalar_end
-                && paragraph.terminator_scalar == Some(cursor)
+            if cursor == paragraph.content_scalar_end && paragraph.terminator_scalar == Some(cursor)
             {
                 let consumed_scalar_end = cursor + 1;
                 lines.push(LinkedFlowLineV1 {
@@ -425,9 +432,8 @@ fn resolve_one_frame_v1(
                     .expect("non-empty selected metrics")
                     .local_scalar_end;
             let measured_width_emu = selected.iter().map(|metric| metric.advance_emu).sum();
-            let mandatory_break =
-                end_index == paragraph.prepared.metrics.len()
-                    && paragraph.terminator_scalar.is_some();
+            let mandatory_break = end_index == paragraph.prepared.metrics.len()
+                && paragraph.terminator_scalar.is_some();
             let consumed_scalar_end = if mandatory_break {
                 paragraph
                     .terminator_scalar
@@ -469,12 +475,7 @@ fn resolve_one_frame_v1(
         flow_policy_fingerprint,
         terminal,
     )?;
-    let downstream = downstream_dependency_state_v1(
-        prepared,
-        ordered_frames,
-        frame_index,
-        cursor,
-    );
+    let downstream = downstream_dependency_state_v1(prepared, ordered_frames, frame_index, cursor);
 
     let mut dependency_payload = Vec::new();
     dependency_payload.extend_from_slice(&frame_dependency_fingerprint);
@@ -490,8 +491,7 @@ fn resolve_one_frame_v1(
         continuation: output_continuation,
         downstream,
     };
-    let output_fingerprint =
-        frame_output_fingerprint_v1(&lines, &output_boundary);
+    let output_fingerprint = frame_output_fingerprint_v1(&lines, &output_boundary);
 
     Ok(ResolvedLinkedFrameV1 {
         frame_id: frame.frame_id.clone(),
@@ -523,10 +523,11 @@ fn continuation_at_cursor_v1(
         if terminal == ContinuationTerminalV1::Complete || next_scalar == story_end {
             (None, None)
         } else {
-            let paragraph = paragraph_at_cursor(prepared, next_scalar)
-                .ok_or(LinkedFlowErrorV1::CursorOutsidePreparedStory {
+            let paragraph = paragraph_at_cursor(prepared, next_scalar).ok_or(
+                LinkedFlowErrorV1::CursorOutsidePreparedStory {
                     scalar: next_scalar,
-                })?;
+                },
+            )?;
             let local_offset = next_scalar - paragraph.scalar_base;
             let fingerprint = fingerprint_v1(
                 "prepared-boundary-v1",
@@ -567,10 +568,7 @@ fn downstream_dependency_state_v1(
     }
 }
 
-fn prepared_suffix_fingerprint_v1(
-    prepared: &PreparedStoryIndexV1,
-    cursor: u32,
-) -> FingerprintV1 {
+fn prepared_suffix_fingerprint_v1(prepared: &PreparedStoryIndexV1, cursor: u32) -> FingerprintV1 {
     let mut payload = Vec::new();
     push_bytes(&mut payload, prepared.story_id.as_bytes());
     push_u32(&mut payload, cursor);
@@ -651,9 +649,7 @@ fn finish_linked_flow_v1(
     }
 }
 
-fn ordered_frame_indices(
-    frames: &[LinkedFrameInputV1],
-) -> Result<Vec<usize>, LinkedFlowErrorV1> {
+fn ordered_frame_indices(frames: &[LinkedFrameInputV1]) -> Result<Vec<usize>, LinkedFlowErrorV1> {
     if frames.is_empty() {
         return Err(LinkedFlowErrorV1::MissingFrames);
     }
@@ -698,11 +694,12 @@ fn ordered_frame_indices(
         let Some(next_id) = current.next_frame_id.as_deref() else {
             break;
         };
-        let next_index = *by_id
-            .get(next_id)
-            .ok_or_else(|| LinkedFlowErrorV1::MissingLinkedFrame {
-                frame_id: next_id.to_owned(),
-            })?;
+        let next_index =
+            *by_id
+                .get(next_id)
+                .ok_or_else(|| LinkedFlowErrorV1::MissingLinkedFrame {
+                    frame_id: next_id.to_owned(),
+                })?;
         let next = &frames[next_index];
         if next.previous_frame_id.as_deref() != Some(current.frame_id.as_str()) {
             return Err(LinkedFlowErrorV1::BrokenPreviousLink {
@@ -770,7 +767,10 @@ fn selected_metrics_fingerprint_v1(
 fn empty_line_fingerprint_v1(paragraph: &PreparedParagraphBindingV1) -> FingerprintV1 {
     fingerprint_v1(
         "linked-empty-line-v1",
-        &[paragraph.paragraph_id.as_bytes(), &paragraph.prepared.output_fingerprint],
+        &[
+            paragraph.paragraph_id.as_bytes(),
+            &paragraph.prepared.output_fingerprint,
+        ],
     )
 }
 
@@ -822,9 +822,7 @@ mod tests {
     };
 
     use crate::prepared_paragraph::prepare_projected_story_v1;
-    use crate::runtime::{
-        FrameGeometryV1, ResolvedScalarMetricV1, resolve_line_regions_v1,
-    };
+    use crate::runtime::{FrameGeometryV1, ResolvedScalarMetricV1, resolve_line_regions_v1};
 
     use super::*;
 
@@ -889,8 +887,7 @@ mod tests {
                 LinkedFrameInputV1 {
                     frame_id: frame_id.clone(),
                     previous_frame_id: (index > 0).then(|| format!("f{index}")),
-                    next_frame_id: (index + 1 < widths.len())
-                        .then(|| format!("f{}", index + 2)),
+                    next_frame_id: (index + 1 < widths.len()).then(|| format!("f{}", index + 2)),
                     region: frame_region(&frame_id, *width),
                 }
             })
@@ -1012,10 +1009,7 @@ mod tests {
         .expect("clean");
 
         assert_eq!(incremental.flow, clean);
-        assert_eq!(
-            incremental.mode,
-            IncrementalExecutionModeV1::FullFallback
-        );
+        assert_eq!(incremental.mode, IncrementalExecutionModeV1::FullFallback);
         assert_eq!(incremental.recomputed_frame_ids.len(), 10);
         assert_eq!(incremental.convergence_after_frame_id, None);
     }
