@@ -61,7 +61,7 @@ test("page eviction discards local index state and clean revisit reconstructs it
   const s=new SpatialWindowV1(); s.replaceWindow(ident(1),rows()); let g=identityKey(ident(1));
   s.evictPage({base_generation_key:g,next_identity:ident(2,["p1","p3"]),page_id:"p2"}); g=identityKey(ident(2,["p1","p3"]));
   assert.equal(s.queryBox("p2",{x:0,y:0,width:100,height:100},g).candidates.length,0);
-  s.replaceWindow(ident(3),rows()); g=identityKey(ident(3)); assert.deepEqual(s.queryPoint("p2",{x_emu:10,y_emu:10},g).candidates.map(x=>x.node_id),["c"]);
+  s.revisitPage({base_generation_key:g,next_identity:ident(3),nodes:[rows()[2]]}); g=identityKey(ident(3)); assert.deepEqual(s.queryPoint("p2",{x_emu:10,y_emu:10},g).candidates.map(x=>x.node_id),["c"]);
 });
 
 test("equal current windows have equal operation cost independent of total document pages",()=>{
