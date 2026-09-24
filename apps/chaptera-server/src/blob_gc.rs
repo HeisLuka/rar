@@ -1,9 +1,4 @@
-use std::{
-    fmt,
-    path::Path,
-    sync::Arc,
-    time::Duration,
-};
+use std::{fmt, path::Path, sync::Arc, time::Duration};
 
 use sqlx::{
     Row, SqlitePool,
@@ -234,10 +229,7 @@ impl SqliteBlobGcLedger {
         Ok(())
     }
 
-    pub async fn schedule(
-        &self,
-        request: ScheduleGcCandidate,
-    ) -> Result<GcCandidate, BlobGcError> {
+    pub async fn schedule(&self, request: ScheduleGcCandidate) -> Result<GcCandidate, BlobGcError> {
         validate_schedule(&request)?;
         let inserted = sqlx::query(
             r#"
@@ -263,10 +255,9 @@ impl SqliteBlobGcLedger {
         .map_err(sqlite_error)?;
 
         if inserted.rows_affected() == 1 {
-            return self
-                .get(&request.candidate_id)
-                .await?
-                .ok_or_else(|| BlobGcError::new("gc_candidate_missing", "inserted candidate vanished"));
+            return self.get(&request.candidate_id).await?.ok_or_else(|| {
+                BlobGcError::new("gc_candidate_missing", "inserted candidate vanished")
+            });
         }
 
         self.find_equivalent(
@@ -434,7 +425,10 @@ impl SqliteBlobGcLedger {
         state: GcCandidateState,
         code: Option<&str>,
     ) -> Result<GcCandidate, BlobGcError> {
-        if !matches!(state, GcCandidateState::Completed | GcCandidateState::Cancelled) {
+        if !matches!(
+            state,
+            GcCandidateState::Completed | GcCandidateState::Cancelled
+        ) {
             return Err(BlobGcError::new(
                 "invalid_gc_terminal_state",
                 "GC terminal update must complete or cancel",
@@ -515,8 +509,13 @@ impl SqliteBlobGcLedger {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcPreDelete {
-    Cancel { code: &'static str },
-    Defer { not_before_ms: i64, code: &'static str },
+    Cancel {
+        code: &'static str,
+    },
+    Defer {
+        not_before_ms: i64,
+        code: &'static str,
+    },
     Ready {
         object_locator: String,
         storage_generation: String,
@@ -605,12 +604,11 @@ impl BlobGcProcessor {
         };
 
         match self.authority.recheck_and_fence(&lease.candidate, now_ms)? {
-            GcPreDelete::Cancel { code } => {
-                self.ledger
-                    .terminal(&lease, now_ms, GcCandidateState::Cancelled, Some(code))
-                    .await
-                    .map(Some)
-            }
+            GcPreDelete::Cancel { code } => self
+                .ledger
+                .terminal(&lease, now_ms, GcCandidateState::Cancelled, Some(code))
+                .await
+                .map(Some),
             GcPreDelete::Defer {
                 not_before_ms,
                 code,
@@ -687,10 +685,7 @@ fn validate_schedule(request: &ScheduleGcCandidate) -> Result<(), BlobGcError> {
 fn require_owner(value: &str) -> Result<(), BlobGcError> {
     require_ident(value, "lease_owner")?;
     if value.len() > MAX_OWNER_BYTES {
-        return Err(BlobGcError::new(
-            "invalid_gc_owner",
-            "GC owner is too long",
-        ));
+        return Err(BlobGcError::new("invalid_gc_owner", "GC owner is too long"));
     }
     Ok(())
 }
@@ -731,15 +726,14 @@ fn decode_candidate(row: sqlx::sqlite::SqliteRow) -> Result<GcCandidate, BlobGcE
         candidate_id: text_blob(&row, "candidate_id")?,
         tenant_id: text_blob(&row, "tenant_id")?,
         object_kind: GcObjectKind::parse(
-            &row.try_get::<String, _>("object_kind").map_err(sqlite_error)?,
+            &row.try_get::<String, _>("object_kind")
+                .map_err(sqlite_error)?,
         )?,
         object_id: text_blob(&row, "object_id")?,
         reason_code: row.try_get("reason_code").map_err(sqlite_error)?,
         not_before_ms: row.try_get("not_before_ms").map_err(sqlite_error)?,
         observed_generation: row.try_get("observed_generation").map_err(sqlite_error)?,
-        state: GcCandidateState::parse(
-            &row.try_get::<String, _>("state").map_err(sqlite_error)?,
-        )?,
+        state: GcCandidateState::parse(&row.try_get::<String, _>("state").map_err(sqlite_error)?)?,
         attempt: row.try_get("attempt").map_err(sqlite_error)?,
         lease_owner: row.try_get("lease_owner").map_err(sqlite_error)?,
         lease_generation: row.try_get("lease_generation").map_err(sqlite_error)?,
@@ -828,7 +822,12 @@ mod tests {
             candidate: &GcCandidate,
             _now_ms: i64,
         ) -> Result<GcPreDelete, BlobGcError> {
-            if self.reachable.lock().unwrap().contains(&candidate.object_id) {
+            if self
+                .reachable
+                .lock()
+                .unwrap()
+                .contains(&candidate.object_id)
+            {
                 return Ok(GcPreDelete::Cancel {
                     code: "became_reachable",
                 });
@@ -939,7 +938,11 @@ mod tests {
 
         assert_eq!(result.state, GcCandidateState::Cancelled);
         assert_eq!(result.last_error_code.as_deref(), Some("became_reachable"));
-        assert!(objects.exists_exact("canonical/tenant-a/blob-1", "g1").unwrap());
+        assert!(
+            objects
+                .exists_exact("canonical/tenant-a/blob-1", "g1")
+                .unwrap()
+        );
 
         ledger.close().await;
         let _ = std::fs::remove_file(path);
@@ -964,8 +967,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.state, GcCandidateState::Cancelled);
-        assert_eq!(result.last_error_code.as_deref(), Some("generation_changed"));
-        assert!(objects.exists_exact("canonical/tenant-a/blob-2", "g2").unwrap());
+        assert_eq!(
+            result.last_error_code.as_deref(),
+            Some("generation_changed")
+        );
+        assert!(
+            objects
+                .exists_exact("canonical/tenant-a/blob-2", "g2")
+                .unwrap()
+        );
 
         ledger.close().await;
         let _ = std::fs::remove_file(path);
@@ -1034,7 +1044,10 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(reclaimed.candidate.candidate_id, first.candidate.candidate_id);
+        assert_eq!(
+            reclaimed.candidate.candidate_id,
+            first.candidate.candidate_id
+        );
         assert!(reclaimed.lease_generation > first.lease_generation);
 
         ledger.close().await;
