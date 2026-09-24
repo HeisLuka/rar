@@ -1,0 +1,102 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera browser text semantics probe</title>
+<style>
+  body { font-family: system-ui, sans-serif; }
+  textarea, [contenteditable] { width: 720px; min-height: 90px; margin: 12px; border: 1px solid #999; }
+</style>
+<textarea id="ta"></textarea>
+<div id="ce" contenteditable="true"></div>
+<script>
+const ta = document.querySelector("#ta");
+const ce = document.querySelector("#ce");
+let events = [];
+
+function targetRanges(event) {
+  if (typeof event.getTargetRanges !== "function") return null;
+  try {
+    return Array.from(event.getTargetRanges()).map((r) => ({
+      start_offset: r.startOffset,
+      end_offset: r.endOffset,
+      start_node: r.startContainer?.nodeType ?? null,
+      end_node: r.endContainer?.nodeType ?? null,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+function selectionSnapshot() {
+  const active = document.activeElement === ta ? "textarea" :
+    document.activeElement === ce ? "contenteditable" : "other";
+  const sel = getSelection();
+  return {
+    active,
+    textarea: {
+      start: ta.selectionStart,
+      end: ta.selectionEnd,
+      direction: ta.selectionDirection,
+    },
+    dom: sel && sel.rangeCount ? {
+      anchor_offset: sel.anchorOffset,
+      focus_offset: sel.focusOffset,
+      is_collapsed: sel.isCollapsed,
+      text: sel.toString(),
+    } : null,
+  };
+}
+
+for (const el of [ta, ce]) {
+  for (const type of ["keydown","beforeinput","input","compositionstart","compositionupdate","compositionend"]) {
+    el.addEventListener(type, (event) => {
+      events.push({
+        type,
+        target: el === ta ? "textarea" : "contenteditable",
+        key: event.key ?? null,
+        input_type: event.inputType ?? null,
+        data: event.data ?? null,
+        is_composing: event.isComposing ?? false,
+        target_ranges: type === "beforeinput" ? targetRanges(event) : null,
+        selection: selectionSnapshot(),
+      });
+    });
+  }
+}
+
+window.resetProbe = () => { events = []; };
+
+window.setTextarea = (value, caret) => {
+  ta.value = value;
+  ta.focus();
+  ta.setSelectionRange(caret, caret);
+  events = [];
+  return selectionSnapshot();
+};
+
+window.setContentEditable = (value, caret) => {
+  ce.textContent = value;
+  ce.focus();
+  const node = ce.firstChild || ce.appendChild(document.createTextNode(""));
+  const range = document.createRange();
+  range.setStart(node, caret);
+  range.collapse(true);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  events = [];
+  return selectionSnapshot();
+};
+
+window.probeSnapshot = () => ({
+  textarea_value: ta.value,
+  contenteditable_text: ce.textContent,
+  selection: selectionSnapshot(),
+  events: structuredClone(events),
+  capabilities: {
+    beforeinput: "onbeforeinput" in document,
+    input_event_target_ranges: typeof InputEvent !== "undefined" &&
+      typeof InputEvent.prototype.getTargetRanges === "function",
+    intl_segmenter: typeof Intl?.Segmenter === "function",
+  },
+});
+</script>
