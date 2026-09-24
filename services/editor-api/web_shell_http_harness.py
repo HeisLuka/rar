@@ -82,6 +82,7 @@ class HarnessState:
         self.baseline_scene = copy.deepcopy(raw_scene)
         self.scenes = {baseline.revision_id: copy.deepcopy(raw_scene)}
         self.commit_requests = 0
+        self.authz_denied_commit_requests = 0
         self.history_requests = 0
         self.executor_calls = 0
         self.history_executor_calls = 0
@@ -223,23 +224,29 @@ class HarnessState:
         }
 
     def commit(self, request: dict, principal_id: str) -> dict:
-        self.commit_requests += 1
         protocol = request.get("protocol_version")
-        if protocol == "chaptera.commit-request.v1":
-            result = self.gateway.commit(
-                request,
-                principal_id=principal_id,
-                executor=self.executor,
-            )
-        elif protocol == "chaptera.history-transition-intent.v1":
+        try:
+            if protocol == "chaptera.commit-request.v1":
+                result = self.gateway.commit(
+                    request,
+                    principal_id=principal_id,
+                    executor=self.executor,
+                )
+            elif protocol == "chaptera.history-transition-intent.v1":
+                result = self.gateway.commit(
+                    request,
+                    principal_id=principal_id,
+                    history_executor=self.history_executor,
+                )
+            else:
+                raise ValueError("unsupported commit protocol")
+        except AuthzDenied:
+            self.authz_denied_commit_requests += 1
+            raise
+
+        self.commit_requests += 1
+        if protocol == "chaptera.history-transition-intent.v1":
             self.history_requests += 1
-            result = self.gateway.commit(
-                request,
-                principal_id=principal_id,
-                history_executor=self.history_executor,
-            )
-        else:
-            raise ValueError("unsupported commit protocol")
 
         if result.get("protocol_version") in {
             "chaptera.commit-accepted.v1",
@@ -362,6 +369,7 @@ class Handler(BaseHTTPRequestHandler):
                 "source_hash": STATE.source_hash,
                 "current_revision_id": current,
                 "commit_requests": STATE.commit_requests,
+                "authz_denied_commit_requests": STATE.authz_denied_commit_requests,
                 "history_requests": STATE.history_requests,
                 "executor_calls": STATE.executor_calls,
                 "history_executor_calls": STATE.history_executor_calls,
