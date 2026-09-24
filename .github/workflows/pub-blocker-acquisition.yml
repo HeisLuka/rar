@@ -359,15 +359,17 @@ jobs:
               name=f.get("name","")
               size=int(f.get("size") or 0)
               lo=name.lower()
-              if lo.endswith((".iso",".img",".bin",".mdf")):
-                  cand.append((size,name,f.get("sha1"),f.get("md5")))
+              # X08-20172 is preserved by IA as an original 7z containing the disc image,
+              # not as a loose ISO. Prefer direct images if present, otherwise the largest
+              # original archive container and verify its IA hashes before extraction.
+              if lo.endswith((".iso",".img",".bin",".mdf",".7z")) and f.get("source")=="original":
+                  rank=2 if lo.endswith((".iso",".img",".bin",".mdf")) else 1
+                  cand.append((rank,size,name,f.get("sha1"),f.get("md5")))
           cand.sort(reverse=True)
           if not cand:
-              raise SystemExit("no disc image")
-          print(cand[0][1])
-          print(cand[0][0])
-          print(cand[0][2] or "")
-          print(cand[0][3] or "")
+              raise SystemExit("no original disc image/container")
+          _,size,name,sha1,md5=cand[0]
+          print(name); print(size); print(sha1 or ""); print(md5 or "")
           PY
           image="$(sed -n '1p' out/selected-file.txt)"
           expected_size="$(sed -n '2p' out/selected-file.txt)"
@@ -376,13 +378,142 @@ jobs:
           printf 'identifier=%s\nfile=%s\nexpected_size=%s\nexpected_sha1=%s\nexpected_md5=%s\n' "$ident" "$image" "$expected_size" "$expected_sha1" "$expected_md5" | tee out/selection.txt
           url="https://archive.org/download/$ident/$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$image")"
           printf '%s\n' "$url" > out/source-url.txt
-          curl -fL --retry 4 --retry-delay 5 --max-time 3600 "$url" -o out/publisher2002-media.bin
-          test "$(stat -c %s out/publisher2002-media.bin)" -eq "$expected_size"
+          curl -fL --retry 4 --retry-delay 5 --max-time 3600 "$url" -o out/publisher2002-container.bin
+          test "$(stat -c %s out/publisher2002-container.bin)" -eq "$expected_size"
+          sha256sum out/publisher2002-container.bin | tee out/container-sha256.txt
+          sha1sum out/publisher2002-container.bin | tee out/container-sha1.txt
+          md5sum out/publisher2002-container.bin | tee out/container-md5.txt
+          if [ -n "$expected_sha1" ]; then test "$(sha1sum out/publisher2002-container.bin | awk '{print $1}')" = "$expected_sha1"; fi
+          if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2002-container.bin | awk '{print $1}')" = "$expected_md5"; fi
+          file out/publisher2002-container.bin | tee out/container-file.txt
+
+          if printf '%s' "$image" | grep -Eqi '\\.7z
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-2002-exact-media-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publisher-2000-trial-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Fetch known coverdisc containing Microsoft Publisher 2000 Trial
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          ident='k-cd-2000-07'
+          curl -fL --retry 3 --max-time 120 "https://archive.org/metadata/$ident" -o out/metadata.json
+          python3 - <<'PY' > out/selected-file.txt
+          import json
+          d=json.load(open("out/metadata.json"))
+          cand=[]
+          for f in d.get("files",[]):
+              name=f.get("name","")
+              size=int(f.get("size") or 0)
+              if name.lower().endswith((".iso",".img",".bin")):
+                  cand.append((size,name,f.get("sha1"),f.get("md5")))
+          cand.sort(reverse=True)
+          if not cand:
+              raise SystemExit("no disc image")
+          print(cand[0][1]); print(cand[0][0]); print(cand[0][2] or ""); print(cand[0][3] or "")
+          PY
+          image="$(sed -n '1p' out/selected-file.txt)"
+          expected_size="$(sed -n '2p' out/selected-file.txt)"
+          expected_sha1="$(sed -n '3p' out/selected-file.txt)"
+          expected_md5="$(sed -n '4p' out/selected-file.txt)"
+          printf 'identifier=%s\nfile=%s\nexpected_size=%s\nexpected_sha1=%s\nexpected_md5=%s\nprovenance=third-party magazine coverdisc containing Microsoft Publisher 2000 Trial\n' "$ident" "$image" "$expected_size" "$expected_sha1" "$expected_md5" | tee out/selection.txt
+          url="https://archive.org/download/$ident/$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$image")"
+          printf '%s\n' "$url" > out/source-url.txt
+          curl -fL --retry 4 --retry-delay 5 --max-time 4200 "$url" -o out/publisher2000-trial-coverdisc.bin
+          test "$(stat -c %s out/publisher2000-trial-coverdisc.bin)" -eq "$expected_size"
+          sha256sum out/publisher2000-trial-coverdisc.bin | tee out/sha256.txt
+          sha1sum out/publisher2000-trial-coverdisc.bin | tee out/sha1.txt
+          md5sum out/publisher2000-trial-coverdisc.bin | tee out/md5.txt
+          if [ -n "$expected_sha1" ]; then test "$(sha1sum out/publisher2000-trial-coverdisc.bin | awk '{print $1}')" = "$expected_sha1"; fi
+          if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2000-trial-coverdisc.bin | awk '{print $1}')" = "$expected_md5"; fi
+          file out/publisher2000-trial-coverdisc.bin | tee out/file.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-2000-trial-candidate-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  historical-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Search Internet Archive by exact historical identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 - <<'PY'
+          import json, subprocess, urllib.parse
+          from pathlib import Path
+          queries = {
+            "publisher2000_trial": '"Microsoft Publisher 2000" AND (trial OR "trial cd")',
+            "publisher2002_trial": '"Publisher 2002" AND (trial OR X08-20172 OR X08-06831)',
+            "publisher2003_trial": '("Publisher 2003" OR "Microsoft Office Publisher 2003") AND (trial OR SKU119 OR OFFICE11)',
+            "vbapb10_chm": '"VBAPB10.CHM"',
+            "keyview_mspubsr": '"mspubsr.dll"',
+            "pub2id": '"Pub2ID" AND (installer OR updater OR plugin)',
+            "office2000_cd2": '"O9PRMCD02"',
+            "office2000_cd1": '"O9PROCD01"',
+          }
+          for name,q in queries.items():
+              url="https://archive.org/advancedsearch.php?"+urllib.parse.urlencode([
+                  ("q",q),("fl[]","identifier"),("fl[]","title"),("fl[]","description"),
+                  ("fl[]","date"),("rows","50"),("page","1"),("output","json")
+              ])
+              p=subprocess.run(["curl","-fL","--retry","3","--max-time","120",url],capture_output=True)
+              Path(f"out/{name}.url.txt").write_text(url+"\n")
+              Path(f"out/{name}.json").write_bytes(p.stdout)
+              Path(f"out/{name}.stderr.txt").write_bytes(p.stderr)
+              if p.returncode==0:
+                  try:
+                      data=json.loads(p.stdout)
+                      docs=data.get("response",{}).get("docs",[])
+                      Path(f"out/{name}.summary.json").write_text(json.dumps({
+                          "query":q,
+                          "numFound":data.get("response",{}).get("numFound"),
+                          "top":docs[:20],
+                      },indent=2,ensure_ascii=False))
+                  except Exception as e:
+                      Path(f"out/{name}.parse-error.txt").write_text(repr(e))
+          PY
+          for f in out/*.summary.json; do echo "===== $f ====="; cat "$f"; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historical-acquisition-discovery-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
+; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends p7zip-full
+            mkdir -p out/publisher2002-extracted
+            7z x -y out/publisher2002-container.bin -oout/publisher2002-extracted > out/container-extract.txt
+            find out/publisher2002-extracted -type f -printf '%s\t%p\n' | sort -nr > out/extracted-files.txt
+            media="$(find out/publisher2002-extracted -type f \( -iname '*.iso' -o -iname '*.img' -o -iname '*.bin' -o -iname '*.mdf' \) -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+            test -n "$media"
+            cp "$media" out/publisher2002-media.bin
+          else
+            cp out/publisher2002-container.bin out/publisher2002-media.bin
+          fi
+          test "$(stat -c %s out/publisher2002-media.bin)" -gt 100000000
           sha256sum out/publisher2002-media.bin | tee out/sha256.txt
           sha1sum out/publisher2002-media.bin | tee out/sha1.txt
           md5sum out/publisher2002-media.bin | tee out/md5.txt
-          if [ -n "$expected_sha1" ]; then test "$(sha1sum out/publisher2002-media.bin | awk '{print $1}')" = "$expected_sha1"; fi
-          if [ -n "$expected_md5" ]; then test "$(md5sum out/publisher2002-media.bin | awk '{print $1}')" = "$expected_md5"; fi
+          stat -c 'size_bytes=%s' out/publisher2002-media.bin | tee out/size.txt
           file out/publisher2002-media.bin | tee out/file.txt
       - uses: actions/upload-artifact@v4
         if: always()
