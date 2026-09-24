@@ -782,10 +782,6 @@ def main():
     print("\n".join(text_lines))
 
 
-if __name__ == "__main__":
-    main()
-
-
 # --- exact-anchor consumer/materialization pass (T451 follow-up) ---
 KNOWN_ANCHORS = {
     "oplpluo_ctor": 0x2E1A3666,
@@ -925,3 +921,7 @@ def exact_anchor_report(v, instructions, by_addr):
                     queue.append(parent)
     out["upward_call_graph"]=nodes
     return out
+
+
+if __name__ == "__main__":
+    main()
