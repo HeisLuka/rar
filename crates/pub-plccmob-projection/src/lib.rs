@@ -29,6 +29,7 @@ const CMO_ENTRY_CMO_ID: u8 = 0x01;
 const CMO_ENTRY_TARGET_QSID: u8 = 0x02;
 const CMO_ENTRY_CARRIER_OHPO: u8 = 0x03;
 const PLC_CMOB_ROW_DECLARED_LENGTH: u32 = 22;
+const PLC_CMOB_CHUNK_ENVELOPE_SIZE: usize = 4;
 const PLC_CMOB_FIXED_PREFIX_SIZE: usize = 16;
 const PLC_CMOB_ROW_SIZE: usize = 24;
 
@@ -56,10 +57,11 @@ pub struct MatureCmobEntryV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaturePlcCmobV1 {
     pub source: RawSpanV1,
+    pub declared_length: u32,
+    pub declared_length_source: RawSpanV1,
     pub declared_count: u32,
     pub declared_count_source: RawSpanV1,
     pub entry_array_source: RawSpanV1,
-    pub content_source: u32,
     pub entries: Vec<MatureCmobEntryV1>,
 }
 
@@ -425,25 +427,40 @@ pub fn parse_confirmed_mature_plc_cmob(
         });
     }
 
+    let declared_length = read_u32_le(bytes, 0)?;
+    let expected_chunk_length = u32::try_from(bytes.len()).map_err(|_| {
+        PlcCmobProjectionError::MalformedPayloadLength {
+            payload_len: bytes.len(),
+        }
+    })?;
+    if declared_length != expected_chunk_length {
+        return Err(PlcCmobProjectionError::DeclaredLengthMismatch {
+            context: "PlcCmob.chunk",
+            expected: expected_chunk_length,
+            actual: declared_length,
+        });
+    }
+
     expect_tag(
         bytes,
-        0,
+        PLC_CMOB_CHUNK_ENVELOPE_SIZE,
         PLC_CMOB_DECLARED_COUNT_ID,
         BLOCK_TYPE_U32,
         "PlcCmob.IcmobMax",
     )?;
-    let declared_count = read_u32_le(bytes, 2)?;
+    let declared_count = read_u32_le(bytes, PLC_CMOB_CHUNK_ENVELOPE_SIZE + 2)?;
 
+    let array_offset = PLC_CMOB_CHUNK_ENVELOPE_SIZE + 6;
     expect_tag(
         bytes,
-        6,
+        array_offset,
         PLC_CMOB_ENTRY_ARRAY_ID,
         BLOCK_TYPE_ARRAY_CONTAINER,
         "PlcCmob.Rgcmob",
     )?;
-    let array_declared_length = read_u32_le(bytes, 8)?;
+    let array_declared_length = read_u32_le(bytes, array_offset + 2)?;
     let expected_array_declared_length =
-        u32::try_from(bytes.len().saturating_sub(8)).map_err(|_| {
+        u32::try_from(bytes.len().saturating_sub(array_offset + 2)).map_err(|_| {
             PlcCmobProjectionError::MalformedPayloadLength {
                 payload_len: bytes.len(),
             }
@@ -455,7 +472,6 @@ pub fn parse_confirmed_mature_plc_cmob(
             actual: array_declared_length,
         });
     }
-    let content_source = read_u32_le(bytes, 12)?;
 
     let payload_len = bytes.len() - PLC_CMOB_FIXED_PREFIX_SIZE;
     if payload_len % PLC_CMOB_ROW_SIZE != 0 {
@@ -563,13 +579,17 @@ pub fn parse_confirmed_mature_plc_cmob(
             offset: 0,
             len: bytes.len(),
         },
+        declared_length,
+        declared_length_source: RawSpanV1 { offset: 0, len: 4 },
         declared_count,
-        declared_count_source: RawSpanV1 { offset: 0, len: 6 },
-        entry_array_source: RawSpanV1 {
-            offset: 6,
-            len: bytes.len() - 6,
+        declared_count_source: RawSpanV1 {
+            offset: PLC_CMOB_CHUNK_ENVELOPE_SIZE,
+            len: 6,
         },
-        content_source,
+        entry_array_source: RawSpanV1 {
+            offset: array_offset,
+            len: bytes.len() - array_offset,
+        },
         entries,
     })
 }
@@ -844,7 +864,7 @@ mod tests {
     }
 
     fn fixture(entries: &[(u32, u32, u32)]) -> Vec<u8> {
-        let mut out = Vec::new();
+        let mut out = 0u32.to_le_bytes().to_vec();
         push_u32_field(
             &mut out,
             PLC_CMOB_DECLARED_COUNT_ID,
@@ -853,9 +873,8 @@ mod tests {
         );
         out.push(PLC_CMOB_ENTRY_ARRAY_ID);
         out.push(BLOCK_TYPE_ARRAY_CONTAINER);
-        let declared = 8 + 24 * u32::try_from(entries.len()).expect("fixture count");
+        let declared = 4 + 24 * u32::try_from(entries.len()).expect("fixture count");
         out.extend_from_slice(&declared.to_le_bytes());
-        out.extend_from_slice(&0u32.to_le_bytes());
 
         for (cmo_id, target_qsid, carrier_ohpo) in entries {
             out.push(PLC_CMOB_ENTRY_ID);
@@ -875,6 +894,9 @@ mod tests {
                 *carrier_ohpo,
             );
         }
+
+        let chunk_len = u32::try_from(out.len()).expect("fixture chunk length");
+        out[0..4].copy_from_slice(&chunk_len.to_le_bytes());
         out
     }
 
@@ -981,9 +1003,22 @@ mod tests {
     }
 
     #[test]
+    fn chunk_envelope_length_mismatch_fails_closed() {
+        let mut raw = fixture(&[(1, 218, 319)]);
+        raw[0..4].copy_from_slice(&39u32.to_le_bytes());
+        assert!(matches!(
+            parse_confirmed_mature_plc_cmob(&raw),
+            Err(PlcCmobProjectionError::DeclaredLengthMismatch {
+                context: "PlcCmob.chunk",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn count_mismatch_fails_closed() {
         let mut raw = fixture(&[(1, 218, 319)]);
-        raw[2..6].copy_from_slice(&2u32.to_le_bytes());
+        raw[6..10].copy_from_slice(&2u32.to_le_bytes());
         assert!(matches!(
             parse_confirmed_mature_plc_cmob(&raw),
             Err(PlcCmobProjectionError::EntryCountMismatch { .. })
@@ -993,14 +1028,14 @@ mod tests {
     #[test]
     fn exact_wire_mismatches_fail_closed() {
         let mut count_wire = fixture(&[(1, 218, 319)]);
-        count_wire[1] = BLOCK_TYPE_REFERENCE_U32;
+        count_wire[5] = BLOCK_TYPE_REFERENCE_U32;
         assert!(matches!(
             parse_confirmed_mature_plc_cmob(&count_wire),
             Err(PlcCmobProjectionError::WrongWire { .. })
         ));
 
         let mut array_wire = fixture(&[(1, 218, 319)]);
-        array_wire[7] = BLOCK_TYPE_ROW_CONTAINER;
+        array_wire[11] = BLOCK_TYPE_ROW_CONTAINER;
         assert!(matches!(
             parse_confirmed_mature_plc_cmob(&array_wire),
             Err(PlcCmobProjectionError::WrongWire { .. })
