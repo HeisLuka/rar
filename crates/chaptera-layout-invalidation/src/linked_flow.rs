@@ -219,12 +219,13 @@ pub fn resolve_linked_story_incremental_v1(
     let environment_matches = old.layout_environment_fingerprint == layout_environment_fingerprint;
     let policy_matches = old.flow_policy_fingerprint == flow_policy_fingerprint;
 
-    let mut actual_start = if old_chain_matches && environment_matches && policy_matches {
+    let reuse_context_matches = old_chain_matches && environment_matches && policy_matches;
+    let mut actual_start = if reuse_context_matches {
         requested_start
     } else {
         0
     };
-    let mut mode = if actual_start == requested_start {
+    let mut mode = if reuse_context_matches {
         IncrementalExecutionModeV1::Bounded
     } else {
         IncrementalExecutionModeV1::FullFallback
