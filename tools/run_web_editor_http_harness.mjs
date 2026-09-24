@@ -174,9 +174,36 @@ async function main() {
         source_hash: window.__shell.snapshot.source_hash,
         bounds: window.__shell.nodeScreenBounds(nodeId),
         host: { x: hostRect.x, y: hostRect.y },
+        export_preview: structuredClone(window.__lastExportPreview),
+        fidelity_text: document.getElementById("fidelity-state").textContent,
+        capability_text: document.getElementById("capability-state").textContent,
+        loss_text: document.getElementById("loss-state").textContent,
+        fidelity_visible: document.getElementById("fidelity-state").dataset.visibleState === "true",
+        capability_visible: document.getElementById("capability-state").dataset.visibleState === "true",
+        loss_visible: document.getElementById("loss-state").dataset.visibleState === "true",
         spans: structuredClone(window.__observability.spans),
       };
     });
+
+    if (
+      initial.export_preview.document_id !== initial.document_id ||
+      initial.export_preview.source_hash !== initial.source_hash ||
+      initial.export_preview.revision_id !== initial.revision_id
+    ) {
+      throw new Error("initial export preview is not bound to visible Scene identity");
+    }
+    if (!initial.fidelity_visible || !initial.capability_visible || !initial.loss_visible) {
+      throw new Error("capability/fidelity/loss disclosure is not browser-visible");
+    }
+    if (!initial.fidelity_text.startsWith("Fidelity:")) {
+      throw new Error("fidelity disclosure missing");
+    }
+    if (!initial.capability_text.startsWith("Capabilities:")) {
+      throw new Error("capability disclosure missing");
+    }
+    if (!initial.loss_text.startsWith("Export IDML:")) {
+      throw new Error("export loss disclosure missing");
+    }
 
     const startX = initial.host.x + initial.bounds.x + initial.bounds.width / 2;
     const startY = initial.host.y + initial.bounds.y + initial.bounds.height / 2;
@@ -366,6 +393,31 @@ async function main() {
       throw new Error("server trace lost history client-operation correlation");
     }
 
+    const finalDisclosure = await page.evaluate(async () => {
+      const preview = await window.__refreshDisclosure();
+      return {
+        preview,
+        revision_id: window.__shell.snapshot.revision_id,
+        fidelity_visible: document.getElementById("fidelity-state").dataset.visibleState === "true",
+        capability_visible: document.getElementById("capability-state").dataset.visibleState === "true",
+        loss_visible: document.getElementById("loss-state").dataset.visibleState === "true",
+        loss_text: document.getElementById("loss-state").textContent,
+      };
+    });
+    if (finalDisclosure.preview.revision_id !== history.redo.revision_id) {
+      throw new Error("export preview did not follow final Redo revision");
+    }
+    if (finalDisclosure.revision_id !== history.redo.revision_id) {
+      throw new Error("visible Scene is not on final Redo revision");
+    }
+    if (
+      !finalDisclosure.fidelity_visible ||
+      !finalDisclosure.capability_visible ||
+      !finalDisclosure.loss_visible
+    ) {
+      throw new Error("final capability/fidelity/loss disclosure is not visible");
+    }
+
     if (RUN_INDEX === "0") {
       await page.locator("#host").screenshot({
         path: path.join(TARGET, BROWSER_ENGINE + "-http-shell.png")
@@ -400,6 +452,14 @@ async function main() {
       browser_sent_before_state: "before" in browserFinal.last_request.command,
       node_id_stable: browserFinal.shell.selected_node_id === initial.node_id,
       source_hash_stable: browserFinal.source_hash === initial.source_hash,
+      capability_state_visible:
+        initial.capability_visible && finalDisclosure.capability_visible,
+      fidelity_state_visible:
+        initial.fidelity_visible && finalDisclosure.fidelity_visible,
+      loss_state_visible:
+        initial.loss_visible && finalDisclosure.loss_visible,
+      export_preview_bound_to_final_revision:
+        finalDisclosure.preview.revision_id === history.redo.revision_id,
       observability: {
         trace_protocol_version: browserFinal.commit_trace.protocol_version,
         same_trace_browser_and_server: commitTrace.trace_id === browserFinal.commit_trace.trace_id,
