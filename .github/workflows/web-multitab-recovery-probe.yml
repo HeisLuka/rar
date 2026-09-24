@@ -1,0 +1,37 @@
+name: WEB-MULTITAB-RECOVERY browser primitives probe
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/multitab-recovery-probe.html"
+      - "tools/run_web_multitab_recovery_probe.mjs"
+      - ".github/workflows/web-multitab-recovery-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run multi-tab/local-recovery browser probe
+        run: node tools/run_web_multitab_recovery_probe.mjs ${{ matrix.browser }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-multitab-recovery-${{ matrix.browser }}
+          path: target/web-multitab-recovery/${{ matrix.browser }}-receipt.json
+          if-no-files-found: error

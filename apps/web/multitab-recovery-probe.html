@@ -1,0 +1,146 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera multi-tab recovery probe</title>
+<script>
+const DB_NAME = "chaptera-recovery-probe-v1";
+const STORE = "pending";
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("transaction aborted"));
+  });
+}
+
+window.probeCapabilities = async () => {
+  const estimate = navigator.storage?.estimate ? await navigator.storage.estimate() : null;
+  const persisted = navigator.storage?.persisted ? await navigator.storage.persisted() : null;
+  return {
+    web_locks: !!navigator.locks,
+    broadcast_channel: typeof BroadcastChannel === "function",
+    indexeddb: !!window.indexedDB,
+    opfs: !!navigator.storage?.getDirectory,
+    storage_persisted: persisted,
+    storage_estimate: estimate ? { quota: estimate.quota ?? null, usage: estimate.usage ?? null } : null,
+  };
+};
+
+window.startChannel = (name) => {
+  window.__messages = [];
+  window.__channel?.close?.();
+  window.__channel = new BroadcastChannel(name);
+  window.__channel.onmessage = (event) => window.__messages.push(event.data);
+  return true;
+};
+window.sendChannel = (value) => { window.__channel.postMessage(value); };
+window.channelMessages = () => structuredClone(window.__messages ?? []);
+
+window.holdLock = async (name) => {
+  if (!navigator.locks) return { supported: false, acquired: false };
+  let acquiredResolve;
+  const acquired = new Promise((resolve) => { acquiredResolve = resolve; });
+  let releaseResolve;
+  const release = new Promise((resolve) => { releaseResolve = resolve; });
+  window.__releaseLock = releaseResolve;
+  navigator.locks.request(name, async (lock) => {
+    acquiredResolve(!!lock);
+    if (lock) await release;
+  });
+  return { supported: true, acquired: await acquired };
+};
+window.releaseHeldLock = () => { window.__releaseLock?.(); };
+window.tryLock = async (name) => {
+  if (!navigator.locks) return { supported: false, acquired: false };
+  const acquired = await navigator.locks.request(name, { ifAvailable: true }, async (lock) => !!lock);
+  return { supported: true, acquired };
+};
+
+window.clearPending = async () => {
+  const db = await openDb();
+  const tx = db.transaction(STORE, "readwrite");
+  tx.objectStore(STORE).clear();
+  await txDone(tx);
+  db.close();
+};
+
+window.writePendingBatch = async (count, prefix) => {
+  const db = await openDb();
+  const start = performance.now();
+  const tx = db.transaction(STORE, "readwrite");
+  const store = tx.objectStore(STORE);
+  for (let i = 0; i < count; i += 1) {
+    store.put({
+      id: prefix + ":" + String(i).padStart(6, "0"),
+      document_id: "doc:probe",
+      base_revision_id: "sha256:" + "a".repeat(64),
+      client_operation_id: prefix + ":op:" + String(i),
+      payload: { kind: "MoveNode", dx: i, dy: -i }
+    });
+  }
+  await txDone(tx);
+  const ms = performance.now() - start;
+  db.close();
+  return { count, ms };
+};
+
+window.countPending = async () => {
+  const db = await openDb();
+  const start = performance.now();
+  const tx = db.transaction(STORE, "readonly");
+  const req = tx.objectStore(STORE).count();
+  const count = await new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  await txDone(tx);
+  const ms = performance.now() - start;
+  db.close();
+  return { count, ms };
+};
+
+window.writeOpfs = async (value) => {
+  if (!navigator.storage?.getDirectory) return { supported: false };
+  const root = await navigator.storage.getDirectory();
+  const handle = await root.getFileHandle("recovery-probe.json", { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify(value));
+  await writable.close();
+  return { supported: true };
+};
+
+window.readOpfs = async () => {
+  if (!navigator.storage?.getDirectory) return { supported: false, value: null };
+  try {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle("recovery-probe.json");
+    const file = await handle.getFile();
+    return { supported: true, value: JSON.parse(await file.text()) };
+  } catch {
+    return { supported: true, value: null };
+  }
+};
+
+window.requestPersistence = async (timeoutMs = 1500) => {
+  if (!navigator.storage?.persist) return { supported: false, granted: null, timed_out: false };
+  const timeout = new Promise((resolve) =>
+    setTimeout(() => resolve({ supported: true, granted: null, timed_out: true }), timeoutMs)
+  );
+  const request = Promise.resolve(navigator.storage.persist())
+    .then((granted) => ({ supported: true, granted, timed_out: false }))
+    .catch((error) => ({ supported: true, granted: null, timed_out: false, error: String(error) }));
+  return Promise.race([request, timeout]);
+};
+</script>
