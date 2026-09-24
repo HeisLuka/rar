@@ -1,0 +1,60 @@
+name: WEB-TEXT-PROTOCOL-01 contract
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/text-protocol-v1.mjs"
+      - "apps/web/text-protocol-v1.test.mjs"
+      - "packages/protocol/text/v1/**"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_revision_store.py"
+      - "docs/web-text-protocol-v1.md"
+      - ".github/workflows/web-text-protocol.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Browser text protocol unit tests
+        run: node --test apps/web/text-protocol-v1.test.mjs
+      - name: Revision kernel Story-range tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store.py
+      - name: Validate protocol schema fixture shape
+        run: |
+          python -m pip install "jsonschema==4.23.0"
+          python - <<'PY'
+          import json
+          from jsonschema import Draft202012Validator
+          schema=json.load(open("packages/protocol/text/v1/story-range-intent.schema.json"))
+          Draft202012Validator.check_schema(schema)
+          fixture={
+              "protocol_version":"chaptera.story-range-intent.v1",
+              "document_id":"doc:1",
+              "source_hash":"a"*64,
+              "base_revision_id":"sha256:"+"b"*64,
+              "client_operation_id":"text-op-00000001",
+              "depends_on_client_operation_id":None,
+              "command":{
+                  "kind":"replace_story_range",
+                  "story_id":"story:1",
+                  "start_scalar":1,
+                  "end_scalar":2,
+                  "replacement_text":"漢"
+              }
+          }
+          errors=list(Draft202012Validator(schema).iter_errors(fixture))
+          assert not errors, errors
+          print("StoryRangeIntentV1 schema valid")
+          PY
