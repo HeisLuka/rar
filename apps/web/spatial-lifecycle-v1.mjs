@@ -210,8 +210,13 @@ export class SpatialWindowV1 {
 
   revisitPage({ base_generation_key, next_identity, nodes }) {
     this.#assertGeneration(base_generation_key);
+    if (!Array.isArray(nodes)) throw new TypeError("revisit nodes must be an array");
+    const incomingIds = new Set(nodes.map(node => node.node_id));
+    const kept = [...this.rows.values()]
+      .filter(row => !incomingIds.has(row.node_id))
+      .map(row => ({ ...row, bounds: { ...row.bounds } }));
     this.metrics.revisits += 1;
-    return this.replaceWindow(next_identity, [...this.rows.values()].map(row => ({ ...row, bounds: { ...row.bounds } })), ...[]);
+    return this.replaceWindow(next_identity, [...kept, ...nodes]);
   }
 
   reconcileSelection(nodeId, generationKey) {
