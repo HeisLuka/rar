@@ -60,6 +60,13 @@ class AuthorizedRevisionGateway:
                 raise ValueError("authoritative executor required")
             capability = CAP_EDIT_TEXT
             callback = lambda _decision: self.kernel.commit_story_range(request, executor)
+        elif protocol == "chaptera.story-edit-transaction-intent.v1":
+            capability = CAP_EDIT_TEXT
+            callback = (
+                (lambda _decision: self.kernel.commit_story_edit_transaction(request))
+                if executor is None
+                else (lambda _decision: self.kernel.commit_story_edit_transaction(request, executor))
+            )
         elif protocol == "chaptera.history-transition-intent.v1":
             if history_executor is None:
                 raise ValueError("authoritative history executor required")
