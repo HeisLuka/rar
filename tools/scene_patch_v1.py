@@ -2,7 +2,7 @@
 import copy
 from render_scene_v1 import hash_id
 
-PRIMITIVE_KINDS = ("rects","images","glyph_runs")
+PRIMITIVE_KINDS = ("rects","images","paths","glyph_runs")
 
 class ScenePatchApplyPoisoned(AssertionError):
     """The renderer-owned compiled state must be discarded after this failure."""
@@ -72,6 +72,7 @@ def diff_render_scenes(base, target, metrics=None):
         "upsert_nodes":upserts,
         "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
         "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "path_deltas": None if base["tables"].get("paths",[])==target["tables"].get("paths",[]) else copy.deepcopy(target["tables"].get("paths",[])),
         "order_deltas": None if (base["order_authority"],base["paint_seq"])==(target["order_authority"],target["paint_seq"]) else {
             "order_authority":target["order_authority"],
             "paint_seq":copy.deepcopy(target["paint_seq"]),
@@ -146,6 +147,8 @@ def _apply_patch_mutating(out, patch, metrics=None):
         out["pages"]=copy.deepcopy(patch["page_deltas"])
     if patch["resource_deltas"]:
         out["tables"]["resources"]=copy.deepcopy(patch["resource_deltas"])
+    if patch.get("path_deltas") is not None:
+        out["tables"]["paths"]=copy.deepcopy(patch["path_deltas"])
     if patch["order_deltas"] is not None:
         out["order_authority"]=patch["order_deltas"]["order_authority"]
         out["paint_seq"]=copy.deepcopy(patch["order_deltas"]["paint_seq"])
