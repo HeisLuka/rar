@@ -171,7 +171,7 @@ def body_for(I,A,start,limit=420):
 def callers_of(I,target):
     return [x["address"] for x in I if direct_call_target(x)==target]
 
-def function_features(v:PE,I,A,start,meta14_aux,descriptor_addrs):
+def function_features(v:PE,I,A,start,meta14_aux,descriptor_addrs,call_map):
     body=body_for(I,A,start)
     if not body:return None
     mem8=[];memc=[];imm14=[];stride12=[];refs=[];calls=[]
@@ -199,7 +199,7 @@ def function_features(v:PE,I,A,start,meta14_aux,descriptor_addrs):
                 imm14=[slim(x) for x in imm14[:20]],mem_disp8=[slim(x) for x in mem8[:20]],mem_disp12=[slim(x) for x in memc[:20]],
                 stride18=[slim(x) for x in stride12[:20]],descriptor_refs=[dict(ins=slim(x),targets=[f"0x{r:08X}" for r in rr]) for x,rr in refs[:30]],
                 local_windows=windows[:20],calls=[f"0x{x:08X}" for x in sorted(set(calls))[:120]],
-                direct_callers=[f"0x{x:08X}" for x in callers_of(I,start)[:200]],
+                direct_callers=[f"0x{x:08X}" for x in call_map.get(start,[])[:200]],
                 body=[slim(x) for x in body[:240]])
 
 def main():
@@ -230,6 +230,11 @@ def main():
     if len(meta14)!=43:raise SystemExit(f"expected 43 meta14 rows, got {len(meta14)}")
 
     I,A=disasm(v)
+    call_map=defaultdict(list)
+    for _ins in I:
+        _ct=direct_call_target(_ins)
+        if _ct is not None:
+            call_map[_ct].append(_ins["address"])
     descriptor_addrs=set(aux_ptrs)
     for t in tables.values():
         descriptor_addrs.add(t["header_va"])
@@ -252,14 +257,14 @@ def main():
 
     candidates=[]
     for s in sorted(starts):
-        f=function_features(v,I,A,s,aux_ptrs,descriptor_addrs)
+        f=function_features(v,I,A,s,aux_ptrs,descriptor_addrs,call_map)
         if f and f["score"]>0:candidates.append(f)
     candidates.sort(key=lambda x:(-x["score"],x["start"]))
 
     # All direct callers of shared helper, classified by overlap with walker candidates,
     # known OplPluo anchors, descriptor refs and local constants.
     helper=KNOWN["shared_helper"]
-    helper_calls=callers_of(I,helper)
+    helper_calls=call_map.get(helper,[])
     parent_map=defaultdict(list)
     for cs in helper_calls:
         idx=A.get(cs)
@@ -269,7 +274,7 @@ def main():
     walker_starts={int(x["start"],16) for x in candidates[:200]}
     caller_profiles=[]
     for s,callsites in parent_map.items():
-        f=function_features(v,I,A,s,aux_ptrs,descriptor_addrs)
+        f=function_features(v,I,A,s,aux_ptrs,descriptor_addrs,call_map)
         if not f:continue
         body=body_for(I,A,s)
         refs=set()
