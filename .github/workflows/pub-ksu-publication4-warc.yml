@@ -1,0 +1,121 @@
+name: PUB KSU Publication4 exact WARC recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pub-ksu-publication4-warc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_URL: "http://faculty.ksu.edu.sa/14812/DocLib1/Publication4.pub"
+      WARC_FILE: "crawl-data/CC-MAIN-2017-17/segments/1492917123632.58/warc/CC-MAIN-20170423031203-00220-ip-10-145-167-34.ec2.internal.warc.gz"
+      WARC_OFFSET: "124818842"
+      WARC_LENGTH: "27828"
+      EXPECTED_CC_DIGEST: "5X3P2XRHDFR5DWVVSSDWT6QUQFDMHGJC"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Recover exact Common Crawl record and emit source-free receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work out
+          end=$((WARC_OFFSET + WARC_LENGTH - 1))
+          curl --fail --location --retry 4 --retry-all-errors \
+            -H "Range: bytes=${WARC_OFFSET}-${end}" \
+            "https://data.commoncrawl.org/${WARC_FILE}" \
+            -o work/record.warc.gz
+          test "$(stat -c %s work/record.warc.gz)" -eq "$WARC_LENGTH"
+
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os
+          from pathlib import Path
+          import olefile
+
+          raw = gzip.decompress(Path("work/record.warc.gz").read_bytes())
+          h_end = raw.find(b"\r\n\r\n")
+          if h_end < 0:
+              raise SystemExit("WARC header terminator missing")
+          warc_headers = raw[:h_end].decode("utf-8", "replace").split("\r\n")
+          warc = {}
+          for line in warc_headers[1:]:
+              if ":" in line:
+                  k,v=line.split(":",1); warc[k.strip().lower()]=v.strip()
+
+          target=os.environ["TARGET_URL"]
+          if warc.get("warc-target-uri") != target:
+              raise SystemExit(f"target mismatch: {warc.get('warc-target-uri')!r}")
+
+          payload=raw[h_end+4:]
+          http_end=payload.find(b"\r\n\r\n")
+          if http_end < 0:
+              raise SystemExit("HTTP header terminator missing")
+          http_header=payload[:http_end].decode("iso-8859-1","replace")
+          status=http_header.splitlines()[0] if http_header else ""
+          if " 200 " not in status:
+              raise SystemExit(f"unexpected HTTP status: {status}")
+          body=payload[http_end+4:]
+          magic=bytes.fromhex("d0cf11e0a1b11ae1")
+          if not body.startswith(magic):
+              raise SystemExit(f"payload is not OLE/CFB: {body[:16].hex()}")
+
+          cc_digest=base64.b32encode(hashlib.sha1(body).digest()).decode().rstrip("=")
+          expected=os.environ["EXPECTED_CC_DIGEST"]
+          if cc_digest != expected:
+              raise SystemExit(f"Common Crawl payload digest mismatch: {cc_digest} != {expected}")
+
+          Path("work/Publication4.pub").write_bytes(body)
+          ole=olefile.OleFileIO("work/Publication4.pub")
+          streams=["/".join(x) for x in ole.listdir(streams=True, storages=False)]
+          stream_set=set(streams)
+          receipt={
+              "schema":"rar-ksu-publication4-warc-recovery/v1",
+              "target_url":target,
+              "capture_timestamp":warc.get("warc-date"),
+              "warc_record_id":warc.get("warc-record-id"),
+              "warc_file":os.environ["WARC_FILE"],
+              "warc_offset":int(os.environ["WARC_OFFSET"]),
+              "warc_length":int(os.environ["WARC_LENGTH"]),
+              "http_status":status,
+              "common_crawl_payload_digest_sha1_base32":cc_digest,
+              "payload_sha256":hashlib.sha256(body).hexdigest(),
+              "payload_size":len(body),
+              "cfb_stream_count":len(streams),
+              "publisher_carriers":{
+                  "contents": "Contents" in stream_set,
+                  "quill": any(s.endswith("Quill/QuillSub/CONTENTS") or s=="Quill/QuillSub/CONTENTS" for s in streams),
+                  "escher": any(s.endswith("Escher/EscherStm") or s=="Escher/EscherStm" for s in streams),
+                  "escher_delay": any(s.endswith("Escher/EscherDelayStm") or s=="Escher/EscherDelayStm" for s in streams),
+              },
+              "stream_paths":streams,
+              "retained_raw_pub":False,
+              "claim":"exact public Common Crawl Publication4.pub recovery; source-free receipt only"
+          }
+          Path("out/receipt.json").write_text(json.dumps(receipt,indent=2,sort_keys=True),encoding="utf-8")
+          print(json.dumps(receipt,indent=2,sort_keys=True))
+          ole.close()
+          PY
+
+          rm -f work/Publication4.pub work/record.warc.gz
+          if find work out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained workspace" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pub-ksu-publication4-warc-${{ github.run_id }}
+          path: out/receipt.json
+          if-no-files-found: error
+          retention-days: 30
