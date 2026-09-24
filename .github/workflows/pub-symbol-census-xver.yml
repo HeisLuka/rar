@@ -45,7 +45,7 @@ jobs:
               "filename":"OfficeXpSp3-kb832671-fullfile-enu.exe",
               "sha256":"734e0757ecb28e40b0c45058748bbf540581db35d1df95cfd8b17ca33ce78e5c",
               "expected_mspub":"02603be3cc900d167aa4842f64320f8550c44d36cb149e0c824830f502d73fdc",
-              "url":"http://download.microsoft.com/download/9/1/f/91ffc6b2-0745-470b-8dd3-1285b85db12b/OfficeXpSp3-kb832671-fullfile-enu.exe",
+              "url":"https://web.archive.org/web/20040330000000id_/http://download.microsoft.com/download/9/1/f/91ffc6b2-0745-470b-8dd3-1285b85db12b/OfficeXpSp3-kb832671-fullfile-enu.exe",
             },
             {
               "generation":"Office 2007 / Publisher 2007",
