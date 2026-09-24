@@ -245,8 +245,9 @@ def wayback_exact_sha(original_url: str, expected_sha: str) -> bytes:
     )
 
 
-def repair_phase1(inputs: Path, out: Path) -> dict:
+def repair_phase1(inputs: Path, prior_success: Path, out: Path) -> dict:
     rows = load_fingerprint_rows(inputs)
+    prior_rows = load_fingerprint_rows(prior_success)
     if len(rows) != 525:
         raise ValueError(f"expected 525 phase1 rows, found {len(rows)}")
 
@@ -258,39 +259,70 @@ def repair_phase1(inputs: Path, out: Path) -> dict:
             print(f"repair SHA already available: {sha[:12]} {prior.get('status')}", file=sys.stderr)
             continue
 
-        if spec["kind"] == "direct":
-            data = wayback_exact_sha(spec["url"], sha)
-        else:
-            last = None
-            for attempt in range(8):
-                try:
-                    data, _ = harvest_pub.common_crawl_fetch(
-                        spec["row"], timeout=90.0, max_bytes=100 * 1024 * 1024
-                    )
-                    break
-                except Exception as exc:
-                    last = exc
-                    if attempt < 7:
-                        time.sleep(min(30, 2 ** attempt))
+        data = None
+        repair_error = None
+        try:
+            if spec["kind"] == "direct":
+                data = wayback_exact_sha(spec["url"], sha)
             else:
-                assert last is not None
-                raise last
+                last = None
+                for attempt in range(8):
+                    try:
+                        data, _ = harvest_pub.common_crawl_fetch(
+                            spec["row"], timeout=90.0, max_bytes=100 * 1024 * 1024
+                        )
+                        break
+                    except Exception as exc:
+                        last = exc
+                        if attempt < 7:
+                            time.sleep(min(30, 2 ** attempt))
+                if data is None:
+                    assert last is not None
+                    raise last
+        except Exception as exc:
+            repair_error = f"{type(exc).__name__}:{exc}"
 
-        actual = hashlib.sha256(data).hexdigest()
-        if actual != sha:
-            raise ValueError(f"repair SHA mismatch expected={sha} actual={actual}")
-        first = novelty.cfb_probe(data)
-        second = novelty.cfb_probe(data)
-        if first != second:
-            raise ValueError(f"repair probe nondeterministic: {sha}")
-        rows[sha] = {
-            "sha256": sha,
-            "sources": prior.get("sources") or [],
-            "filenames": prior.get("filenames") or [],
-            **first,
-            "status": "ok",
-            "rehydrated_from": f"bounded_repair:{spec['kind']}",
-        }
+        if data is not None:
+            actual = hashlib.sha256(data).hexdigest()
+            if actual != sha:
+                raise ValueError(f"repair SHA mismatch expected={sha} actual={actual}")
+            first = novelty.cfb_probe(data)
+            second = novelty.cfb_probe(data)
+            if first != second:
+                raise ValueError(f"repair probe nondeterministic: {sha}")
+            rows[sha] = {
+                "sha256": sha,
+                "sources": prior.get("sources") or [],
+                "filenames": prior.get("filenames") or [],
+                **first,
+                "status": "ok",
+                "rehydrated_from": f"bounded_repair:{spec['kind']}",
+                "family_projection_status": "current_raw_verified",
+            }
+            continue
+
+        historical = prior_rows.get(sha)
+        if historical is None or historical.get("status") != "ok":
+            raise ValueError(
+                f"repair unavailable and no prior successful source-free receipt for {sha}: "
+                f"{repair_error}"
+            )
+        logical = historical.get("content_topology_fingerprint_sha256")
+        if not logical:
+            raise ValueError(f"prior successful row lacks logical identity: {sha}")
+
+        # The historical receipt proves generic CFB parse success and exact logical
+        # stream identity, but predates the current /Contents family projection.
+        # Preserve that evidence without inventing family/revision.
+        carried = dict(historical)
+        carried["sha256"] = sha
+        carried["status"] = "ok"
+        carried["contents_family"] = "unknown_due_to_raw_unavailable"
+        carried["contents_serialization_revision"] = None
+        carried["rehydrated_from"] = "retained_source_free_prior_success"
+        carried["family_projection_status"] = "raw_unavailable_current; prior_generic_probe_success"
+        carried["current_repair_error"] = repair_error
+        rows[sha] = carried
 
     result = [rows[k] for k in sorted(rows)]
     status = Counter(str(row.get("status") or "") for row in result)
@@ -402,7 +434,7 @@ def build_final(args: argparse.Namespace) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     phase1_out = args.out / "phase1"
-    repair_phase1(args.inputs / "phase1", phase1_out)
+    repair_phase1(args.inputs / "phase1", args.inputs / "prior_phase1", phase1_out)
 
     root0 = args.out / "c425_root0"
     range_container425_root0(root0)
@@ -441,6 +473,11 @@ def build_final(args: argparse.Namespace) -> int:
         raise ValueError(f"matrix status drift: {status}")
     if status.get("rehydrate_failed", 0) != 0:
         raise ValueError(f"matrix retained rehydrate failures: {status}")
+    unknown = (summary.get("contents_family_logical_counts") or {}).get(
+        "unknown_due_to_raw_unavailable", 0
+    )
+    if unknown != 4:
+        raise ValueError(f"expected 4 raw-unavailable family gaps, got {unknown}")
 
     print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
     return 0
