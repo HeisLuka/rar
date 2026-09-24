@@ -134,6 +134,21 @@ class CmoSlotFlowTests(unittest.TestCase):
         self.assertEqual(receipt["overset"]["first_nonfitting_scalar_index"], 2)
         self.assertEqual(receipt["overset"]["failure_reason"], "height")
 
+        fits = self.assert_admitted(
+            fixture(
+                [
+                    shaped_line(0, 1, 2, height=30),
+                    slot(0, 2, 7, height=70),
+                ],
+                height=100,
+            )
+        )
+        visible = fits["visible_slots"][0]
+        self.assertEqual(visible["preceding_text_height_emu"], 30)
+        self.assertEqual(visible["used_height_before_emu"], 30)
+        self.assertEqual(visible["resolved_y_emu"], 30)
+        self.assertEqual(visible["used_height_after_emu"], 100)
+
     def test_failing_text_line_also_establishes_authoritative_overset(self):
         value = fixture(
             [
