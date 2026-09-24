@@ -1,0 +1,26 @@
+name: Story Range V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/story_range_v1.py"
+      - "services/editor-api/test_story_range_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_revision_store.py"
+      - ".github/workflows/story-range-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run canonical Story range primitive tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_story_range_v1 test_revision_store.StoryRangeCommitTests

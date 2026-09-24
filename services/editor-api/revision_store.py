@@ -34,6 +34,29 @@ except ModuleNotFoundError:
     reorder_authored_lane = _authored_stack_module.reorder_authored_lane
     validate_authored_lane = _authored_stack_module.validate_authored_lane
 
+try:
+    from story_range_v1 import (
+        validate_scalar_sequence_v1,
+        validate_story_range_operation_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _story_range_path = pathlib.Path(__file__).with_name("story_range_v1.py")
+    _story_range_spec = importlib.util.spec_from_file_location(
+        "chaptera_story_range_v1",
+        _story_range_path,
+    )
+    if _story_range_spec is None or _story_range_spec.loader is None:
+        raise ImportError("cannot load story_range_v1 sibling module")
+    _story_range_module = importlib.util.module_from_spec(_story_range_spec)
+    _story_range_spec.loader.exec_module(_story_range_module)
+    validate_scalar_sequence_v1 = _story_range_module.validate_scalar_sequence_v1
+    validate_story_range_operation_v1 = (
+        _story_range_module.validate_story_range_operation_v1
+    )
+
 
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
@@ -733,7 +756,14 @@ class RevisionKernel:
         command = request.get("command")
         if not isinstance(command, dict) or command.get("kind") != "replace_story_range":
             raise ValueError("V1 Story range requires replace_story_range command")
-        allowed = {"kind", "story_id", "start_scalar", "end_scalar", "replacement_text"}
+        allowed = {
+            "kind",
+            "story_id",
+            "start_scalar",
+            "end_scalar",
+            "expected_before",
+            "replacement_text",
+        }
         if set(command) != allowed:
             raise ValueError("replace_story_range contains non-intent/authoritative fields")
         story_id = command.get("story_id")
@@ -751,8 +781,8 @@ class RevisionKernel:
             or end > 0xFFFFFFFF
         ):
             raise ValueError("Story scalar range is invalid")
-        if not isinstance(command.get("replacement_text"), str):
-            raise ValueError("replacement_text is required")
+        validate_scalar_sequence_v1(command.get("expected_before"), "expected_before")
+        validate_scalar_sequence_v1(command.get("replacement_text"), "replacement_text")
         depends = request.get("depends_on_client_operation_id")
         if depends is not None and (not isinstance(depends, str) or len(depends) < 8):
             raise ValueError("depends_on_client_operation_id is invalid")
@@ -1213,20 +1243,7 @@ class RevisionKernel:
 
     @staticmethod
     def _validate_canonical_story_range(command: dict, operation: dict) -> None:
-        if operation.get("kind") != "replace_story_range":
-            raise ValueError("authoritative executor returned non-story-range operation")
-        if operation.get("story_id") != command.get("story_id"):
-            raise ValueError("canonical Story operation targets a different story")
-        if operation.get("start_scalar") != command.get("start_scalar"):
-            raise ValueError("canonical Story start_scalar differs from accepted intent")
-        if operation.get("end_scalar") != command.get("end_scalar"):
-            raise ValueError("canonical Story end_scalar differs from accepted intent")
-        if operation.get("replacement_text") != command.get("replacement_text"):
-            raise ValueError("canonical Story replacement_text differs from accepted intent")
-        if not isinstance(operation.get("before_text_hash"), str):
-            raise ValueError("authoritative executor must derive before_text_hash")
-        if not isinstance(operation.get("after_text_hash"), str):
-            raise ValueError("authoritative executor must derive after_text_hash")
+        validate_story_range_operation_v1(command, operation)
 
     @staticmethod
     def _validate_canonical_image_crop(command: dict, operation: dict) -> None:

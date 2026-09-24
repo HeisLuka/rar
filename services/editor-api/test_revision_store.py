@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from revision_store import RevisionKernel
+from story_range_v1 import replace_story_range_v1
 
 
 DOCUMENT_ID = "10000000-0000-4000-8000-000000000001"
@@ -199,29 +200,21 @@ class FakeStoryExecutor:
         self.calls = 0
 
     def __call__(self, base_project, command):
-        import hashlib
         self.calls += 1
         story = base_project["stories"][command["story_id"]]
-        chars = list(story)
-        start = command["start_scalar"]
-        end = command["end_scalar"]
-        if end > len(chars):
-            raise ValueError("Story range outside canonical text")
-        replacement = command["replacement_text"]
-        after = "".join(chars[:start]) + replacement + "".join(chars[end:])
-        operation = {
-            "kind": "replace_story_range",
-            "story_id": command["story_id"],
-            "start_scalar": start,
-            "end_scalar": end,
-            "replacement_text": replacement,
-            "before_text_hash": hashlib.sha256(story.encode("utf-8")).hexdigest(),
-            "after_text_hash": hashlib.sha256(after.encode("utf-8")).hexdigest(),
-        }
+        result = replace_story_range_v1(
+            story_id=command["story_id"],
+            story_text=story,
+            start_scalar=command["start_scalar"],
+            end_scalar=command["end_scalar"],
+            expected_before=command["expected_before"],
+            replacement_text=command["replacement_text"],
+        )
+        operation = result.operation
         project = copy.deepcopy(base_project)
         project["operations"] = list(project["operations"]) + [copy.deepcopy(operation)]
         project["stories"] = dict(project["stories"])
-        project["stories"][command["story_id"]] = after
+        project["stories"][command["story_id"]] = result.after_text
         return operation, project, [{"key": "story.text", "state": "supported", "note": None}]
 
 
@@ -241,7 +234,25 @@ class StoryRangeCommitTests(unittest.TestCase):
         )
         self.executor = FakeStoryExecutor()
 
-    def story_request(self, op_id, start, end, replacement, base=None, depends=None):
+    def story_request(
+        self,
+        op_id,
+        start,
+        end,
+        replacement,
+        base=None,
+        depends=None,
+        expected_before=None,
+    ):
+        if expected_before is None:
+            story = self.project["stories"]["story:1"]
+            expected_before = (
+                story[start:end]
+                if isinstance(start, int)
+                and isinstance(end, int)
+                and 0 <= start <= end <= len(story)
+                else ""
+            )
         return {
             "protocol_version": "chaptera.story-range-intent.v1",
             "document_id": DOCUMENT_ID,
@@ -254,6 +265,7 @@ class StoryRangeCommitTests(unittest.TestCase):
                 "story_id": "story:1",
                 "start_scalar": start,
                 "end_scalar": end,
+                "expected_before": expected_before,
                 "replacement_text": replacement,
             },
         }
@@ -321,6 +333,40 @@ class StoryRangeCommitTests(unittest.TestCase):
         req["command"]["before_text_hash"] = "evil"
         with self.assertRaisesRegex(ValueError, "replace_story_range"):
             self.kernel.commit_story_range(req, self.executor)
+
+
+    def test_story_range_exact_expected_before_is_enforced_by_authoritative_primitive(self):
+        current = self.kernel.current_revision(DOCUMENT_ID).revision_id
+        with self.assertRaisesRegex(ValueError, "expected_before"):
+            self.kernel.commit_story_range(
+                self.story_request(
+                    "text-op-00000008",
+                    1,
+                    2,
+                    "漢",
+                    expected_before="X",
+                ),
+                self.executor,
+            )
+        self.assertEqual(current, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_story_range_canonical_operation_contains_exact_inverse(self):
+        result = self.kernel.commit_story_range(
+            self.story_request("text-op-00000009", 1, 2, "漢"),
+            self.executor,
+        )
+        operation = result["canonical_operation"]
+        self.assertEqual("chaptera.replace-story-range.v1", operation["protocol_version"])
+        self.assertEqual("😀", operation["expected_before"])
+        self.assertEqual(
+            {
+                "start_scalar": 1,
+                "end_scalar": 2,
+                "expected_before": "漢",
+                "replacement_text": "😀",
+            },
+            operation["inverse"],
+        )
 
 
 
