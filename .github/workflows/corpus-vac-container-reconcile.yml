@@ -1,0 +1,59 @@
+name: CORPUS-VAC container exact reconcile
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/container_resume_reconcile.py'
+      - 'tools/corpus/test_container_resume_reconcile.py'
+      - '.github/workflows/corpus-vac-container-reconcile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/container_resume_reconcile.py'
+      - 'tools/corpus/test_container_resume_reconcile.py'
+      - '.github/workflows/corpus-vac-container-reconcile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB dependency used by baseline ledger
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Run offline reconciliation tests
+        working-directory: tools/corpus
+        run: python -m unittest -v test_container_resume_reconcile
+      - name: Reconcile full container union against current Rar exact union
+        working-directory: tools/corpus
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python container_resume_reconcile.py \
+            --sources structural_novelty_sources.json \
+            --container-artifact-id 10805973231 \
+            --container-artifact-sha256 1959aad2c1d1e274a1823c3261f7c04c9c3ffa4be10674fb166d89329705f26d \
+            --crossarm-artifact-id 10812415542 \
+            --crossarm-artifact-sha256 e773f22e0ee2efa1851485b16fd954d76bce970eccb20cc41733403d1f03301b \
+            --out ../../out/container-reconcile
+      - name: Prove receipt contains no raw PUB
+        run: |
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into reconcile receipt" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-container-reconcile-${{ github.run_id }}
+          path: out/container-reconcile/**
+          if-no-files-found: error
+          retention-days: 90
