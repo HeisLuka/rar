@@ -137,11 +137,11 @@ class NestedAbsoluteTargetTests(unittest.TestCase):
             scope=scope,selection_snapshot=snap,ancestry=(g0,g1),
             cascade_snapshots=(cascade(g0,outer_children),cascade(g1,inner_children)),
             members=(NestedAbsoluteTargetMemberV1("a",RectEmu(10,10,10,10)),),
-            desired_page_rects=(DesiredPageRectV1("a",RectEmu(60,60,10,10)),),
+            desired_page_rects=(DesiredPageRectV1("a",RectEmu(75,75,10,10)),),
         )
         self.assertEqual("refit_exact",plan.status)
         self.assertIsNone(plan.ancestor_cascade)
-        self.assertEqual(RectEmu(60,60,10,10),plan.move_entries[0].after_page)
+        self.assertEqual(RectEmu(75,75,10,10),plan.move_entries[0].after_page)
         self.assertTrue(plan.unselected_siblings_preserved)
 
     def test_depth_two_crossing_outer_uses_ancestor_cascade_and_reverifies_leaf(self):
