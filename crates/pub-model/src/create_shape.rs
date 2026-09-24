@@ -60,6 +60,7 @@ pub enum CreateShapeError {
     InvalidBounds,
     UnsafeBoundsEdge,
     InvalidPaint(ShapePaintValidationError),
+    ExplicitFillAndStrokeRequired,
     PaintMustBeAuthorCreated,
 }
 
@@ -72,6 +73,9 @@ pub fn create_shape_entity_v1(
     }
     validate_rect_emu_v1(operation.bounds)?;
     validate_shape_paint_v1(&operation.paint).map_err(CreateShapeError::InvalidPaint)?;
+    if operation.paint.fill.is_none() || operation.paint.stroke.is_none() {
+        return Err(CreateShapeError::ExplicitFillAndStrokeRequired);
+    }
     if !matches!(
         operation.paint.provenance,
         ShapePaintProvenanceV1::AuthorCreated
