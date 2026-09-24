@@ -1,0 +1,62 @@
+name: PUB Sandbox Exact-Hash Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/symbols/sandbox_hash_probe.py"
+      - ".github/workflows/pub-sandbox-hash-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pub-sandbox-hash-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate probe
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/symbols/sandbox_hash_probe.py
+
+      - name: Probe public sandbox indexes by exact module SHA-256
+        run: |
+          set -euo pipefail
+          python tools/symbols/sandbox_hash_probe.py             --out out/pub-sandbox-hash-probe             --timeout 20             --delay 0.35
+
+      - name: Write summary
+        if: always()
+        run: |
+          if [[ -f out/pub-sandbox-hash-probe/summary.json ]]; then
+            echo "## Publisher exact-hash sandbox probe" >> "$GITHUB_STEP_SUMMARY"
+            cat out/pub-sandbox-hash-probe/summary.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guard metadata-only artifact
+        if: always()
+        run: |
+          set -euo pipefail
+          bad="$(find out/pub-sandbox-hash-probe -type f ( -iname '*.exe' -o -iname '*.dll' -o -iname '*.pdb' -o -iname '*.dmp' -o -iname '*.mdmp' -o -iname '*.zip' -o -iname '*.7z' ) -print 2>/dev/null || true)"
+          if [[ -n "$bad" ]]; then
+            echo "$bad" >&2
+            exit 4
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pub-sandbox-hash-probe-${{ github.run_id }}
+          path: out/pub-sandbox-hash-probe/**
+          if-no-files-found: error
+          retention-days: 90
