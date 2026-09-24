@@ -1,0 +1,102 @@
+name: TEMP legacy PUB template novelty
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/tmp-legacy-pub-template-novelty.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover exact and historical template files
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python tools/corpus/wayback_pub_seed.py \
+            --url 'http://www.paramind.net/CD_Booklet_Template_2003.pub' \
+            --url 'http://paramind.net/CD_Booklet_Template_2003.pub' \
+            --domain 'desktoppublishing.com' \
+            --domain 'www.desktoppublishing.com' \
+            --exact-limit 20 \
+            --domain-limit 1000 \
+            --delay 0.4 \
+            --out out/seed.csv \
+            --summary out/discovery.json
+          cat out/discovery.json
+      - name: Recover bytes
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/seed.csv \
+            --out out/harvest \
+            --max-files -1 \
+            --timeout 30 \
+            --max-bytes 104857600 \
+            --per-host-delay 0.1
+      - name: Filter against exact 950 SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import hashlib, io, json, os, shutil, zipfile
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          artifact_ids=[10808750049,10807797944,10808390771,10807882317,10808417821,10807881478,10807597565]
+          token=os.environ['GITHUB_TOKEN']; known=set()
+          for aid in artifact_ids:
+              req=Request(f'https://api.github.com/repos/HeisLuka/rar/actions/artifacts/{aid}/zip',headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json','User-Agent':'rar-legacy-template-novelty/1.0'})
+              with urlopen(req,timeout=120) as r: payload=r.read()
+              with zipfile.ZipFile(io.BytesIO(payload)) as z:
+                  names=[n for n in z.namelist() if n.endswith('index.json')]
+                  if not names: raise RuntimeError(f'no index.json in {aid}')
+                  for row in json.loads(z.read(names[0])):
+                      sha=str(row.get('sha256','')).lower()
+                      if len(sha)==64: known.add(sha)
+          if len(known)!=950: raise RuntimeError(f'expected 950 known SHA, got {len(known)}')
+          rows=json.loads(Path('out/harvest/manifest.json').read_text(encoding='utf-8'))
+          nd=Path('out/novel'); nd.mkdir(parents=True,exist_ok=True)
+          novel={}; known_hits=set(); publisher=set()
+          for row in rows:
+              if row.get('fetch_status') not in {'ok','ok_archive_member'} or row.get('classification')!='cfb_publisher_hint': continue
+              sha=str(row.get('sha256') or '').lower()
+              if len(sha)!=64: continue
+              publisher.add(sha)
+              if sha in known: known_hits.add(sha); continue
+              if sha in novel: continue
+              src=Path('out/harvest')/str(row.get('stored_path') or '')
+              if not src.is_file(): raise RuntimeError(f'missing {src}')
+              data=src.read_bytes()
+              if hashlib.sha256(data).hexdigest()!=sha: raise RuntimeError(f'sha mismatch {sha}')
+              if not data.startswith(bytes.fromhex('D0CF11E0A1B11AE1')): raise RuntimeError(f'not CFB {sha}')
+              name=Path(str(row.get('candidate_filename') or 'candidate.pub')).name
+              if not name.lower().endswith('.pub'): name += '.pub'
+              dst=nd/f'{sha}__{name}'; shutil.copyfile(src,dst)
+              rec=dict(row);rec['exported_name']=dst.name;novel[sha]=rec
+          out=[novel[k] for k in sorted(novel)]
+          Path('out/novel.json').write_text(json.dumps(out,indent=2,ensure_ascii=False),encoding='utf-8')
+          summary={'known_corpus_sha':len(known),'publisher_unique_sha':len(publisher),'known_sha_hits':len(known_hits),'novel_unique_sha':len(out),'novel':[{'sha256':r['sha256'],'url':r.get('wayback_original_url'),'name':r.get('candidate_filename')} for r in out]}
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-pub-template-novelty-${{ github.run_id }}
+          path: |
+            out/discovery.json
+            out/summary.json
+            out/novel.json
+            out/novel/**
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
