@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fmt,
+    env, fmt,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -258,9 +257,7 @@ async fn migrate_to(
     if current > target_version {
         return Err(MigrationError::new(
             "schema_version_too_new_for_target",
-            format!(
-                "database is already at schema {current}, target request was {target_version}"
-            ),
+            format!("database is already at schema {current}, target request was {target_version}"),
         ));
     }
 
@@ -268,20 +265,17 @@ async fn migrate_to(
         .iter()
         .filter(|spec| spec.version > current && spec.version <= target_version)
     {
-        raw_sql(spec.sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| {
-                MigrationError::new(
-                    "migration_apply_failed",
-                    format!(
-                        "migration {} ({}) failed: {}",
-                        spec.version,
-                        spec.name,
-                        bounded_sqlx_message(&error)
-                    ),
-                )
-            })?;
+        raw_sql(spec.sql).execute(&mut *tx).await.map_err(|error| {
+            MigrationError::new(
+                "migration_apply_failed",
+                format!(
+                    "migration {} ({}) failed: {}",
+                    spec.version,
+                    spec.name,
+                    bounded_sqlx_message(&error)
+                ),
+            )
+        })?;
 
         sqlx::query(
             r#"
@@ -452,13 +446,12 @@ async fn table_exists(
     connection: &mut SqliteConnection,
     table_name: &str,
 ) -> Result<bool, MigrationError> {
-    let exists: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?",
-    )
-    .bind(table_name)
-    .fetch_one(connection)
-    .await
-    .map_err(sqlite_error)?;
+    let exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?")
+            .bind(table_name)
+            .fetch_one(connection)
+            .await
+            .map_err(sqlite_error)?;
 
     Ok(exists == 1)
 }
@@ -507,7 +500,10 @@ fn now_ms() -> Result<i64, MigrationError> {
 }
 
 fn sqlite_error(error: impl fmt::Display) -> MigrationError {
-    MigrationError::new("sqlite_migration_error", bounded_message(&error.to_string()))
+    MigrationError::new(
+        "sqlite_migration_error",
+        bounded_message(&error.to_string()),
+    )
 }
 
 fn bounded_sqlx_message(error: &sqlx::Error) -> String {
@@ -577,15 +573,11 @@ mod tests {
         let second = runtime.migrate_up().await.unwrap();
         assert_eq!(second, first);
 
-        let mut connection = connect(&path, Duration::from_secs(2), false)
+        let mut connection = connect(&path, Duration::from_secs(2), false).await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chaptera_schema_migrations")
+            .fetch_one(&mut connection)
             .await
             .unwrap();
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM chaptera_schema_migrations",
-        )
-        .fetch_one(&mut connection)
-        .await
-        .unwrap();
         assert_eq!(count, CURRENT_SCHEMA_VERSION);
 
         cleanup(&path);
@@ -597,9 +589,7 @@ mod tests {
         let runtime = SqliteMigrationRuntime::new(&path, Duration::from_secs(2)).unwrap();
         runtime.migrate_up().await.unwrap();
 
-        let mut connection = connect(&path, Duration::from_secs(2), false)
-            .await
-            .unwrap();
+        let mut connection = connect(&path, Duration::from_secs(2), false).await.unwrap();
         sqlx::query(
             "UPDATE chaptera_schema_migrations SET checksum_sha256='tampered' WHERE version=2",
         )
@@ -619,9 +609,7 @@ mod tests {
         let runtime = SqliteMigrationRuntime::new(&path, Duration::from_secs(2)).unwrap();
         runtime.migrate_up().await.unwrap();
 
-        let mut connection = connect(&path, Duration::from_secs(2), false)
-            .await
-            .unwrap();
+        let mut connection = connect(&path, Duration::from_secs(2), false).await.unwrap();
         sqlx::query(
             r#"
             INSERT INTO chaptera_schema_migrations(
@@ -648,8 +636,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let restarted =
-                SqliteMigrationRuntime::new(&path, Duration::from_secs(2)).unwrap();
+            let restarted = SqliteMigrationRuntime::new(&path, Duration::from_secs(2)).unwrap();
             let final_report = restarted.migrate_up().await.unwrap();
             assert_eq!(final_report.state, "current");
             assert_eq!(final_report.current_version, CURRENT_SCHEMA_VERSION);
@@ -668,12 +655,11 @@ mod tests {
         assert_eq!(left.unwrap().state, "current");
         assert_eq!(right.unwrap().state, "current");
 
-        let final_report =
-            SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
-                .unwrap()
-                .status_report()
-                .await
-                .unwrap();
+        let final_report = SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .status_report()
+            .await
+            .unwrap();
         assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5]);
 
         cleanup(&path);
@@ -682,9 +668,7 @@ mod tests {
     #[tokio::test]
     async fn refuses_unversioned_known_schema() {
         let path = temp_db("legacy");
-        let mut connection = connect(&path, Duration::from_secs(2), true)
-            .await
-            .unwrap();
+        let mut connection = connect(&path, Duration::from_secs(2), true).await.unwrap();
         sqlx::query("CREATE TABLE jobs(job_id BLOB PRIMARY KEY)")
             .execute(&mut connection)
             .await
