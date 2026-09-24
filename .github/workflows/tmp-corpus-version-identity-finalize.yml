@@ -30,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p inputs/phase1 inputs/c425_root1 inputs/c425_root2 inputs/container407 inputs/crossarm129
+          mkdir -p inputs/phase1 inputs/prior_phase1 inputs/c425_root1 inputs/c425_root2 inputs/container407 inputs/crossarm129
           fetch_artifact() {
             id="$1"
             dest="$2"
@@ -43,6 +43,7 @@ jobs:
           fetch_artifact 10837319526 inputs/phase1/p1-1
           fetch_artifact 10837294686 inputs/phase1/p1-2
           fetch_artifact 10836964952 inputs/phase1/p1-3
+          fetch_artifact 10804158328 inputs/prior_phase1
           fetch_artifact 10837528964 inputs/c425_root1
           fetch_artifact 10837796947 inputs/c425_root2
           fetch_artifact 10837667603 inputs/container407
