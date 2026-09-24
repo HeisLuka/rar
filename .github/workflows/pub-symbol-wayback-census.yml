@@ -35,7 +35,10 @@ jobs:
           set -euo pipefail
           python tools/symbols/symbol_wayback_cdx.py \
             --out out/pub-symbol-wayback \
-            --delay 0.20 \
+            --retry-errors-only \
+            --timeout 25 \
+            --retries 0 \
+            --delay 0.75 \
             --limit 50
           cat out/pub-symbol-wayback/summary.json
 
