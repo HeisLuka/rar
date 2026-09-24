@@ -88,9 +88,44 @@ jobs:
           curl -fL --retry 4 --retry-delay 5 --max-time 2400 "$url" -o out/p2002.7z
           test "$(sha1sum out/p2002.7z | awk '{print $1}')" = "1ebbf5a8c188794e14a5ad2556bb751797034d0c"
           7z x -y out/p2002.7z -oout/container > /dev/null
-          media="$(find out/container -type f -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
-          test -n "$media"
-          7z x -y "$media" -oout/disc > out/media-extract.txt 2>&1
+          find out/container -type f -printf '%s\t%p\n' | sort -nr | tee out/container-files.txt
+          bin="$(find out/container -type f -iname '*.bin' | head -n1 || true)"
+          cue="$(find out/container -type f -iname '*.cue' | head -n1 || true)"
+          if [ -z "$bin" ]; then
+            bin="$(find out/container -type f -printf '%s\t%p\n' | sort -nr | head -n1 | cut -f2-)"
+          fi
+          test -n "$bin"
+          stat -c 'raw_size_bytes=%s' "$bin" | tee out/raw-size.txt
+          file "$bin" | tee out/raw-file.txt
+          if [ -n "$cue" ]; then
+            bchunk "$bin" "$cue" out/p2002 > out/bchunk.txt 2>&1
+            iso="$(find out -maxdepth 1 -type f -name 'p2002*.iso' | head -n1)"
+          else
+            python3 - "$bin" <<'PY'
+          import sys
+          from pathlib import Path
+          src=Path(sys.argv[1]); dst=Path("out/p2002.iso")
+          size=src.stat().st_size
+          if size % 2352:
+              raise SystemExit("raw image not 2352-sector aligned")
+          with src.open("rb") as fi, dst.open("wb") as fo:
+              while True:
+                  sec=fi.read(2352)
+                  if not sec:
+                      break
+                  if len(sec)!=2352:
+                      raise SystemExit("short sector")
+                  fo.write(sec[16:16+2048])
+          PY
+            iso="out/p2002.iso"
+          fi
+          test -n "$iso"
+          sha256sum "$iso" | tee out/iso-sha256.txt
+          sha1sum "$iso" | tee out/iso-sha1.txt
+          md5sum "$iso" | tee out/iso-md5.txt
+          stat -c 'iso_size_bytes=%s' "$iso" | tee out/iso-size.txt
+          file "$iso" | tee out/iso-file.txt
+          7z x -y "$iso" -oout/disc > out/media-extract.txt 2>&1
           find out/disc -type f -iname '*.msi' -printf '%s\t%p\n' | sort -nr > out/msi-list.txt
           : > out/vbapb10-msi-hits.txt
           while IFS= read -r msi; do
