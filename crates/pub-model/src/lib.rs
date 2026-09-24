@@ -48,9 +48,7 @@ pub use source_identity::{
     pub_contents_object_key_v1, pub_quill_story_object_key_v1,
 };
 
-
 pub use rotate_quarter::{
-    ExactAffineV1, RotateQuarterError, RotateQuarterResultV1,
-    apply_authored_shape_quarter_turn_v1, canonical_shape_affine_v1,
-    validate_exact_affine_v1,
+    ExactAffineV1, RotateQuarterError, RotateQuarterResultV1, apply_authored_shape_quarter_turn_v1,
+    canonical_shape_affine_v1, validate_exact_affine_v1,
 };
