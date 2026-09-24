@@ -1,0 +1,215 @@
+name: CORPUS novelty pilot 01
+
+on:
+  push:
+    branches: [corpus-novelty-pilot-01]
+    paths:
+      - '.github/workflows/corpus-novelty-pilot-01.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  ANALYZER_REF: '2416bf1af401caa997e588b41285816422a7d59b'
+
+jobs:
+  github-history-novelty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: rar
+      - uses: actions/checkout@v4
+        with:
+          repository: HeisLuka/yab
+          ref: ${{ env.ANALYZER_REF }}
+          path: analyzer
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85.0'
+      - name: Discover exact immutable Git-history locators
+        working-directory: rar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/novelty
+          python tools/corpus/github_history_pub_seed.py \
+            --repo-file tools/corpus/pub_history_repositories.txt \
+            --no-search --max-repos 4 --history-depth 1000 \
+            --max-paths-per-repo 100 --max-captures-per-path 2 --max-releases 20 \
+            --out out/novelty/seed.csv \
+            --summary out/novelty/discovery.json
+          cat out/novelty/discovery.json
+      - name: Rehydrate exact bytes with SHA-bearing manifest
+        working-directory: rar
+        run: |
+          set -euo pipefail
+          python tools/corpus/harvest_pub.py \
+            --seed out/novelty/seed.csv \
+            --out out/novelty/harvest \
+            --max-files -1 --timeout 25 --max-bytes 104857600 --per-host-delay 0.05
+      - name: Build pinned public analyzer
+        working-directory: analyzer
+        run: |
+          set -euo pipefail
+          cargo build --release -p pub-cli
+          ./target/release/pub --help | head -80
+      - name: Generate source-free fingerprints twice
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,subprocess
+          from pathlib import Path
+
+          root=Path("rar/out/novelty/harvest")
+          rows=json.loads((root/"manifest.json").read_text())
+          pub=Path("analyzer/target/release/pub").resolve()
+
+          def run_json(args):
+              p=subprocess.run([str(pub),*args],capture_output=True,text=True)
+              return p.returncode,p.stdout,p.stderr
+
+          def normalize_inventory(obj):
+              entries=obj.get("entries",[]) if isinstance(obj,dict) else []
+              normalized=[]
+              for e in entries:
+                  if not isinstance(e,dict):
+                      continue
+                  normalized.append({
+                      "path":e.get("path"),
+                      "kind":e.get("kind"),
+                      "len":e.get("len"),
+                      "sha256":e.get("sha256"),
+                  })
+              normalized.sort(key=lambda x:(str(x["path"]),str(x["kind"]),str(x["len"]),str(x["sha256"])))
+              return normalized
+
+          def fingerprint_pass():
+              out=[]
+              for row in sorted(rows,key=lambda r:(str(r.get("sha256","")),str(r.get("candidate_filename","")))):
+                  if row.get("fetch_status")!="ok" or row.get("classification")!="cfb_publisher_hint":
+                      continue
+                  stored=row.get("stored_path")
+                  path=root/stored
+                  raw=path.read_bytes()
+                  sha=hashlib.sha256(raw).hexdigest()
+                  expected=str(row.get("sha256","")).lower()
+                  if sha!=expected:
+                      raise SystemExit(f"SHA mismatch {path}: {sha} != {expected}")
+
+                  irc,iout,ierr=run_json(["inspect",str(path),"--json"])
+                  inspect_obj=None
+                  inspect_error=None
+                  if irc==0:
+                      try: inspect_obj=json.loads(iout)
+                      except Exception as e: inspect_error=f"json_decode:{e}"
+                  else:
+                      inspect_error=(ierr or iout)[-1000:]
+
+                  src=normalize_inventory(inspect_obj or {})
+                  topology_blob=json.dumps(src,sort_keys=True,separators=(",",":")).encode()
+                  topology_sha=hashlib.sha256(topology_blob).hexdigest()
+
+                  src_rc,sout,serr=run_json(["structural-base",str(path),"--json"])
+                  structural=None
+                  structural_error=None
+                  if src_rc==0:
+                      try: structural=json.loads(sout)
+                      except Exception as e: structural_error=f"json_decode:{e}"
+                  else:
+                      structural_error=(serr or sout)[-1200:]
+
+                  s_summary=None
+                  if isinstance(structural,dict):
+                      streams=structural.get("streams",[])
+                      candidates=structural.get("candidates",[])
+                      diagnostics=structural.get("diagnostics",[])
+                      s_summary={
+                          "source_sha256":structural.get("source_sha256"),
+                          "stream_count":len(streams) if isinstance(streams,list) else None,
+                          "candidate_count":len(candidates) if isinstance(candidates,list) else None,
+                          "diagnostic_count":len(diagnostics) if isinstance(diagnostics,list) else None,
+                          "diagnostic_codes":sorted({
+                              str(d.get("code","")) for d in diagnostics if isinstance(d,dict) and d.get("code")
+                          }),
+                      }
+
+                  out.append({
+                      "sha256":sha,
+                      "source_class":row.get("source_class"),
+                      "candidate_filename":row.get("candidate_filename"),
+                      "github_repository":row.get("github_repository"),
+                      "github_commit":row.get("github_commit"),
+                      "github_path":row.get("github_path"),
+                      "size_bytes":len(raw),
+                      "inspect_ok":irc==0 and inspect_error is None,
+                      "inspect_error":inspect_error,
+                      "cfb_entry_count":len(src),
+                      "cfb_topology_sha256":topology_sha,
+                      "structural_base_ok":src_rc==0 and structural_error is None,
+                      "structural_base_error":structural_error,
+                      "structural_base":s_summary,
+                  })
+              return out
+
+          a=fingerprint_pass()
+          b=fingerprint_pass()
+          ca=json.dumps(a,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+          cb=json.dumps(b,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+          if ca!=cb:
+              raise SystemExit("non-deterministic fingerprint output")
+
+          import collections
+          clusters=collections.defaultdict(list)
+          for r in a:
+              clusters[r["cfb_topology_sha256"]].append(r["sha256"])
+          summary={
+              "schema":"rar-corpus-novelty-pilot-v1",
+              "analyzer_repo":"HeisLuka/yab",
+              "analyzer_ref":"2416bf1af401caa997e588b41285816422a7d59b",
+              "attempted_sha256":len(a),
+              "inspect_ok":sum(bool(r["inspect_ok"]) for r in a),
+              "structural_base_ok":sum(bool(r["structural_base_ok"]) for r in a),
+              "structural_base_failed":sum(not bool(r["structural_base_ok"]) for r in a),
+              "exact_topology_clusters":len(clusters),
+              "duplicate_topology_clusters":sum(len(v)>1 for v in clusters.values()),
+              "deterministic_two_pass":True,
+              "fingerprint_sha256":hashlib.sha256(ca.encode()).hexdigest(),
+              "guardrail":"Git-history pilot only; not the full post-M1 corpus novelty closure."
+          }
+          outdir=Path("rar/out/novelty/fingerprints")
+          outdir.mkdir(parents=True,exist_ok=True)
+          (outdir/"per_sha.json").write_text(json.dumps(a,indent=2,ensure_ascii=False))
+          (outdir/"clusters.json").write_text(json.dumps(
+              {k:sorted(v) for k,v in sorted(clusters.items())},indent=2))
+          (outdir/"summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Delete all raw PUB bytes before upload
+        if: always()
+        working-directory: rar
+        run: |
+          set -euo pipefail
+          find out/novelty/harvest -type f \
+            ! -name 'manifest.json' ! -name 'manifest.csv' -delete 2>/dev/null || true
+          if find out/novelty -type f \( -iname '*.pub' -o -iname '*.PUB' \) | grep -q .; then
+            echo "raw PUB remains" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-novelty-pilot-01-${{ github.run_id }}
+          path: |
+            rar/out/novelty/discovery.json
+            rar/out/novelty/harvest/manifest.json
+            rar/out/novelty/harvest/manifest.csv
+            rar/out/novelty/fingerprints/**
+          if-no-files-found: warn
+          retention-days: 30
