@@ -16,7 +16,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: pub-blocker-acquisition-${{ github.ref }}
+  group: pub-blocker-acquisition-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
