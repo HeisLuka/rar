@@ -1,0 +1,44 @@
+name: Authoring Rotate Quarter V1
+
+on:
+  pull_request:
+    paths:
+      - "crates/pub-model/**"
+      - "services/editor-api/rotate_quarter_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_rotate_quarter_v1.py"
+      - "packages/protocol/authoring-rotate-quarter/v1/**"
+      - ".github/workflows/authoring-rotate-quarter-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run quarter-turn revision tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_rotate_quarter_v1 test_revision_store test_create_shape
+      - name: Check JSON schema syntax
+        run: python -m json.tool packages/protocol/authoring-rotate-quarter/v1/rotate-node-quarter-intent.schema.json >/dev/null
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check pub-model
+        run: cargo check -p pub-model --all-targets
+      - name: Lint pub-model
+        run: cargo clippy -p pub-model --all-targets -- -D warnings
+      - name: Test pub-model
+        run: cargo test -p pub-model

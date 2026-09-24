@@ -115,6 +115,33 @@ except ModuleNotFoundError:
     validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
 
 try:
+    from rotate_quarter_v1 import (
+        authored_bounds_center_v1,
+        validate_affine_v1,
+        validate_rotate_node_quarter_intent_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _rotate_quarter_path = pathlib.Path(__file__).with_name("rotate_quarter_v1.py")
+    _rotate_quarter_spec = importlib.util.spec_from_file_location(
+        "chaptera_rotate_quarter_v1",
+        _rotate_quarter_path,
+    )
+    if _rotate_quarter_spec is None or _rotate_quarter_spec.loader is None:
+        raise ImportError("cannot load rotate_quarter_v1 sibling module")
+    _rotate_quarter_module = importlib.util.module_from_spec(_rotate_quarter_spec)
+    sys.modules[_rotate_quarter_spec.name] = _rotate_quarter_module
+    _rotate_quarter_spec.loader.exec_module(_rotate_quarter_module)
+    authored_bounds_center_v1 = _rotate_quarter_module.authored_bounds_center_v1
+    validate_affine_v1 = _rotate_quarter_module.validate_affine_v1
+    validate_rotate_node_quarter_intent_v1 = (
+        _rotate_quarter_module.validate_rotate_node_quarter_intent_v1
+    )
+
+
+try:
     from authoring_fragment_v1 import (
         canonical_paste_fragment_operation_v1,
         validate_paste_fragment_intent_v1,
@@ -483,6 +510,52 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_create_shape_v2_request_shape,
             canonical_validator=self._validate_canonical_create_shape_v2,
+        )
+
+    def commit_rotate_node_quarter(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        def bound_executor(base_project: dict, command: dict):
+            operation, resulting_project, consequences = executor(
+                base_project,
+                command,
+            )
+            node_id = command["node_id"]
+            shapes = base_project.get("shapes")
+            target = shapes.get(node_id) if isinstance(shapes, dict) else None
+            if not isinstance(target, dict):
+                raise ValueError("RotateNodeQuarterTurn target missing from base project")
+            expected_pivot = authored_bounds_center_v1(target.get("bounds"))
+            if operation.get("pivot") != expected_pivot:
+                raise ValueError(
+                    "canonical RotateNodeQuarterTurn pivot differs from authored bounds center"
+                )
+            result_shapes = resulting_project.get("shapes")
+            result_target = (
+                result_shapes.get(node_id)
+                if isinstance(result_shapes, dict)
+                else None
+            )
+            expected_transform = {
+                "kind": "affine",
+                **operation.get("after", {}),
+            }
+            if (
+                not isinstance(result_target, dict)
+                or result_target.get("transform") != expected_transform
+            ):
+                raise ValueError(
+                    "RotateNodeQuarterTurn resulting project is not bound to canonical after transform"
+                )
+            return operation, resulting_project, consequences
+
+        return self._commit_command(
+            request,
+            bound_executor,
+            request_validator=self._validate_rotate_node_quarter_request_shape,
+            canonical_validator=self._validate_canonical_rotate_node_quarter,
         )
 
     def commit_paste_fragment(
@@ -1660,6 +1733,61 @@ class RevisionKernel:
             raise ValueError("canonical CreateShape fill differs from accepted intent")
         if paint.get("stroke") != command.get("paint", {}).get("stroke"):
             raise ValueError("canonical CreateShape stroke differs from accepted intent")
+
+    @staticmethod
+    def _validate_rotate_node_quarter_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.rotate-node-quarter-intent.v1":
+            raise ValueError("V1 RotateNodeQuarterTurn protocol_version is required")
+        validate_rotate_node_quarter_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_rotate_node_quarter(
+        command: dict,
+        operation: dict,
+    ) -> None:
+        expected_keys = {
+            "kind",
+            "node_id",
+            "before",
+            "after",
+            "pivot_policy",
+            "pivot",
+            "quarter_turns",
+        }
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != expected_keys
+            or operation.get("kind") != "rotate_node_quarter_turn"
+        ):
+            raise ValueError(
+                "authoritative executor returned malformed RotateNodeQuarterTurn operation"
+            )
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical RotateNodeQuarterTurn targets a different node")
+        before = validate_affine_v1(operation.get("before"), "canonical before affine")
+        after = validate_affine_v1(operation.get("after"), "canonical after affine")
+        expected_before = validate_affine_v1(
+            command.get("expected_before"),
+            "expected_before affine",
+        )
+        if before != expected_before:
+            raise ValueError(
+                "canonical RotateNodeQuarterTurn before-state differs from precondition"
+            )
+        if before == after:
+            raise ValueError("canonical RotateNodeQuarterTurn must change transform")
+        if operation.get("pivot_policy") != command.get("pivot_policy"):
+            raise ValueError("canonical RotateNodeQuarterTurn pivot policy differs from intent")
+        pivot = operation.get("pivot")
+        if (
+            not isinstance(pivot, dict)
+            or set(pivot) != {"x", "y"}
+            or not all(isinstance(pivot.get(axis), str) for axis in ("x", "y"))
+        ):
+            raise ValueError("canonical RotateNodeQuarterTurn pivot is malformed")
+        turns = command.get("quarter_turns")
+        if operation.get("quarter_turns") != turns % 4:
+            raise ValueError("canonical RotateNodeQuarterTurn quarter_turns differ from intent")
 
     @staticmethod
     def _validate_paste_fragment_request_shape(request: dict) -> None:

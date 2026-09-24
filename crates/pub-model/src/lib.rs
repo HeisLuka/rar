@@ -8,6 +8,7 @@
 mod create_shape;
 mod fragment;
 mod projection_context;
+mod rotate_quarter;
 mod shape_paint;
 mod shape_paint_op;
 mod source_identity;
@@ -45,4 +46,9 @@ pub use source_identity::{
     PUB_SOURCE_ADAPTER_ID_V1, SOURCE_DERIVED_NAMESPACE_V1, SourceIdentityError,
     derive_pub_node_id_v1, derive_pub_page_id_v1, derive_pub_story_id_v1, derive_source_uuid_v5_v1,
     pub_contents_object_key_v1, pub_quill_story_object_key_v1,
+};
+
+pub use rotate_quarter::{
+    ExactAffineV1, RotateQuarterError, RotateQuarterResultV1, apply_authored_shape_quarter_turn_v1,
+    canonical_shape_affine_v1, validate_exact_affine_v1,
 };
