@@ -46,13 +46,14 @@ CREATE INDEX IF NOT EXISTS idx_relations_src
 CREATE INDEX IF NOT EXISTS idx_relations_dst
   ON relations(dst_type, dst_id, relation);
 
+-- Stored-content FTS is deliberate. It permits ordinary DELETE/INSERT refreshes
+-- across the SQLite versions commonly bundled with Python on Windows.
 CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
   entity_type UNINDEXED,
   entity_id UNINDEXED,
   title,
   body_markdown,
-  blocker,
-  content=''
+  blocker
 );
 
 CREATE TABLE IF NOT EXISTS sync_watermarks (
