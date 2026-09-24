@@ -428,11 +428,10 @@ pub fn parse_confirmed_mature_plc_cmob(
     }
 
     let declared_length = read_u32_le(bytes, 0)?;
-    let expected_chunk_length = u32::try_from(bytes.len()).map_err(|_| {
-        PlcCmobProjectionError::MalformedPayloadLength {
+    let expected_chunk_length =
+        u32::try_from(bytes.len()).map_err(|_| PlcCmobProjectionError::MalformedPayloadLength {
             payload_len: bytes.len(),
-        }
-    })?;
+        })?;
     if declared_length != expected_chunk_length {
         return Err(PlcCmobProjectionError::DeclaredLengthMismatch {
             context: "PlcCmob.chunk",
