@@ -7,7 +7,10 @@ on:
       - "tools/run_render_bench_contract.py"
       - "tools/render_scene_v1.py"
       - "tools/scene_patch_v1.py"
+      - "tools/optimization_receipt_v1.py"
+      - "tools/run_optimization_spine_contract.py"
       - "docs/render-bench-v1.md"
+      - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
   workflow_dispatch:
 
@@ -25,8 +28,15 @@ jobs:
           python-version: "3.12"
       - name: Run RenderScene and ScenePatch benchmark matrix
         run: python tools/run_render_bench_contract.py
+      - name: Normalize benchmark into optimization measurement snapshot
+        run: python tools/run_optimization_spine_contract.py
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
           path: target/render-bench-v1/receipt.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optimization-spine-render-bench-measurement
+          path: target/optimization-spine-v1/render-bench-measurement.json
           if-no-files-found: error
