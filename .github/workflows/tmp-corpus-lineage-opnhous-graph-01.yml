@@ -19,16 +19,16 @@ jobs:
           python-version: '3.12'
       - name: Install pinned CFB parser
         run: python -m pip install --disable-pip-version-check olefile==0.47
-      - name: Route OPNHOUS by exact no-Quill 0x22 dialect and compare text/property state
+      - name: Decode OPNHOUS property pages and locate object directories
         run: |
           set -euo pipefail
           python - <<'PY'
           from __future__ import annotations
-          import hashlib, json, math, time, urllib.parse, urllib.request
+          import hashlib, json, time, urllib.parse, urllib.request
           from pathlib import Path
           import olefile
 
-          UA="rar-opnhous-dialect/2.0"; SECTOR=2048
+          UA="rar-opnhous-graph/3.0"; SECTOR=2048
           SPECS={
             "left":{"sha256":"0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c","size":11264,"member":"PAGEWIZ/OPNHOUS.PUB","archive_url":"https://archive.org/download/PUB40CD/PUB_40_CD.ISO","source_page":"https://archive.org/details/PUB40CD"},
             "right":{"sha256":"227961e2fba4a6fb814aa2da47e79b19d55ff04e87e49d9c5ceef8d07ce36d0e","size":11264,"member":"PageWiz/OPNHOUS.PUB","archive_url":"https://archive.org/download/pub-40-cd/PUB_40_CD.iso","source_page":"https://archive.org/details/pub-40-cd"}
@@ -40,25 +40,27 @@ jobs:
           def u32(b,o):
             if o<0 or o+4>len(b): raise ValueError(f"u32 oob {o}")
             return int.from_bytes(b[o:o+4],"little")
+          def s8(x): return x-256 if x>=128 else x
+          def s16(v): return v-65536 if v>=32768 else v
 
           class ISO:
             def __init__(self,url):
               self.url=url; self.cache={}; self.delivery=self._choose()
             def candidates(self):
-              p=urllib.parse.urlparse(self.url); parts=p.path.split("/"); ident=parts[2]; fn="/".join(parts[3:])
+              p=urllib.parse.urlparse(self.url); q=p.path.split("/"); ident=q[2]; fn="/".join(q[3:])
               req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
               with urllib.request.urlopen(req,timeout=30) as r:m=json.load(r)
-              out=[]; d=str(m.get("dir") or "")
+              d=str(m.get("dir") or ""); out=[]
               for k in ("d1","d2"):
                 h=str(m.get(k) or "")
-                if h and d: out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
               out += [self.url,self.url+"?download=1"]; return list(dict.fromkeys(out))
             def rr(self,url,start,n):
               req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
               with urllib.request.urlopen(req,timeout=45) as r:
-                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"): raise ValueError("range unsupported")
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
                 d=r.read(n+1)
-              if len(d)!=n: raise ValueError(f"range size {len(d)} != {n}")
+              if len(d)!=n:raise ValueError(f"range size {len(d)} != {n}")
               return d
             def _choose(self):
               last=None
@@ -66,11 +68,11 @@ jobs:
                 for a in range(3):
                   try:
                     p=self.rr(u,16*SECTOR,SECTOR)
-                    if p[:6]!=b"\x01CD001": raise ValueError("bad pvd")
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
                     return u
                   except Exception as e:
                     last=e
-                    if a<2: time.sleep(2**a)
+                    if a<2:time.sleep(2**a)
               raise last
             def read(self,start,n):
               last=None
@@ -85,7 +87,7 @@ jobs:
               return r[33:33+r[32]].decode("ascii","strict"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
             def directory(self,e,s):
               if (e,s) in self.cache:return self.cache[e,s]
-              d=self.read(e*SECTOR,s); out={}; p=0
+              d=self.read(e*SECTOR,s);out={};p=0
               while p<len(d):
                 n=d[p]
                 if not n:p=((p//SECTOR)+1)*SECTOR;continue
@@ -94,7 +96,7 @@ jobs:
                 p+=n
               self.cache[e,s]=out;return out
             def member(self,path):
-              p=self.read(16*SECTOR,SECTOR); rl=p[156]; _,e,s,fl=self.rec(p[156:156+rl])
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
               parts=[x.upper() for x in path.strip("/").split("/") if x]
               for i,x in enumerate(parts):
                 e,s,fl=self.directory(e,s)[x]
@@ -102,90 +104,177 @@ jobs:
               if fl&2:raise ValueError("target dir")
               return self.read(e*SECTOR,s)
 
-          def controls(t):
-            return {
-              "shape_0c":[i+1 for i,x in enumerate(t) if x==0x0c],
-              "cell_0f":[i for i,x in enumerate(t) if x==0x0f],
-              "field_05":[i for i,x in enumerate(t) if x==0x05],
-              "field_06":[i for i,x in enumerate(t) if x==0x06],
-              "vertical_0b":[i for i,x in enumerate(t) if x==0x0b],
-              "crlf":[i+2 for i in range(len(t)-1) if t[i:i+2]==b"\r\n"],
-            }
+          def extract_contents(pub):
+            with olefile.OleFileIO(pub) as ole:return ole.openstream(["Contents"]).read()
 
-          def generation(sig,cv):
-            return {
-              ("c002",200):"Publisher2.0",
-              ("7d00",300):"Publisher95",
-              ("8800",300):"Publisher97",
-            }.get((sig,cv),"unknown-noquill-0x22")
+          def record_at(page,style_offset,kind):
+            pos=2*style_offset
+            if pos>=511:return {"offset":style_offset,"valid":False,"error":"offset-oob"}
+            ln=page[pos]
+            end=pos+1+ln
+            if end>511:return {"offset":style_offset,"valid":False,"length":ln,"error":"record-oob"}
+            raw=page[pos:end]
+            row={"offset":style_offset,"valid":True,"length":ln,"sha256":sha(raw)}
+            if kind=="char" and ln:
+              payload=raw[1:]
+              if len(payload)>=1:row["flags_bold_italic_smallcaps_allcaps"]=payload[0]&0x0f
+              if len(payload)>=3:row["font_index"]=payload[2]
+              if len(payload)>=5:
+                row["size_delta_half_points"]=s16(int.from_bytes(payload[4:6],"little")) if len(payload)>=6 else s8(payload[4])
+              if len(payload)>=7:row["baseline_raw_s8"]=s8(payload[6])
+              if len(payload)>=9:row["underline_spacing_raw"]=payload[8]
+              if len(payload)>=11:row["field_id_candidate"]=int.from_bytes(payload[10:12],"little") if len(payload)>=12 else payload[10]
+              if len(payload)>=13:
+                remain=len(payload)-12
+                width=1 if remain<2 else 2 if remain<4 else 4
+                row["color_candidate_width"]=width
+                row["color_candidate_raw"]=int.from_bytes(payload[12:12+width],"little")
+            return row
 
-          def parse_directory_prefix(c,trailer):
-            if trailer+2>len(c):
-              return {"num_blocks":None,"valid_prefix_count":0,"error":"trailer-oob","entries":[]}
-            n=u16(c,trailer); entries=[]; err=None
+          def parse_indexed_page(c,index,kind):
+            start=index*0x200
+            page=c[start:start+0x200]
+            if len(page)!=0x200:return {"index":index,"kind":kind,"valid":False,"error":"short-page"}
+            n=page[-1]
+            if kind=="char":
+              need=4*(n+1)+n
+              if need>511:return {"index":index,"kind":kind,"valid":False,"n":n,"error":"index-header-oob"}
+              base=u32(page,0)
+              absolute=[u32(page,4*i) for i in range(n+1)]
+              positions=[x-base for x in absolute[1:]]
+              idx_start=4*(n+1)
+              style_offsets=list(page[idx_start:idx_start+n])
+            else:
+              need=4*n+n
+              if need>511:return {"index":index,"kind":kind,"valid":False,"n":n,"error":"index-header-oob"}
+              absolute=[u32(page,4*i) for i in range(n)]
+              positions=absolute
+              idx_start=4*n
+              style_offsets=list(page[idx_start:idx_start+n])
+            records=[record_at(page,x,kind) for x in sorted(set(style_offsets))]
+            return {"index":index,"kind":kind,"valid":True,"page_sha256":sha(page),"n":n,"positions":positions,"style_offsets":style_offsets,"style_records":records}
+
+          def candidate_directory(c,off):
+            if off<0 or off+2>len(c):return None
+            n=u16(c,off)
+            if not (5<=n<=128) or off+2+n*10>len(c):return None
+            rows=[];ids=[];parents=[];chunks=[];markers=[]
             for i in range(n):
-              off=trailer+2+i*10
-              if off+10>len(c):
-                err={"kind":"truncated","row":i}; break
-              service=u16(c,off); oid=u16(c,off+2); parent=u16(c,off+4); chunk=u32(c,off+6)
-              if chunk+2>len(c):
-                err={"kind":"chunk-offset-oob","row":i,"service":service,"id":oid,"parent":parent,"chunk_offset":chunk}; break
-              entries.append({"row":i,"service":service,"id":oid,"parent":parent,"chunk_offset":chunk,"marker":u16(c,chunk)})
-            return {"num_blocks":n,"valid_prefix_count":len(entries),"error":err,"entries":entries}
+              p=off+2+i*10
+              service=u16(c,p);oid=u16(c,p+2);parent=u16(c,p+4);chunk=u32(c,p+6)
+              if chunk<0x20 or chunk+2>len(c):return None
+              marker=u16(c,chunk)
+              if marker>0x0100:return None
+              rows.append({"row":i,"service":service,"id":oid,"parent":parent,"chunk_offset":chunk,"marker":marker})
+              ids.append(oid);parents.append(parent);chunks.append(chunk);markers.append(marker)
+            unique_id_ratio=len(set(ids))/n;unique_chunk_ratio=len(set(chunks))/n
+            idset=set(ids)
+            parent_ref_ratio=sum(1 for p in parents if p==0 or p in idset or p in (0xfe,0xff,0x100))/n
+            if unique_id_ratio<0.60 or unique_chunk_ratio<0.60:return None
+            score=n*100 + round(unique_id_ratio*20) + round(unique_chunk_ratio*20) + round(parent_ref_ratio*20)
+            return {"offset":off,"num_blocks":n,"score":score,"unique_id_ratio":round(unique_id_ratio,3),"unique_chunk_ratio":round(unique_chunk_ratio,3),"parent_ref_ratio":round(parent_ref_ratio,3),"rows":rows}
 
-          def parse(pub):
-            with olefile.OleFileIO(pub) as ole:c=ole.openstream(["Contents"]).read()
-            if c[:2]!=b"\xe8\xac" or u16(c,2)!=0x22:raise ValueError("not old 0x22")
-            cv=u16(c,4); sig=c[0x0c:0x0e].hex()
-            text_root=u32(c,0x12); trailer=u32(c,0x16); m=text_root+14
-            ts=u32(c,m); te=u32(c,m+4); i0=u16(c,m+8); i1=u16(c,m+10); i2=u16(c,m+12); i3=u16(c,m+14)
-            if not (0<=ts<=te<=len(c)):raise ValueError("bad text bounds")
-            t=c[ts:te]
-            pages=math.ceil(len(c)/0x200)
-            def role_hashes(a,b):
-              out={}
-              for idx in range(a,b):
-                if idx<0 or idx>=pages: break
-                raw=c[idx*0x200:min((idx+1)*0x200,len(c))]
-                out[str(idx)]={"len":len(raw),"sha256":sha(raw)}
-              return out
+          def scan_directories(c):
+            found=[]
+            for off in range(0,len(c)-2,2):
+              cand=candidate_directory(c,off)
+              if cand:found.append(cand)
+            found.sort(key=lambda x:(-x["score"],-x["num_blocks"],x["offset"]))
+            return found[:20]
+
+          def canonical(cand):
+            return sorted((r["service"],r["id"],r["parent"],r["marker"]) for r in cand["rows"])
+
+          def parse(c):
+            if c[:2]!=b"\xe8\xac" or u16(c,2)!=0x22:raise ValueError("not 0x22")
+            cv=u16(c,4);sig=c[0x0c:0x0e].hex();trailer=u32(c,0x16);root=u32(c,0x12);m=root+14
+            ts=u32(c,m);te=u32(c,m+4);i0=u16(c,m+8);i1=u16(c,m+10);i2=u16(c,m+12);i3=u16(c,m+14)
+            if not (0<=ts<=te<=len(c)):raise ValueError("text bounds")
+            text=c[ts:te]
             return {
-              "contents_len":len(c),"contents_sha256":sha(c),"family":"0x0022",
-              "content_version":cv,"secondary_signature_hex":sig,"generation_hint":generation(sig,cv),
-              "text_root_offset":text_root,"trailer_offset":trailer,
-              "text":{"start":ts,"end":te,"len":len(t),"sha256":sha(t),"controls":controls(t)},
-              "property_indexes":{"char_start":i0,"paragraph_start":i1,"cell_start":i2,"end":i3},
-              "char_pages":role_hashes(i0,i1),"paragraph_pages":role_hashes(i1,i2),"cell_pages":role_hashes(i2,i3),
-              "directory_probe":parse_directory_prefix(c,trailer)
+              "contents_len":len(c),"content_version":cv,"secondary_signature":sig,
+              "text_root_offset":root,"header_directory_pointer":trailer,
+              "text":{"start":ts,"end":te,"len":len(text),"sha256":sha(text)},
+              "property_indexes":{"char":i0,"paragraph":i1,"cell":i2,"end":i3},
+              "char_page":parse_indexed_page(c,i0,"char"),
+              "paragraph_page":parse_indexed_page(c,i1,"paragraph"),
+              "cell_page":parse_indexed_page(c,i2,"cell"),
+              "directory_candidates":scan_directories(c)
             }
 
-          parsed={}; deliveries={}
+          parsed={};deliveries={}
           for side,s in SPECS.items():
-            iso=ISO(s["archive_url"]); pub=iso.member(s["member"])
+            iso=ISO(s["archive_url"]);pub=iso.member(s["member"])
             if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(side+" exact member drift")
-            parsed[side]=parse(pub); deliveries[side]=iso.delivery
+            parsed[side]=parse(extract_contents(pub));deliveries[side]=iso.delivery
 
           L,R=parsed["left"],parsed["right"]
-          text_equal=L["text"]["sha256"]==R["text"]["sha256"]
-          controls_equal=L["text"]["controls"]==R["text"]["controls"]
-          char_equal=L["char_pages"]==R["char_pages"]; para_equal=L["paragraph_pages"]==R["paragraph_pages"]; cell_equal=L["cell_pages"]==R["cell_pages"]
-          same_generation=L["generation_hint"]==R["generation_hint"]
-          dirL=L["directory_probe"]; dirR=R["directory_probe"]
-          directory_full=(dirL["error"] is None and dirR["error"] is None)
-          if same_generation and text_equal and controls_equal and char_equal and para_equal and cell_equal and not directory_full:
-            classification="positive-lineage-generation-routed-directory-grammar-open"
-          elif same_generation and text_equal and controls_equal and char_equal and para_equal and cell_equal:
-            classification="positive-lineage-text-style-identical"
-          elif not same_generation:
-            classification="cross-generation-lineage-candidate"
-          else:
-            classification="semantic-state-diff-present"
+          if L["secondary_signature"]!="8800" or R["secondary_signature"]!="8800" or L["content_version"]!=300 or R["content_version"]!=300:
+            raise ValueError("dialect drift")
+          left_header=L["header_directory_pointer"]
+          left_match=next((x for x in L["directory_candidates"] if x["offset"]==left_header),None)
+          if not left_match or left_match["num_blocks"]!=41:
+            raise ValueError(f"locator failed positive control: pointer={left_header} match={left_match}")
+          right_header=R["header_directory_pointer"]
+          right_match=next((x for x in R["directory_candidates"] if x["offset"]==right_header),None)
+          right_best=R["directory_candidates"][0] if R["directory_candidates"] else None
+          graph_equal=False
+          if right_best:
+            graph_equal=canonical(left_match)==canonical(right_best)
 
-          receipt={"schema":"chaptera.opnhous-dialect-route.v2","files":{side:{"sha256":SPECS[side]["sha256"],"member":SPECS[side]["member"],"source_page":SPECS[side]["source_page"],"selected_delivery_url":deliveries[side]} for side in ("left","right")},"left":L,"right":R,"comparison":{"same_generation_hint":same_generation,"text_exact":text_equal,"controls_equal":controls_equal,"char_pages_equal":char_equal,"paragraph_pages_equal":para_equal,"cell_pages_equal":cell_equal,"directory_full_parse_both":directory_full,"classification":classification},"source_safe":True,"raw_pub_retained":False}
-          summary={"schema":"chaptera.opnhous-dialect-route-summary.v2","all_exact_members_verified":True,"left_generation_hint":L["generation_hint"],"right_generation_hint":R["generation_hint"],"left_secondary_signature":L["secondary_signature_hex"],"right_secondary_signature":R["secondary_signature_hex"],"left_content_version":L["content_version"],"right_content_version":R["content_version"],"text_exact":text_equal,"controls_equal":controls_equal,"char_pages_equal":char_equal,"paragraph_pages_equal":para_equal,"cell_pages_equal":cell_equal,"left_directory_valid_prefix":dirL["valid_prefix_count"],"right_directory_valid_prefix":dirR["valid_prefix_count"],"left_directory_error":dirL["error"],"right_directory_error":dirR["error"],"classification":classification,"source_safe":True}
+          page_cmp={}
+          for key in ("char_page","paragraph_page","cell_page"):
+            a,b=L[key],R[key]
+            page_cmp[key]={
+              "positions_equal":a.get("positions")==b.get("positions"),
+              "style_offsets_equal":a.get("style_offsets")==b.get("style_offsets"),
+              "style_record_hashes_equal":[x.get("sha256") for x in a.get("style_records",[])]==[x.get("sha256") for x in b.get("style_records",[])],
+              "left_n":a.get("n"),"right_n":b.get("n"),
+              "left_record_count":len(a.get("style_records",[])),"right_record_count":len(b.get("style_records",[]))
+            }
+
+          page_structure_equal=all(x["positions_equal"] and x["style_offsets_equal"] for x in page_cmp.values())
+          style_records_equal=all(x["style_record_hashes_equal"] for x in page_cmp.values())
+          if page_structure_equal and not style_records_equal and right_best and graph_equal:
+            classification="same-layout-indexes-formatting-record-revision-plus-directory-relocation"
+          elif page_structure_equal and not style_records_equal and not right_best:
+            classification="same-layout-indexes-formatting-record-revision-directory-location-open"
+          elif not page_structure_equal:
+            classification="property-layout-index-mutation"
+          elif style_records_equal and right_best and graph_equal:
+            classification="physical-directory-relocation-only"
+          else:
+            classification="mixed-open"
+
+          # Retained candidates are numeric/source-safe only. Limit row detail to best candidates.
+          for side in ("left","right"):
+            parsed[side]["directory_candidates"]=[
+              {**{k:v for k,v in cand.items() if k!="rows"},
+               "canonical_rows":[{"service":r["service"],"id":r["id"],"parent":r["parent"],"marker":r["marker"],"chunk_offset":r["chunk_offset"]} for r in cand["rows"]]}
+              for cand in parsed[side]["directory_candidates"][:5]
+            ]
+
+          summary={
+            "schema":"chaptera.opnhous-graph-locator-summary.v3",
+            "all_exact_members_verified":True,
+            "text_exact":L["text"]["sha256"]==R["text"]["sha256"],
+            "property_page_comparison":page_cmp,
+            "page_structure_equal":page_structure_equal,
+            "style_records_equal":style_records_equal,
+            "left_header_directory_pointer":left_header,
+            "left_locator_positive_control_blocks":left_match["num_blocks"],
+            "right_header_directory_pointer":right_header,
+            "right_header_pointer_is_full_candidate":right_match is not None,
+            "right_candidate_count":len(R["directory_candidates"]),
+            "right_best_candidate":None if right_best is None else {k:v for k,v in right_best.items() if k!="rows"},
+            "canonical_graph_equal_to_right_best":graph_equal,
+            "classification":classification,
+            "source_safe":True
+          }
+          receipt={"schema":"chaptera.opnhous-graph-locator.v3","files":{side:{"sha256":SPECS[side]["sha256"],"member":SPECS[side]["member"],"source_page":SPECS[side]["source_page"],"selected_delivery_url":deliveries[side]} for side in ("left","right")},"left":L,"right":R,"summary":summary,"source_safe":True,"raw_pub_retained":False}
           out=Path("out");out.mkdir(exist_ok=True)
-          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
           (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
           print(json.dumps(summary,indent=2))
           PY
       - name: Enforce source-safe receipt
@@ -198,6 +287,7 @@ jobs:
           s=json.loads(Path("out/summary.json").read_text())
           assert s["all_exact_members_verified"] is True
           assert s["source_safe"] is True
+          assert s["left_locator_positive_control_blocks"] == 41
           PY
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
