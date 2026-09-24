@@ -1,0 +1,43 @@
+name: Nested Absolute Target V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/nested_absolute_target_v1.py"
+      - "services/editor-api/test_nested_absolute_target_v1.py"
+      - "services/editor-api/run_nested_absolute_target_receipt.py"
+      - "services/editor-api/authored_group_geometry_v1.py"
+      - "services/editor-api/group_transform_chain_v1.py"
+      - "services/editor-api/group_refit_plan_v1.py"
+      - "services/editor-api/group_multi_member_refit_v1.py"
+      - "services/editor-api/group_ancestor_refit_v1.py"
+      - "services/editor-api/nested_group_selection_v1.py"
+      - ".github/workflows/nested-absolute-target-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run nested absolute target adapter tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_nested_absolute_target_v1
+      - name: Re-run exact transform/refit primitives
+        working-directory: services/editor-api
+        run: python -m unittest -v test_group_transform_chain_v1 test_group_refit_plan_v1 test_group_multi_member_refit_v1 test_group_ancestor_refit_v1 test_nested_group_selection_v1
+      - name: Emit composite plan receipt
+        working-directory: services/editor-api
+        run: mkdir -p ../../target/nested-absolute-target && python run_nested_absolute_target_receipt.py | tee ../../target/nested-absolute-target/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nested-absolute-target-${{ github.run_id }}
+          path: target/nested-absolute-target/receipt.json
+          if-no-files-found: error
