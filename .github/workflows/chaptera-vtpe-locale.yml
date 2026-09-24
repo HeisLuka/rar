@@ -1,0 +1,82 @@
+name: CHAPTERA-VTPE-LOCALE-01 Windows locale contract
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/chaptera-vtpe-locale.yml"
+      - "tools/chaptera-locale-contract/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-locale:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile bounded validator
+        shell: pwsh
+        run: |
+          python -m py_compile tools/chaptera-locale-contract/validate_locale_contract.py
+
+      - name: Probe real Windows user locale and validate contract
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out/chaptera-locale | Out-Null
+          python tools/chaptera-locale-contract/validate_locale_contract.py --out out/chaptera-locale/receipt.json
+
+      - name: Enforce receipt boundary
+        shell: pwsh
+        run: |
+          @'
+          import json
+          from pathlib import Path
+
+          r = json.loads(Path("out/chaptera-locale/receipt.json").read_text(encoding="utf-8"))
+          assert r["schema"] == "chaptera.vtpe-locale-validation.v1"
+          assert r["result"] == "pass"
+          assert r["all_checks_passed"] is True
+          assert r["check_count"] >= 28
+          assert r["actual_windows_user_locale"]["raw"]
+          assert r["actual_windows_user_locale"]["api"] == "GetUserDefaultLocaleName"
+          assert r["boundary"]["private_chaptera_source_imported"] is False
+          assert r["boundary"]["product_integration_claim"] is False
+          assert r["boundary"]["network_lookup_used"] is False
+          assert r["boundary"]["ip_geolocation_used"] is False
+          assert r["boundary"]["timezone_inference_used"] is False
+          print("locale receipt boundary: PASS")
+          '@ | python -
+
+      - name: Write run summary
+        shell: pwsh
+        run: |
+          @'
+          import json
+          from pathlib import Path
+
+          r = json.loads(Path("out/chaptera-locale/receipt.json").read_text(encoding="utf-8"))
+          print("# CHAPTERA-VTPE-LOCALE-01")
+          print()
+          print(f"- Windows API locale: `{r['actual_windows_user_locale']['raw']}`")
+          print(f"- normalized: `{r['actual_windows_user_locale']['normalized']}`")
+          print(f"- mapped market: **{r['actual_windows_user_locale']['market_profile']}**")
+          print(f"- deterministic checks: **{r['check_count']} / {r['check_count']} PASS**")
+          print("- private Chaptera source imported: **false**")
+          print("- product integration claimed: **false**")
+          '@ | python - | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload source-neutral locale receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-vtpe-locale-${{ github.run_id }}
+          path: out/chaptera-locale/receipt.json
+          if-no-files-found: error
+          retention-days: 90
