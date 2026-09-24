@@ -705,13 +705,13 @@ fn validate_create_request(request: &CreateBindingRequest) -> Result<(), BlobSto
         ));
     }
     require_ident(&request.validation_profile, "validation_profile")?;
-    if let Some(mime) = &request.canonical_mime {
-        if mime.is_empty() || mime.len() > 256 || mime.chars().any(char::is_control) {
-            return Err(BlobStoreError::new(
-                "invalid_canonical_mime",
-                "canonical MIME must be a bounded display token",
-            ));
-        }
+    if let Some(mime) = &request.canonical_mime
+        && (mime.is_empty() || mime.len() > 256 || mime.chars().any(char::is_control))
+    {
+        return Err(BlobStoreError::new(
+            "invalid_canonical_mime",
+            "canonical MIME must be a bounded display token",
+        ));
     }
     Ok(())
 }
