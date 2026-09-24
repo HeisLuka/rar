@@ -15,6 +15,8 @@ axum = { version = "=0.8.9", features = ["http1", "json", "tokio"] }
 clap = { version = "=4.6.7", features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 
 [dev-dependencies]
