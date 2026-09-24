@@ -1,0 +1,19 @@
+{
+  "policy_version": "chaptera.tenant-isolation.v1",
+  "artifact_grant_ttl_seconds": 300,
+  "max_job_inputs": 64,
+  "allowed_artifact_kinds": [
+    "source",
+    "scene",
+    "resource",
+    "export",
+    "job_output"
+  ],
+  "audit_allowed_fields": [
+    "action",
+    "result",
+    "resource_kind",
+    "job_id",
+    "error_code"
+  ]
+}
