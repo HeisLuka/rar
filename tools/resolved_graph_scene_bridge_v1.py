@@ -102,18 +102,63 @@ def require_transform(value: Any, label: str) -> dict[str, Any]:
     return out
 
 
-def _empty_context(context: Any) -> dict[str, list[Any]]:
+PROJECTION_CONTEXT_SCHEMA_V1 = "chaptera.pub-projection-context.v1"
+
+
+def _projection_context(context: Any) -> dict[str, Any]:
     if context is None:
-        return {"master_relations": [], "cmo_relations": []}
-    if not isinstance(context, dict) or set(context) != {"master_relations", "cmo_relations"}:
+        return {
+            "schema_version": PROJECTION_CONTEXT_SCHEMA_V1,
+            "master_relations": [],
+            "cmo_relations": [],
+        }
+    expected = {"schema_version", "master_relations", "cmo_relations"}
+    if not isinstance(context, dict) or set(context) != expected:
         raise ResolvedGraphSceneError("projection context fields mismatch")
+    if context["schema_version"] != PROJECTION_CONTEXT_SCHEMA_V1:
+        raise ResolvedGraphSceneError("projection context schema_version mismatch")
     for key in ("master_relations", "cmo_relations"):
         if not isinstance(context[key], list):
             raise ResolvedGraphSceneError(f"projection context {key} must be an array")
-        if context[key]:
+    if context["cmo_relations"]:
+        raise ResolvedGraphSceneError(
+            "non-empty cmo_relations is outside resolved-geometry-v1 semantics"
+        )
+
+    seen_sources: set[str] = set()
+    for index, relation in enumerate(context["master_relations"]):
+        if not isinstance(relation, dict) or set(relation) != {
+            "source_page_id",
+            "source_page_seq_num",
+            "master_page_id",
+            "master_page_seq_num",
+        }:
             raise ResolvedGraphSceneError(
-                f"non-empty {key} is outside resolved-geometry-v1 semantics"
+                f"master_relations[{index}] fields mismatch"
             )
+        source_page_id = require_uuid(
+            relation["source_page_id"],
+            f"master_relations[{index}].source_page_id",
+        )
+        master_page_id = require_uuid(
+            relation["master_page_id"],
+            f"master_relations[{index}].master_page_id",
+        )
+        require_int(
+            relation["source_page_seq_num"],
+            f"master_relations[{index}].source_page_seq_num",
+        )
+        require_int(
+            relation["master_page_seq_num"],
+            f"master_relations[{index}].master_page_seq_num",
+        )
+        if source_page_id == master_page_id:
+            raise ResolvedGraphSceneError("master relation cannot self-reference")
+        if source_page_id in seen_sources:
+            raise ResolvedGraphSceneError(
+                f"duplicate master relation for source page {source_page_id}"
+            )
+        seen_sources.add(source_page_id)
     return copy.deepcopy(context)
 
 
@@ -135,7 +180,7 @@ def project_resolved_graph_scene(
 ) -> dict[str, Any]:
     if not isinstance(graph, dict):
         raise ResolvedGraphSceneError("resolved graph must be an object")
-    _empty_context(context)
+    projection_context = _projection_context(context)
 
     document = graph.get("document")
     pages_in = graph.get("pages")
@@ -154,6 +199,22 @@ def project_resolved_graph_scene(
     if not isinstance(page_order, list):
         raise ResolvedGraphSceneError("resolved graph document.pages must be an array")
 
+    master_relations = projection_context["master_relations"]
+    master_page_ids = {relation["master_page_id"] for relation in master_relations}
+    source_master = {
+        relation["source_page_id"]: relation["master_page_id"]
+        for relation in master_relations
+    }
+    for source_page_id, master_page_id in source_master.items():
+        if source_page_id not in pages_in:
+            raise ResolvedGraphSceneError(
+                f"master relation source page {source_page_id} missing from graph"
+            )
+        if master_page_id not in pages_in:
+            raise ResolvedGraphSceneError(
+                f"master relation target page {master_page_id} missing from graph"
+            )
+
     pages: list[dict[str, Any]] = []
     referenced_pages = set()
     for index, page_id_raw in enumerate(page_order):
@@ -166,17 +227,19 @@ def project_resolved_graph_scene(
             raise ResolvedGraphSceneError(f"missing page {page_id}")
         if require_uuid(page.get("id"), f"pages[{page_id}].id") != page_id:
             raise ResolvedGraphSceneError(f"page key/id mismatch for {page_id}")
-        pages.append({
-            "origin": page_id,
-            "size": require_size(page.get("size"), f"pages[{page_id}].size"),
-            "bleed": copy.deepcopy(page.get("bleed")),
-            "margins": copy.deepcopy(page.get("margins")),
-        })
+        if page_id not in master_page_ids:
+            pages.append({
+                "origin": page_id,
+                "size": require_size(page.get("size"), f"pages[{page_id}].size"),
+                "bleed": copy.deepcopy(page.get("bleed")),
+                "margins": copy.deepcopy(page.get("margins")),
+            })
 
     # pub-layout normalizes input order by canonical identity.
     pages.sort(key=lambda item: item["origin"])
 
     nodes: list[dict[str, Any]] = []
+    source_nodes: dict[str, dict[str, Any]] = {}
     for node_key, node in nodes_in.items():
         require_uuid(node_key, "nodes key")
         if not isinstance(node, dict):
@@ -191,7 +254,7 @@ def project_resolved_graph_scene(
             header.get("parent_id"),
             f"nodes[{node_key}].header.parent_id",
         )
-        nodes.append({
+        projected = {
             "origin": node_id,
             "parent_origin": parent,
             "bounds": require_rect(
@@ -202,8 +265,59 @@ def project_resolved_graph_scene(
                 header.get("transform"),
                 f"nodes[{node_key}].header.transform",
             ),
-        })
-    nodes.sort(key=lambda item: item["origin"])
+        }
+        source_nodes[node_id] = projected
+        if parent not in master_page_ids:
+            nodes.append(projected)
+
+    projected_master_instances: list[dict[str, Any]] = []
+    for relation in master_relations:
+        source_page_id = relation["source_page_id"]
+        master_page_id = relation["master_page_id"]
+        master_page = pages_in[master_page_id]
+        children = master_page.get("children")
+        if not isinstance(children, list):
+            raise ResolvedGraphSceneError(
+                f"master page {master_page_id}.children must be an array"
+            )
+        for child_index, child_raw in enumerate(children):
+            child_id = require_uuid(
+                child_raw,
+                f"pages[{master_page_id}].children[{child_index}]",
+            )
+            source_node = source_nodes.get(child_id)
+            if source_node is None:
+                raise ResolvedGraphSceneError(
+                    f"master child {child_id} missing from graph nodes"
+                )
+            if source_node["parent_origin"] != master_page_id:
+                raise ResolvedGraphSceneError(
+                    f"master child {child_id} parent does not match master page"
+                )
+            instance_id = hash_id({
+                "projection_kind": "inherited_master",
+                "origin": child_id,
+                "target_page": source_page_id,
+            })
+            instance = {
+                "origin": child_id,
+                "parent_origin": source_page_id,
+                "bounds": copy.deepcopy(source_node["bounds"]),
+                "transform": copy.deepcopy(source_node["transform"]),
+                "instance_id": instance_id,
+                "projection_kind": "inherited_master",
+                "source_parent_origin": master_page_id,
+            }
+            nodes.append(instance)
+            projected_master_instances.append(instance)
+
+    nodes.sort(
+        key=lambda item: (
+            item["origin"],
+            item["parent_origin"],
+            item.get("instance_id", ""),
+        )
+    )
 
     story_ids: list[str] = []
     for story_key, story in stories_in.items():
@@ -227,13 +341,20 @@ def project_resolved_graph_scene(
         if not isinstance(value, str) or not value:
             raise ResolvedGraphSceneError(f"layout environment {key} must be non-empty")
 
-    origin_mapping = [
-        {
+    origin_mapping = []
+    for item in nodes:
+        mapping = {
             "authoring_origin": item["origin"],
             "resolved_node_origin": item["origin"],
         }
-        for item in nodes
-    ]
+        if item.get("projection_kind") == "inherited_master":
+            mapping.update({
+                "resolved_instance_id": item["instance_id"],
+                "projection_kind": "inherited_master",
+                "target_page_origin": item["parent_origin"],
+                "source_parent_origin": item["source_parent_origin"],
+            })
+        origin_mapping.append(mapping)
 
     diagnostics = [
         {
