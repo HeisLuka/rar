@@ -4,6 +4,7 @@ members = [
   "crates/pub-model",
   "crates/pub-paint-bridge",
   "crates/pub-plccmob-projection",
+  "crates/chaptera-layout-invalidation",
 ]
 resolver = "2"
 
