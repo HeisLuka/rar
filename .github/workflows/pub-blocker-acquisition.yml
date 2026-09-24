@@ -447,7 +447,6 @@ jobs:
           sha1sum out/publisher2002-media.bin | tee out/sha1.txt
           md5sum out/publisher2002-media.bin | tee out/md5.txt
           stat -c 'size_bytes=%s' out/publisher2002-media.bin | tee out/size.txt
-          file out/publisher2002-media.bin | tee out/file.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
