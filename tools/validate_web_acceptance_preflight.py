@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from adapt_viewer_scene_v1 import adapt_viewer_geometry
 from validate_revision_producer_receipt import validate_schema as validate_revision_schema
 from validate_revision_producer_receipt import validate_semantics as validate_revision_semantics
+from validate_viewer_geometry_receipt import validate_schema as validate_viewer_schema
 
 
 def load_json(path):
@@ -87,6 +88,12 @@ def main():
             blockers.append("viewer_receipt_cannot_bind_without_revision_receipt")
         else:
             viewer = load_json(viewer_path)
+            validate_viewer_schema(viewer)
+            viewer_source = viewer["document"]["source"]
+            if viewer_source["source_hash"] != fixture["sha256"]:
+                raise AssertionError("Viewer receipt source hash is not the pinned real PUB")
+            if viewer_source["byte_len"] != fixture["byte_len"]:
+                raise AssertionError("Viewer receipt byte length is not the pinned real PUB")
             scene_snapshot = adapt_viewer_geometry(
                 viewer,
                 revision["document_id"],

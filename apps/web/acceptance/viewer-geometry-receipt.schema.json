@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/web/viewer-geometry-receipt.v0.1.json",
+  "title": "Chaptera sanitized ViewerGeometryDocument receipt v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "document", "scene"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "document": {"$ref": "#/$defs/document"},
+    "scene": {"$ref": "#/$defs/scene"},
+    "paints": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/paint"}
+    },
+    "story_frames": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/storyFrame"}
+    },
+    "images": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/image"}
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "boxEdges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["top", "right", "bottom", "left"],
+      "properties": {
+        "top": {"type": "integer"},
+        "right": {"type": "integer"},
+        "bottom": {"type": "integer"},
+        "left": {"type": "integer"}
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["a", "b", "c", "d", "tx", "ty"],
+      "properties": {
+        "a": {"$ref": "#/$defs/decimal"},
+        "b": {"$ref": "#/$defs/decimal"},
+        "c": {"$ref": "#/$defs/decimal"},
+        "d": {"$ref": "#/$defs/decimal"},
+        "tx": {"type": "integer"},
+        "ty": {"type": "integer"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "source_hash", "byte_len"],
+      "properties": {
+        "format": {"type": "string", "minLength": 1},
+        "format_version": {"type": "string", "minLength": 1},
+        "source_hash": {"$ref": "#/$defs/sha256"},
+        "byte_len": {"type": "integer", "minimum": 0}
+      }
+    },
+    "viewerPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "id", "width_emu", "height_emu"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 1},
+        "id": {"$ref": "#/$defs/uuid"},
+        "width_emu": {"type": "integer", "minimum": 1},
+        "height_emu": {"type": "integer", "minimum": 1}
+      }
+    },
+    "viewerStory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text"],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"},
+        "text": {"type": "string"}
+      }
+    },
+    "viewerDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["info", "fidelity_warning"]},
+        "message": {"type": "string", "minLength": 1}
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source", "pages", "stories"],
+      "properties": {
+        "schema_version": {"const": "0.1"},
+        "source": {"$ref": "#/$defs/source"},
+        "pages": {"type": "array", "items": {"$ref": "#/$defs/viewerPage"}},
+        "stories": {"type": "array", "items": {"$ref": "#/$defs/viewerStory"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/viewerDiagnostic"}}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine_revision", "font_set_fingerprint", "resource_fingerprint"],
+      "properties": {
+        "engine_revision": {"type": "string", "minLength": 1},
+        "font_set_fingerprint": {"type": "string", "minLength": 1},
+        "resource_fingerprint": {"type": "string", "minLength": 1}
+      }
+    },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "size", "bleed", "margins"],
+      "properties": {
+        "origin": {"$ref": "#/$defs/uuid"},
+        "size": {"$ref": "#/$defs/size"},
+        "bleed": {
+          "anyOf": [{"type": "null"}, {"$ref": "#/$defs/boxEdges"}]
+        },
+        "margins": {
+          "anyOf": [{"type": "null"}, {"$ref": "#/$defs/boxEdges"}]
+        }
+      }
+    },
+    "resolvedNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "parent_origin", "bounds", "transform"],
+      "properties": {
+        "origin": {"$ref": "#/$defs/uuid"},
+        "parent_origin": {"$ref": "#/$defs/uuid"},
+        "bounds": {"$ref": "#/$defs/rect"},
+        "transform": {"$ref": "#/$defs/transform"}
+      }
+    },
+    "originMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoring_origin", "resolved_node_origin"],
+      "properties": {
+        "authoring_origin": {"$ref": "#/$defs/uuid"},
+        "resolved_node_origin": {"$ref": "#/$defs/uuid"}
+      }
+    },
+    "sceneDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "origin", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "severity": {"const": "fidelity_warning"},
+        "origin": {"$ref": "#/$defs/uuid"},
+        "message": {"type": "string", "minLength": 1}
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "surfaces", "nodes", "origin_mapping"],
+      "properties": {
+        "environment": {"$ref": "#/$defs/environment"},
+        "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/resolvedNode"}},
+        "origin_mapping": {"type": "array", "items": {"$ref": "#/$defs/originMapping"}},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/sceneDiagnostic"}}
+      }
+    },
+    "rgb": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "integer", "minimum": 0, "maximum": 255}
+    },
+    "solidLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rgb", "width_emu"],
+      "properties": {
+        "rgb": {"$ref": "#/$defs/rgb"},
+        "width_emu": {"type": "integer", "minimum": 1}
+      }
+    },
+    "paint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id"],
+      "properties": {
+        "node_id": {"$ref": "#/$defs/uuid"},
+        "solid_fill_rgb": {"$ref": "#/$defs/rgb"},
+        "solid_line": {"$ref": "#/$defs/solidLine"}
+      },
+      "anyOf": [
+        {"required": ["solid_fill_rgb"]},
+        {"required": ["solid_line"]}
+      ]
+    },
+    "storyFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["story_id", "frame_id", "ordinal"],
+      "properties": {
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "frame_id": {"$ref": "#/$defs/uuid"},
+        "ordinal": {"type": "integer", "minimum": 0}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_id", "mime", "node_ids"],
+      "properties": {
+        "resource_id": {"$ref": "#/$defs/uuid"},
+        "mime": {"type": "string", "minLength": 1},
+        "node_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/uuid"}
+        }
+      }
+    }
+  }
+}

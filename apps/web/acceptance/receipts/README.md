@@ -9,3 +9,20 @@ The final product gate requires:
 - `browser-acceptance.real.json` — real headless-browser end-to-end receipt validated by `browser-acceptance-receipt.schema.json`.
 
 Unit fixtures, synthetic Scene V1 fixtures, manually authored receipts, screenshots without semantic evidence, or browser runs over mocked Scene JSON cannot occupy these slots.
+
+
+## Viewer receipt privacy allowlist
+
+Before a real Viewer receipt can participate in preflight it must validate against
+`../viewer-geometry-receipt.schema.json` via:
+
+```bash
+python tools/validate_viewer_geometry_receipt.py apps/web/acceptance/receipts/viewer-geometry.real.json
+```
+
+The v0.1 receipt schema is an explicit public allowlist for the current source-free
+`ViewerGeometryDocument` shape. Unknown fields fail closed. In particular, raw image
+`bytes`, local/private paths, unreviewed resource fetch handles, parser carriers, and
+other producer-private additions cannot silently pass merely because the Scene adapter
+ignores them. A future richer producer must deliberately revise the public receipt
+contract rather than widening this slot implicitly.
