@@ -97,10 +97,10 @@ def activate_canvas_tool_v1(
     if not isinstance(tool, CanvasToolIdV1):
         raise CanvasToolStateError("tool must be CanvasToolIdV1")
 
-    cancelled = state.active_gesture.token if state.active_gesture is not None else None
-    if state.active_tool == tool and cancelled is None:
+    if state.active_tool == tool:
         return CanvasToolTransitionV1(state=state, action="no_change")
 
+    cancelled = state.active_gesture.token if state.active_gesture is not None else None
     return CanvasToolTransitionV1(
         state=CanvasToolStateV1(active_tool=tool, active_gesture=None),
         action=(
