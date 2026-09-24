@@ -1,0 +1,31 @@
+name: Migration PDF worker isolation V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/migration_pdf_worker_isolation.py"
+      - "tools/test_migration_pdf_worker_isolation.py"
+      - ".github/workflows/migration-pdf-worker-isolation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify libseccomp is available
+        run: |
+          python - <<'PY'
+          import ctypes.util
+          name = ctypes.util.find_library("seccomp")
+          assert name, "libseccomp is required for network default-deny"
+          print(name)
+          PY
+      - name: Run per-file isolation regressions
+        run: python tools/test_migration_pdf_worker_isolation.py -v
