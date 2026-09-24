@@ -5,9 +5,7 @@
 //! crate owns the semantic admission law: field 0x0D must be wire 0x68 and
 //! resolve to an existing raw 0x43 PAGE without duplication or self-reference.
 
-use pub_model::{
-    MasterProjectionRelationV1, PubProjectionContextV1, derive_pub_page_id_v1,
-};
+use pub_model::{MasterProjectionRelationV1, PubProjectionContextV1, derive_pub_page_id_v1};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -120,7 +118,10 @@ impl fmt::Display for MasterProjectionError {
         match self {
             Self::InvalidPageId => write!(f, "page_id must be canonical lowercase UUID"),
             Self::CanonicalPageIdentity { seq_num } => {
-                write!(f, "could not derive canonical PAGE identity for seqNum {seq_num}")
+                write!(
+                    f,
+                    "could not derive canonical PAGE identity for seqNum {seq_num}"
+                )
             }
             Self::DuplicatePageId(id) => write!(f, "duplicate page id {id}"),
             Self::DuplicateSeqNum(seq) => write!(f, "duplicate PAGE seqNum {seq}"),
@@ -284,9 +285,11 @@ pub fn materialize_source_input_v1(
         .pages
         .iter()
         .map(|page| {
-            let page_id = derive_pub_page_id_v1(&input.source_hash, page.seq_num)
-                .map_err(|_| MasterProjectionError::CanonicalPageIdentity {
-                    seq_num: page.seq_num,
+            let page_id =
+                derive_pub_page_id_v1(&input.source_hash, page.seq_num).map_err(|_| {
+                    MasterProjectionError::CanonicalPageIdentity {
+                        seq_num: page.seq_num,
+                    }
                 })?;
             Ok(PageProjectionSourceV1 {
                 page_id,
