@@ -182,6 +182,21 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_image_crop(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_image_crop_request_shape,
+            canonical_validator=self._validate_canonical_image_crop,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_story_range(
         self,
         request: dict,
@@ -505,6 +520,38 @@ class RevisionKernel:
             raise ValueError("depends_on_client_operation_id is invalid")
 
     @staticmethod
+    def _validate_crop_state(crop: dict, label: str) -> None:
+        if not isinstance(crop, dict) or set(crop) != {"left", "top", "right", "bottom"}:
+            raise ValueError(f"{label} must contain exactly left/top/right/bottom")
+        for side in ("left", "top", "right", "bottom"):
+            value = crop.get(side)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < MIN_SAFE_EMU
+                or value > MAX_SAFE_EMU
+            ):
+                raise ValueError(f"{label}.{side} must be a JavaScript-safe integer")
+
+    @staticmethod
+    def _validate_image_crop_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.image-crop-intent.v1":
+            raise ValueError("V1 image crop protocol_version is required")
+        command = request.get("command")
+        if not isinstance(command, dict) or command.get("kind") != "set_image_crop":
+            raise ValueError("V1 image crop requires set_image_crop command")
+        allowed = {"kind", "node_id", "expected_before", "after"}
+        if set(command) != allowed:
+            raise ValueError("set_image_crop contains non-intent/authoritative fields")
+        node_id = command.get("node_id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("set_image_crop node_id is required")
+        RevisionKernel._validate_crop_state(command.get("expected_before"), "expected_before")
+        RevisionKernel._validate_crop_state(command.get("after"), "after")
+        if command["expected_before"] == command["after"]:
+            raise ValueError("set_image_crop no-op is not admitted")
+
+    @staticmethod
     def _validate_replace_image_request_shape(request: dict) -> None:
         command = request.get("command")
         if not isinstance(command, dict) or command.get("kind") != "replace_image":
@@ -570,6 +617,23 @@ class RevisionKernel:
             raise ValueError("authoritative executor must derive before_text_hash")
         if not isinstance(operation.get("after_text_hash"), str):
             raise ValueError("authoritative executor must derive after_text_hash")
+
+    @staticmethod
+    def _validate_canonical_image_crop(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "set_image_crop":
+            raise ValueError("authoritative executor returned non-SetImageCrop operation")
+        if operation.get("node_id") != command.get("node_id"):
+            raise ValueError("canonical SetImageCrop targets a different node")
+        before = operation.get("before")
+        after = operation.get("after")
+        RevisionKernel._validate_crop_state(before, "canonical before crop")
+        RevisionKernel._validate_crop_state(after, "canonical after crop")
+        if before != command.get("expected_before"):
+            raise ValueError("canonical SetImageCrop before-state differs from expected precondition")
+        if after != command.get("after"):
+            raise ValueError("canonical SetImageCrop after-state differs from accepted intent")
+        if before == after:
+            raise ValueError("canonical SetImageCrop must change crop state")
 
     @staticmethod
     def _validate_canonical_replace_image(command: dict, operation: dict) -> None:
