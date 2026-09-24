@@ -1,0 +1,28 @@
+name: PUB corpus authority receipt
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/receipts/corpus-authority-lower-bound-2026-09-24.json'
+      - 'tools/corpus/test_corpus_authority_receipt.py'
+      - '.github/workflows/corpus-authority-receipt.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/receipts/corpus-authority-lower-bound-2026-09-24.json'
+      - 'tools/corpus/test_corpus_authority_receipt.py'
+      - '.github/workflows/corpus-authority-receipt.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/corpus/test_corpus_authority_receipt.py
