@@ -207,7 +207,7 @@ def section_for_offset(pe: pefile.PE, offset: int) -> str | None:
         start = int(section.PointerToRawData)
         end = start + int(section.SizeOfRawData)
         if start <= offset < end:
-            return section.Name.rstrip(b"\\x00").decode("ascii", errors="replace")
+            return section.Name.rstrip(bytes([0])).decode("ascii", errors="replace")
     return None
 
 
@@ -280,6 +280,612 @@ def checker_identifier_clusters(rows: list[dict], max_gap: int = 1024) -> list[d
         }
         for group in clusters
     ]
+
+
+def checker_pointer_rows(pe: pefile.PE, path: Path, checker_rows: list[dict]) -> list[dict]:
+    """Find exact little-endian RVA/VA pointers to checker identifier strings."""
+    data = path.read_bytes()
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    rows: list[dict] = []
+    for checker in checker_rows:
+        if not checker.get("rva") or not checker.get("va"):
+            continue
+        target_rva = int(checker["rva"], 16)
+        target_va = int(checker["va"], 16)
+        for encoding, value in (("va32", target_va), ("rva32", target_rva)):
+            needle = struct.pack("<I", value & 0xFFFFFFFF)
+            start = 0
+            while True:
+                offset = data.find(needle, start)
+                if offset < 0:
+                    break
+                start = offset + 1
+                try:
+                    slot_rva = int(pe.get_rva_from_offset(offset))
+                except Exception:
+                    slot_rva = None
+                slot_va = image_base + slot_rva if slot_rva is not None else None
+                rows.append(
+                    {
+                        "identifier": checker["text"],
+                        "target_rva": checker["rva"],
+                        "target_va": checker["va"],
+                        "pointer_encoding": encoding,
+                        "pointer_offset": offset,
+                        "pointer_section": section_for_offset(pe, offset),
+                        "pointer_rva": f"0x{slot_rva:08X}" if slot_rva is not None else None,
+                        "pointer_va": f"0x{slot_va:08X}" if slot_va is not None else None,
+                    }
+                )
+    rows.sort(key=lambda row: (row["pointer_offset"], row["identifier"], row["pointer_encoding"]))
+    return rows
+
+
+def checker_pointer_clusters(rows: list[dict], max_gap: int = 32) -> list[dict]:
+    """Cluster nearby pointer slots; keep only clusters spanning >=2 distinct identifiers."""
+    if not rows:
+        return []
+    groups: list[list[dict]] = [[rows[0]]]
+    for row in rows[1:]:
+        if row["pointer_offset"] - groups[-1][-1]["pointer_offset"] <= max_gap:
+            groups[-1].append(row)
+        else:
+            groups.append([row])
+
+    clusters: list[dict] = []
+    for group in groups:
+        identifiers = sorted({row["identifier"] for row in group})
+        if len(identifiers) < 2:
+            continue
+        valid_rvas = [int(row["pointer_rva"], 16) for row in group if row.get("pointer_rva")]
+        valid_vas = [int(row["pointer_va"], 16) for row in group if row.get("pointer_va")]
+        clusters.append(
+            {
+                "start_offset": group[0]["pointer_offset"],
+                "end_offset": group[-1]["pointer_offset"],
+                "pointer_count": len(group),
+                "distinct_identifier_count": len(identifiers),
+                "identifiers": identifiers,
+                "sections": sorted({row["pointer_section"] for row in group if row.get("pointer_section")}),
+                "start_rva": f"0x{min(valid_rvas):08X}" if valid_rvas else None,
+                "end_rva": f"0x{max(valid_rvas):08X}" if valid_rvas else None,
+                "start_va": f"0x{min(valid_vas):08X}" if valid_vas else None,
+                "end_va": f"0x{max(valid_vas):08X}" if valid_vas else None,
+                "items": group,
+            }
+        )
+    clusters.sort(key=lambda row: (-row["distinct_identifier_count"], row["start_offset"]))
+    return clusters
+
+
+def checker_pointer_cluster_code_refs(pe: pefile.PE, instructions: list, clusters: list[dict]) -> list[dict]:
+    """Find code operands that point into or at a candidate checker pointer cluster."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for cluster in clusters:
+        if not cluster.get("start_va") or not cluster.get("end_va"):
+            continue
+        lo = int(cluster["start_va"], 16)
+        hi = int(cluster["end_va"], 16) + 4
+        refs: list[dict] = []
+        for insn in instructions:
+            hit_kind = None
+            hit_value = None
+            for op in insn.operands:
+                if op.type == X86_OP_IMM and lo <= int(op.imm) <= hi:
+                    hit_kind = "imm"
+                    hit_value = int(op.imm)
+                elif op.type == X86_OP_MEM and lo <= int(op.mem.disp) <= hi:
+                    hit_kind = "mem_disp"
+                    hit_value = int(op.mem.disp)
+            if hit_kind:
+                refs.append(
+                    {
+                        "va": f"0x{insn.address:08X}",
+                        "rva": f"0x{insn.address - image_base:08X}",
+                        "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                        "hit_kind": hit_kind,
+                        "hit_value": f"0x{hit_value:08X}",
+                    }
+                )
+                if len(refs) >= 128:
+                    break
+        out.append(
+            {
+                "start_offset": cluster["start_offset"],
+                "end_offset": cluster["end_offset"],
+                "distinct_identifier_count": cluster["distinct_identifier_count"],
+                "identifiers": cluster["identifiers"],
+                "refs": refs,
+            }
+        )
+    out.sort(key=lambda row: (-len(row["refs"]), -row["distinct_identifier_count"], row["start_offset"]))
+    return out
+
+
+def classify_pe_dword(pe: pefile.PE, value: int) -> dict:
+    """Classify a 32-bit value without assigning semantics beyond PE location."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    image_size = int(pe.OPTIONAL_HEADER.SizeOfImage)
+    if value == 0:
+        return {"value": "0x00000000", "kind": "null"}
+
+    if image_base <= value < image_base + image_size:
+        rva = value - image_base
+        try:
+            offset = int(pe.get_offset_from_rva(rva))
+            section = section_for_offset(pe, offset)
+        except Exception:
+            offset = None
+            section = None
+        return {
+            "value": f"0x{value:08X}",
+            "kind": "va",
+            "rva": f"0x{rva:08X}",
+            "offset": offset,
+            "section": section,
+        }
+
+    if value <= 0xFFFF:
+        return {"value": f"0x{value:08X}", "kind": "small_immediate", "decimal": value}
+
+    if 0 < value < image_size:
+        try:
+            offset = int(pe.get_offset_from_rva(value))
+            section = section_for_offset(pe, offset)
+        except Exception:
+            offset = None
+            section = None
+        return {
+            "value": f"0x{value:08X}",
+            "kind": "rva",
+            "rva": f"0x{value:08X}",
+            "offset": offset,
+            "section": section,
+        }
+
+    return {"value": f"0x{value:08X}", "kind": "scalar_or_external"}
+
+
+def decode_checker_fixed_records(
+    pe: pefile.PE, path: Path, clusters: list[dict], record_size: int = 16
+) -> list[dict]:
+    """Decode candidate fixed-stride arrays that begin with checker-name pointers."""
+    data = path.read_bytes()
+    out: list[dict] = []
+    for cluster in clusters:
+        by_offset: dict[int, dict] = {}
+        for item in cluster["items"]:
+            # Prefer the VA-form hit when both an RVA and VA happen to collide.
+            current = by_offset.get(item["pointer_offset"])
+            if current is None or item["pointer_encoding"] == "va32":
+                by_offset[item["pointer_offset"]] = item
+        offsets = sorted(by_offset)
+        if len(offsets) < 4:
+            continue
+        strides = [b - a for a, b in zip(offsets, offsets[1:])]
+        if not strides or any(stride != record_size for stride in strides):
+            continue
+
+        records: list[dict] = []
+        text_section_pointer_fields = 0
+        field_kind_counts: list[dict[str, int]] = [defaultdict(int) for _ in range(4)]
+        field_section_counts: list[dict[str, int]] = [defaultdict(int) for _ in range(4)]
+        for offset in offsets:
+            if offset + record_size > len(data):
+                continue
+            dwords = list(struct.unpack_from("<IIII", data, offset))
+            fields = []
+            for field_index, value in enumerate(dwords):
+                classified = classify_pe_dword(pe, value)
+                field_kind_counts[field_index][classified["kind"]] += 1
+                if classified.get("section"):
+                    field_section_counts[field_index][classified["section"]] += 1
+                if field_index > 0 and classified.get("section") == ".text":
+                    text_section_pointer_fields += 1
+                fields.append({"index": field_index, **classified})
+            first = by_offset[offset]
+            records.append(
+                {
+                    "offset": offset,
+                    "rva": first["pointer_rva"],
+                    "va": first["pointer_va"],
+                    "identifier": first["identifier"],
+                    "fields": fields,
+                }
+            )
+
+        out.append(
+            {
+                "record_size": record_size,
+                "record_count": len(records),
+                "start_offset": offsets[0],
+                "end_offset": offsets[-1] + record_size - 1,
+                "start_rva": records[0]["rva"] if records else None,
+                "end_rva": records[-1]["rva"] if records else None,
+                "text_section_pointer_fields_after_name": text_section_pointer_fields,
+                "field_kind_counts": [
+                    {"field_index": i, "counts": dict(sorted(counts.items()))}
+                    for i, counts in enumerate(field_kind_counts)
+                ],
+                "field_section_counts": [
+                    {"field_index": i, "counts": dict(sorted(counts.items()))}
+                    for i, counts in enumerate(field_section_counts)
+                ],
+                "records": records,
+            }
+        )
+    out.sort(key=lambda row: (-row["record_count"], row["start_offset"]))
+    return out
+
+
+def import_iat_map(pe: pefile.PE, wanted: set[str]) -> dict[int, str]:
+    out: dict[int, str] = {}
+    if not hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
+        return out
+    for module in pe.DIRECTORY_ENTRY_IMPORT:
+        dll = module.dll.decode("ascii", errors="replace")
+        for imp in module.imports:
+            if not imp.name:
+                continue
+            name = imp.name.decode("ascii", errors="replace")
+            if name in wanted:
+                out[int(imp.address)] = f"{dll}!{name}"
+    return out
+
+
+def import_thunk_map(pe: pefile.PE, instructions: list, iat_map: dict[int, str]) -> dict[int, str]:
+    """Resolve simple x86 import thunks: JMP [IAT] -> imported API name."""
+    out: dict[int, str] = {}
+    for insn in instructions:
+        if insn.mnemonic != "jmp":
+            continue
+        for op in insn.operands:
+            if op.type == X86_OP_MEM and int(op.mem.disp) in iat_map:
+                out[int(insn.address)] = iat_map[int(op.mem.disp)]
+                break
+    return out
+
+
+def pointer_occurrence_instructions(
+    pe: pefile.PE, instructions: list, pointer_rows: list[dict]
+) -> list[dict]:
+    """Bind raw DWORD pointer occurrences in executable sections to containing instructions."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for row in pointer_rows:
+        if row.get("section") != ".text" or not row.get("rva"):
+            continue
+        occurrence_va = image_base + int(row["rva"], 16)
+        containing = None
+        for insn in instructions:
+            if int(insn.address) <= occurrence_va < int(insn.address) + int(insn.size):
+                containing = {
+                    "instruction_va": f"0x{insn.address:08X}",
+                    "instruction_rva": f"0x{insn.address - image_base:08X}",
+                    "instruction_size": int(insn.size),
+                    "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                    "byte_offset_within_instruction": occurrence_va - int(insn.address),
+                }
+                break
+        out.append({**row, "containing_instruction": containing})
+    return out
+
+
+def code_refs_to_pointer_slots(
+    pe: pefile.PE, instructions: list, pointer_rows: list[dict]
+) -> list[dict]:
+    """Find code operands that reference second-order data pointer slots exactly."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    slots = {
+        int(row["va"], 16): row
+        for row in pointer_rows
+        if row.get("va") and row.get("section") != ".text"
+    }
+    out: list[dict] = []
+    for insn in instructions:
+        for op in insn.operands:
+            if op.type == X86_OP_IMM:
+                value = int(op.imm)
+                kind = "imm"
+            elif op.type == X86_OP_MEM:
+                value = int(op.mem.disp)
+                kind = "mem_disp"
+            else:
+                continue
+            if value in slots:
+                row = slots[value]
+                out.append(
+                    {
+                        "slot_va": row["va"],
+                        "slot_rva": row["rva"],
+                        "cluster_index": row["cluster_index"],
+                        "va": f"0x{insn.address:08X}",
+                        "rva": f"0x{insn.address - image_base:08X}",
+                        "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                        "operand_kind": kind,
+                    }
+                )
+    return out
+
+
+def shared_record_target_headers(pe: pefile.PE, path: Path, record_arrays: list[dict]) -> list[dict]:
+    """Decode small shared targets referenced by a fixed record field, without assigning semantics."""
+    data = path.read_bytes()
+    seen: set[int] = set()
+    out: list[dict] = []
+    for array in record_arrays:
+        for record in array.get("records", []):
+            for field in record.get("fields", [])[1:]:
+                if field.get("kind") != "va" or field.get("offset") is None:
+                    continue
+                target_offset = int(field["offset"])
+                if target_offset in seen:
+                    continue
+                seen.add(target_offset)
+                start = max(0, target_offset - 16)
+                end = min(len(data), target_offset + 32)
+                window = data[start:end]
+                dwords = []
+                for pos in range(0, len(window) - 3, 4):
+                    value = struct.unpack_from("<I", window, pos)[0]
+                    dwords.append(
+                        {
+                            "relative_offset": start + pos - target_offset,
+                            **classify_pe_dword(pe, value),
+                        }
+                    )
+                out.append(
+                    {
+                        "target_va": field["value"],
+                        "target_rva": field.get("rva"),
+                        "target_offset": target_offset,
+                        "target_section": field.get("section"),
+                        "window_start_offset": start,
+                        "window_end_offset": end,
+                        "dwords": dwords,
+                    }
+                )
+    return out
+
+
+def classify_x86_dword_occurrence(path: Path, offset: int) -> dict:
+    """Classify common 32-bit x86 encodings where a DWORD begins at offset."""
+    data = path.read_bytes()
+    start = max(0, offset - 8)
+    end = min(len(data), offset + 12)
+    context = data[start:end]
+    pattern = "unknown_or_data"
+
+    if offset >= 2:
+        prefix2 = data[offset - 2 : offset]
+        if prefix2 == b"\xFF\x15":
+            pattern = "call_abs_mem_ff15"
+        elif prefix2 == b"\xFF\x25":
+            pattern = "jmp_abs_mem_ff25"
+        elif len(prefix2) == 2 and prefix2[0] in {0x8B, 0x89, 0x8D, 0x80, 0x81, 0x83, 0xC7} and (prefix2[1] & 0xC7) == 0x05:
+            pattern = f"abs_disp32_opcode_{prefix2[0]:02x}_{prefix2[1]:02x}"
+
+    if pattern == "unknown_or_data" and offset >= 1:
+        opcode = data[offset - 1]
+        if opcode == 0x68:
+            pattern = "push_imm32_68"
+        elif 0xB8 <= opcode <= 0xBF:
+            pattern = f"mov_reg_imm32_{opcode:02x}"
+        elif opcode == 0xA1:
+            pattern = "mov_eax_moffs32_a1"
+        elif opcode == 0xA3:
+            pattern = "mov_moffs32_eax_a3"
+
+    return {
+        "pattern": pattern,
+        "context_start_offset": start,
+        "dword_offset_in_context": offset - start,
+        "context_hex": context.hex(),
+    }
+
+
+def attach_x86_occurrence_context(path: Path, rows: list[dict]) -> list[dict]:
+    return [
+        {**row, "x86_context": classify_x86_dword_occurrence(path, int(row["offset"]))}
+        for row in rows
+    ]
+
+
+def occurrence_pattern_counts(rows: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        counts[row.get("x86_context", {}).get("pattern", "missing")] += 1
+    return dict(sorted(counts.items()))
+
+
+def imported_iat_raw_occurrences(
+    pe: pefile.PE, path: Path, iat_map: dict[int, str]
+) -> list[dict]:
+    """Find raw little-endian IAT VA occurrences and retain executable-section locations."""
+    data = path.read_bytes()
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for iat_va, name in sorted(iat_map.items()):
+        needle = struct.pack("<I", iat_va & 0xFFFFFFFF)
+        start = 0
+        while True:
+            offset = data.find(needle, start)
+            if offset < 0:
+                break
+            start = offset + 1
+            section = section_for_offset(pe, offset)
+            if section != ".text":
+                continue
+            try:
+                rva = int(pe.get_rva_from_offset(offset))
+            except Exception:
+                rva = None
+            out.append(
+                {
+                    "target": name,
+                    "iat_va": f"0x{iat_va:08X}",
+                    "offset": offset,
+                    "section": section,
+                    "rva": f"0x{rva:08X}" if rva is not None else None,
+                    "va": f"0x{image_base + rva:08X}" if rva is not None else None,
+                }
+            )
+    return out
+
+
+def imported_call_sites(
+    pe: pefile.PE,
+    instructions: list,
+    iat_map: dict[int, str],
+    thunk_map: dict[int, str] | None = None,
+) -> list[dict]:
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    thunk_map = thunk_map or {}
+    out: list[dict] = []
+    for idx, insn in enumerate(instructions):
+        if insn.mnemonic != "call":
+            continue
+        target = None
+        resolution = None
+        for op in insn.operands:
+            if op.type == X86_OP_MEM and int(op.mem.disp) in iat_map:
+                target = iat_map[int(op.mem.disp)]
+                resolution = "direct_iat"
+                break
+            if op.type == X86_OP_IMM and int(op.imm) in thunk_map:
+                target = thunk_map[int(op.imm)]
+                resolution = "import_thunk"
+                break
+        if target:
+            out.append(
+                {
+                    "instruction_index": idx,
+                    "va": f"0x{insn.address:08X}",
+                    "rva": f"0x{insn.address - image_base:08X}",
+                    "target": target,
+                    "resolution": resolution,
+                    "instruction": f"{insn.mnemonic} {insn.op_str}".strip(),
+                }
+            )
+    return out
+
+
+def cluster_base_pointer_rows(pe: pefile.PE, path: Path, clusters: list[dict]) -> list[dict]:
+    """Find second-order DWORD pointers to candidate pointer-array bases."""
+    data = path.read_bytes()
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    out: list[dict] = []
+    for cluster_index, cluster in enumerate(clusters):
+        if not cluster.get("start_va") or not cluster.get("start_rva"):
+            continue
+        targets = (
+            ("base_va32", int(cluster["start_va"], 16)),
+            ("base_rva32", int(cluster["start_rva"], 16)),
+        )
+        for encoding, value in targets:
+            needle = struct.pack("<I", value & 0xFFFFFFFF)
+            start = 0
+            while True:
+                offset = data.find(needle, start)
+                if offset < 0:
+                    break
+                start = offset + 1
+                # Ignore the array's own first element if its value happens to equal its base.
+                if cluster["start_offset"] <= offset <= cluster["end_offset"]:
+                    continue
+                try:
+                    rva = int(pe.get_rva_from_offset(offset))
+                except Exception:
+                    rva = None
+                va = image_base + rva if rva is not None else None
+                out.append(
+                    {
+                        "cluster_index": cluster_index,
+                        "cluster_start_rva": cluster["start_rva"],
+                        "cluster_start_va": cluster["start_va"],
+                        "encoding": encoding,
+                        "offset": offset,
+                        "section": section_for_offset(pe, offset),
+                        "rva": f"0x{rva:08X}" if rva is not None else None,
+                        "va": f"0x{va:08X}" if va is not None else None,
+                    }
+                )
+    out.sort(key=lambda row: (row["cluster_index"], row["offset"], row["encoding"]))
+    return out
+
+
+def loader_proximity(
+    pe: pefile.PE,
+    instructions: list,
+    call_sites: list[dict],
+    clusters: list[dict],
+    second_order_rows: list[dict],
+    checker_rows: list[dict],
+    window_size: int = 32,
+) -> list[dict]:
+    """Record bounded operands near loader calls that touch checker arrays/names."""
+    image_base = int(pe.OPTIONAL_HEADER.ImageBase)
+    checker_vas = {
+        int(row["va"], 16): row["text"]
+        for row in checker_rows
+        if row.get("va")
+    }
+    second_order_vas = {
+        int(row["va"], 16): row
+        for row in second_order_rows
+        if row.get("va")
+    }
+    cluster_ranges = []
+    for index, cluster in enumerate(clusters):
+        if cluster.get("start_va") and cluster.get("end_va"):
+            cluster_ranges.append(
+                (index, int(cluster["start_va"], 16), int(cluster["end_va"], 16) + 4)
+            )
+
+    out: list[dict] = []
+    for call in call_sites:
+        idx = int(call["instruction_index"])
+        hits: list[dict] = []
+        for prev in instructions[max(0, idx - window_size):idx]:
+            for op in prev.operands:
+                if op.type == X86_OP_IMM:
+                    value = int(op.imm)
+                    kind = "imm"
+                elif op.type == X86_OP_MEM:
+                    value = int(op.mem.disp)
+                    kind = "mem_disp"
+                else:
+                    continue
+                detail = None
+                if value in checker_vas:
+                    detail = {"class": "checker_string_va", "identifier": checker_vas[value]}
+                elif value in second_order_vas:
+                    detail = {
+                        "class": "checker_cluster_base_pointer_va",
+                        "cluster_index": second_order_vas[value]["cluster_index"],
+                    }
+                else:
+                    for cluster_index, lo, hi in cluster_ranges:
+                        if lo <= value <= hi:
+                            detail = {
+                                "class": "checker_cluster_range",
+                                "cluster_index": cluster_index,
+                            }
+                            break
+                if detail:
+                    hits.append(
+                        {
+                            "va": f"0x{prev.address:08X}",
+                            "rva": f"0x{prev.address - image_base:08X}",
+                            "instruction": f"{prev.mnemonic} {prev.op_str}".strip(),
+                            "operand_kind": kind,
+                            "value": f"0x{value:08X}",
+                            **detail,
+                        }
+                    )
+        out.append({**call, "nearby_checker_hits": hits})
+    return out
 
 
 def raw_string_matches(path: Path, anchors: list[str]) -> tuple[list[dict], list[dict]]:
@@ -531,6 +1137,59 @@ def main() -> int:
     )
     checker_ids = checker_identifier_rows(pe, pe_path, instructions)
     checker_id_clusters = checker_identifier_clusters(checker_ids)
+    checker_pointer_hits = checker_pointer_rows(pe, pe_path, checker_ids)
+    checker_pointer_tables = checker_pointer_clusters(checker_pointer_hits)
+    checker_pointer_table_refs = checker_pointer_cluster_code_refs(
+        pe, instructions, checker_pointer_tables
+    )
+    checker_fixed_records = decode_checker_fixed_records(
+        pe, pe_path, checker_pointer_tables
+    )
+    checker_shared_target_headers = shared_record_target_headers(
+        pe, pe_path, checker_fixed_records
+    )
+    checker_cluster_base_pointers = cluster_base_pointer_rows(
+        pe, pe_path, checker_pointer_tables
+    )
+    checker_cluster_base_x86_context = attach_x86_occurrence_context(
+        pe_path, checker_cluster_base_pointers
+    )
+    checker_cluster_base_occurrence_instructions = pointer_occurrence_instructions(
+        pe, instructions, checker_cluster_base_pointers
+    )
+    checker_cluster_base_slot_code_refs = code_refs_to_pointer_slots(
+        pe, instructions, checker_cluster_base_pointers
+    )
+    loader_iat = import_iat_map(
+        pe,
+        {
+            "GetProcAddress",
+            "LoadLibraryA",
+            "LoadLibraryW",
+            "GetModuleHandleA",
+            "GetModuleHandleW",
+            "FreeLibrary",
+        },
+    )
+    loader_iat_raw_occurrences = imported_iat_raw_occurrences(
+        pe, pe_path, loader_iat
+    )
+    loader_iat_raw_x86_context = attach_x86_occurrence_context(
+        pe_path, loader_iat_raw_occurrences
+    )
+    loader_iat_occurrence_instructions = pointer_occurrence_instructions(
+        pe, instructions, loader_iat_raw_occurrences
+    )
+    loader_thunks = import_thunk_map(pe, instructions, loader_iat)
+    loader_calls = imported_call_sites(pe, instructions, loader_iat, loader_thunks)
+    loader_checker_proximity = loader_proximity(
+        pe,
+        instructions,
+        loader_calls,
+        checker_pointer_tables,
+        checker_cluster_base_pointers,
+        checker_ids,
+    )
 
     companion_modules: list[dict] = []
     if args.scan_root:
@@ -567,6 +1226,30 @@ def main() -> int:
             "checker_exports": checker_export_rows(pe),
             "checker_identifier_strings": checker_ids,
             "checker_identifier_clusters": checker_id_clusters,
+            "checker_pointer_hits": checker_pointer_hits,
+            "checker_pointer_clusters": checker_pointer_tables,
+            "checker_pointer_cluster_code_refs": checker_pointer_table_refs,
+            "checker_fixed_stride_records": checker_fixed_records,
+            "checker_shared_record_target_headers": checker_shared_target_headers,
+            "checker_cluster_base_pointers": checker_cluster_base_pointers,
+            "checker_cluster_base_x86_context": checker_cluster_base_x86_context,
+            "checker_cluster_base_x86_pattern_counts": occurrence_pattern_counts(checker_cluster_base_x86_context),
+            "checker_cluster_base_occurrence_instructions": checker_cluster_base_occurrence_instructions,
+            "checker_cluster_base_slot_code_refs": checker_cluster_base_slot_code_refs,
+            "loader_import_iat": [
+                {"iat_va": f"0x{va:08X}", "name": name}
+                for va, name in sorted(loader_iat.items())
+            ],
+            "loader_iat_raw_occurrences": loader_iat_raw_occurrences,
+            "loader_iat_raw_x86_context": loader_iat_raw_x86_context,
+            "loader_iat_raw_x86_pattern_counts": occurrence_pattern_counts(loader_iat_raw_x86_context),
+            "loader_iat_occurrence_instructions": loader_iat_occurrence_instructions,
+            "loader_import_thunks": [
+                {"thunk_va": f"0x{va:08X}", "target": name}
+                for va, name in sorted(loader_thunks.items())
+            ],
+            "loader_call_sites": loader_calls,
+            "loader_checker_proximity": loader_checker_proximity,
         },
         "anchors_total": len(anchors),
         "resource_anchors_matched": len(matched_anchor_names),
@@ -615,6 +1298,23 @@ def main() -> int:
         f"- MSPUB checker identifier strings: {len(checker_ids)}",
         f"- checker identifiers with code refs: {sum(1 for row in checker_ids if row['code_refs'])}",
         f"- checker identifier clusters: {len(checker_id_clusters)}",
+        f"- checker pointer hits (exact RVA/VA dwords): {len(checker_pointer_hits)}",
+        f"- checker pointer clusters (>=2 identifiers): {len(checker_pointer_tables)}",
+        f"- checker pointer clusters with code refs: {sum(1 for row in checker_pointer_table_refs if row['refs'])}",
+        f"- fixed 16-byte checker record arrays: {len(checker_fixed_records)}",
+        f"- executable pointer fields after name: {sum(row['text_section_pointer_fields_after_name'] for row in checker_fixed_records)}",
+        f"- shared fixed-record VA targets decoded: {len(checker_shared_target_headers)}",
+        f"- second-order pointers to checker array bases: {len(checker_cluster_base_pointers)}",
+        f"- second-order .text occurrences bound to instructions: {sum(1 for row in checker_cluster_base_occurrence_instructions if row['containing_instruction'])}",
+        f"- code refs to second-order data slots: {len(checker_cluster_base_slot_code_refs)}",
+        f"- loader API imports: {len(loader_iat)}",
+        f"- checker array-base x86 occurrence patterns: {occurrence_pattern_counts(checker_cluster_base_x86_context)}",
+        f"- raw .text IAT occurrences: {len(loader_iat_raw_occurrences)}",
+        f"- raw .text IAT x86 patterns: {occurrence_pattern_counts(loader_iat_raw_x86_context)}",
+        f"- raw IAT occurrences bound to instructions: {sum(1 for row in loader_iat_occurrence_instructions if row['containing_instruction'])}",
+        f"- loader import thunks: {len(loader_thunks)}",
+        f"- loader API call sites: {len(loader_calls)}",
+        f"- loader calls with nearby checker hits: {sum(1 for row in loader_checker_proximity if row['nearby_checker_hits'])}",
         f"- STRINGTABLE IDs matched: {len(matched_string_ids)}",
         f"- direct code immediates to matched IDs: {len(direct_refs)}",
         f"- LoadString call sites: {len(load_string_refs)}",
@@ -649,6 +1349,41 @@ def main() -> int:
                 "checker_identifiers": len(checker_ids),
                 "checker_identifiers_with_refs": sum(1 for row in checker_ids if row["code_refs"]),
                 "checker_identifier_clusters": len(checker_id_clusters),
+                "checker_pointer_hits": len(checker_pointer_hits),
+                "checker_pointer_clusters": len(checker_pointer_tables),
+                "checker_pointer_clusters_with_code_refs": sum(
+                    1 for row in checker_pointer_table_refs if row["refs"]
+                ),
+                "checker_fixed_record_arrays": len(checker_fixed_records),
+                "checker_text_section_pointer_fields_after_name": sum(
+                    row["text_section_pointer_fields_after_name"]
+                    for row in checker_fixed_records
+                ),
+                "checker_shared_record_targets": len(checker_shared_target_headers),
+                "checker_cluster_base_pointers": len(checker_cluster_base_pointers),
+                "checker_cluster_base_text_occurrences_bound_to_instructions": sum(
+                    1 for row in checker_cluster_base_occurrence_instructions
+                    if row["containing_instruction"]
+                ),
+                "checker_cluster_base_slot_code_refs": len(checker_cluster_base_slot_code_refs),
+                "loader_imports": len(loader_iat),
+                "checker_cluster_base_x86_patterns": occurrence_pattern_counts(
+                    checker_cluster_base_x86_context
+                ),
+                "loader_iat_raw_occurrences": len(loader_iat_raw_occurrences),
+                "loader_iat_raw_x86_patterns": occurrence_pattern_counts(
+                    loader_iat_raw_x86_context
+                ),
+                "loader_iat_occurrences_bound_to_instructions": sum(
+                    1 for row in loader_iat_occurrence_instructions
+                    if row["containing_instruction"]
+                ),
+                "loader_import_thunks": len(loader_thunks),
+                "loader_call_sites": len(loader_calls),
+                "loader_calls_with_checker_proximity": sum(
+                    1 for row in loader_checker_proximity
+                    if row["nearby_checker_hits"]
+                ),
                 "string_ids": len(matched_string_ids),
                 "direct_refs": len(direct_refs),
                 "clusters": len(clusters),
