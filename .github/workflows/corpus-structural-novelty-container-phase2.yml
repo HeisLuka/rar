@@ -1,0 +1,116 @@
+name: CORPUS structural novelty container phase 2
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/structural_novelty_container_phase2.py'
+      - '.github/workflows/corpus-structural-novelty-container-phase2.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/corpus/structural_novelty_container_phase2.py'
+      - '.github/workflows/corpus-structural-novelty-container-phase2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: corpus-structural-novelty-container-phase2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB/archive tools
+        run: |
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Offline fail-closed validation
+        run: |
+          set -euo pipefail
+          python -m py_compile             tools/corpus/structural_novelty.py             tools/corpus/structural_novelty_container_phase2.py             tools/corpus/pub_container_extract.py
+          python tools/corpus/structural_novelty_container_phase2.py self-test
+
+  scan:
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        container_index: [0, 1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB/archive tools
+        run: |
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full
+      - name: Rehydrate one admitted root container and probe exact members
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/corpus/structural_novelty_container_phase2.py scan-container             --sources tools/corpus/structural_novelty_sources.json             --out out             --container-index "${{ matrix.container_index }}"
+      - name: Prove raw-byte cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: structural-novelty-container-phase2-${{ github.run_id }}-${{ matrix.container_index }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: github.event_name != 'pull_request' && always()
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: structural-novelty-container-phase2-${{ github.run_id }}-*
+          path: shards
+      - name: Aggregate and deduplicate by exact SHA
+        run: |
+          set -euo pipefail
+          python tools/corpus/structural_novelty_container_phase2.py aggregate             --input shards             --out aggregate
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("aggregate/summary.json").read_text())
+          assert s["container_unique_sha"] == 425, s
+          assert s["analyzed_rows"] == 425, s
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: structural-novelty-container-phase2-aggregate-${{ github.run_id }}
+          path: aggregate/**
+          if-no-files-found: error
+          retention-days: 30
