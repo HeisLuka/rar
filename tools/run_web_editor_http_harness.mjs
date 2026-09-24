@@ -362,6 +362,7 @@ async function main() {
       action: structuredClone(window.__historyActions.at(-1)),
       history_requests: window.__service.historyRequests,
       history_trace: structuredClone(window.__service.lastHistoryTraceContext),
+      source_hash: window.__shell.snapshot.source_hash,
       spans: structuredClone(window.__observability.spans),
       error: window.__historyError,
     }), initial.node_id);
