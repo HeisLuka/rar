@@ -13,7 +13,26 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from authored_stack_v1 import reorder_authored_lane, validate_authored_lane
+try:
+    from authored_stack_v1 import reorder_authored_lane, validate_authored_lane
+except ModuleNotFoundError:
+    # Some local producer builders load revision_store.py directly via
+    # importlib.spec_from_file_location without placing this sibling directory
+    # on sys.path. Load the source-neutral sibling explicitly in that case.
+    import importlib.util
+    import pathlib
+
+    _authored_stack_path = pathlib.Path(__file__).with_name("authored_stack_v1.py")
+    _authored_stack_spec = importlib.util.spec_from_file_location(
+        "chaptera_authored_stack_v1",
+        _authored_stack_path,
+    )
+    if _authored_stack_spec is None or _authored_stack_spec.loader is None:
+        raise ImportError("cannot load authored_stack_v1 sibling module")
+    _authored_stack_module = importlib.util.module_from_spec(_authored_stack_spec)
+    _authored_stack_spec.loader.exec_module(_authored_stack_module)
+    reorder_authored_lane = _authored_stack_module.reorder_authored_lane
+    validate_authored_lane = _authored_stack_module.validate_authored_lane
 
 
 MAX_SAFE_EMU = 9_007_199_254_740_991
