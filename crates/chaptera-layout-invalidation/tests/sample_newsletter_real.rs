@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use chaptera_layout_invalidation::linked_flow::{
-    ContinuationTerminalV1, LinkedFrameInputV1, resolve_linked_story_full_v1,
-    resolve_linked_story_incremental_v1,
+    ContinuationTerminalV1, LinkedFrameInputV1, linked_scene_shard_output_fingerprint_v1,
+    resolve_linked_story_full_v1, resolve_linked_story_incremental_v1,
 };
 use chaptera_layout_invalidation::prepared_paragraph::prepare_projected_story_v1;
 use chaptera_layout_invalidation::runtime::{
@@ -96,6 +96,7 @@ struct WorkReceiptV1 {
     exact_linked_flow_equivalence: bool,
     exact_shaped_flow_equivalence: bool,
     exact_fixed_run_equivalence: bool,
+    exact_scene_shard_equivalence: bool,
     reshaping_calls_after_geometry_edit: u32,
     synthetic_typography: bool,
     publisher_glyph_exact_claim: bool,
@@ -577,6 +578,11 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
     )
     .expect("bounded frame work ratio");
 
+    let incremental_scene_shard =
+        linked_scene_shard_output_fingerprint_v1("sample-newsletter-page", &incremental.flow);
+    let clean_scene_shard =
+        linked_scene_shard_output_fingerprint_v1("sample-newsletter-page", &clean);
+
     let work_receipt = WorkReceiptV1 {
         schema: "chaptera.layout-invalidation-work-receipt.v1".into(),
         source_sha256: fixture.source.sha256.clone(),
@@ -591,6 +597,7 @@ fn real_sample_newsletter_story22_incremental_flow_converges_to_clean_recompute(
         exact_linked_flow_equivalence: incremental.flow == clean,
         exact_shaped_flow_equivalence: incremental_shaped == clean_shaped,
         exact_fixed_run_equivalence: incremental_runs == clean_runs,
+        exact_scene_shard_equivalence: incremental_scene_shard == clean_scene_shard,
         reshaping_calls_after_geometry_edit: incremental_receipt.invariants.reshaping_calls,
         synthetic_typography: true,
         publisher_glyph_exact_claim: false,
