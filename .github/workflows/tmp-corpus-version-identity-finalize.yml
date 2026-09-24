@@ -1,0 +1,82 @@
+name: TEMP CORPUS version identity finalize
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-version-identity-finalize.yml'
+      - 'tools/corpus/tmp_version_identity_finalize.py'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tmp-corpus-version-identity-finalize-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Restore retained source-free census inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/phase1 inputs/c425_root1 inputs/c425_root2 inputs/container407 inputs/crossarm129
+          fetch_artifact() {
+            id="$1"
+            dest="$2"
+            tmp="artifact-${id}.zip"
+            gh api               -H "Accept: application/vnd.github+json"               "/repos/${{ github.repository }}/actions/artifacts/${id}/zip"               > "$tmp"
+            unzip -q "$tmp" -d "$dest"
+            rm -f "$tmp"
+          }
+          fetch_artifact 10837459158 inputs/phase1/p1-0
+          fetch_artifact 10837319526 inputs/phase1/p1-1
+          fetch_artifact 10837294686 inputs/phase1/p1-2
+          fetch_artifact 10836964952 inputs/phase1/p1-3
+          fetch_artifact 10837528964 inputs/c425_root1
+          fetch_artifact 10837796947 inputs/c425_root2
+          fetch_artifact 10837667603 inputs/container407
+          fetch_artifact 10837444111 inputs/crossarm129
+      - name: Repair transport-only misses and build final matrix
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m py_compile tools/corpus/tmp_version_identity_finalize.py
+          python tools/corpus/tmp_version_identity_finalize.py             --inputs inputs             --out final
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("final/matrix/summary.json").read_text())
+          assert s["physical_sha_count"] == 1486, s
+          assert s["successful_physical_sha_count"] == 1474, s
+          assert s["logical_identity_count"] == 1314, s
+          assert s["surplus_physical_sha_count"] == 160, s
+          assert s["status"].get("ok") == 1474, s
+          assert s["status"].get("probe_failed") == 12, s
+          assert s["status"].get("rehydrate_failed", 0) == 0, s
+          PY
+      - name: Prove retained output is source-safe
+        run: |
+          set -euo pipefail
+          if find final -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into final retained output" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: version-identity-matrix-final-${{ github.run_id }}
+          path: final/**
+          if-no-files-found: error
+          retention-days: 90
