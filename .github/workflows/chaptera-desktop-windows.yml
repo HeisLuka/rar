@@ -222,6 +222,55 @@ jobs:
           if ($manifest.agent_catalog_sha256 -ne $catalogHash) { throw "package manifest Agent catalog hash mismatch" }
           if ([int64]$manifest.agent_catalog_size -ne $catalogBytes) { throw "package manifest Agent catalog byte length mismatch" }
 
+          $describeRequest = '{"request_id":"portable-describe","command":"protocol.describe"}'
+          $describeLines = $describeRequest | & $exe --agent-v1
+          $agentExit = $LASTEXITCODE
+          if ($agentExit -ne 0) { throw "portable Agent V1 protocol.describe failed with exit code $agentExit" }
+          $describeText = ($describeLines -join "`n").Trim()
+          if (-not $describeText) { throw "portable Agent V1 protocol.describe returned no output" }
+          try {
+            $describeEnvelope = $describeText | ConvertFrom-Json
+          } catch {
+            throw "portable Agent V1 protocol.describe did not return valid JSON"
+          }
+          if ($describeEnvelope.message_type -ne "result" -or $describeEnvelope.ok -ne $true) {
+            throw "portable Agent V1 protocol.describe returned a non-success envelope"
+          }
+          $describe = $describeEnvelope.result
+          if ($describe.protocol_version -ne "chaptera.agent-control.v1") { throw "portable runtime Agent protocol mismatch" }
+          if ($describe.catalog_schema -ne "chaptera.agent-control.catalog.v1") { throw "portable runtime Agent catalog schema mismatch" }
+          if ($describe.executable -ne "chaptera-editor.exe") { throw "portable runtime Agent executable identity mismatch" }
+          if ($describe.catalog_sha256 -ne $catalogHash) { throw "portable runtime embedded catalog SHA does not match packaged catalog" }
+          if ($describe.native_pub_write -ne $false) { throw "portable runtime unexpectedly exposes native PUB write" }
+          if ($describe.global_laws.source_pub_immutable -ne $true) { throw "portable runtime lost immutable-source law" }
+          if ($describe.global_laws.native_pub_write -ne $false) { throw "portable runtime catalog widened native PUB write" }
+
+          $commandNames = @($describe.commands)
+          $contractNames = @($describe.command_contracts.PSObject.Properties.Name)
+          if ($commandNames.Count -ne 21 -or $contractNames.Count -ne 21) {
+            throw "portable runtime Agent command catalog does not contain exactly 21 commands"
+          }
+          $commandSet = @($commandNames | Sort-Object -Unique)
+          $contractSet = @($contractNames | Sort-Object -Unique)
+          if (($commandSet -join "`n") -ne ($contractSet -join "`n")) {
+            throw "portable runtime Agent command list differs from embedded command contracts"
+          }
+
+          $handshakePath = Join-Path $artifact "chaptera.agent-portable-handshake.json"
+          [ordered]@{
+            schema = "chaptera.agent-portable-handshake.v1"
+            executable_sha256 = $exeHash
+            catalog_sha256 = $catalogHash
+            runtime_catalog_sha256 = [string]$describe.catalog_sha256
+            protocol_version = [string]$describe.protocol_version
+            catalog_schema = [string]$describe.catalog_schema
+            command_count = $commandNames.Count
+            source_pub_immutable = [bool]$describe.global_laws.source_pub_immutable
+            native_pub_write = [bool]$describe.global_laws.native_pub_write
+            checkout_present = $false
+            catalog_binding_verified = $true
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $handshakePath
+
       - uses: actions/upload-artifact@v4
         with:
           name: chaptera-editor-portable-windows-x86_64
@@ -230,4 +279,5 @@ jobs:
             ${{ runner.temp }}/chaptera-artifact/Chaptera-Editor.package.json
             ${{ runner.temp }}/chaptera-artifact/editor-live-trial-package.real.json
             ${{ runner.temp }}/chaptera-artifact/chaptera.desktop-source-free-smoke.json
+            ${{ runner.temp }}/chaptera-artifact/chaptera.agent-portable-handshake.json
           if-no-files-found: error
