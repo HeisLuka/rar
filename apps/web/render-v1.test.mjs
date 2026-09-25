@@ -5,6 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  DEFAULT_RENDERER_KIND,
+  FALLBACK_RENDERER_KIND,
+  OPTIONAL_ACCELERATED_RENDERER_KIND,
   RENDERER_KINDS,
   assertSceneSourceNeutral,
   buildOverlayPlan,
@@ -34,6 +37,15 @@ function deepFreeze(value) {
 
 test("preflight exposes all required renderer candidates", () => {
   assert.deepEqual(RENDERER_KINDS, ["svg", "canvas2d", "webgl2-hybrid"]);
+});
+
+test("V1 renderer decision is Canvas2D primary with SVG fallback", () => {
+  assert.equal(DEFAULT_RENDERER_KIND, "canvas2d");
+  assert.equal(FALLBACK_RENDERER_KIND, "svg");
+  assert.equal(OPTIONAL_ACCELERATED_RENDERER_KIND, "webgl2-hybrid");
+  assert.ok(RENDERER_KINDS.includes(DEFAULT_RENDERER_KIND));
+  assert.ok(RENDERER_KINDS.includes(FALLBACK_RENDERER_KIND));
+  assert.ok(RENDERER_KINDS.includes(OPTIONAL_ACCELERATED_RENDERER_KIND));
 });
 
 test("render plan is deterministic and does not mutate a frozen scene", () => {
