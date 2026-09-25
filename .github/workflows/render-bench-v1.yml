@@ -18,6 +18,9 @@ on:
       - "tools/render_segment_plan_v1.py"
       - "tools/test_render_segment_plan_v1.py"
       - "tools/run_render_segment_plan_benchmark.py"
+      - "tools/render_color_contract_v1.py"
+      - "tools/test_render_color_contract_v1.py"
+      - "tools/run_render_color_contract.py"
       - "docs/render-bench-v1.md"
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
@@ -53,6 +56,11 @@ jobs:
         run: python test_render_segment_plan_v1.py
       - name: Run segment planning benchmark
         run: mkdir -p target/render-segment-plan && PYTHONPATH=tools python tools/run_render_segment_plan_benchmark.py | tee target/render-segment-plan/receipt.json
+      - name: Unit-test renderer color contract
+        working-directory: tools
+        run: python test_render_color_contract_v1.py
+      - name: Emit renderer color contract receipt
+        run: mkdir -p target/render-color && PYTHONPATH=tools python tools/run_render_color_contract.py | tee target/render-color/receipt.json
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
@@ -77,4 +85,9 @@ jobs:
         with:
           name: render-segment-plan-${{ github.run_id }}
           path: target/render-segment-plan/receipt.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-color-${{ github.run_id }}
+          path: target/render-color/receipt.json
           if-no-files-found: error
