@@ -3434,10 +3434,8 @@ mod tests {
         harness.step();
         {
             let editor = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
-            editor.key_combination(&[
-                egui_kittest::kittest::Key::Control,
-                egui_kittest::kittest::Key::A,
-            ]);
+            editor.focus();
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
             editor.type_text(replacement.clone());
         }
         harness.step();
