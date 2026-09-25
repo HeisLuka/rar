@@ -531,7 +531,7 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
     let mut field_27_matched_syids_on_document_pages = BTreeSet::new();
     let mut field_27_matched_syids_outside_document_pages = BTreeSet::new();
     let mut shape_scalars_by_story =
-        BTreeMap::<u32, Vec<(u32, BTreeMap<(u8, u8), Vec<u32>>)>>::new();
+        BTreeMap::<u32, Vec<(u32, BTreeMap<(u16, u8), Vec<u32>>)>>::new();
 
     for reference in references.values() {
         if single_raw_type(reference) != Some(RAW_TYPE_SHAPE) {
