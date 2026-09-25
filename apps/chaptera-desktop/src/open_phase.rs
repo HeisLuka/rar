@@ -83,7 +83,7 @@ fn decode_visible_resources(visual: &ViewerGeometryDocument) -> Result<(), Strin
         let format = match embedded.mime.as_str() {
             "image/png" => image::ImageFormat::Png,
             "image/jpeg" => image::ImageFormat::Jpeg,
-            other => return Err(format!("unsupported visible image MIME {other}")),
+            _ => continue,
         };
         image::load_from_memory_with_format(&embedded.bytes, format)
             .map_err(|error| format!("decode visible resource: {error}"))?
@@ -240,10 +240,11 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
         &mut cursor,
         ns_ms(timing.reader.parse_source_graph_ns)
             + ns_ms(timing.resolve_model_ns)
-            + ns_ms(timing.viewer_document_projection_ns),
+            + ns_ms(timing.viewer_document_projection_ns)
+            + ns_ms(timing.orchestration_ns),
         "document_global",
         (0, 0, page_count, story_count, 0),
-        "current source graph, resolved graph and Viewer document projection are eager/document-global",
+        "current source graph, resolved graph, Viewer document projection and inter-stage Viewer orchestration are eager/document-global",
     ));
     phases.push(phase(
         "first_page_dependency_resolution",
