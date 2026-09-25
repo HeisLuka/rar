@@ -1174,11 +1174,12 @@ impl EditorSession {
             }
             EditorEditableTarget::Odg => {
                 let mut package =
-                    project_resolved_graph_to_odg(&plan, &self.graph, frame_from_payload)
-                        .map_err(|error| EditorExportError::Projection {
+                    project_resolved_graph_to_odg(&plan, &self.graph, frame_from_payload).map_err(
+                        |error| EditorExportError::Projection {
                             target,
                             message: error.to_string(),
-                        })?;
+                        },
+                    )?;
                 let placements = self.odg_replacement_placements()?;
                 add_embedded_images_to_odg(&plan, &mut package, &placements).map_err(|error| {
                     EditorExportError::Projection {
@@ -1281,15 +1282,17 @@ impl EditorSession {
         let mut placements = Vec::with_capacity(self.image_replacements.len());
 
         for (node_id, asset_sha) in &self.image_replacements {
-            let node = self.graph.nodes.get(node_id).ok_or_else(|| {
-                EditorExportError::Projection {
-                    target,
-                    message: format!(
-                        "replacement image node {} is missing from the resolved graph",
-                        node_id.as_canonical()
-                    ),
-                }
-            })?;
+            let node =
+                self.graph
+                    .nodes
+                    .get(node_id)
+                    .ok_or_else(|| EditorExportError::Projection {
+                        target,
+                        message: format!(
+                            "replacement image node {} is missing from the resolved graph",
+                            node_id.as_canonical()
+                        ),
+                    })?;
             let asset = self.replacement_assets.get(asset_sha).ok_or_else(|| {
                 EditorExportError::Projection {
                     target,
@@ -1758,11 +1761,7 @@ impl EditorSession {
         Ok(())
     }
 
-    pub fn can_resize_node_to(
-        &self,
-        node_id: NodeId,
-        bounds: RectEmu,
-    ) -> Result<(), EditorError> {
+    pub fn can_resize_node_to(&self, node_id: NodeId, bounds: RectEmu) -> Result<(), EditorError> {
         self.can_resize_node(node_id)?;
 
         let before = self

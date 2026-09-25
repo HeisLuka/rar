@@ -369,7 +369,6 @@ impl MoveTransaction {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenRect {
     pub x: f64,
@@ -671,7 +670,9 @@ impl ResizeTransaction {
     pub const fn preview_bounds(self) -> Option<RectEmu> {
         match self.state {
             ResizeTransactionState::Cancelled => None,
-            ResizeTransactionState::Active | ResizeTransactionState::Committed => Some(self.preview),
+            ResizeTransactionState::Active | ResizeTransactionState::Committed => {
+                Some(self.preview)
+            }
         }
     }
 
@@ -739,9 +740,15 @@ impl ResizeTransaction {
 
         let Some(candidate) = candidate else {
             let non_positive = (self.handle.uses_left() || self.handle.uses_right())
-                && right.get().checked_sub(left.get()).is_some_and(|value| value <= 0)
+                && right
+                    .get()
+                    .checked_sub(left.get())
+                    .is_some_and(|value| value <= 0)
                 || (self.handle.uses_top() || self.handle.uses_bottom())
-                    && bottom.get().checked_sub(top.get()).is_some_and(|value| value <= 0);
+                    && bottom
+                        .get()
+                        .checked_sub(top.get())
+                        .is_some_and(|value| value <= 0);
             self.last_update_valid = false;
             return Ok(ResizeUpdate::Invalid {
                 reason: if non_positive {
@@ -1116,10 +1123,6 @@ mod tests {
             .expect("preview");
         cancelled.cancel().expect("cancel");
         assert_eq!(cancelled.preview_bounds(), None);
-        assert_eq!(
-            cancelled.commit(),
-            Err(ResizeTransactionError::NotActive)
-        );
+        assert_eq!(cancelled.commit(), Err(ResizeTransactionError::NotActive));
     }
 }
-

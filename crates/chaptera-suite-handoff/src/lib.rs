@@ -183,7 +183,10 @@ pub fn create_reader_handoff(
 
 pub fn validate_packet(packet: &HandoffPacket) -> Result<(), String> {
     if packet.protocol_version != PACKET_VERSION {
-        return Err(format!("unsupported suite handoff version: {}", packet.protocol_version));
+        return Err(format!(
+            "unsupported suite handoff version: {}",
+            packet.protocol_version
+        ));
     }
     if packet.sender_product_id != READER_PRODUCT_ID {
         return Err("current V1 sender must be chaptera.reader".to_owned());
@@ -194,7 +197,9 @@ pub fn validate_packet(packet: &HandoffPacket) -> Result<(), String> {
     if !packet.provenance.source_identity_verified
         || packet.provenance.mutable_document_state_included
     {
-        return Err("handoff must carry verified source identity and no mutable document state".to_owned());
+        return Err(
+            "handoff must carry verified source identity and no mutable document state".to_owned(),
+        );
     }
     if !packet.consent.local_file_handoff || !packet.consent.user_initiated {
         return Err("handoff requires explicit local user intent".to_owned());
@@ -227,7 +232,10 @@ pub fn write_packet(packet: &HandoffPacket, output: &Path) -> Result<(), String>
     if Path::new(&packet.source.path) == output {
         return Err("handoff packet must not overwrite the source PUB".to_owned());
     }
-    if let Some(parent) = output.parent().filter(|value| !value.as_os_str().is_empty()) {
+    if let Some(parent) = output
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
@@ -241,8 +249,8 @@ pub fn load_for_receiver(
     packet_path: &Path,
     expected_receiver: &str,
 ) -> Result<ValidatedHandoff, String> {
-    let packet_bytes =
-        fs::read(packet_path).map_err(|error| format!("read {}: {error}", packet_path.display()))?;
+    let packet_bytes = fs::read(packet_path)
+        .map_err(|error| format!("read {}: {error}", packet_path.display()))?;
     let packet: HandoffPacket = serde_json::from_slice(&packet_bytes)
         .map_err(|error| format!("parse suite handoff packet: {error}"))?;
     validate_packet(&packet)?;
@@ -307,7 +315,10 @@ pub fn write_acceptance(receipt: &HandoffAcceptance, output: &Path) -> Result<()
     {
         return Err("invalid suite handoff acceptance receipt".to_owned());
     }
-    if let Some(parent) = output.parent().filter(|value| !value.as_os_str().is_empty()) {
+    if let Some(parent) = output
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
@@ -333,7 +344,8 @@ mod tests {
     #[test]
     fn reader_editor_packet_contains_identity_but_no_mutable_state() {
         let source = temp_pub("editor");
-        let packet = create_reader_handoff(&source, EDITOR_PRODUCT_ID, true, false).expect("packet");
+        let packet =
+            create_reader_handoff(&source, EDITOR_PRODUCT_ID, true, false).expect("packet");
         assert_eq!(packet.requested_job, "edit_supported_pub");
         assert!(!packet.provenance.mutable_document_state_included);
         assert!(packet.provenance.source_identity_verified);
@@ -374,7 +386,8 @@ mod tests {
     #[test]
     fn receiver_detects_source_tampering() {
         let source = temp_pub("tamper");
-        let packet = create_reader_handoff(&source, EDITOR_PRODUCT_ID, true, false).expect("packet");
+        let packet =
+            create_reader_handoff(&source, EDITOR_PRODUCT_ID, true, false).expect("packet");
         let packet_path = source.with_extension("handoff.json");
         write_packet(&packet, &packet_path).expect("write packet");
         fs::write(&source, b"changed").expect("tamper source");

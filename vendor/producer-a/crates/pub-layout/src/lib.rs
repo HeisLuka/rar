@@ -10,8 +10,7 @@
 use pub_model::{
     Affine2D, BoxEdges, CanonicalId, GroundedRulerGuide, LengthEmu, NodeId, Page, PageId,
     ParagraphId, PublisherGuideRole, RectEmu, RulerGuide, RulerGuideAxis, SimpleRectangularTable,
-    Size2D, Story, StoryFrame, StoryId,
-    TableCellAddress, TableCellId, TextRunId,
+    Size2D, Story, StoryFrame, StoryId, TableCellAddress, TableCellId, TextRunId,
 };
 use serde::{Deserialize, Serialize};
 

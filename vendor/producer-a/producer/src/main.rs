@@ -5,11 +5,12 @@ use pub_editor::{EditorEditableTarget, EditorProject};
 use pub_model::{Sha256Digest, to_cdm_debug_json_v0_1};
 use std::{env, fs, io::Cursor, path::Path};
 
-const SAMPLE_HASH: &str =
-    "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf";
+const SAMPLE_HASH: &str = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf";
 
 fn pinned_hash() -> Sha256Digest {
-    SAMPLE_HASH.parse().expect("pinned SampleNewsletter SHA-256")
+    SAMPLE_HASH
+        .parse()
+        .expect("pinned SampleNewsletter SHA-256")
 }
 
 fn emit_viewer(path: &str) -> Result<()> {
@@ -25,15 +26,13 @@ fn emit_viewer(path: &str) -> Result<()> {
 
 fn emit_resolved_graph(path: &str) -> Result<()> {
     let bytes = fs::read(path).context("read pinned PUB fixture")?;
-    let source = pub_reader::build_mature_0x2c_source_graph(
-        Cursor::new(bytes.as_slice()),
-        pinned_hash(),
-    )
-    .context("build mature-0x2c SourceGraph")?;
+    let source =
+        pub_reader::build_mature_0x2c_source_graph(Cursor::new(bytes.as_slice()), pinned_hash())
+            .context("build mature-0x2c SourceGraph")?;
     let resolved =
         pub_reader::resolve_pub_source_graph(&source.graph).context("resolve PUB SourceGraph")?;
-    let canonical = to_cdm_debug_json_v0_1(&resolved.graph)
-        .context("serialize canonical resolved graph")?;
+    let canonical =
+        to_cdm_debug_json_v0_1(&resolved.graph).context("serialize canonical resolved graph")?;
     std::io::Write::write_all(&mut std::io::stdout(), &canonical)?;
     Ok(())
 }
@@ -54,10 +53,9 @@ fn emit_editable_export(
     report_path: &str,
 ) -> Result<()> {
     let bytes = fs::read(fixture).context("read pinned PUB fixture")?;
-    let project: EditorProject = serde_json::from_slice(
-        &fs::read(project_path).context("read canonical EditorProject")?,
-    )
-    .context("parse canonical EditorProject")?;
+    let project: EditorProject =
+        serde_json::from_slice(&fs::read(project_path).context("read canonical EditorProject")?)
+            .context("parse canonical EditorProject")?;
     let target = editable_target(target_name)?;
     let mut session =
         pub_editor::open_mature_0x2c_editor(&bytes, pinned_hash()).context("open editor")?;
@@ -93,7 +91,9 @@ fn emit_editable_export(
 
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
-    let first = args.next().context("fixture path or mode argument missing")?;
+    let first = args
+        .next()
+        .context("fixture path or mode argument missing")?;
     if first == "authoring-overset" {
         if args.next().is_some() {
             anyhow::bail!("unexpected extra arguments");
