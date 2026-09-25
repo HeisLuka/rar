@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drain_deadline_stops_heartbeat_and_leaves_job_and_quota_leases_reclaimable() {
+    async fn drain_deadline_leaves_job_reclaimable_without_forging_quota_release() {
         let (queue, path) = queue().await;
         enqueue(&queue, "job-drain").await;
         let started = Arc::new(Notify::new());
