@@ -4,7 +4,16 @@ use std::{
     process::ExitCode,
 };
 
-use pub_cmo_slot_flow::{CmoSlotFlowInputV1, build_receipt_v1};
+use chaptera_layout_projection::{CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1};
+use pub_model::PubProjectionContextV1;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PacketInputV1 {
+    projection_context: PubProjectionContextV1,
+    slot_flow: CmoStorySlotFlowInputV1,
+}
 
 fn read_input() -> Result<String, String> {
     if let Some(path) = env::args().nth(1) {
@@ -20,12 +29,12 @@ fn read_input() -> Result<String, String> {
 
 fn run() -> Result<(), String> {
     let raw = read_input()?;
-    let input: CmoSlotFlowInputV1 =
+    let packet: PacketInputV1 =
         serde_json::from_str(&raw).map_err(|error| format!("invalid input JSON: {error}"))?;
-    let receipt =
-        build_receipt_v1(&input).map_err(|error| format!("slot-flow rejected: {error}"))?;
-    let output = serde_json::to_string_pretty(&receipt)
-        .map_err(|error| format!("serialize receipt: {error}"))?;
+    let output = resolve_cmo_slot_flow_v1(&packet.projection_context, &packet.slot_flow)
+        .map_err(|error| format!("Cmo slot-flow rejected: {error}"))?;
+    let output = serde_json::to_string_pretty(&output)
+        .map_err(|error| format!("serialize Cmo slot-flow output: {error}"))?;
     println!("{output}");
     Ok(())
 }

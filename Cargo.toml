@@ -10,7 +10,6 @@ members = [
   "crates/pub-line-placement",
   "crates/pub-paint-bridge",
   "crates/pub-plccmob-projection",
-  "crates/pub-cmo-slot-flow",
 ]
 resolver = "2"
 

@@ -3,12 +3,17 @@ name: Cmo slot-flow receipt V1
 on:
   pull_request:
     paths:
-      - "Cargo.toml"
-      - "crates/pub-cmo-slot-flow/**"
+      - "crates/chaptera-layout-projection/**"
+      - "crates/chaptera-scene-instance/**"
       - "packages/protocol/pub-projection/v1/cmo-slot-flow-*"
       - "tools/cmo_slot_flow_v1.py"
+      - "tools/cmo_slot_runtime_bridge_v1.py"
+      - "tools/resolved_graph_scene_bridge_v1.py"
       - "tools/validate_cmo_slot_flow_receipt.py"
       - "tools/test_cmo_slot_flow_v1.py"
+      - "tools/test_cmo_slot_flow_carlton_march.py"
+      - "tools/test_cmo_slot_runtime_bridge_v1.py"
+      - "tools/test_resolved_graph_scene_bridge_v1.py"
       - ".github/workflows/cmo-slot-flow-receipt.yml"
   workflow_dispatch:
 
@@ -16,30 +21,35 @@ permissions:
   contents: read
 
 jobs:
-  contract:
+  contract-and-runtime:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install schema validator
-        run: python -m pip install "jsonschema==4.23.0"
-      - name: Run slot-flow unit and negative tests
-        run: python tools/test_cmo_slot_flow_v1.py -v
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check native slot-flow formatting
-        run: cargo fmt --all -- --check
-      - name: Check native slot-flow crate
-        run: cargo check -p chaptera-layout-projection --all-targets
-      - name: Lint native slot-flow crate
-        run: cargo clippy -p chaptera-layout-projection --all-targets -- -D warnings
-      - name: Test native slot-flow crate
-        run: cargo test -p chaptera-layout-projection
+      - name: Install schema validator
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Run source-free slot-flow unit and negative tests
+        run: python tools/test_cmo_slot_flow_v1.py -v
       - name: Run exact Carlton March source-free witnesses
         run: python tools/test_cmo_slot_flow_carlton_march.py -v
+      - name: Validate resolved Scene Cmo admission boundary
+        run: python tools/test_resolved_graph_scene_bridge_v1.py -v
+      - name: Check canonical Rust slot-flow formatting
+        run: cargo fmt -p chaptera-layout-projection -- --check
+      - name: Check canonical Rust slot-flow crate
+        run: cargo check -p chaptera-layout-projection --all-targets
+      - name: Lint canonical Rust slot-flow crate
+        run: cargo clippy -p chaptera-layout-projection --all-targets -- -D warnings
+      - name: Test canonical Rust slot-flow crate
+        run: cargo test -p chaptera-layout-projection
+      - name: Exercise typed current-graph runtime bridge
+        run: python tools/test_cmo_slot_runtime_bridge_v1.py -v
       - name: Produce source-free synthetic receipt
         run: |
           python tools/cmo_slot_flow_v1.py \
@@ -47,47 +57,3 @@ jobs:
             > /tmp/cmo-slot-flow-receipt.json
       - name: Validate independent public receipt contract
         run: python tools/validate_cmo_slot_flow_receipt.py /tmp/cmo-slot-flow-receipt.json
-
-
-  rust-native:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.94.1"
-          components: rustfmt, clippy
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install schema validator
-        run: python -m pip install "jsonschema==4.23.0"
-      - name: Check native slot-flow formatting
-        run: cargo fmt -p pub-cmo-slot-flow -- --check
-      - name: Check native slot-flow crate
-        run: cargo check -p pub-cmo-slot-flow --all-targets
-      - name: Lint native slot-flow crate
-        run: cargo clippy -p pub-cmo-slot-flow --all-targets -- -D warnings
-      - name: Test native slot-flow crate
-        run: cargo test -p pub-cmo-slot-flow
-      - name: Produce and independently validate Rust receipt
-        run: |
-          cargo run -q -p pub-cmo-slot-flow --bin cmo-slot-flow-packet --             packages/protocol/pub-projection/v1/cmo-slot-flow-synthetic-input.json             > /tmp/cmo-slot-flow-rust.json
-          python tools/validate_cmo_slot_flow_receipt.py /tmp/cmo-slot-flow-rust.json
-      - name: Prove Rust/Python contract parity on synthetic and Carlton March witnesses
-        shell: bash
-        run: |
-          set -euo pipefail
-          fixtures=(
-            cmo-slot-flow-synthetic-input.json
-            cmo-slot-flow-carlton-march-q218-fit.json
-            cmo-slot-flow-carlton-march-q120-fit.json
-            cmo-slot-flow-carlton-march-q216-fit.json
-            cmo-slot-flow-carlton-march-q49-lower-bound.json
-          )
-          for fixture in "${fixtures[@]}"; do
-            input="packages/protocol/pub-projection/v1/${fixture}"
-            python tools/cmo_slot_flow_v1.py "${input}" > /tmp/python.json
-            cargo run -q -p pub-cmo-slot-flow --bin cmo-slot-flow-packet -- "${input}" > /tmp/rust.json
-            python -c 'import json, pathlib, sys; a=json.loads(pathlib.Path("/tmp/python.json").read_text()); b=json.loads(pathlib.Path("/tmp/rust.json").read_text()); sys.exit(0 if a == b else "Rust/Python Cmo slot-flow parity mismatch")'
-          done

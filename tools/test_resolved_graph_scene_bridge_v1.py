@@ -156,7 +156,20 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ResolvedGraphSceneError, "differs"):
             compare_viewer_and_adapter_scene(broken, scene)
 
-    def test_non_empty_cmo_projection_context_still_fails_closed(self):
+    def test_typed_cmo_context_withholds_carrier_until_slot_flow(self):
+        scene = project_resolved_graph_scene(
+            graph(),
+            context=projection_context_sidecar()["context"],
+        )
+        origins = {node["origin"] for node in scene["nodes"]}
+        self.assertNotIn(NODE_ID, origins)
+        pending = [
+            item for item in scene["diagnostics"]
+            if item["code"] == "cmo_slot_flow_not_materialized"
+        ]
+        self.assertEqual([STORY_ID], [item["origin"] for item in pending])
+
+    def test_malformed_cmo_projection_context_still_fails_closed(self):
         with self.assertRaisesRegex(ResolvedGraphSceneError, "cmo_relations"):
             project_resolved_graph_scene(
                 graph(),
