@@ -13,6 +13,7 @@
     "restore_requested_at_utc",
     "cold_start_succeeded_at_utc",
     "expected_environment_fingerprint",
+    "pre_restore_state_sha256",
     "vmware"
   ],
   "properties": {
@@ -24,6 +25,7 @@
     "restore_requested_at_utc": {"type": "string", "format": "date-time"},
     "cold_start_succeeded_at_utc": {"type": "string", "format": "date-time"},
     "expected_environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "pre_restore_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "vmware": {
       "type": "object",
       "additionalProperties": false,
