@@ -27,6 +27,9 @@ import pub_container_extract as containers  # type: ignore
 
 DSI_PATH = "/\x05DocumentSummaryInformation"
 DSI_OLE_NAME = "\x05DocumentSummaryInformation"
+# FMTID_DocSummaryInformation = D5CDD502-2E9C-101B-9397-08002B2CF9AE,
+# serialized in OLE Property Set GUID byte order (little-endian Data1/Data2/Data3).
+FMTID_DOCSUMMARY = bytes.fromhex("02d5cdd59c2e1b10939708002b2cf9ae")
 T645_ARTIFACT_ID = 10853776519
 POST_M1 = {
     "post_m1_delta:class_templates": (10811670607, 52),
