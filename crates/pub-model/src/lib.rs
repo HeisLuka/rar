@@ -12,6 +12,9 @@ mod rotate_quarter;
 mod shape_paint;
 mod shape_paint_op;
 mod source_identity;
+mod table_cell_id;
+mod table_cell_paint;
+mod table_cell_paint_op;
 mod text_preset;
 
 pub use shape_paint::{
@@ -23,6 +26,22 @@ pub use shape_paint::{
 pub use shape_paint_op::{
     SetFillV1, SetStrokeV1, ShapePaintOperationError, ShapePaintOperationV1,
     apply_shape_paint_operation_v1, inverse_shape_paint_operation_v1,
+};
+
+pub use table_cell_id::{TableCellId, TableCellIdError};
+
+pub use table_cell_paint::{
+    PUBLISHER16_TABLE_CELL_PAINT_AUTHORITY_V1, TABLE_CELL_PAINT_SCHEMA_V1,
+    Publisher16TableCellPaintImportError, Publisher16TableCellPaintObservationV1,
+    TableCellBorderSideV1, TableCellBordersV1, TableCellClassV1, TableCellPaintV1,
+    TableCellPaintValidationError, canonical_table_cell_paint_hash_v1,
+    promote_publisher16_table_cell_paint_v1, validate_table_cell_paint_v1,
+};
+
+pub use table_cell_paint_op::{
+    ClearTableCellBorderSideV1, ClearTableCellFillV1, SetTableCellBorderSideV1,
+    SetTableCellFillV1, TableCellPaintOperationError, TableCellPaintOperationV1,
+    apply_table_cell_paint_operation_v1, inverse_table_cell_paint_operation_v1,
 };
 
 pub use create_shape::{
@@ -45,8 +64,9 @@ pub use projection_context::{
 
 pub use source_identity::{
     PUB_SOURCE_ADAPTER_ID_V1, SOURCE_DERIVED_NAMESPACE_V1, SourceIdentityError,
-    derive_pub_node_id_v1, derive_pub_page_id_v1, derive_pub_story_id_v1, derive_source_uuid_v5_v1,
-    pub_contents_object_key_v1, pub_quill_story_object_key_v1,
+    derive_pub_node_id_v1, derive_pub_page_id_v1, derive_pub_story_id_v1,
+    derive_pub_table_cell_id_v1, derive_source_uuid_v5_v1, pub_contents_object_key_v1,
+    pub_quill_story_object_key_v1, pub_table_cell_object_key_v1,
 };
 
 pub use rotate_quarter::{
