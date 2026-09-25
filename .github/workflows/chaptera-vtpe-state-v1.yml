@@ -1,0 +1,51 @@
+name: CHAPTERA-VTPE-STATE-01 persistence
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/Cargo.toml"
+      - "apps/chaptera-desktop/src/main.rs"
+      - "apps/chaptera-desktop/src/supporter.rs"
+      - "tools/run_chaptera_vtpe_state_receipt.py"
+      - "docs/chaptera-vtpe-state-v1.md"
+      - ".github/workflows/chaptera-vtpe-state-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supporter-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Chaptera desktop compiles
+        run: cargo check -p chaptera-desktop
+
+      - name: Run supporter cadence contract tests
+        run: cargo test -p chaptera-desktop supporter::tests::
+
+      - name: Prove eframe persistence wiring roundtrip
+        run: cargo test -p chaptera-desktop supporter_persistence_wiring_round_trips_through_eframe_storage -- --exact
+
+      - name: Prove malformed and future state fail closed
+        run: cargo test -p chaptera-desktop malformed_supporter_storage_falls_back_to_conservative_default -- --exact
+
+      - name: Produce source-bound validation receipt
+        run: python tools/run_chaptera_vtpe_state_receipt.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-vtpe-state-v1
+          path: target/chaptera-vtpe-state-v1/receipt.json
+          if-no-files-found: error
