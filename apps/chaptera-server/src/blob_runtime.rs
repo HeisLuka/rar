@@ -85,9 +85,7 @@ fn require_s3_compatible(provider: &str) -> Result<(), BlobStoreError> {
     } else {
         Err(BlobStoreError::new(
             "storage_provider_unsupported",
-            format!(
-                "configured storage provider {provider:?} is unsupported by Cloud V0 runtime"
-            ),
+            format!("configured storage provider {provider:?} is unsupported by Cloud V0 runtime"),
         ))
     }
 }
@@ -95,10 +93,7 @@ fn require_s3_compatible(provider: &str) -> Result<(), BlobStoreError> {
 fn random_id(prefix: &'static str) -> Result<String, BlobStoreError> {
     let mut bytes = [0_u8; RANDOM_ID_BYTES];
     OsRng.try_fill_bytes(&mut bytes).map_err(|error| {
-        BlobStoreError::new(
-            "blob_id_random_failed",
-            bounded_message(&error.to_string()),
-        )
+        BlobStoreError::new("blob_id_random_failed", bounded_message(&error.to_string()))
     })?;
 
     let mut out = String::with_capacity(prefix.len() + 1 + RANDOM_ID_BYTES * 2);
