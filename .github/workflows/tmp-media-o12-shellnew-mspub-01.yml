@@ -271,19 +271,39 @@ jobs:
 
               cabroot=pathlib.Path(f"/tmp/o12/cab/{i}")
               cabroot.mkdir(parents=True, exist_ok=True)
-              # Extract only paths whose basename is the exact Media.Cabinet.
+              listing=subprocess.run(
+                  ["7z","l","-slt",iso],
+                  stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,check=True,
+              ).stdout
+              iso_paths=[
+                  line.split(" = ",1)[1]
+                  for line in listing.splitlines()
+                  if line.startswith("Path = ")
+              ]
+              cab_paths=[
+                  p for p in iso_paths
+                  if pathlib.PurePosixPath(p.replace("\\\\","/")).name.lower()==cabinet.lower()
+              ]
+              if len(cab_paths) != 1:
+                  row["extraction_state"]="cabinet_path_ambiguous_or_missing"
+                  row["cabinet_iso_candidates"]=cab_paths
+                  results.append(row)
+                  continue
+              cab_path=cab_paths[0]
               r=subprocess.run(
-                  ["7z","x","-y",f"-o{cabroot}",iso,f"-r!*{cabinet}"],
+                  ["7z","x","-y",f"-o{cabroot}",iso,cab_path],
                   stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
               )
               cabs=[p for p in cabroot.rglob("*") if p.is_file() and p.name.lower()==cabinet.lower()]
               if not cabs:
-                  row["extraction_state"]="cabinet_not_found_in_iso"
+                  row["extraction_state"]="cabinet_extract_failed"
+                  row["cabinet_iso_path"]=cab_path
                   row["7z_returncode"]=r.returncode
+                  row["7z_stderr"]=r.stderr[-500:]
                   results.append(row)
                   continue
               cab=cabs[0]
-              row["cabinet_iso_path"]=str(cab.relative_to(cabroot))
+              row["cabinet_iso_path"]=cab_path
 
               target=pathlib.Path(f"/tmp/o12/target-{i}.pub")
               candidates=[]
@@ -340,6 +360,7 @@ jobs:
               ).upper()
               if "SHELLNEW" in text:
                   shellnew.append(m)
+          extracted=[r for r in extraction["results"] if r.get("extraction_state")=="extracted"]
           summary={
               "schema":"chaptera.media-o12-shellnew-mspub-summary.v1",
               "source_safe":True,
@@ -347,6 +368,7 @@ jobs:
               "office12_iso_sha256":"8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3",
               "msi_match_count":lookup["match_count"],
               "shellnew_directory_match_count":len(shellnew),
+              "extracted_member_count":len(extracted),
               "exact_t704_hash_match_count":len(exact),
               "exact_t704_matches":exact,
               "classification":(
@@ -354,7 +376,9 @@ jobs:
                   if exact and shellnew
                   else "exact_office2007_media_match_directory_unresolved"
                   if exact
-                  else "office2007_media_no_exact_t704_match"
+                  else "office2007_media_member_hash_mismatch"
+                  if extracted
+                  else "office2007_media_member_extraction_unresolved"
               ),
               "causality_boundary":"distribution/install-media provenance does not prove which Publisher save operation originally authored the template bytes",
           }
