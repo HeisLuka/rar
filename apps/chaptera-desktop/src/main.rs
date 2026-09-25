@@ -1896,8 +1896,8 @@ impl ViewerApp {
         let Some(visual) = &self.visual else {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
-                    ui.heading("Drop a .pub file here");
-                    ui.label("or start with: chaptera FILE.pub");
+                    ui.heading("Open a Publisher file");
+                    ui.label("Use Open PUB… above, or drag and drop a .pub file here.");
                     if let Some(error) = &self.load_error {
                         ui.add_space(12.0);
                         ui.colored_label(ui.visuals().error_fg_color, &error.message);
