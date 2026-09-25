@@ -75,13 +75,17 @@ class ResearchResetReceiptVerifierTests(unittest.TestCase):
                 )
             )
 
-    def test_cold_restore_environment_drift_is_detectable(self):
+    def test_cold_restore_environment_drift_fails_closed(self):
         first = self.validate(receipt())
-        second = self.validate(receipt(environment_fingerprint_sha256="2" * 64))
-        self.assertNotEqual(
-            first["environment_fingerprint_sha256"],
-            second["environment_fingerprint_sha256"],
+        second = self.validate(
+            receipt(
+                environment_fingerprint_sha256="2" * 64,
+                restore_started_at_utc="2026-09-25T15:01:00.000Z",
+                restore_completed_at_utc="2026-09-25T15:01:03.000Z",
+            )
         )
+        with self.assertRaises(SystemExit):
+            self.verifier.validate_cold_restore_comparison(first, second)
 
     def test_two_independent_cold_restores_pass(self):
         first = self.validate(receipt())
