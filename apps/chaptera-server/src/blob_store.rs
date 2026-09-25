@@ -219,7 +219,10 @@ pub trait BlobBindingRepository: Send + Sync {
         physical_blob_id: &str,
     ) -> Result<Option<PhysicalBlobRecord>, BlobStoreError>;
 
-    async fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError>;
+    async fn get_binding(
+        &self,
+        binding_id: &str,
+    ) -> Result<Option<ResourceBinding>, BlobStoreError>;
 
     async fn commit_physical_and_binding(
         &self,
@@ -227,7 +230,10 @@ pub trait BlobBindingRepository: Send + Sync {
         binding: ResourceBinding,
     ) -> Result<ResourceBinding, BlobStoreError>;
 
-    async fn commit_binding(&self, binding: ResourceBinding) -> Result<ResourceBinding, BlobStoreError>;
+    async fn commit_binding(
+        &self,
+        binding: ResourceBinding,
+    ) -> Result<ResourceBinding, BlobStoreError>;
 
     async fn mark_physical_deleted(
         &self,
@@ -640,21 +646,22 @@ impl BlobStoreService {
         }
         let binding_id = self.ids.next_binding_id()?;
         require_ident(&binding_id, "binding_id")?;
-        self.repo.commit_binding(ResourceBinding {
-            binding_id,
-            tenant_id: request.tenant_id.clone(),
-            project_id: request.project_id.clone(),
-            document_id: request.document_id.clone(),
-            physical_blob_id: physical.physical_blob_id.clone(),
-            content_sha256: request.content_sha256.clone(),
-            byte_len: request.byte_len,
-            resource_kind: request.resource_kind,
-            validation_profile: request.validation_profile.clone(),
-            lifecycle_state: BindingLifecycle::Active,
-            created_at_ms: request.now_ms,
-            retired_at_ms: None,
-        })
-        .await
+        self.repo
+            .commit_binding(ResourceBinding {
+                binding_id,
+                tenant_id: request.tenant_id.clone(),
+                project_id: request.project_id.clone(),
+                document_id: request.document_id.clone(),
+                physical_blob_id: physical.physical_blob_id.clone(),
+                content_sha256: request.content_sha256.clone(),
+                byte_len: request.byte_len,
+                resource_kind: request.resource_kind,
+                validation_profile: request.validation_profile.clone(),
+                lifecycle_state: BindingLifecycle::Active,
+                created_at_ms: request.now_ms,
+                retired_at_ms: None,
+            })
+            .await
     }
 
     async fn verify_physical_exact(
@@ -1091,7 +1098,10 @@ mod tests {
             Ok(self.physical.lock().unwrap().get(physical_blob_id).cloned())
         }
 
-        async fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError> {
+        async fn get_binding(
+            &self,
+            binding_id: &str,
+        ) -> Result<Option<ResourceBinding>, BlobStoreError> {
             Ok(self.bindings.lock().unwrap().get(binding_id).cloned())
         }
 
