@@ -182,7 +182,7 @@ fn write_report(
     let report = build_report(receipt, expected_source_sha256);
     let bytes = serde_json::to_vec_pretty(&report)
         .map_err(|error| format!("serialize Rescue report: {error}"))?;
-    if let Some(parent) = output_path.parent() {
+    if let Some(parent) = output_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
