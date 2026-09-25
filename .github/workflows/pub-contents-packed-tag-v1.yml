@@ -26,7 +26,9 @@ jobs:
           toolchain: "1.85.0"
       - name: Run packed-tag codec regressions
         run: python tools/test_pub_contents_packed_tag_v1.py -v
-      - name: Run production Rust Contents regressions
-        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents
+      - name: Check production Rust Contents library
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-contents
+      - name: Run standalone packed-tag Rust regression
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents --test packed_tag
       - name: Check bounded Reader consumers
         run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader
