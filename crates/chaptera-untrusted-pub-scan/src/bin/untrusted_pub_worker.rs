@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug, Serialize)]
@@ -46,7 +46,9 @@ fn write_json<T: Serialize>(mut output: BufWriter<File>, value: &T) -> Result<()
     output
         .write_all(b"\n")
         .map_err(|error| format!("write result newline: {error}"))?;
-    output.flush().map_err(|error| format!("flush result: {error}"))
+    output
+        .flush()
+        .map_err(|error| format!("flush result: {error}"))
 }
 
 fn parse_u64(args: &[String], name: &str) -> Result<u64, String> {
@@ -85,7 +87,9 @@ fn inspect(args: &[String]) -> Result<(), String> {
 
 fn expect_eperm(result: std::io::Result<impl Sized>, label: &str) -> Result<i32, String> {
     match result {
-        Ok(_) => Err(format!("{label} unexpectedly succeeded after post-read sandbox")),
+        Ok(_) => Err(format!(
+            "{label} unexpectedly succeeded after post-read sandbox"
+        )),
         Err(error) if error.raw_os_error() == Some(libc::EPERM) => Ok(libc::EPERM),
         Err(error) => Err(format!(
             "{label} was not denied with EPERM: {error} (errno={:?})",
