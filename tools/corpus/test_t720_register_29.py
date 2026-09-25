@@ -42,7 +42,7 @@ class T720RegistrationTests(unittest.TestCase):
 
         # This digest freezes the exact 29-SHA input independent of package/member naming.
         self.assertEqual(
-            "__T720_NEW_TRANCHE_DIGEST__",
+            "eb2cd6ad8f21860f93d33763a8f630135c12c128e0160e0d1909c0c3ae228ae8",
             canonical_digest(combined),
         )
 
