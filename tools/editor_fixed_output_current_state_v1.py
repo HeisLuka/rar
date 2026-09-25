@@ -27,6 +27,11 @@ for path in (str(TOOLS), str(EDITOR_API)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from cmo_slot_runtime_bridge_v1 import (  # noqa: E402
+    CmoSlotRuntimeError,
+    build_cmo_slot_runtime_v1,
+    merge_cmo_runtime_into_scene_v1,
+)
 from resolved_graph_scene_bridge_v1 import (  # noqa: E402
     ResolvedGraphSceneError,
     apply_project_to_resolved_graph,
@@ -446,11 +451,30 @@ def build_current_fixed_output(
         current_graph,
         context=context,
     )
+    try:
+        cmo_runtime = build_cmo_slot_runtime_v1(
+            resolved_graph=current_graph,
+            projection_context=context,
+            shaped_flow=shaped_flow,
+        )
+        if cmo_runtime["native_outputs"] or cmo_runtime["scene_instances"]:
+            current_scene = merge_cmo_runtime_into_scene_v1(
+                current_scene,
+                cmo_runtime,
+            )
+    except CmoSlotRuntimeError as error:
+        raise EditorFixedOutputError(
+            f"Cmo slot runtime failed: {error}"
+        ) from error
+
     normalized = _normalize_shaped_flow(
         shaped_flow,
         source_hash=source_hash,
         current_graph=current_graph,
         current_scene=current_scene,
+    )
+    normalized["story_overset"] = (
+        normalized["story_overset"] or cmo_runtime["story_overset"]
     )
     rust_runs, rust_receipt = _run_rust_fixed_flow_adapter(
         normalized,
@@ -499,12 +523,32 @@ def build_current_fixed_output(
         "visible_line_count": len(rust_receipt["lines"]),
         "fixed_run_count": len(rust_receipt["runs"]),
         "story_overset": rust_receipt["story_overset"],
+        "cmo_target_count": len(cmo_runtime["native_outputs"]),
+        "cmo_visible_slot_count": len(cmo_runtime["scene_instances"]),
+        "cmo_overset_story_count": sum(
+            1
+            for output in cmo_runtime["native_outputs"]
+            if output["overset"]["story_overset"]
+        ),
         "current_story_states": story_states,
         "invariants": {
             "current_editor_project_authoritative": True,
             "source_reparse_after_edit_count": 0,
             "same_current_graph_feeds_scene_and_story_validation": True,
             "rust_fixed_flow_adapter_authoritative": True,
+            "canonical_cmo_slot_flow_authoritative": True,
+            "cmo_carrier_reparent_count": sum(
+                output["carrier_reparent_count"]
+                for output in cmo_runtime["native_outputs"]
+            ),
+            "cmo_scaling_applied": any(
+                output["scaling_applied"]
+                for output in cmo_runtime["native_outputs"]
+            ),
+            "cmo_skip_to_fit": any(
+                output["skip_to_fit"]
+                for output in cmo_runtime["native_outputs"]
+            ),
             "reshaping_calls": rust_receipt["invariants"]["reshaping_calls"],
             "raw_text_emitted": False,
             "native_pub_write_used": False,

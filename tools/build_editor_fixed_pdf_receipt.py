@@ -275,6 +275,9 @@ def build_receipt(
         "visible_line_count": packet_receipt["visible_line_count"],
         "fixed_run_count": packet_receipt["fixed_run_count"],
         "story_overset": packet_receipt["story_overset"],
+        "cmo_target_count": packet_receipt["cmo_target_count"],
+        "cmo_visible_slot_count": packet_receipt["cmo_visible_slot_count"],
+        "cmo_overset_story_count": packet_receipt["cmo_overset_story_count"],
         "renderer": renderer,
         "artifact": {
             "format": "pdf",
@@ -286,6 +289,9 @@ def build_receipt(
             "current_editor_project_authoritative": True,
             "source_reparse_after_edit_count": 0,
             "renderer_received_source_bytes": False,
+            "canonical_cmo_slot_flow_authoritative": packet_receipt["invariants"][
+                "canonical_cmo_slot_flow_authoritative"
+            ],
             "native_pub_write_used": False,
             "pdf_renderer_reimplemented_in_rar": False,
             "raw_text_emitted": False,

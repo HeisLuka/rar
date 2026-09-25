@@ -15,6 +15,7 @@ implement a second slot-flow algorithm.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import pathlib
 import subprocess
@@ -515,6 +516,176 @@ def build_cmo_slot_runtime_v1(
             for output in outputs
         ),
     }
+
+
+
+def merge_cmo_runtime_into_scene_v1(
+    scene: dict[str, Any],
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(scene, dict):
+        raise CmoSlotRuntimeError("Scene must be an object")
+    for key in ("surfaces", "nodes", "origin_mapping", "diagnostics"):
+        if not isinstance(scene.get(key), list):
+            raise CmoSlotRuntimeError(f"Scene.{key} must be an array")
+
+    expected_runtime = {
+        "runtime_version",
+        "source_hash",
+        "native_outputs",
+        "scene_instances",
+        "story_overset",
+    }
+    if not isinstance(runtime, dict) or set(runtime) != expected_runtime:
+        raise CmoSlotRuntimeError("Cmo runtime fields mismatch")
+    if runtime["runtime_version"] != RUNTIME_VERSION:
+        raise CmoSlotRuntimeError("Cmo runtime_version mismatch")
+    if not isinstance(runtime["native_outputs"], list):
+        raise CmoSlotRuntimeError("Cmo runtime native_outputs must be an array")
+    if not isinstance(runtime["scene_instances"], list):
+        raise CmoSlotRuntimeError("Cmo runtime scene_instances must be an array")
+    if not isinstance(runtime["story_overset"], bool):
+        raise CmoSlotRuntimeError("Cmo runtime story_overset must be boolean")
+
+    result = copy.deepcopy(scene)
+    surface_ids = {
+        item.get("origin")
+        for item in result["surfaces"]
+        if isinstance(item, dict)
+    }
+    existing_instance_ids = {
+        item.get("instance_id")
+        for item in result["nodes"]
+        if isinstance(item, dict) and isinstance(item.get("instance_id"), str)
+    }
+    target_stories: set[str] = set()
+    overset_stories: set[str] = set()
+
+    computed_overset = False
+    for index, output in enumerate(runtime["native_outputs"]):
+        if not isinstance(output, dict):
+            raise CmoSlotRuntimeError(f"Cmo native_outputs[{index}] must be an object")
+        if output.get("schema_version") != NATIVE_SCHEMA:
+            raise CmoSlotRuntimeError(
+                f"Cmo native_outputs[{index}] schema_version mismatch"
+            )
+        story_id = require_uuid(
+            output.get("target_story_id"),
+            f"Cmo native_outputs[{index}].target_story_id",
+        )
+        target_stories.add(story_id)
+        overset = output.get("overset")
+        if not isinstance(overset, dict) or not isinstance(
+            overset.get("story_overset"), bool
+        ):
+            raise CmoSlotRuntimeError(
+                f"Cmo native_outputs[{index}].overset invalid"
+            )
+        if overset["story_overset"]:
+            overset_stories.add(story_id)
+            computed_overset = True
+
+    if computed_overset != runtime["story_overset"]:
+        raise CmoSlotRuntimeError("Cmo runtime overset aggregate mismatch")
+
+    for index, instance in enumerate(runtime["scene_instances"]):
+        expected_instance = {
+            "origin",
+            "parent_origin",
+            "bounds",
+            "transform",
+            "instance_id",
+            "projection_kind",
+            "source_parent_origin",
+            "target_story_origin",
+            "target_frame_origin",
+            "scalar_index",
+            "source_order",
+            "cmo_id",
+            "carrier_story_origin",
+        }
+        if not isinstance(instance, dict) or set(instance) != expected_instance:
+            raise CmoSlotRuntimeError(
+                f"Cmo scene_instances[{index}] fields mismatch"
+            )
+        if instance["projection_kind"] != "cmo_story_slot":
+            raise CmoSlotRuntimeError(
+                f"Cmo scene_instances[{index}] projection_kind mismatch"
+            )
+        instance_id = instance["instance_id"]
+        if not isinstance(instance_id, str) or not instance_id.startswith("sha256:"):
+            raise CmoSlotRuntimeError(
+                f"Cmo scene_instances[{index}].instance_id invalid"
+            )
+        if instance_id in existing_instance_ids:
+            raise CmoSlotRuntimeError("duplicate Scene instance identity")
+        existing_instance_ids.add(instance_id)
+        if instance["parent_origin"] not in surface_ids:
+            raise CmoSlotRuntimeError(
+                f"Cmo scene_instances[{index}] target page absent from Scene"
+            )
+        target_story = require_uuid(
+            instance["target_story_origin"],
+            f"Cmo scene_instances[{index}].target_story_origin",
+        )
+        if target_story not in target_stories:
+            raise CmoSlotRuntimeError(
+                f"Cmo scene_instances[{index}] has no native target output"
+            )
+        result["nodes"].append(copy.deepcopy(instance))
+        result["origin_mapping"].append({
+            "authoring_origin": instance["origin"],
+            "resolved_node_origin": instance["origin"],
+            "resolved_instance_id": instance_id,
+            "projection_kind": "cmo_story_slot",
+            "target_page_origin": instance["parent_origin"],
+            "source_parent_origin": instance["source_parent_origin"],
+            "target_story_origin": target_story,
+            "target_frame_origin": instance["target_frame_origin"],
+            "scalar_index": instance["scalar_index"],
+            "source_order": instance["source_order"],
+            "cmo_id": instance["cmo_id"],
+        })
+
+    result["nodes"].sort(
+        key=lambda item: (
+            item["origin"],
+            item["parent_origin"],
+            item.get("instance_id", ""),
+        )
+    )
+    result["origin_mapping"].sort(
+        key=lambda item: (
+            item.get("resolved_node_origin", ""),
+            item.get("target_page_origin", ""),
+            item.get("resolved_instance_id", ""),
+        )
+    )
+
+    result["diagnostics"] = [
+        item
+        for item in result["diagnostics"]
+        if not (
+            isinstance(item, dict)
+            and item.get("code") == "cmo_slot_flow_not_materialized"
+            and item.get("origin") in target_stories
+        )
+    ]
+    for story_id in sorted(overset_stories):
+        result["diagnostics"].append({
+            "code": "cmo_story_overset",
+            "severity": "fidelity_warning",
+            "origin": story_id,
+            "message": "bounded Cmo slot-flow established Story overset at the first non-fitting item",
+        })
+    result["diagnostics"].sort(
+        key=lambda item: (
+            item.get("code", "") if isinstance(item, dict) else "",
+            item.get("origin", "") if isinstance(item, dict) else "",
+            item.get("message", "") if isinstance(item, dict) else "",
+        )
+    )
+    return result
 
 
 def main() -> int:
