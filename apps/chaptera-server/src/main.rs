@@ -19,11 +19,11 @@ use chaptera_server::{
     source_ingress_http::{self, SourceIngressHttpState},
     source_ingress_sqlite::SqliteSourceIngressRepository,
     sqlite_store::SqliteRevisionStore,
-    upload_admission::SqliteUploadAdmissionAuthority,
-    workspace_context::SqliteWorkspaceContextResolver,
     state::{AppState, RuntimePorts},
+    upload_admission::SqliteUploadAdmissionAuthority,
     worker,
     worker_runtime::ConfiguredWorkerRuntime,
+    workspace_context::SqliteWorkspaceContextResolver,
 };
 use clap::Parser;
 
@@ -131,9 +131,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                             busy_timeout,
                         )
                         .await?;
-                        let scanner = Arc::new(source_ingress_http::production_scanner(
-                            source_config,
-                        )?);
+                        let scanner =
+                            Arc::new(source_ingress_http::production_scanner(source_config)?);
                         let baseline = IsolatedSourceBaselineProducer::new(
                             source_ingress_http::baseline_config(source_config),
                             blob_store.service().clone(),
