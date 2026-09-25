@@ -391,7 +391,6 @@ fn native_pub_persistence_does_not_overclaim_created_shape_support() {
     }));
 }
 
-
 fn zip_text(bytes: &[u8], path: &str) -> String {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid editable package zip");
     let mut entry = archive.by_name(path).expect("expected package part");
@@ -432,8 +431,15 @@ fn authored_rectangle_survives_reopen_and_materializes_in_idml_and_odg_with_expl
     let project = session.project();
     let mut reopened = EditorSession::new(base.clone()).expect("reopen");
     reopened.apply_project(&project).expect("replay project");
-    assert_eq!(reopened.graph(), &base, "editable export must not mutate source graph");
-    assert_eq!(reopened.authored_shape(node_id), session.authored_shape(node_id));
+    assert_eq!(
+        reopened.graph(),
+        &base,
+        "editable export must not mutate source graph"
+    );
+    assert_eq!(
+        reopened.authored_shape(node_id),
+        session.authored_shape(node_id)
+    );
 
     for target in [EditorEditableTarget::Idml, EditorEditableTarget::Odg] {
         let preview = reopened
