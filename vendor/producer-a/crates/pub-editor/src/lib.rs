@@ -44,7 +44,8 @@ use pub_odg::{
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
-    PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
+    PubImageResourceCatalog, PubResolvedGraph, PubResolvedNodePayload,
+    build_mature_0x2c_image_resource_catalog, build_mature_0x2c_source_graph,
     materialize_bounded_simple_table_cells, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -1076,15 +1077,30 @@ impl fmt::Display for EditorProjectError {
 
 impl std::error::Error for EditorProjectError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceImageAuthorityV1 {
+    pub resource_id: ResourceId,
+    pub mime: String,
+    pub source_hash: Sha256Digest,
+}
+
 pub fn open_mature_0x2c_editor(
     bytes: &[u8],
     source_hash: Sha256Digest,
 ) -> Result<EditorSession, EditorOpenError> {
     let source = build_mature_0x2c_source_graph(Cursor::new(bytes), source_hash)
         .map_err(|error| EditorOpenError::SourceGraph(error.to_string()))?;
+    let image_catalog =
+        build_mature_0x2c_image_resource_catalog(Cursor::new(bytes), &source.graph)
+            .ok()
+            .flatten();
     let resolved = resolve_pub_source_graph(&source.graph)
         .map_err(|error| EditorOpenError::Resolve(error.to_string()))?;
-    EditorSession::new(resolved.graph).map_err(EditorOpenError::Session)
+    let mut session = EditorSession::new(resolved.graph).map_err(EditorOpenError::Session)?;
+    if let Some(catalog) = image_catalog {
+        session.install_source_image_authority(catalog);
+    }
+    Ok(session)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1204,6 +1220,7 @@ impl std::error::Error for EditorExportError {}
 pub struct EditorSession {
     source_hash: Sha256Digest,
     graph: PubResolvedGraph,
+    source_image_authority: BTreeMap<NodeId, SourceImageAuthorityV1>,
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
     authored_shapes: BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
@@ -1221,6 +1238,7 @@ impl EditorSession {
         Ok(Self {
             source_hash,
             graph,
+            source_image_authority: BTreeMap::new(),
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
             authored_shapes: BTreeMap::new(),
@@ -1259,6 +1277,36 @@ impl EditorSession {
 
     pub fn image_replacement_for(&self, node_id: NodeId) -> Option<Sha256Digest> {
         self.image_replacements.get(&node_id).copied()
+    }
+
+    pub fn source_image_authority_for(
+        &self,
+        node_id: NodeId,
+    ) -> Option<&SourceImageAuthorityV1> {
+        self.source_image_authority.get(&node_id)
+    }
+
+    fn install_source_image_authority(&mut self, catalog: PubImageResourceCatalog) {
+        let PubImageResourceCatalog {
+            resources,
+            node_resources,
+            ..
+        } = catalog;
+
+        self.source_image_authority = node_resources
+            .into_iter()
+            .filter_map(|(node_id, resource_id)| {
+                let resource = resources.get(&resource_id)?;
+                Some((
+                    node_id,
+                    SourceImageAuthorityV1 {
+                        resource_id,
+                        mime: resource.mime.clone(),
+                        source_hash: resource.source_hash,
+                    },
+                ))
+            })
+            .collect();
     }
 
     pub fn import_replacement_asset(
