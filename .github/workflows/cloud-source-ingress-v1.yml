@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/source_ingress.rs"
+      - "apps/chaptera-server/src/source_ingress_sqlite.rs"
       - "apps/chaptera-server/src/source_authority.rs"
       - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/Cargo.toml"
@@ -23,7 +24,9 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Check Chaptera server formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Run Chaptera server clippy
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run Chaptera server tests
         run: cargo test -p chaptera-server
