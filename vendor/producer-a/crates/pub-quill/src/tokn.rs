@@ -50,6 +50,17 @@ impl QuillToknPropertyBlock {
         }
         Some(&first.value)
     }
+
+    fn has_duplicate_property(&self, tag: u16) -> bool {
+        let Self::Properties { properties, .. } = self else {
+            return false;
+        };
+        properties
+            .iter()
+            .filter(|property| property.tag.value == tag)
+            .nth(1)
+            .is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,13 +335,19 @@ fn effective_tokens(
     let mut result = Vec::with_capacity(first_phase.len());
 
     for (index, block) in first_phase.iter().enumerate() {
-        if let Some(value) = block.property(TOKN_PROPERTY_STATE) {
+        if block.has_duplicate_property(TOKN_PROPERTY_STATE) {
+            state_raw = None;
+        } else if let Some(value) = block.property(TOKN_PROPERTY_STATE) {
             state_raw = Some(value.value);
         }
-        if let Some(value) = block.property(TOKN_PROPERTY_TEXT_LENGTH) {
+        if block.has_duplicate_property(TOKN_PROPERTY_TEXT_LENGTH) {
+            text_length = None;
+        } else if let Some(value) = block.property(TOKN_PROPERTY_TEXT_LENGTH) {
             text_length = Some(value.value);
         }
-        if let Some(value) = block.property(TOKN_PROPERTY_KIND) {
+        if block.has_duplicate_property(TOKN_PROPERTY_KIND) {
+            kind_raw = None;
+        } else if let Some(value) = block.property(TOKN_PROPERTY_KIND) {
             kind_raw = Some(value.value);
         }
 
@@ -576,18 +593,24 @@ fn decode_target_record(
         };
     }
 
-    let utf16 = payload
-        .chunks_exact(2)
-        .map(|word| u16::from_le_bytes([word[0], word[1]]))
-        .collect::<Vec<_>>();
-    if let Ok(text) = String::from_utf16(&utf16) {
-        return QuillToknTargetRecord::Utf16String {
-            source,
-            declared_units,
-            bytes_source: payload_source,
-            bytes: payload,
-            text,
-        };
+    let string_class = !referring_kinds.is_empty()
+        && referring_kinds
+            .iter()
+            .all(|kind| matches!(*kind, 1 | 4));
+    if string_class {
+        let utf16 = payload
+            .chunks_exact(2)
+            .map(|word| u16::from_le_bytes([word[0], word[1]]))
+            .collect::<Vec<_>>();
+        if let Ok(text) = String::from_utf16(&utf16) {
+            return QuillToknTargetRecord::Utf16String {
+                source,
+                declared_units,
+                bytes_source: payload_source,
+                bytes: payload,
+                text,
+            };
+        }
     }
 
     QuillToknTargetRecord::Unknown {
