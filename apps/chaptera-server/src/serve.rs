@@ -12,8 +12,8 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Request, State},
-    http::{HeaderMap, StatusCode},
+    extract::{ConnectInfo, MatchedPath, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::get,
@@ -157,7 +157,11 @@ async fn local_events(
 
 async fn local_request_log(request: Request, next: Next) -> Response {
     let method = request.method().to_string();
-    let path = request.uri().path().to_owned();
+    let path = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched| matched.as_str().to_owned())
+        .unwrap_or_else(|| "<unmatched>".to_owned());
     let trace_id = request
         .headers()
         .get("x-chaptera-trace-id")
@@ -167,8 +171,11 @@ async fn local_request_log(request: Request, next: Next) -> Response {
     let seq = LOCAL_EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
     let request_id = format!("req:{seq:08}");
     let start = Instant::now();
-    let response = next.run(request).await;
+    let mut response = next.run(request).await;
     let status = response.status().as_u16();
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
 
     if path != "/local/api/events" && path != "/local/api/status" {
         let level = if status >= 500 {
