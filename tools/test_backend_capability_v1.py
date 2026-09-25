@@ -22,6 +22,16 @@ class BackendCapabilityTests(unittest.TestCase):
         self.assertEqual(got["outcome"], "CompatibleDegraded")
         self.assertIn("missing_optional:timestamp_query", got["reason_codes"])
 
+    def test_missing_performance_only_feature_remains_compatible(self):
+        req = RenderRequirementSet(
+            mandatory_features=frozenset({"rect", "image_rgba8", "clip:rect"}),
+            optional_quality_features=frozenset(),
+            performance_features=frozenset({"timestamp_query"}),
+        )
+        got = compatibility(fake_backend("no_timing"), req)
+        self.assertEqual(got["outcome"], "CompatibleExact")
+        self.assertEqual(got["reason_codes"], [])
+
     def test_low_limit_is_workload_specific_incompatible(self):
         got = compatibility(fake_backend("low_limit"), self.req(max_texture_dimension=4096))
         self.assertEqual(got["outcome"], "Incompatible")
@@ -38,6 +48,16 @@ class BackendCapabilityTests(unittest.TestCase):
         self.assertEqual(rebuild["device_generation"], 2)
         self.assertEqual(rebuild["authoring_mutations"], 0)
         self.assertEqual(rebuild["layout_mutations"], 0)
+
+    def test_recreated_backend_reruns_compatibility_for_new_capabilities(self):
+        req = self.req(mandatory=frozenset({"rect", "clip:stencil"}))
+        life = BackendLifecycle(fake_backend("full"))
+        self.assertEqual(compatibility(life.descriptor, req)["outcome"], "CompatibleExact")
+        life.lose()
+        life.recreate(fake_backend("no_stencil", generation=2))
+        got = compatibility(life.descriptor, req)
+        self.assertEqual(got["outcome"], "Incompatible")
+        self.assertIn("missing_mandatory:clip:stencil", got["reason_codes"])
 
     def test_permanent_failure_is_unavailable(self):
         got = compatibility(fake_backend("permanent_failure"), self.req())
