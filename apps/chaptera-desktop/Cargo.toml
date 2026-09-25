@@ -28,3 +28,6 @@ sha2.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
+
+[dev-dependencies]
+egui_kittest = { version = "=0.31.1", features = ["eframe"] }
