@@ -16,6 +16,12 @@ pool_max = 4
 [worker]
 heavy_concurrency = 1
 light_concurrency = 2
+# Explicit deployment policy. Tune from measured capacity; do not infer these
+# budgets from worker concurrency.
+quota_shared_capacity = 2
+quota_semantic_headroom = 1
+quota_export_cap = 1
+quota_background_cap = 1
 
 [storage]
 provider = "s3-compatible"
