@@ -160,6 +160,56 @@ def load_producer_dsi_map(path: Path | None) -> dict[str, dict]:
     return out
 
 
+def load_producer_projection(path: Path | None) -> dict[str, dict]:
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("producer projection must be a JSON list")
+    out: dict[str, dict] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        logical = str(row.get("logical_identity") or "").lower()
+        if not logical:
+            continue
+        if row.get("dsi_present") is False:
+            current = {
+                "producer_evidence_state": "dsi_stream_absent",
+                "producer_major": None,
+                "producer_build_or_minor": None,
+                "producer_dsi_sha256": None,
+            }
+        else:
+            state = str(row.get("piddsi_state") or "")
+            if state == "empty_stream":
+                current = {
+                    "producer_evidence_state": "dsi_stream_empty",
+                    "producer_major": None,
+                    "producer_build_or_minor": None,
+                    "producer_dsi_sha256": str(row.get("dsi_sha256") or "").lower() or None,
+                }
+            elif state == "valid_vt_i4":
+                major = row.get("producer_major")
+                minor = row.get("producer_build_or_minor")
+                if not isinstance(major, int) or not isinstance(minor, int):
+                    raise ValueError(f"logical identity {logical} has invalid producer numeric fields")
+                current = {
+                    "producer_evidence_state": "valid_pid_dsi_vt_i4",
+                    "producer_major": major,
+                    "producer_build_or_minor": minor,
+                    "producer_dsi_sha256": str(row.get("dsi_sha256") or "").lower() or None,
+                }
+            else:
+                raise ValueError(
+                    f"logical identity {logical} has unsupported producer state: {state!r}"
+                )
+        if logical in out and out[logical] != current:
+            raise ValueError(f"conflicting producer projection for logical identity {logical}")
+        out[logical] = current
+    return out
+
+
 def one_value(values: set, *, field: str, logical_identity: str):
     clean = {v for v in values if v not in {"", None}}
     if len(clean) > 1:
@@ -197,6 +247,8 @@ def build(
     distribution_media_version_counts = Counter()
     family_counts = Counter()
     revision_counts = Counter()
+    producer_evidence_state_counts = Counter()
+    producer_major_counts = Counter()
     producer_evidence_state_counts = Counter()
     producer_major_counts = Counter()
     producer_dsi_spans: dict[str, set[tuple[str, str]]] = defaultdict(set)
@@ -296,6 +348,10 @@ def build(
         )
         version_label = "|".join(labels) if labels else "unlabelled"
         provenance_class = "|".join(provenance_classes) if provenance_classes else "unlabelled"
+
+        producer = producer_projection.get(logical)
+        if producer is None:
+            raise ValueError(f"logical identity {logical} missing producer projection")
 
         logical_row = {
             "logical_identity": logical,
@@ -422,6 +478,13 @@ def build(
         "distribution_media_provenance_covered_logical_count": (
             logical_count - distribution_media_version_counts.get("unknown", 0)
         ),
+        "producer_evidence_state_logical_counts": dict(
+            sorted(producer_evidence_state_counts.items())
+        ),
+        "producer_major_logical_counts": dict(
+            sorted(producer_major_counts.items(), key=lambda item: int(item[0]))
+        ),
+        "producer_major_covered_logical_count": sum(producer_major_counts.values()),
         "source_logical_membership_counts_nonexclusive": dict(sorted(source_logical_counts.items())),
         "producer_evidence_state_logical_counts": dict(sorted(producer_evidence_state_counts.items())),
         "producer_major_logical_counts": dict(
@@ -498,7 +561,21 @@ def self_test() -> int:
         },
         {"sha256": "4" * 64, "status": "probe_failed"},
     ]
-    result = build(rows)
+    projection = {
+        "a" * 64: {
+            "producer_evidence_state": "valid_pid_dsi_vt_i4",
+            "producer_major": 12,
+            "producer_build_or_minor": 0,
+            "producer_dsi_sha256": "c" * 64,
+        },
+        "b" * 64: {
+            "producer_evidence_state": "dsi_stream_absent",
+            "producer_major": None,
+            "producer_build_or_minor": None,
+            "producer_dsi_sha256": None,
+        },
+    }
+    result = build(rows, producer_projection=projection)
     s = result["summary"]
     assert s["physical_sha_count"] == 4
     assert s["successful_physical_sha_count"] == 3
@@ -528,7 +605,12 @@ def self_test() -> int:
             "evidence": "self-test",
         }
     }
-    enriched = build(rows, media_roots=media_roots, family_overrides=overrides)
+    enriched = build(
+        rows,
+        media_roots=media_roots,
+        family_overrides=overrides,
+        producer_projection=projection,
+    )
     es = enriched["summary"]
     assert es["contents_family_logical_counts"] == {
         "0x2c": 1,
@@ -550,7 +632,7 @@ def self_test() -> int:
     conflicting = [dict(rows[0]), dict(rows[1])]
     conflicting[1]["contents_family"] = "0x22"
     try:
-        build(conflicting)
+        build(conflicting, producer_projection=projection)
     except ValueError as exc:
         assert "disagrees on contents_family" in str(exc)
     else:
@@ -570,6 +652,7 @@ def main() -> int:
     build_cmd.add_argument("--provenance", type=Path)
     build_cmd.add_argument("--media-roots", type=Path)
     build_cmd.add_argument("--family-overrides", type=Path)
+    build_cmd.add_argument("--producer-projection", type=Path, required=True)
     build_cmd.add_argument("--producer-dsi-map", type=Path)
 
     sub.add_parser("self-test")
