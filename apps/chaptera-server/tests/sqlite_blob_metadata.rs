@@ -134,11 +134,7 @@ async fn concurrent_exact_retry_converges_to_one_identity() {
     let right_b = b.clone();
 
     let (left, right) = tokio::join!(
-        async move {
-            left_repo
-                .commit_physical_and_binding(left_p, left_b)
-                .await
-        },
+        async move { left_repo.commit_physical_and_binding(left_p, left_b).await },
         async move {
             right_repo
                 .commit_physical_and_binding(right_p, right_b)
@@ -148,14 +144,8 @@ async fn concurrent_exact_retry_converges_to_one_identity() {
 
     assert_eq!(left.unwrap(), b);
     assert_eq!(right.unwrap(), b);
-    assert_eq!(
-        repo.get_physical("blob-1").await.unwrap(),
-        Some(p)
-    );
-    assert_eq!(
-        repo.get_binding("binding-1").await.unwrap(),
-        Some(b)
-    );
+    assert_eq!(repo.get_physical("blob-1").await.unwrap(), Some(p));
+    assert_eq!(repo.get_binding("binding-1").await.unwrap(), Some(b));
 
     repo.close().await;
     cleanup(&path);
