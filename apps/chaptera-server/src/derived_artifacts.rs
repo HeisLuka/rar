@@ -53,7 +53,10 @@ impl DerivedArtifactFenceV1 {
         require_ident(&self.document_id, "document_id")?;
         require_ident(&self.service_revision_id, "service_revision_id")?;
         require_hex_sha256(&self.canonical_revision_id, "canonical_revision_id")?;
-        if !matches!(self.stage.as_str(), "layout" | "scene" | "preview" | "export") {
+        if !matches!(
+            self.stage.as_str(),
+            "layout" | "scene" | "preview" | "export"
+        ) {
             return Err(DerivedArtifactError::new(
                 "invalid_stage",
                 "stage must be layout, scene, preview, or export",
@@ -71,24 +74,15 @@ impl DerivedArtifactFenceV1 {
         // Match the canonical JSON + sorted-key hash used by the Rar service
         // contract landed in rar#432. BTreeMap makes key order explicit.
         let mut envelope = BTreeMap::new();
-        envelope.insert(
-            "canonical_revision_id",
-            self.canonical_revision_id.as_str(),
-        );
+        envelope.insert("canonical_revision_id", self.canonical_revision_id.as_str());
         envelope.insert("document_id", self.document_id.as_str());
         envelope.insert(
             "environment_fingerprint",
             self.environment_fingerprint.as_str(),
         );
         envelope.insert("input_fingerprint", self.input_fingerprint.as_str());
-        envelope.insert(
-            "schema_version",
-            DERIVED_ARTIFACT_FENCE_SCHEMA_V1,
-        );
-        envelope.insert(
-            "service_revision_id",
-            self.service_revision_id.as_str(),
-        );
+        envelope.insert("schema_version", DERIVED_ARTIFACT_FENCE_SCHEMA_V1);
+        envelope.insert("service_revision_id", self.service_revision_id.as_str());
         envelope.insert("stage", self.stage.as_str());
         envelope.insert("stage_version", self.stage_version.as_str());
 
@@ -223,28 +217,25 @@ impl SqliteDerivedArtifactStore {
         .await;
 
         match result {
-            Ok(done) if done.rows_affected() == 1 => Ok(PublishOutcomeV1::Published(
-                DerivedArtifactRecordV1 {
+            Ok(done) if done.rows_affected() == 1 => {
+                Ok(PublishOutcomeV1::Published(DerivedArtifactRecordV1 {
                     fence_id,
                     fence,
                     content_hash,
                     created_at_ms,
-                },
-            )),
+                }))
+            }
             Ok(_) => Err(DerivedArtifactError::new(
                 "artifact_publish_no_effect",
                 "derived artifact insert completed without one row",
             )),
             Err(error) if is_constraint(&error) => {
-                let existing = self
-                    .resolve_by_fence_id(&fence_id)
-                    .await?
-                    .ok_or_else(|| {
-                        DerivedArtifactError::new(
-                            "artifact_fence_conflict",
-                            "exact fence conflicted without a readable historical row",
-                        )
-                    })?;
+                let existing = self.resolve_by_fence_id(&fence_id).await?.ok_or_else(|| {
+                    DerivedArtifactError::new(
+                        "artifact_fence_conflict",
+                        "exact fence conflicted without a readable historical row",
+                    )
+                })?;
 
                 if existing.fence == fence && existing.content_hash == content_hash {
                     Ok(PublishOutcomeV1::AlreadyPublished(existing))
@@ -322,21 +313,19 @@ impl SqliteDerivedArtifactStore {
     }
 }
 
-fn decode_row(row: sqlx::sqlite::SqliteRow) -> Result<DerivedArtifactRecordV1, DerivedArtifactError> {
+fn decode_row(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<DerivedArtifactRecordV1, DerivedArtifactError> {
     let fence = DerivedArtifactFenceV1 {
         document_id: blob_text(&row, "document_id")?,
         service_revision_id: blob_text(&row, "service_revision_id")?,
-        canonical_revision_id: row
-            .try_get("canonical_revision_id")
-            .map_err(sqlite_error)?,
+        canonical_revision_id: row.try_get("canonical_revision_id").map_err(sqlite_error)?,
         stage: row.try_get("stage").map_err(sqlite_error)?,
         stage_version: row.try_get("stage_version").map_err(sqlite_error)?,
         environment_fingerprint: row
             .try_get("environment_fingerprint")
             .map_err(sqlite_error)?,
-        input_fingerprint: row
-            .try_get("input_fingerprint")
-            .map_err(sqlite_error)?,
+        input_fingerprint: row.try_get("input_fingerprint").map_err(sqlite_error)?,
     };
     fence.validate()?;
 
@@ -366,10 +355,7 @@ fn decode_row(row: sqlx::sqlite::SqliteRow) -> Result<DerivedArtifactRecordV1, D
 fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, DerivedArtifactError> {
     let bytes: Vec<u8> = row.try_get(column).map_err(sqlite_error)?;
     String::from_utf8(bytes).map_err(|_| {
-        DerivedArtifactError::new(
-            "sqlite_row_corrupt",
-            format!("{column} is not UTF-8"),
-        )
+        DerivedArtifactError::new("sqlite_row_corrupt", format!("{column} is not UTF-8"))
     })
 }
 
@@ -389,7 +375,11 @@ fn require_ident(value: &str, label: &'static str) -> Result<(), DerivedArtifact
 }
 
 fn require_hex_sha256(value: &str, label: &'static str) -> Result<(), DerivedArtifactError> {
-    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f')) {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+    {
         return Err(DerivedArtifactError::new(
             "invalid_hash",
             format!("{label} must be 64 lowercase hex characters"),
@@ -398,10 +388,7 @@ fn require_hex_sha256(value: &str, label: &'static str) -> Result<(), DerivedArt
     Ok(())
 }
 
-fn require_prefixed_sha256(
-    value: &str,
-    label: &'static str,
-) -> Result<(), DerivedArtifactError> {
+fn require_prefixed_sha256(value: &str, label: &'static str) -> Result<(), DerivedArtifactError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(DerivedArtifactError::new(
             "invalid_hash",
@@ -457,7 +444,12 @@ mod tests {
         format!("sha256:{}", std::iter::repeat_n(ch, 64).collect::<String>())
     }
 
-    fn fence(canonical: char, stage: &str, environment: char, input: char) -> DerivedArtifactFenceV1 {
+    fn fence(
+        canonical: char,
+        stage: &str,
+        environment: char,
+        input: char,
+    ) -> DerivedArtifactFenceV1 {
         DerivedArtifactFenceV1 {
             document_id: "doc-1".into(),
             service_revision_id: fingerprint('a'),
@@ -506,7 +498,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            reopened.resolve(&exact).await.unwrap().unwrap().content_hash,
+            reopened
+                .resolve(&exact)
+                .await
+                .unwrap()
+                .unwrap()
+                .content_hash,
             fingerprint('4')
         );
 
