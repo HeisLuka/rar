@@ -3616,17 +3616,29 @@ mod tests {
             preview_idml.simulate_click();
         }
         harness.step();
+        let (preview, preview_status) = {
+            let app = harness.state();
+            (app.export_preview.clone(), app.edit_status.clone())
+        };
+        let preview = preview.unwrap_or_else(|| {
+            panic!(
+                "GUI IDML preview was not created; edit_status={preview_status:?}"
+            )
+        });
+        assert_eq!(
+            preview.target,
+            pub_editor::EditorEditableTarget::Idml,
+            "GUI preview must target IDML"
+        );
+        assert_eq!(
+            preview.operation_count,
+            2,
+            "GUI IDML preview must bind both accepted operations"
+        );
         assert!(
-            harness
-                .state()
-                .export_preview
-                .as_ref()
-                .is_some_and(|preview| {
-                    preview.target == pub_editor::EditorEditableTarget::Idml
-                        && preview.operation_count == 2
-                        && preview.can_serialize
-                }),
-            "GUI IDML preview must admit the current edited state"
+            preview.can_serialize,
+            "GUI IDML preview must be serializable; summary={}",
+            preview.summary
         );
         {
             let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
