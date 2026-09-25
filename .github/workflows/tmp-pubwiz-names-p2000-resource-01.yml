@@ -1,0 +1,362 @@
+name: TEMP PUBWIZ P2000 PUB6INTL resource census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-names-p2000-resource-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  resource-census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat
+          python -m pip install --disable-pip-version-check --no-cache-dir pefile==2024.8.26
+
+      - name: Recover exact Publisher 2000 PUB6INTL.DLL
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/p2kr/src /tmp/p2kr/img /tmp/p2kr/dll
+          python - <<'PY'
+          import json, urllib.request, urllib.parse, pathlib
+          ident="X05-44678"
+          req=urllib.request.Request(
+              f"https://archive.org/metadata/{ident}",
+              headers={"User-Agent":"rar-pubwiz-p2000-resource/1.0"},
+          )
+          with urllib.request.urlopen(req,timeout=60) as r:
+              meta=json.load(r)
+          files=[
+              f for f in meta.get("files",[])
+              if str(f.get("source") or "")=="original"
+              and str(f.get("name") or "").lower().endswith(".7z")
+          ]
+          if not files:
+              raise SystemExit("no original 7z")
+          files.sort(key=lambda f:int(f.get("size") or 0),reverse=True)
+          f=files[0]
+          name=str(f["name"])
+          url=f"https://archive.org/download/{ident}/"+urllib.parse.quote(name,safe="/")
+          pathlib.Path("/tmp/p2kr/url").write_text(url)
+          pathlib.Path("out/source.json").write_text(json.dumps({
+              "identifier":ident,
+              "name":name,
+              "reported_size":int(f.get("size") or 0),
+              "reported_md5":f.get("md5"),
+              "reported_sha1":f.get("sha1"),
+          },indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/p2kr/src/source.7z "$(cat /tmp/p2kr/url)"
+          test "$(sha256sum /tmp/p2kr/src/source.7z | awk '{print $1}')" = \
+            "5c9b052976fc261d4a1f04d41277871395699bb98b4078b6f9bf832b932ac1ba"
+
+          7z l -slt /tmp/p2kr/src/source.7z > /tmp/p2kr/archive.slt
+          python - <<'PY'
+          import pathlib
+          rows=[]; cur={}
+          for line in pathlib.Path("/tmp/p2kr/archive.slt").read_text(errors="replace").splitlines():
+              if " = " not in line:
+                  continue
+              k,v=line.split(" = ",1)
+              if k=="Path" and cur:
+                  rows.append(cur); cur={}
+              cur[k]=v
+          if cur: rows.append(cur)
+          cand=[]
+          for r in rows:
+              p=r.get("Path","")
+              if p.lower().endswith((".mdf",".iso",".img",".bin")):
+                  try:s=int(r.get("Size","0"))
+                  except:s=0
+                  cand.append((s,p))
+          if not cand:
+              raise SystemExit("no image member")
+          cand.sort(reverse=True)
+          pathlib.Path("/tmp/p2kr/image_member").write_text(cand[0][1])
+          PY
+          7z x -y /tmp/p2kr/src/source.7z -o/tmp/p2kr/img "$(cat /tmp/p2kr/image_member)" >/dev/null
+          IMAGE="$(find /tmp/p2kr/img -type f | head -n1)"
+          test -n "$IMAGE"
+          case "$IMAGE" in
+            *.mdf|*.MDF) iat "$IMAGE" /tmp/p2kr/p2000.iso >/dev/null; IMAGE=/tmp/p2kr/p2000.iso ;;
+          esac
+          test "$(sha256sum "$IMAGE" | awk '{print $1}')" = \
+            "f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0"
+
+          7z x -y "$IMAGE" -o/tmp/p2kr/dll 'PFILES/MSOFFICE/OFFICE/PUB6INTL.DLL' >/dev/null
+          DLL="$(find /tmp/p2kr/dll -type f -iname 'PUB6INTL.DLL' | head -n1)"
+          test -n "$DLL"
+          test "$(sha256sum "$DLL" | awk '{print $1}')" = \
+            "5dce7b46fd5e43194ce6dd92847942b09b7db17b6f3d5b0f0be9cf2bc9616b3c"
+          printf '%s' "$DLL" > /tmp/p2kr/dll_path
+
+      - name: Enumerate PE resources and bounded catalog signals
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pefile, pathlib, hashlib, json, re, struct
+
+          dll=pathlib.Path("/tmp/p2kr/dll_path").read_text()
+          path=pathlib.Path(dll)
+          pe=pefile.PE(str(path),fast_load=False)
+          if not hasattr(pe,"DIRECTORY_ENTRY_RESOURCE"):
+              raise SystemExit("PUB6INTL has no PE resources")
+
+          type_names={
+              1:"RT_CURSOR",2:"RT_BITMAP",3:"RT_ICON",4:"RT_MENU",5:"RT_DIALOG",
+              6:"RT_STRING",7:"RT_FONTDIR",8:"RT_FONT",9:"RT_ACCELERATOR",
+              10:"RT_RCDATA",11:"RT_MESSAGETABLE",12:"RT_GROUP_CURSOR",
+              14:"RT_GROUP_ICON",16:"RT_VERSION",17:"RT_DLGINCLUDE",19:"RT_PLUGPLAY",
+              20:"RT_VXD",21:"RT_ANICURSOR",22:"RT_ANIICON",23:"RT_HTML",24:"RT_MANIFEST",
+          }
+          vocab=[
+            "Accent Box","Accessory Bar","Arcs","Argyle","Arrows","Astro","Axis","Bars",
+            "Birthday","Blank","Blends","Blocks","Bloks","Border Flowers","Borders","Bouquet","Bounce",
+            "Brocade","Bubbles","Butterfly","Capsules","Cascade","Checkers","Circles","Color Band",
+            "Confetti","Corner Art","Crossed Lines","Diamonds","Echo","Eclipse","Edge","Floating Oval",
+            "Handprint","Hearts and Circles","Jumbled Boxes","Jungle","Layers","Leaves","Level",
+            "Linear Accent","Marker","Marquee","Maze","Mobile","Modular","Network","Pansies",
+            "Party Time","Perforation","Photoscope","Pinwheel","Pixel","Profile","Punctuation",
+            "Quadrant","Radial","Refined","Retro","Ribbons","Romance","Scallops","Signpost",
+            "Simple Divider","Soap Bubbles","Starfish","Steps","Straight Edge","Stripes","Studio",
+            "Tabs","Tilt","Triangles","Wallpaper","Watermark","Waves","Wavy Frame"
+          ]
+          p98={"Arcs","Bars","Blends","Bloks","Bubbles","Capsules","Checkers","Straight Edge","Tilt","Waves"}
+          p2000_doc={"Arcs","Tilt","Floating Oval","Mobile","Marquee"}
+          context=["Master Set","Master Sets","Master Design Set","Master Design Sets","Design Sets"]
+
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          def label(entry):
+              if entry.name is not None:
+                  return str(entry.name)
+              return int(entry.id)
+          def type_label(entry):
+              x=label(entry)
+              if isinstance(x,int):
+                  return type_names.get(x,f"TYPE_{x}")
+              return str(x)
+          def isword_char(ch):
+              return ch.isalnum() or ch=="_"
+          def whole_text_hits(text,terms):
+              low=text.casefold()
+              out=[]
+              for term in terms:
+                  n=term.casefold(); pos=0
+                  while True:
+                      i=low.find(n,pos)
+                      if i<0: break
+                      before=text[i-1] if i>0 else None
+                      after=text[i+len(term)] if i+len(term)<len(text) else None
+                      if (before is None or not isword_char(before)) and (after is None or not isword_char(after)):
+                          out.append({"term":term,"char_offset":i})
+                      pos=i+1
+              return out
+          def extract_printable(data):
+              vals=[]
+              for m in re.finditer(rb"[ -~]{3,120}",data):
+                  vals.append((m.start(),"ascii",m.group(0).decode("ascii","replace")))
+              for m in re.finditer(rb"(?:[ -~]\x00){3,120}",data):
+                  try:s=m.group(0).decode("utf-16le")
+                  except UnicodeDecodeError: continue
+                  vals.append((m.start(),"utf16le",s))
+              vals.sort()
+              return vals
+          def resource_text_matches(data):
+              matches=[]
+              vals=extract_printable(data)
+              for off,enc,s in vals:
+                  vh=whole_text_hits(s,vocab)
+                  ch=whole_text_hits(s,context)
+                  if vh or ch:
+                      matches.append({
+                          "offset":off,"encoding":enc,"text":s,
+                          "vocab_terms":sorted({x["term"] for x in vh}),
+                          "context_terms":sorted({x["term"] for x in ch}),
+                      })
+              return matches
+          def parse_string_block(data,block_id):
+              pos=0; rows=[]
+              for idx in range(16):
+                  if pos+2>len(data):
+                      rows.append({"index":idx,"error":"truncated_length"}); break
+                  n=struct.unpack_from("<H",data,pos)[0]; pos+=2
+                  byte_len=n*2
+                  if pos+byte_len>len(data):
+                      rows.append({"index":idx,"error":"truncated_text","declared_chars":n}); break
+                  raw=data[pos:pos+byte_len]; pos+=byte_len
+                  text=raw.decode("utf-16le","replace")
+                  sid=(block_id-1)*16+idx if isinstance(block_id,int) else None
+                  vh=whole_text_hits(text,vocab)
+                  ch=whole_text_hits(text,context)
+                  rows.append({
+                      "index":idx,
+                      "string_id":sid,
+                      "text":text if (vh or ch) else None,
+                      "matched_vocab":sorted({x["term"] for x in vh}),
+                      "matched_context":sorted({x["term"] for x in ch}),
+                      "length":n,
+                  })
+              return rows
+
+          resources=[]
+          string_hits=[]
+          structured_hits=[]
+          for t in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+              tlabel=type_label(t)
+              tkey=label(t)
+              if not hasattr(t,"directory"): continue
+              for n in t.directory.entries:
+                  nkey=label(n)
+                  if not hasattr(n,"directory"): continue
+                  for l in n.directory.entries:
+                      lang=int(l.id)
+                      d=l.data.struct
+                      rva=int(d.OffsetToData); size=int(d.Size)
+                      data=pe.get_memory_mapped_image()[rva:rva+size]
+                      rec={
+                          "type":tlabel,
+                          "type_key":tkey,
+                          "name_or_id":nkey,
+                          "lang":lang,
+                          "size":size,
+                          "sha256":sha(data),
+                      }
+                      if tkey==6 and isinstance(nkey,int):
+                          rows=parse_string_block(data,nkey)
+                          kept=[x for x in rows if x.get("matched_vocab") or x.get("matched_context")]
+                          if kept:
+                              rec["matched_string_entries"]=kept
+                              string_hits.extend([
+                                  {
+                                      "block_id":nkey,
+                                      "lang":lang,
+                                      **x
+                                  } for x in kept
+                              ])
+                      else:
+                          matches=resource_text_matches(data)
+                          if matches:
+                              rec["bounded_text_matches"]=matches[:80]
+                              structured_hits.append({
+                                  "type":tlabel,"type_key":tkey,"name_or_id":nkey,"lang":lang,
+                                  "size":size,"sha256":rec["sha256"],
+                                  "matches":matches[:80],
+                              })
+                      resources.append(rec)
+
+          # Group string hits by block to determine whether a coherent same-block cluster exists.
+          block_groups={}
+          for h in string_hits:
+              key=(h["block_id"],h["lang"])
+              block_groups.setdefault(key,[]).append(h)
+          string_clusters=[]
+          for (block,lang),items in sorted(block_groups.items()):
+              names=sorted({x for i in items for x in i.get("matched_vocab",[])})
+              ctx=sorted({x for i in items for x in i.get("matched_context",[])})
+              if len(names)>=2 or (ctx and names):
+                  string_clusters.append({
+                      "block_id":block,"lang":lang,"names":names,"context_terms":ctx,
+                      "entries":items,
+                  })
+
+          resource_clusters=[]
+          for h in structured_hits:
+              names=sorted({x for m in h["matches"] for x in m["vocab_terms"]})
+              ctx=sorted({x for m in h["matches"] for x in m["context_terms"]})
+              if len(names)>=2 or (ctx and names):
+                  resource_clusters.append({
+                      "type":h["type"],"type_key":h["type_key"],"name_or_id":h["name_or_id"],
+                      "lang":h["lang"],"size":h["size"],"sha256":h["sha256"],
+                      "names":names,"context_terms":ctx,
+                  })
+
+          all_names=sorted({
+              x
+              for r in resources
+              for e in r.get("matched_string_entries",[])
+              for x in e.get("matched_vocab",[])
+          } | {
+              x
+              for h in structured_hits
+              for m in h["matches"]
+              for x in m["vocab_terms"]
+          })
+
+          report={
+              "schema":"chaptera.pubwiz-p2000-pub6intl-resource-census.v1",
+              "source_safe":True,
+              "raw_payload_retained":False,
+              "dll":{
+                  "path":"PFILES/MSOFFICE/OFFICE/PUB6INTL.DLL",
+                  "size":path.stat().st_size,
+                  "sha256":sha(path.read_bytes()),
+              },
+              "resource_count":len(resources),
+              "resource_type_counts":{},
+              "all_matched_vocab":all_names,
+              "p98_matched":sorted(set(all_names)&p98),
+              "p2000_documented_matched":sorted(set(all_names)&p2000_doc),
+              "string_hits":string_hits,
+              "same_string_block_clusters":string_clusters,
+              "structured_resource_hits":structured_hits,
+              "same_resource_clusters":resource_clusters,
+              "resources":[{
+                  "type":r["type"],"type_key":r["type_key"],"name_or_id":r["name_or_id"],
+                  "lang":r["lang"],"size":r["size"],"sha256":r["sha256"],
+              } for r in resources],
+              "guardrail":"PE resource IDs are local resource identities only. They are not sttCatStyles, BIZCARD desID, or POC opyid. Promotion requires a coherent same-resource/string-block catalog context plus independent version evidence."
+          }
+          for r in resources:
+              report["resource_type_counts"][r["type"]]=report["resource_type_counts"].get(r["type"],0)+1
+
+          if string_clusters or resource_clusters:
+              verdict="structured_catalog_candidate_present"
+          elif string_hits or structured_hits:
+              verdict="isolated_resource_hits_no_catalog_cluster"
+          else:
+              verdict="no_bounded_masterset_signal_in_pe_resources"
+          report["verdict"]=verdict
+          pathlib.Path("out/resource-census.json").write_text(json.dumps(report,indent=2))
+          print(json.dumps({
+              "resource_count":report["resource_count"],
+              "resource_type_counts":report["resource_type_counts"],
+              "all_matched_vocab":all_names,
+              "p98_matched":report["p98_matched"],
+              "p2000_documented_matched":report["p2000_documented_matched"],
+              "same_string_block_clusters":string_clusters,
+              "same_resource_clusters":resource_clusters,
+              "verdict":verdict,
+          },indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+
+      - name: Enforce source-safe artifact
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          r=json.load(open("out/resource-census.json"))
+          assert r["source_safe"] is True
+          assert r["raw_payload_retained"] is False
+          assert r["dll"]["sha256"]=="5dce7b46fd5e43194ce6dd92847942b09b7db17b6f3d5b0f0be9cf2bc9616b3c"
+          for p in pathlib.Path("out").rglob("*"):
+              if p.suffix.lower() in {".dll",".exe",".msi",".cab",".poc",".des",".chm",".hlp",".iso",".mdf",".7z",".bin"}:
+                  raise SystemExit(f"raw payload leaked: {p}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-p2000-pub6intl-resource-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
