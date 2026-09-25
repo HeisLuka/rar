@@ -510,30 +510,35 @@ pub fn resolve_cmo_slot_flow_v1(
     })
 }
 
+#[derive(Serialize)]
+struct SlotInstanceIdentityV1<'a> {
+    // Field order is deliberately alphabetical to match the already-admitted
+    // Python public contract's canonical JSON (sort_keys=True).
+    carrier_node_id: &'a str,
+    projection_kind: &'static str,
+    scalar_index: u32,
+    source_order: usize,
+    target_frame_node_id: &'a str,
+    target_story_id: &'a str,
+}
+
 fn slot_instance_id_v1(
     target_story_id: &str,
     target_frame_node_id: &str,
     scalar_index: u32,
     relation: &CmoProjectionRelationV1,
 ) -> String {
-    let mut hasher = Sha256::new();
-    hash_part(&mut hasher, b"chaptera.scene-instance.cmo-story-slot.v1");
-    hash_part(&mut hasher, target_story_id.as_bytes());
-    hash_part(&mut hasher, target_frame_node_id.as_bytes());
-    hasher.update(scalar_index.to_be_bytes());
-    hasher.update(
-        u64::try_from(relation.source_order)
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
-    hasher.update(relation.cmo_id.to_be_bytes());
-    hash_part(&mut hasher, relation.carrier_node_id.as_bytes());
-    format!("sha256:{:x}", hasher.finalize())
-}
-
-fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
-    hasher.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
-    hasher.update(bytes);
+    let identity = SlotInstanceIdentityV1 {
+        carrier_node_id: &relation.carrier_node_id,
+        projection_kind: "cmo_story_slot",
+        scalar_index,
+        source_order: relation.source_order,
+        target_frame_node_id,
+        target_story_id,
+    };
+    let canonical = serde_json::to_vec(&identity)
+        .expect("fixed Cmo slot identity fields must serialize to canonical JSON");
+    format!("sha256:{:x}", Sha256::digest(canonical))
 }
 
 #[cfg(test)]
@@ -682,6 +687,30 @@ mod tests {
                 index: 0,
                 scalar: 1
             })
+        );
+    }
+
+    #[test]
+    fn slot_instance_id_matches_admitted_public_contract_law() {
+        let relation = CmoProjectionRelationV1 {
+            source_order: 3,
+            cmo_id: 7,
+            carrier_ohpo: 441,
+            carrier_cmo_id: 7,
+            target_qsid: 49,
+            carrier_node_id: "b98be77a-5dc8-5134-9998-0d2738c1b077".to_owned(),
+            carrier_story_id: Some("86f4e1e1-2d6e-54c4-b732-4ff49dde3737".to_owned()),
+            target_story_id: "9ec067e2-2962-5923-85b9-7470503a2181".to_owned(),
+            target_frame_node_id: Some("4e554b11-a364-5e15-ba52-9d1ecda18b5f".to_owned()),
+        };
+        assert_eq!(
+            slot_instance_id_v1(
+                "9ec067e2-2962-5923-85b9-7470503a2181",
+                "4e554b11-a364-5e15-ba52-9d1ecda18b5f",
+                0,
+                &relation,
+            ),
+            "sha256:c2b4d34997a6f85ded10439f3ce7ff0fd1a71e8b2f829004185ee23d55911f47"
         );
     }
 
