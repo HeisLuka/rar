@@ -914,10 +914,9 @@ mod tests {
             SqliteUploadAdmissionAuthority::open(&path, 4, Duration::from_secs(2), strict.clone())
                 .await
                 .unwrap();
-        let right =
-            SqliteUploadAdmissionAuthority::open(&path, 4, Duration::from_secs(2), strict)
-                .await
-                .unwrap();
+        let right = SqliteUploadAdmissionAuthority::open(&path, 4, Duration::from_secs(2), strict)
+            .await
+            .unwrap();
 
         let (left_result, right_result) = tokio::join!(
             left.reserve(request("race-left", "principal-a", 800), 10),
