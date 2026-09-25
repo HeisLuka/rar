@@ -10,7 +10,6 @@ on:
       - "services/editor-api/text_keyboard_policy_v1.py"
       - "services/editor-api/text_visual_line_navigation_v1.py"
       - "services/editor-api/text_unplaced_interaction_v1.py"
-      - "services/editor-api/story_edit_transaction_v1.py"
       - "services/editor-api/text_ingress_v1.py"
       - ".github/workflows/editor-text-range-format-ui-v1.yml"
   workflow_dispatch:
