@@ -11,6 +11,7 @@ mod asset_export;
 mod assets;
 mod failure_envelope;
 mod failure_intake;
+mod guide_bridge;
 mod intake_protocol;
 mod resolve;
 mod structural_base;
@@ -36,6 +37,10 @@ pub use failure_envelope::{
 pub use failure_intake::{
     FailureIntakeClass, FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
     classify_failure_candidate,
+};
+pub use guide_bridge::{
+    PubGroundedGuideBuild, PubGuideObservation, PubGuideProjectionDiagnostic,
+    materialize_grounded_guides,
 };
 pub use intake_protocol::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_PROTOCOL_SCHEMA_V1,

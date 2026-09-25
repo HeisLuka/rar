@@ -1,0 +1,33 @@
+name: EDITOR-GUIDE-PROJECTION-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-model/src/guides.rs"
+      - "vendor/producer-a/crates/pub-model/src/lib.rs"
+      - "vendor/producer-a/crates/pub-reader/src/guide_bridge.rs"
+      - "vendor/producer-a/crates/pub-reader/src/lib.rs"
+      - "vendor/producer-a/crates/pub-reader/tests/guide_bridge.rs"
+      - "vendor/producer-a/crates/pub-layout/src/lib.rs"
+      - ".github/workflows/editor-guide-projection-v1.yml"
+  push:
+    branches:
+      - editor-guide-projection-01
+
+permissions:
+  contents: read
+
+jobs:
+  guide-projection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test grounded guide bridge and projection
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-model -p pub-layout
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader --test guide_bridge
+      - name: Check task-owned crates
+        run: |
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-layout

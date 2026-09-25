@@ -1,3 +1,4 @@
+use crate::{PageId, SourceRef};
 use serde::{Deserialize, Serialize};
 
 /// Разные Publisher guide mechanisms не объединяются в один тип по внешнему виду.
@@ -28,6 +29,21 @@ pub enum RulerGuideAxis {
 pub struct RulerGuide<Position> {
     pub axis: RulerGuideAxis,
     pub position: Position,
+}
+
+/// A guide may cross the authoring boundary only after the source adapter has
+/// grounded its page ownership, semantic role, axis and physical position.
+///
+/// Raw source provenance stays attached here for auditability; the layout
+/// projection deliberately strips carrier/byte-range details and retains only
+/// the semantic PublisherGuideRole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroundedRulerGuide<Position> {
+    pub page_id: PageId,
+    pub role: PublisherGuideRole,
+    pub guide: RulerGuide<Position>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_refs: Vec<SourceRef>,
 }
 
 #[cfg(test)]

@@ -45,7 +45,7 @@ pub use geometry::{
     Affine2D, EMU_PER_CSS_PIXEL_96_DPI, EMU_PER_INCH, EMU_PER_MILLIMETER, EMU_PER_POINT, LengthEmu,
     RectEmu,
 };
-pub use guides::{PublisherGuideRole, RulerGuide, RulerGuideAxis};
+pub use guides::{GroundedRulerGuide, PublisherGuideRole, RulerGuide, RulerGuideAxis};
 pub use id_derivation::{
     SOURCE_DERIVED_NAMESPACE_V1, SourceDerivedIdError, SourceDerivedIdInput, SourceIdComponent,
     derive_source_canonical_id, new_editor_canonical_id,
