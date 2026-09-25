@@ -907,3 +907,367 @@ fn sqlite_error(error: impl fmt::Display) -> AuthzError {
 fn export_error(error: AuthzError) -> ExportExecutorError {
     ExportExecutorError::new(error.code, error.message)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use crate::{
+        export_executor::{
+            EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExportPublicationCommitter,
+            IDML_BOUNDED_EDITABLE_PROFILE,
+        },
+        job_queue::JobStatus,
+        schema_migration::SqliteMigrationRuntime,
+    };
+
+    use super::*;
+
+    static NEXT_DB: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_db(label: &str) -> PathBuf {
+        let serial = NEXT_DB.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "chaptera-authz-{label}-{}-{serial}.sqlite",
+            std::process::id()
+        ))
+    }
+
+    fn cleanup(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
+    }
+
+    async fn stores(
+        label: &str,
+    ) -> (
+        PathBuf,
+        SqliteAuthzAuthority,
+        SqliteExportPublicationStore,
+    ) {
+        let path = temp_db(label);
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+        let authority = SqliteAuthzAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let publications = SqliteExportPublicationStore::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        (path, authority, publications)
+    }
+
+    fn job(job_id: &str, tenant_id: &str) -> JobRecord {
+        JobRecord {
+            job_id: job_id.to_owned(),
+            tenant_id: tenant_id.to_owned(),
+            job_kind: JobKind::Export,
+            payload_schema_version: 1,
+            payload: Vec::new(),
+            request_hash: "a".repeat(64),
+            status: JobStatus::Running,
+            available_at_ms: 0,
+            attempt: 1,
+            max_attempts: 3,
+            lease_owner: Some("worker-authz-test".to_owned()),
+            lease_generation: 1,
+            lease_expires_at_ms: Some(10_000),
+            cancel_requested_at_ms: None,
+            idempotency_key: format!("idem-{job_id}"),
+            created_at_ms: 0,
+            started_at_ms: Some(0),
+            finished_at_ms: None,
+            terminal_code: None,
+        }
+    }
+
+    fn payload(job_suffix: &str) -> ExportJobPayloadV1 {
+        ExportJobPayloadV1 {
+            schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.to_owned(),
+            tenant_id: "tenant:authz".to_owned(),
+            document_id: "document:authz".to_owned(),
+            requesting_principal_id: "principal:editor".to_owned(),
+            exact_revision_id: format!("service-rev-{job_suffix}"),
+            canonical_authoring_revision_id: "c".repeat(64),
+            target_profile: IDML_BOUNDED_EDITABLE_PROFILE.to_owned(),
+            layout_environment_id: format!("sha256:{}", "d".repeat(64)),
+        }
+    }
+
+    fn publication(job_id: &str, payload: &ExportJobPayloadV1) -> ExportPublicationInputV1 {
+        ExportPublicationInputV1 {
+            tenant_id: payload.tenant_id.clone(),
+            job_id: job_id.to_owned(),
+            document_id: payload.document_id.clone(),
+            exact_revision_id: payload.exact_revision_id.clone(),
+            canonical_revision_id: payload.canonical_authoring_revision_id.clone(),
+            target_profile: payload.target_profile.clone(),
+            layout_environment_id: payload.layout_environment_id.clone(),
+            fence_id: format!("sha256:{}", "e".repeat(64)),
+            artifact_binding_id: format!("binding-artifact-{job_id}"),
+            artifact_content_hash: format!("sha256:{}", "f".repeat(64)),
+            loss_binding_id: format!("binding-loss-{job_id}"),
+            loss_report_hash: format!("sha256:{}", "b".repeat(64)),
+        }
+    }
+
+    #[tokio::test]
+    async fn role_change_and_revoke_advance_access_generation_and_audit() {
+        let (path, authority, publications) = stores("grant-revoke").await;
+
+        let granted = authority
+            .set_role(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                DocumentRole::Editor,
+                None,
+                "grant-op-1",
+                10,
+            )
+            .await
+            .unwrap();
+        assert_eq!(granted.authz_version, 1);
+        assert!(granted.active_session_barrier_complete);
+
+        let allowed = authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "job-authz-1",
+                20,
+            )
+            .await
+            .unwrap();
+        assert_eq!(allowed.role, DocumentRole::Editor);
+        assert_eq!(allowed.authz_version, 1);
+
+        let revoked = authority
+            .revoke(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                "revoke-op-1",
+                30,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.authz_version, 2);
+
+        let denied = authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "job-authz-2",
+                40,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "grant_missing");
+
+        let audit: Vec<(String, String, String, i64, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT action, result, capability, authz_version, error_code
+            FROM authz_audit_events
+            ORDER BY event_id
+            "#,
+        )
+        .fetch_all(&authority.pool)
+        .await
+        .unwrap();
+        assert_eq!(audit.len(), 4);
+        assert_eq!(audit[0].0, "grant.set");
+        assert_eq!(audit[1].1, "allowed");
+        assert_eq!(audit[2].0, "grant.revoke");
+        assert_eq!(audit[3].1, "denied");
+        assert_eq!(audit[3].4.as_deref(), Some("grant_missing"));
+
+        publications.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn viewer_cannot_export_but_editor_can() {
+        let (path, authority, publications) = stores("capability").await;
+
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                DocumentRole::Viewer,
+                None,
+                "grant-viewer",
+                10,
+            )
+            .await
+            .unwrap();
+        let denied = authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "export-as-viewer",
+                20,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "capability_denied");
+
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                DocumentRole::Editor,
+                None,
+                "grant-editor",
+                30,
+            )
+            .await
+            .unwrap();
+        authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "export-as-editor",
+                40,
+            )
+            .await
+            .unwrap();
+
+        publications.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn revoke_and_publication_share_one_sqlite_barrier() {
+        let (path, authority, publications) = stores("barrier").await;
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                DocumentRole::Editor,
+                None,
+                "grant-editor",
+                10,
+            )
+            .await
+            .unwrap();
+
+        let first_job = job("job-export-before-revoke", "tenant:authz");
+        let first_payload = payload("before-revoke");
+        let first_input = publication(&first_job.job_id, &first_payload);
+
+        let mut conn = begin_immediate(&authority.pool).await.unwrap();
+        let decision = check_authorization(
+            &mut conn,
+            &first_payload.tenant_id,
+            &first_payload.document_id,
+            &first_payload.requesting_principal_id,
+            CAP_EXPORT,
+            20,
+        )
+        .await
+        .unwrap();
+        assert_eq!(decision.authz_version, 1);
+
+        insert_audit(
+            &mut conn,
+            &first_payload.tenant_id,
+            &first_payload.document_id,
+            &first_payload.requesting_principal_id,
+            &first_job.job_id,
+            "export.publish",
+            "allowed",
+            CAP_EXPORT,
+            decision.authz_version,
+            None,
+            20,
+        )
+        .await
+        .unwrap();
+
+        let revoke_authority = authority.clone();
+        let revoke_task = tokio::spawn(async move {
+            revoke_authority
+                .revoke(
+                    "tenant:authz",
+                    "document:authz",
+                    "principal:editor",
+                    "concurrent-revoke",
+                    30,
+                )
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !revoke_task.is_finished(),
+            "revoke must wait while authorized publication owns BEGIN IMMEDIATE"
+        );
+
+        publications
+            .prepare_in_transaction(&mut conn, first_input, 20)
+            .await
+            .unwrap();
+        commit(&mut conn).await.unwrap();
+
+        let revoked = revoke_task.await.unwrap().unwrap();
+        assert_eq!(revoked.authz_version, 2);
+        assert!(
+            publications
+                .get_by_job("tenant:authz", &first_job.job_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        let committer = SqliteAuthorizedExportPublicationCommitter::new(
+            authority.clone(),
+            publications.clone(),
+        )
+        .unwrap();
+        let second_job = job("job-export-after-revoke", "tenant:authz");
+        let second_payload = payload("after-revoke");
+        let error = committer
+            .commit_authorized(
+                &second_job,
+                &second_payload,
+                publication(&second_job.job_id, &second_payload),
+                40,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "export_publish_unauthorized");
+        assert!(
+            publications
+                .get_by_job("tenant:authz", &second_job.job_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "revoked principal must not prepare a later logical publication"
+        );
+
+        publications.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
+}
