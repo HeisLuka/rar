@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_10,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_11,
     EditOperation, EditorError, EditorProject, EditorProjectError, EditorSession, LengthEmu,
     RectEmu, ResizeNodeBatchEntry,
 };
@@ -151,7 +151,7 @@ fn entries(base: &PubResolvedGraph) -> Vec<ResizeNodeBatchEntry> {
 
 #[test]
 fn canonical_batch_is_one_history_and_project_replay_unit() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10);
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_11);
     let base = graph();
     let (page_id, node_a, node_b) = ids();
     let mut batch = entries(&base);
