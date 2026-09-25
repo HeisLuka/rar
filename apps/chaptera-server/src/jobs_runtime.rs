@@ -573,14 +573,9 @@ mod tests {
             .await
             .unwrap();
 
-        let runtime = JobsRuntime::open_with_authz(
-            &path,
-            4,
-            Duration::from_secs(2),
-            authz.clone(),
-        )
-        .await
-        .unwrap();
+        let runtime = JobsRuntime::open_with_authz(&path, 4, Duration::from_secs(2), authz.clone())
+            .await
+            .unwrap();
         runtime.close().await;
 
         authz
