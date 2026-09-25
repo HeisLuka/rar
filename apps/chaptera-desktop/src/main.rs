@@ -23,7 +23,6 @@ use pub_viewer::{
     ViewerGeometryDocument, ViewerTextMatch, classify_failure_candidate,
     exact_file_intake_eligible,
 };
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -2950,6 +2949,7 @@ mod tests {
     #[ignore = "requires CHAPTERA_SAMPLE_NEWSLETTER and a WGPU-capable hosted runner"]
     fn reader_open_phase_wgpu_first_paint_uses_current_viewer_app() {
         use egui_kittest::Harness;
+        use sha2::{Digest, Sha256};
 
         let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
             .map(PathBuf::from)
