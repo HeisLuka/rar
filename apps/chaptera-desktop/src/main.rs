@@ -3429,6 +3429,11 @@ mod tests {
         let replacement = "Chaptera GUI-only V0 acceptance text".to_owned();
         {
             let editor = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+            editor.click();
+        }
+        harness.step();
+        {
+            let editor = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
             editor.key_combination(&[
                 egui_kittest::kittest::Key::Control,
                 egui_kittest::kittest::Key::A,
