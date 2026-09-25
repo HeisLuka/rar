@@ -2,10 +2,6 @@ name: PUB Save roundtrip handoff
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/pub-save-roundtrip-handoff.yml"
   pull_request:
     paths:
       - ".github/workflows/pub-save-roundtrip-handoff.yml"
@@ -16,6 +12,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: pub-save-roundtrip-handoff-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   prepare-handoff:
@@ -94,7 +94,7 @@ jobs:
           retention-days: 30
 
   native-roundtrip:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     needs: prepare-handoff
     runs-on:
       - self-hosted
