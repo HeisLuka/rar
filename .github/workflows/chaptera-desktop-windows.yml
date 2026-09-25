@@ -97,14 +97,14 @@ jobs:
           "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Test GUI-only Desktop V0 walkthrough
-        run: cargo test -p chaptera-desktop --features embedded-fixture-tests gui_only_v0_walkthrough_uses_real_widgets -- --nocapture
+        run: cargo test -p chaptera-desktop gui_only_v0_walkthrough_uses_real_widgets -- --nocapture
 
       - name: Capture headless Chaptera UX snapshots
         shell: pwsh
         run: |
           $snapshotDir = (Resolve-Path "target/release").Path
           $env:CHAPTERA_UX_SNAPSHOT_DIR = $snapshotDir
-          cargo test -p chaptera-desktop --features embedded-fixture-tests headless_wgpu_ux_snapshots_render_current_viewer_app -- --nocapture
+          cargo test -p chaptera-desktop headless_wgpu_ux_snapshots_render_current_viewer_app -- --nocapture
           python tools/validate_editor_desktop_ux_snapshots.py --default target/release/chaptera-editor-ux-1280x820.png --minimum target/release/chaptera-editor-ux-900x600.png --output target/release/editor-desktop-ux-snapshots.real.json
 
       - name: Run real Desktop V0 continuity receipt
