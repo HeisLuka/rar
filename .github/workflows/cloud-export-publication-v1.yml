@@ -12,6 +12,7 @@ on:
       - ".github/workflows/cloud-export-publication-v1.yml"
   workflow_dispatch:
 
+# Prepared publication rows are visible only after WorkerLoop commits job_effect.
 permissions:
   contents: read
 
