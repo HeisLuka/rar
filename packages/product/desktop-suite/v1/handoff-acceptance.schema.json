@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/suite-handoff-acceptance.v1.json",
+  "title": "Chaptera source-free cross-app handoff acceptance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version","sender_product_id","receiver_product_id","requested_job","handoff_packet_sha256","source_sha256","source_unchanged","receiver_capability_admitted","mutable_document_state_received","source_path_serialized"],
+  "properties": {
+    "protocol_version": {"const": "chaptera.suite-handoff-acceptance.v1"},
+    "sender_product_id": {"const": "chaptera.reader"},
+    "receiver_product_id": {"enum": ["chaptera.editor","chaptera.rescue"]},
+    "requested_job": {"enum": ["edit_supported_pub","diagnose_or_recover"]},
+    "handoff_packet_sha256": {"type": "string","pattern": "^[0-9a-f]{64}$"},
+    "source_sha256": {"type": "string","pattern": "^[0-9a-f]{64}$"},
+    "source_unchanged": {"const": true},
+    "receiver_capability_admitted": {"const": true},
+    "mutable_document_state_received": {"const": false},
+    "source_path_serialized": {"const": false}
+  }
+}

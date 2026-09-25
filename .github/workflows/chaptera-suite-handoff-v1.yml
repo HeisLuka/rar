@@ -1,0 +1,164 @@
+name: Chaptera suite cross-app handoff V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-suite-handoff/**"
+      - "apps/chaptera-desktop/**"
+      - "apps/chaptera-rescue/**"
+      - "packages/product/desktop-suite/v1/handoff*.json"
+      - "tools/validate_chaptera_suite_handoff.py"
+      - "tools/test_validate_chaptera_suite_handoff.py"
+      - ".github/workflows/chaptera-suite-handoff-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-real-binaries:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Validate handoff contract tests
+        run: |
+          cargo test --manifest-path crates/chaptera-suite-handoff/Cargo.toml
+          python -m unittest tools/test_validate_chaptera_suite_handoff.py -v
+
+      - name: Build Reader sender
+        run: cargo build -p chaptera-desktop --release --features reader-only
+
+      - name: Stage Reader sender
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Copy-Item "target/release/chaptera-editor.exe" (Join-Path $bin "chaptera-reader.exe") -Force
+
+      - name: Build Editor receiver
+        run: cargo build -p chaptera-desktop --release
+
+      - name: Stage Editor receiver
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          Copy-Item "target/release/chaptera-editor.exe" (Join-Path $bin "chaptera-editor.exe") -Force
+
+      - name: Build Rescue receiver
+        run: cargo build --manifest-path apps/chaptera-rescue/Cargo.toml --release
+
+      - name: Stage Rescue receiver
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          Copy-Item "apps/chaptera-rescue/target/release/chaptera-rescue.exe" (Join-Path $bin "chaptera-rescue.exe") -Force
+
+      - name: Acquire supported + damaged recovery-eligible local sources
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "suite-handoff"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $supported = Join-Path $root "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $supported
+          $hash = (Get-FileHash $supported -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "supported source hash mismatch: $hash"
+          }
+          $damaged = Join-Path $root "damaged.pub"
+          $cfbMagic = [byte[]](0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1)
+          $publisherHint = [Text.Encoding]::ASCII.GetBytes("Microsoft Publisher")
+          $damagedBytes = New-Object byte[] ($cfbMagic.Length + $publisherHint.Length)
+          [Array]::Copy($cfbMagic, 0, $damagedBytes, 0, $cfbMagic.Length)
+          [Array]::Copy($publisherHint, 0, $damagedBytes, $cfbMagic.Length, $publisherHint.Length)
+          [IO.File]::WriteAllBytes($damaged, $damagedBytes)
+          [IO.File]::WriteAllBytes(
+            (Join-Path $root "unknown-unsupported.pub"),
+            [byte[]](0x00,0xFF,0x10,0x80,0x00,0x7F,0xAA,0x55,0x13,0x37,0x00,0xFE)
+          )
+          "SUITE_HANDOFF_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Reader to Editor real-binary handoff
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          $source = Join-Path $env:SUITE_HANDOFF_ROOT "SampleNewsletter.pub"
+          $packet = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.packet.json"
+          $receipt = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.acceptance.json"
+          $before = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          $reader = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.editor", $source, $packet) -Wait -PassThru
+          if ($reader.ExitCode -ne 0) { throw "Reader failed to create Editor handoff: exit $($reader.ExitCode)" }
+          python tools/validate_chaptera_suite_handoff.py packet $packet
+          $editor = Start-Process -FilePath (Join-Path $bin "chaptera-editor.exe") -ArgumentList @("--handoff-accept-v1", $packet, $receipt) -Wait -PassThru
+          if ($editor.ExitCode -ne 0) { throw "Editor failed to accept Reader handoff: exit $($editor.ExitCode)" }
+          python tools/validate_chaptera_suite_handoff.py acceptance $receipt
+          $after = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($before -ne $after) { throw "Reader->Editor handoff mutated source" }
+
+      - name: Prove unknown unsupported input is not promoted to Rescue
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          $source = Join-Path $env:SUITE_HANDOFF_ROOT "unknown-unsupported.pub"
+          $packet = Join-Path $env:SUITE_HANDOFF_ROOT "unsupported-to-rescue.packet.json"
+          $reader = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.rescue", $source, $packet) -Wait -PassThru
+          if ($reader.ExitCode -eq 0) { throw "Reader promoted non-recovery PubPossible input to Rescue" }
+          if (Test-Path $packet) { throw "Rejected Rescue handoff unexpectedly wrote a packet" }
+
+      - name: Reader to Rescue real-binary handoff
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          $source = Join-Path $env:SUITE_HANDOFF_ROOT "damaged.pub"
+          $packet = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-rescue.packet.json"
+          $receipt = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-rescue.acceptance.json"
+          $before = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          $reader = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.rescue", $source, $packet) -Wait -PassThru
+          if ($reader.ExitCode -ne 0) { throw "Reader failed to create Rescue handoff: exit $($reader.ExitCode)" }
+          python tools/validate_chaptera_suite_handoff.py packet $packet
+          $rescue = Start-Process -FilePath (Join-Path $bin "chaptera-rescue.exe") -ArgumentList @("--handoff-accept-v1", $packet, $receipt) -Wait -PassThru
+          if ($rescue.ExitCode -ne 0) { throw "Rescue failed to accept Reader handoff: exit $($rescue.ExitCode)" }
+          python tools/validate_chaptera_suite_handoff.py acceptance $receipt
+          $after = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($before -ne $after) { throw "Reader->Rescue handoff mutated source" }
+
+      - name: Prove wrong receiver and source tamper fail closed
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
+          $editorPacket = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.packet.json"
+          $badReceipt = Join-Path $env:SUITE_HANDOFF_ROOT "wrong-receiver.acceptance.json"
+          $wrongReceiver = Start-Process -FilePath (Join-Path $bin "chaptera-rescue.exe") -ArgumentList @("--handoff-accept-v1", $editorPacket, $badReceipt) -Wait -PassThru
+          if ($wrongReceiver.ExitCode -eq 0) { throw "Rescue accepted an Editor-targeted handoff" }
+
+          $tamper = Join-Path $env:SUITE_HANDOFF_ROOT "tamper.pub"
+          Copy-Item (Join-Path $env:SUITE_HANDOFF_ROOT "SampleNewsletter.pub") $tamper
+          $tamperPacket = Join-Path $env:SUITE_HANDOFF_ROOT "tamper.packet.json"
+          $tamperSender = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.editor", $tamper, $tamperPacket) -Wait -PassThru
+          if ($tamperSender.ExitCode -ne 0) { throw "Reader failed to create tamper control packet: exit $($tamperSender.ExitCode)" }
+          [IO.File]::AppendAllText($tamper, "tampered after sender admission")
+          $tamperReceiver = Start-Process -FilePath (Join-Path $bin "chaptera-editor.exe") -ArgumentList @("--handoff-accept-v1", $tamperPacket, (Join-Path $env:SUITE_HANDOFF_ROOT "tamper.acceptance.json")) -Wait -PassThru
+          if ($tamperReceiver.ExitCode -eq 0) { throw "Editor accepted source bytes changed after sender admission" }
+
+      - name: Stage source-free acceptance receipts
+        shell: pwsh
+        run: |
+          $out = "suite-handoff-acceptance"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item (Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.acceptance.json") (Join-Path $out "reader-to-editor.acceptance.json")
+          Copy-Item (Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-rescue.acceptance.json") (Join-Path $out "reader-to-rescue.acceptance.json")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-suite-handoff-v1
+          path: suite-handoff-acceptance/*.json
+          if-no-files-found: error
