@@ -29,13 +29,14 @@ use pub_idml::{
 };
 pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_model::{
-    ResourceId, SourceDerivedIdInput, StoryFrame, derive_source_canonical_id, validate_story_frames,
+    ResourceId, SourceDerivedIdInput, Story, StoryFrame, derive_source_canonical_id,
+    validate_story_frames,
 };
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
-    PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
+    PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame, build_mature_0x2c_source_graph,
     materialize_bounded_simple_table_cells, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -49,7 +50,8 @@ pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
 pub const EDITOR_PROJECT_VERSION_V0_3: &str = "pub-editor-v0.3";
 pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_5;
+pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_6;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -122,6 +124,14 @@ pub enum EditOperation {
         before: String,
         after: String,
     },
+    BreakTextFrameForwardLink {
+        story_id: StoryId,
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+        new_story_id: StoryId,
+        before_frames: Vec<StoryFrame<StoryId, NodeId>>,
+        after_frames: Vec<StoryFrame<StoryId, NodeId>>,
+    },
     ReplaceTableCellText {
         node_id: NodeId,
         story_id: StoryId,
@@ -159,6 +169,22 @@ impl PersistenceRequirements for EditOperation {
                     property_path: Some("story.text".into()),
                 }]
             }
+            Self::BreakTextFrameForwardLink {
+                story_id,
+                new_story_id,
+                ..
+            } => vec![
+                PersistenceRequirement {
+                    feature: "story.linked_frames".into(),
+                    origin: Some(story_id.into_canonical()),
+                    property_path: Some("story.frames".into()),
+                },
+                PersistenceRequirement {
+                    feature: "story.created_identity".into(),
+                    origin: Some(new_story_id.into_canonical()),
+                    property_path: Some("story".into()),
+                },
+            ],
             Self::ReplaceTableCellText {
                 story_id, cell_id, ..
             } => vec![
@@ -351,6 +377,19 @@ pub enum EditorError {
         story_id: StoryId,
         errors: usize,
     },
+    BreakLinkUnsupported {
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+    },
+    NewStoryIdInvalid {
+        story_id: StoryId,
+    },
+    NewStoryIdConflict {
+        story_id: StoryId,
+    },
+    StaleFrameTopology {
+        story_id: StoryId,
+    },
     TableEditUnsupported {
         node_id: NodeId,
     },
@@ -444,6 +483,30 @@ impl fmt::Display for EditorError {
             Self::FrameTopologyUnsupported { story_id, errors } => write!(
                 formatter,
                 "story {} has unsupported or inconsistent multi-frame topology ({errors} validation errors)",
+                story_id.as_canonical()
+            ),
+            Self::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            } => write!(
+                formatter,
+                "text-frame edge {} -> {} is not an admitted explicit Story chain edge",
+                upstream_frame_id.as_canonical(),
+                downstream_frame_id.as_canonical()
+            ),
+            Self::NewStoryIdInvalid { story_id } => write!(
+                formatter,
+                "new Story identity {} is not an editor-created UUIDv7",
+                story_id.as_canonical()
+            ),
+            Self::NewStoryIdConflict { story_id } => write!(
+                formatter,
+                "new Story identity {} already exists",
+                story_id.as_canonical()
+            ),
+            Self::StaleFrameTopology { story_id } => write!(
+                formatter,
+                "story {} frame topology changed since the persisted operation",
                 story_id.as_canonical()
             ),
             Self::TableEditUnsupported { node_id } => write!(
@@ -557,6 +620,10 @@ impl EditorError {
             Self::TableStoryUnsupported { .. } => "table_story_unsupported",
             Self::FrameCountUnsupported { .. } => "frame_count_unsupported",
             Self::FrameTopologyUnsupported { .. } => "frame_topology_unsupported",
+            Self::BreakLinkUnsupported { .. } => "break_link_unsupported",
+            Self::NewStoryIdInvalid { .. } => "new_story_id_invalid",
+            Self::NewStoryIdConflict { .. } => "new_story_id_conflict",
+            Self::StaleFrameTopology { .. } => "stale_frame_topology",
             Self::TableEditUnsupported { .. } => "table_edit_unsupported",
             Self::MissingTableCell { .. } => "missing_table_cell",
             Self::TableCellNoChange { .. } => "table_cell_no_change",
@@ -629,6 +696,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesResizeOperation {
         index: usize,
     },
+    LegacyProjectCarriesBreakLinkOperation {
+        index: usize,
+    },
     MissingAssetBytes {
         sha256: Sha256Digest,
     },
@@ -666,7 +736,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, or {EDITOR_PROJECT_VERSION_V0_5:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, or {EDITOR_PROJECT_VERSION_V0_6:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -689,6 +759,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesResizeOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses ResizeNode but the project schema predates pub-editor-v0.5"
+            ),
+            Self::LegacyProjectCarriesBreakLinkOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses BreakTextFrameForwardLink but the project schema predates pub-editor-v0.6"
             ),
             Self::MissingAssetBytes { sha256 } => {
                 write!(
@@ -945,6 +1019,12 @@ impl EditorSession {
         let schema_version = if self
             .undo
             .iter()
+            .any(|operation| matches!(operation, EditOperation::BreakTextFrameForwardLink { .. }))
+        {
+            EDITOR_PROJECT_VERSION_V0_6
+        } else if self
+            .undo
+            .iter()
             .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
         {
             EDITOR_PROJECT_VERSION_V0_5
@@ -1018,6 +1098,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_3
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1039,6 +1120,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             if let Some(index) = project
                 .operations
@@ -1048,13 +1130,26 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesGeometryOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+        {
             if let Some(index) = project
                 .operations
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| {
+                    matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
+                })
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesBreakLinkOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
