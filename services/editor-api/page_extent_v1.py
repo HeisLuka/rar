@@ -31,6 +31,31 @@ def _extent(value: object, label: str) -> dict:
     return {"width_emu": value["width_emu"], "height_emu": value["height_emu"]}
 
 
+
+def validate_page_extent_authority_v1(command: dict, authority: dict) -> None:
+    """Validate caller-supplied page-role/tracking evidence.
+
+    The intent never carries these authoritative fields. A runtime that knows
+    the document projection supplies this evidence out-of-band before commit.
+    """
+    if not isinstance(authority, dict) or set(authority) != {
+        "page_id",
+        "page_role",
+        "tracking_morph",
+    }:
+        raise PageExtentV1Error("page extent authority evidence is incomplete")
+    if authority.get("page_id") != command.get("page_id"):
+        raise PageExtentV1Error("page extent authority targets a different page")
+
+    role = authority.get("page_role")
+    if role not in {"customer_page", "chaptera_authored_page"}:
+        raise PageExtentV1Error("page extent target role is not authorable")
+
+    tracking = authority.get("tracking_morph")
+    if tracking not in {"absent", "classified_safe"}:
+        raise PageExtentV1Error("page tracking/morph state is not classified safe")
+
+
 def apply_set_page_extent_v1(base_project: dict, command: dict) -> tuple[dict, dict, list]:
     if not isinstance(command, dict) or command.get("kind") != "set_page_extent":
         raise PageExtentV1Error("SetPageExtentV1 command is required")
