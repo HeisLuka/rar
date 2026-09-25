@@ -1,0 +1,125 @@
+name: TEMP high-information live Publisher batch 03
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-live-batch-03.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install inspection tooling
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Recover exact public Publisher locators
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/pub-batch03
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess,olefile,struct
+
+          items=[
+            ("Jump Start Attendance","https://jumpstartattendance.weebly.com/sarb.html","attendance_brochure_en.pub","https://jumpstartattendance.weebly.com/uploads/7/9/5/3/79539374/attendacne_brochure_june_2016_-_final.pub","attendance-en"),
+            ("Jump Start Attendance","https://jumpstartattendance.weebly.com/sarb.html","attendance_brochure_es.pub","https://jumpstartattendance.weebly.com/uploads/7/9/5/3/79539374/attendacne_brochure_june_2016_-_final_spanish.pub","attendance-es"),
+            ("Jump Start Attendance","https://jumpstartattendance.weebly.com/sarb.html","tardy_brochure_es.pub","https://jumpstartattendance.weebly.com/uploads/7/9/5/3/79539374/tardy_brochure_june_2016_-_final_spanish.pub","attendance-es"),
+            ("Cactus Rose E-Portfolio","https://cactusrose.weebly.com/newsletter.html","ho_3_calendario_de_etimologia.pub","https://cactusrose.weebly.com/uploads/2/2/7/0/2270288/ho_3_calendario_de_etimologia.pub","spanish-calendar"),
+            ("Cactus Rose E-Portfolio","https://cactusrose.weebly.com/newsletter.html","spanish_characters.pub","https://cactusrose.weebly.com/uploads/2/2/7/0/2270288/spanish_characters.pub","spanish-characters"),
+            ("Cactus Rose E-Portfolio","https://cactusrose.weebly.com/newsletter.html","newsletter.pub","https://cactusrose.weebly.com/uploads/2/2/7/0/2270288/newsletter.pub","newsletter"),
+            ("Technology Mrs Doherty","https://technologymrsdoherty.weebly.com/projects--resources.html","internet_safety_model__brochure.pub","https://technologymrsdoherty.weebly.com/uploads/1/9/9/2/1992200/internet_safety_model__brochure.pub","brochure-model"),
+            ("Technology Mrs Doherty","https://technologymrsdoherty.weebly.com/projects--resources.html","dream_vacation_booklet_template.pub","https://technologymrsdoherty.weebly.com/uploads/1/9/9/2/1992200/dream_vacation_booklet_template.pub","template"),
+            ("Technology Mrs Doherty","https://technologymrsdoherty.weebly.com/projects--resources.html","student_model_dreamvacationbooklet.pub","https://technologymrsdoherty.weebly.com/uploads/1/9/9/2/1992200/student_model_dreamvacationbooklet.pub","student-model"),
+            ("The Mathematics Shed","https://www.mathematicshed.com/measuring-shed.html","superheromeasuring.pub","https://www.mathematicshed.com/uploads/1/2/5/7/12572836/superheromeasuring.pub","measuring"),
+            ("The Mathematics Shed","https://www.mathematicshed.com/measuring-shed.html","robotmeasuring.pub","https://www.mathematicshed.com/uploads/1/2/5/7/12572836/robotmeasuring.pub","measuring"),
+            ("The Mathematics Shed","https://www.mathematicshed.com/measuring-shed.html","spaceshipmeasuring.pub","https://www.mathematicshed.com/uploads/1/2/5/7/12572836/spaceshipmeasuring.pub","measuring"),
+            ("The Mathematics Shed","https://www.mathematicshed.com/measuring-shed.html","measuringchallenge4.pub","https://www.mathematicshed.com/uploads/1/2/5/7/12572836/measuringchallenge4.pub","measuring-challenge"),
+            ("Mrs Gray NHD","https://grayshistoryclass.weebly.com/nhd.html","2016_-17_honors_nhd_calendar.pub","https://grayshistoryclass.weebly.com/uploads/7/9/3/6/79360790/2016_-17_honors_nhd_calendar.pub","nhd-honors"),
+            ("Mrs Gray NHD","https://grayshistoryclass.weebly.com/nhd.html","2016_-17_nhd_calendar.pub","https://grayshistoryclass.weebly.com/uploads/7/9/3/6/79360790/2016_-17_nhd_calendar.pub","nhd-regular"),
+          ]
+
+          rows=[]
+          for idx,(org,page,name,url,relation) in enumerate(items):
+              p=pathlib.Path('/tmp/pub-batch03')/f'{idx:02d}.pub'
+              cmd=['curl','-fL','--retry','4','--retry-all-errors','--connect-timeout','30','--max-time','150',
+                   '-A','Mozilla/5.0 (compatible; Chaptera corpus research)','-e',page,'-o',str(p),url]
+              proc=subprocess.run(cmd,text=True,capture_output=True)
+              row={'organization':org,'source_page':page,'observed_filename':name,'direct_url':url,'relation_hint':relation,
+                   'fetch_ok':proc.returncode==0,'curl_returncode':proc.returncode,
+                   'fetch_error':None if proc.returncode==0 else (proc.stderr[-1200:] or proc.stdout[-1200:])}
+              if proc.returncode==0 and p.exists():
+                  raw=p.read_bytes()
+                  row['size']=len(raw)
+                  row['sha256']=hashlib.sha256(raw).hexdigest()
+                  row['is_cfb']=raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1')
+                  row['ole_open_ok']=False
+                  row['publisher_stream_signal']=False
+                  row['streams']=[]
+                  row['stream_count']=0
+                  row['contents_size']=None
+                  row['contents_revision_u16_at_2']=None
+                  row['inspection_error']=None
+                  try:
+                      if row['is_cfb']:
+                          ole=olefile.OleFileIO(str(p))
+                          row['ole_open_ok']=True
+                          streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                          row['streams']=streams
+                          row['stream_count']=len(streams)
+                          row['publisher_stream_signal']='Contents' in streams
+                          if ole.exists('Contents'):
+                              data=ole.openstream('Contents').read()
+                              row['contents_size']=len(data)
+                              if len(data)>=4:
+                                  row['contents_revision_u16_at_2']=struct.unpack_from('<H',data,2)[0]
+                          ole.close()
+                  except Exception as exc:
+                      row['inspection_error']=repr(exc)
+              rows.append(row)
+
+          valid=[r for r in rows if r.get('fetch_ok') and r.get('is_cfb') and r.get('ole_open_ok') and r.get('publisher_stream_signal')]
+          summary={
+              'schema':'chaptera.corpus-live-high-information-batch-03.v1',
+              'source_safe':True,'raw_pub_retained':False,
+              'attempted':len(rows),
+              'fetch_ok':sum(bool(r.get('fetch_ok')) for r in rows),
+              'valid_publisher_observations':len(valid),
+              'unique_valid_sha256':len({r['sha256'] for r in valid}),
+              'transport_failures':sum(not bool(r.get('fetch_ok')) for r in rows),
+              'strict_validation_failures':sum(bool(r.get('fetch_ok')) and not (r.get('is_cfb') and r.get('ole_open_ok') and r.get('publisher_stream_signal')) for r in rows),
+              'files':rows,
+              'pair_hints':[
+                ['attendance-en','attendance-es'],
+                ['template','student-model'],
+                ['nhd-honors','nhd-regular']
+              ],
+              'guardrail':'Pair hints are source-context hypotheses only; equivalence/lineage requires byte/object comparison after recovery. Page language is provenance only.'
+          }
+          pathlib.Path('out/receipt.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into public artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-live-high-information-batch-03-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
