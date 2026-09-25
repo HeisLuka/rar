@@ -6,7 +6,7 @@
 
 use super::{
     EditOperation, EditorSession, mature_0x2c_pub_format_manifest,
-    mature_0x2c_pub_persistence_target,
+    mature_0x2c_pub_persistence_target, replace_scalar_range_text,
 };
 use pub_export::{
     PersistenceCompatibilityAssessment, PersistenceCompatibilityError, PersistenceRequirement,
@@ -73,6 +73,9 @@ pub enum EditorPubWriterAssessmentError {
     MissingFinalStory {
         story_id: StoryId,
     },
+    InvalidStoryHistory {
+        story_id: StoryId,
+    },
     Compatibility(PersistenceCompatibilityError),
 }
 
@@ -89,6 +92,10 @@ impl fmt::Display for EditorPubWriterAssessmentError {
                     "финальная Story {story_id:?} отсутствует в Editor graph"
                 )
             }
+            Self::InvalidStoryHistory { story_id } => write!(
+                formatter,
+                "история Story {story_id:?} не replay-ится обратно к immutable source state"
+            ),
             Self::Compatibility(error) => {
                 write!(formatter, "ошибка persistence assessment: {error}")
             }
@@ -112,17 +119,14 @@ impl EditorSession {
     pub fn effective_ordinary_story_text_mutations(
         &self,
     ) -> Result<Vec<EffectiveStoryTextMutation>, EditorPubWriterAssessmentError> {
-        let mut original_text = BTreeMap::<StoryId, String>::new();
+        let mut ordinary_touched = BTreeSet::<StoryId>::new();
         let mut table_touched = BTreeSet::<StoryId>::new();
 
         for operation in self.operations() {
             match operation {
-                EditOperation::ReplaceStoryText {
-                    story_id, before, ..
-                } => {
-                    original_text
-                        .entry(*story_id)
-                        .or_insert_with(|| before.clone());
+                EditOperation::ReplaceStoryRange { story_id, .. }
+                | EditOperation::ReplaceStoryText { story_id, .. } => {
+                    ordinary_touched.insert(*story_id);
                 }
                 EditOperation::ReplaceTableCellText { story_id, .. } => {
                     table_touched.insert(*story_id);
@@ -132,7 +136,7 @@ impl EditorSession {
         }
 
         let mut mutations = Vec::new();
-        for (story_id, before) in original_text {
+        for story_id in ordinary_touched {
             if table_touched.contains(&story_id) {
                 continue;
             }
@@ -144,16 +148,56 @@ impl EditorSession {
                 .ok_or(EditorPubWriterAssessmentError::MissingFinalStory { story_id })?
                 .text
                 .clone();
+            let mut before = after.clone();
 
-            if before == after {
-                continue;
+            for operation in self.operations().iter().rev() {
+                match operation {
+                    EditOperation::ReplaceStoryRange {
+                        story_id: op_story,
+                        start_scalar,
+                        expected_before,
+                        replacement_text,
+                        ..
+                    } if *op_story == story_id => {
+                        let replacement_len = u32::try_from(replacement_text.chars().count())
+                            .map_err(|_| EditorPubWriterAssessmentError::InvalidStoryHistory {
+                                story_id,
+                            })?;
+                        let inverse_end = start_scalar.checked_add(replacement_len).ok_or(
+                            EditorPubWriterAssessmentError::InvalidStoryHistory { story_id },
+                        )?;
+                        before = replace_scalar_range_text(
+                            &before,
+                            *start_scalar,
+                            inverse_end,
+                            replacement_text,
+                            expected_before,
+                        )
+                        .ok_or(EditorPubWriterAssessmentError::InvalidStoryHistory { story_id })?;
+                    }
+                    EditOperation::ReplaceStoryText {
+                        story_id: op_story,
+                        before: operation_before,
+                        after: operation_after,
+                    } if *op_story == story_id => {
+                        if before != *operation_after {
+                            return Err(EditorPubWriterAssessmentError::InvalidStoryHistory {
+                                story_id,
+                            });
+                        }
+                        before.clone_from(operation_before);
+                    }
+                    _ => {}
+                }
             }
 
-            mutations.push(EffectiveStoryTextMutation {
-                story_id,
-                before,
-                after,
-            });
+            if before != after {
+                mutations.push(EffectiveStoryTextMutation {
+                    story_id,
+                    before,
+                    after,
+                });
+            }
         }
 
         Ok(mutations)
@@ -171,7 +215,7 @@ impl EditorSession {
 
         for operation in self.operations() {
             match operation {
-                EditOperation::ReplaceStoryText { .. } => {}
+                EditOperation::ReplaceStoryRange { .. } | EditOperation::ReplaceStoryText { .. } => {}
                 EditOperation::ReplaceTableCellText { .. }
                 | EditOperation::ReplaceImage { .. }
                 | EditOperation::MoveNode { .. } => {
