@@ -51,6 +51,23 @@ jobs:
       - name: Test Chaptera agent protocol core
         run: cargo test -p chaptera-desktop
 
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
+          Invoke-WebRequest -Uri $url -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $fixture).Length
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          }
+          if ($bytes -ne 291840) {
+            throw "SampleNewsletter byte length mismatch: $bytes"
+          }
+          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+
       - name: Test GUI-only Desktop V0 walkthrough
         run: cargo test -p chaptera-desktop --features embedded-fixture-tests gui_only_v0_walkthrough_uses_real_widgets -- --nocapture
 
@@ -82,21 +99,6 @@ jobs:
             source_commit = "${{ github.sha }}"
           } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-editor.desktop-build.json
 
-      - name: Acquire pinned Apache POI SampleNewsletter
-        shell: pwsh
-        run: |
-          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
-          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
-          Invoke-WebRequest -Uri $url -OutFile $fixture
-          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
-          $bytes = (Get-Item $fixture).Length
-          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
-            throw "SampleNewsletter SHA-256 mismatch: $hash"
-          }
-          if ($bytes -ne 291840) {
-            throw "SampleNewsletter byte length mismatch: $bytes"
-          }
-          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Capture real Chaptera UX snapshots
         shell: pwsh
