@@ -2108,13 +2108,22 @@ impl EditorSession {
             .nodes
             .get(&node_id)
             .ok_or(EditorError::ImageReplaceUnsupported { node_id })?;
-        if node.payload.image_slot.is_none() || node.payload.explicit_image_crop.is_some() {
+        if node.payload.image_slot.is_none() {
             return Err(EditorError::ImageReplaceUnsupported { node_id });
+        }
+        if let Some(crop) = node.payload.explicit_image_crop.as_ref() {
+            let authority = self
+                .source_image_authority_for(node_id)
+                .ok_or(EditorError::ImageReplaceUnsupported { node_id })?;
+            if crop.ambiguous || !matches!(authority.mime.as_str(), "image/png" | "image/jpeg") {
+                return Err(EditorError::ImageReplaceUnsupported { node_id });
+            }
         }
         if node.header.bounds.width.get() <= 0
             || node.header.bounds.height.get() <= 0
             || node.header.bounds.right().is_none()
             || node.header.bounds.bottom().is_none()
+            || node.header.transform != pub_model::Affine2D::identity()
         {
             return Err(EditorError::ImageReplaceUnsupported { node_id });
         }
