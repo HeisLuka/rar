@@ -478,10 +478,31 @@ impl ViewerApp {
         ui.horizontal(|ui| {
             ui.strong("Chaptera Editor");
             ui.separator();
+
+            let open_clicked = ui.button("Open PUB…").clicked();
+            if open_clicked {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Microsoft Publisher", &["pub"])
+                        .pick_file()
+                    {
+                        self.load_path(path);
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    self.edit_status = Some(
+                        "The native Open dialog is part of Windows Portable V0; drag and drop a PUB file on this platform."
+                            .to_owned(),
+                    );
+                }
+            }
+
             if let Some(label) = document_label {
                 ui.label(label);
             } else {
-                ui.weak("Drop a .pub file onto the window to begin");
+                ui.weak("Open or drop a .pub file to begin");
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
