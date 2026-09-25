@@ -11,6 +11,10 @@ on:
     branches:
       - feature/authoring-textframe-break-link-01
 
+concurrency:
+  group: authoring-textframe-break-link-v1-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
