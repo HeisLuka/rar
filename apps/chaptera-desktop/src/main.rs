@@ -2729,22 +2729,48 @@ impl ViewerApp {
                 .instance_for_node(drag.node_id())
                 .map(str::to_owned)
         });
-        if canvas_clicked || drag_commit.is_some() || next_canvas_drag.is_some() {
-            if let Some(instance_id) = canvas_hit.or(drag_instance) {
+        let resize_instance = next_canvas_resize.and_then(|resize| {
+            hit_index
+                .instance_for_node(resize.node_id())
+                .map(str::to_owned)
+        });
+        let resize_commit_instance = resize_commit.and_then(|resize| {
+            hit_index
+                .instance_for_node(resize.node_id)
+                .map(str::to_owned)
+        });
+        if canvas_clicked
+            || drag_commit.is_some()
+            || next_canvas_drag.is_some()
+            || resize_commit.is_some()
+            || next_canvas_resize.is_some()
+        {
+            if let Some(instance_id) = canvas_hit
+                .or(resize_instance)
+                .or(resize_commit_instance)
+                .or(drag_instance)
+            {
                 self.canvas_selection.select_only(instance_id);
             } else if canvas_clicked {
                 self.canvas_selection.clear();
             }
         }
 
-        if let Some(error) = drag_error {
+        if let Some(error) = resize_error {
             self.canvas_drag = None;
-        self.canvas_resize = None;
+            self.canvas_resize = None;
+            self.edit_status = Some(error);
+        } else if let Some(resize) = resize_commit {
+            self.commit_canvas_resize(resize);
+        } else if let Some(error) = drag_error {
+            self.canvas_drag = None;
+            self.canvas_resize = None;
             self.edit_status = Some(error);
         } else if let Some(drag) = drag_commit {
             self.commit_canvas_drag(drag);
         } else {
             self.canvas_drag = next_canvas_drag;
+            self.canvas_resize = next_canvas_resize;
         }
 
         self.preview_clipped_frames = preview_clipped_frames;
