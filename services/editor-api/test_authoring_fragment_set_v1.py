@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 
 from authoring_fragment_set_v1 import (
@@ -6,7 +7,7 @@ from authoring_fragment_set_v1 import (
     apply_paste_fragment_set_v1,
     capture_rectangle_fragment_set_v1,
 )
-from revision_store import RevisionKernel
+from revision_store import RevisionKernel, canonical_json, project_hash
 
 
 DOCUMENT_ID = "document:fragment-set"
@@ -204,6 +205,39 @@ class FragmentSetRevisionTests(unittest.TestCase):
         )
         self.assertEqual("stale_revision", stale["code"])
         self.assertEqual(1, self.executor.calls)
+
+    def test_replay_and_save_reopen_preserve_complete_identity_map(self):
+        accepted = self.kernel.commit_paste_fragment_set(
+            request(self.baseline.revision_id, "fragment-set-op-replay", self.command),
+            self.executor,
+        )
+        pasted = copy.deepcopy(self.kernel.current_revision(DOCUMENT_ID).project)
+        canonical = accepted["canonical_operation"]
+        replay_command = {
+            "kind": "paste_fragment_set",
+            "fragment_set": copy.deepcopy(canonical["fragment_set"]),
+            "identity_map": copy.deepcopy(canonical["identity_map"]),
+            "destination": copy.deepcopy(canonical["destination"]),
+            "placement": copy.deepcopy(canonical["placement"]),
+        }
+        replay_operation, replayed, _ = apply_paste_fragment_set_v1(
+            copy.deepcopy(self.base_project),
+            replay_command,
+        )
+        self.assertEqual(canonical, replay_operation)
+        self.assertEqual(pasted["shapes"][DEST_A], replayed["shapes"][DEST_A])
+        self.assertEqual(pasted["shapes"][DEST_B], replayed["shapes"][DEST_B])
+
+        saved = json.loads(canonical_json(pasted).decode("utf-8"))
+        reopened = RevisionKernel()
+        reopened_baseline = reopened.register_baseline(
+            document_id="document:fragment-set-reopened",
+            source_hash=SOURCE_HASH,
+            project=saved,
+        )
+        self.assertEqual(project_hash(pasted), reopened_baseline.project_hash)
+        self.assertEqual(DEST_A, reopened_baseline.project["shapes"][DEST_A]["node_id"])
+        self.assertEqual(DEST_B, reopened_baseline.project["shapes"][DEST_B]["node_id"])
 
     def test_undo_redo_restore_whole_set_with_same_destination_ids(self):
         accepted = self.kernel.commit_paste_fragment_set(
