@@ -1,0 +1,329 @@
+name: TEMP PUBWIZ P2002 POC Office12 semantic crosswalk
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-poc-p2002-xml-semantic-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  crosswalk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat msitools
+      - name: Recover exact Publisher 2002 POC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/xw/p2src /tmp/xw/p2disc /tmp/xw/p2assets out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z' \
+            -o /tmp/xw/p2.7z
+          test "$(sha1sum /tmp/xw/p2.7z | awk '{print $1}')" = '1ebbf5a8c188794e14a5ad2556bb751797034d0c'
+          7z x -y /tmp/xw/p2.7z -o/tmp/xw/p2src >/dev/null
+          MDF2="$(find /tmp/xw/p2src -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF2"
+          iat "$MDF2" /tmp/xw/p2.iso >/dev/null
+          test "$(sha256sum /tmp/xw/p2.iso | awk '{print $1}')" = '2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d'
+          7z x -y /tmp/xw/p2.iso -o/tmp/xw/p2disc OFFICE1.CAB >/dev/null
+          test -f /tmp/xw/p2disc/OFFICE1.CAB
+          for n in ACCSBAR.POC ACCTBOX.POC; do
+            7z e -y /tmp/xw/p2disc/OFFICE1.CAB -o/tmp/xw/p2assets "$n" >/dev/null
+            test -f "/tmp/xw/p2assets/$n"
+          done
+          test "$(sha256sum /tmp/xw/p2assets/ACCSBAR.POC | awk '{print $1}')" = '3466fb848d7eeab6e6b487599925f39cc618c27a6780b46aaf99b91ec90b850e'
+          test "$(sha256sum /tmp/xw/p2assets/ACCTBOX.POC | awk '{print $1}')" = 'fe4f86e6f3e8f62d6384d348cfb9961afe8bc3d4cb146a5d20ae009de7262e20'
+      - name: Recover exact Office12 XML
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/xw/o12media /tmp/xw/o12disc /tmp/xw/o12xml
+          python - <<'PY'
+          import json, urllib.request, urllib.parse, pathlib
+          ident="microsoft-office-professional-plus-2007"
+          req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":"rar-pubwiz-p2-o12-xwalk/1.0"})
+          with urllib.request.urlopen(req,timeout=60) as r:m=json.load(r)
+          cand=[]
+          for f in m.get("files",[]):
+              if str(f.get("source") or "")!="original": continue
+              n=str(f.get("name") or "")
+              if n.lower().endswith((".iso",".img")):
+                  cand.append((int(f.get("size") or 0),n,f.get("md5"),f.get("sha1")))
+          if not cand: raise SystemExit("no original Office12 image")
+          cand.sort(reverse=True)
+          size,name,md5,sha1=cand[0]
+          url=f"https://archive.org/download/{ident}/"+urllib.parse.quote(name,safe="/")
+          pathlib.Path("/tmp/xw/o12url").write_text(url)
+          pathlib.Path("out/o12-source.json").write_text(json.dumps({"item":ident,"name":name,"size":size,"md5":md5,"sha1":sha1},indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -o /tmp/xw/o12media/office12.img "$(cat /tmp/xw/o12url)"
+          test "$(sha256sum /tmp/xw/o12media/office12.img | awk '{print $1}')" = '8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3'
+          7z x -y /tmp/xw/o12media/office12.img -o/tmp/xw/o12disc -r '*ProPlusWW.msi' '*ProPlsWW.CAB' >/dev/null
+          MSI="$(find /tmp/xw/o12disc -type f -iname 'ProPlusWW.msi' | head -n1)"
+          CAB="$(find /tmp/xw/o12disc -type f -iname 'ProPlsWW.CAB' | head -n1)"
+          test -n "$MSI"; test -n "$CAB"
+          msiinfo export "$MSI" File > /tmp/xw/file.idt
+          python - <<'PY'
+          import pathlib
+          lines=pathlib.Path("/tmp/xw/file.idt").read_text(errors="replace").splitlines()
+          cols=lines[0].split("\t")
+          wanted={"DGACCBAR.XML","DGACCBOX.XML"}
+          found={}
+          for line in lines[3:]:
+              vals=line.split("\t")+[""]*len(cols)
+              row=dict(zip(cols,vals))
+              longname=(row.get("FileName") or "").split("|")[-1].upper()
+              if longname in wanted:
+                  found[longname]=row["File"]
+          if set(found)!=wanted: raise SystemExit(f"missing XML File rows: {found}")
+          for name,key in found.items():
+              pathlib.Path(f"/tmp/xw/{name}.key").write_text(key)
+          PY
+          for n in DGACCBAR.XML DGACCBOX.XML; do
+            KEY="$(cat /tmp/xw/$n.key)"
+            rm -rf /tmp/xw/cabtmp
+            mkdir -p /tmp/xw/cabtmp
+            7z e -y "$CAB" -o/tmp/xw/cabtmp "$KEY" >/dev/null
+            SRC="$(find /tmp/xw/cabtmp -type f | head -n1)"
+            test -n "$SRC"
+            cp "$SRC" "/tmp/xw/o12xml/$n"
+          done
+          test "$(stat -c %s /tmp/xw/o12xml/DGACCBAR.XML)" = '1294'
+          test "$(stat -c %s /tmp/xw/o12xml/DGACCBOX.XML)" = '638'
+      - name: Analyze grounded crosswalk
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, hashlib, json, re, xml.etree.ElementTree as ET, collections
+          p2=pathlib.Path("/tmp/xw/p2assets")
+          o12=pathlib.Path("/tmp/xw/o12xml")
+          expected={
+            "ACCSBAR.POC":"3466fb848d7eeab6e6b487599925f39cc618c27a6780b46aaf99b91ec90b850e",
+            "ACCTBOX.POC":"fe4f86e6f3e8f62d6384d348cfb9961afe8bc3d4cb146a5d20ae009de7262e20",
+          }
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          def decode_xml(raw):
+              if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+                  return raw.decode("utf-16")
+              if raw.startswith(b"\xc3\xbf\xc3\xbe"):
+                  return raw[4:].decode("utf-16le")
+              if b"\x00" in raw[:16]:
+                  return raw.decode("utf-16le")
+              return raw.decode("utf-8-sig")
+          def parse_xml(path):
+              raw=path.read_bytes()
+              root=ET.fromstring(decode_xml(raw))
+              rows=[]
+              for it in root.findall("item"):
+                  opl=it.attrib.get("opl","")
+                  triples=[tuple(map(int,m)) for m in re.findall(r"(\d+)='(\d+)=(\d+)'",opl)]
+                  rows.append({
+                    "style":it.attrib.get("style"),
+                    "wid":int(it.attrib["wid"]) if "wid" in it.attrib else None,
+                    "desID":int(it.attrib["desID"]) if "desID" in it.attrib else None,
+                    "opl":opl,
+                    "triples":triples,
+                  })
+              return raw,rows
+          xml={}
+          for n in ["DGACCBAR.XML","DGACCBOX.XML"]:
+              raw,rows=parse_xml(o12/n)
+              if not rows: raise SystemExit(f"{n}: no item rows")
+              xml[n]={"raw":raw,"rows":rows}
+          def vector(rows,kind):
+              if kind=="desID":
+                  return [r["desID"] for r in rows if r["desID"] is not None]
+              vals=[]
+              for r in rows:
+                  if len(r["triples"])!=1: return []
+                  vals.append(r["triples"][0][2])
+              return vals
+
+          def u16(b,o): return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o): return int.from_bytes(b[o:o+4],"little")
+          FIXED={1:0,4:4,7:16}
+          LEN_TYPES={16,17,19,24}
+          def parse_payload(p):
+              pos=0; props=[]; stop=None
+              while pos<len(p):
+                  if len(p)-pos<2: stop={"kind":"truncated_tag","at":pos}; break
+                  tag=u16(p,pos); typ=(tag>>11)&31; opy=tag&0x7ff
+                  rec={"offset":pos,"type":typ,"opyid":opy}
+                  if typ in FIXED:
+                      need=2+FIXED[typ]
+                      if pos+need>len(p): stop={"kind":"truncated_fixed","at":pos,"type":typ}; break
+                      if typ==4: rec["u32"]=u32(p,pos+2)
+                      props.append(rec); pos+=need
+                  elif typ in LEN_TYPES:
+                      if pos+6>len(p): stop={"kind":"truncated_len","at":pos,"type":typ}; break
+                      cb=u32(p,pos+2)
+                      if cb<4 or pos+2+cb>len(p): stop={"kind":"bad_len","at":pos,"type":typ,"cb":cb}; break
+                      rec["cb_after_tag"]=cb
+                      rec["payload_len"]=cb-4
+                      props.append(rec); pos+=2+cb
+                  else:
+                      stop={"kind":"unknown_type","at":pos,"type":typ,"opyid":opy}; break
+              return props,len(p)-pos,stop
+          def parse_poc(path):
+              b=path.read_bytes()
+              assert sha(b)==expected[path.name], (path.name,sha(b))
+              info={"name":path.name,"size":len(b),"sha256":sha(b),"magic":b[:6].decode("ascii",errors="replace")}
+              if not b.startswith(b"POCPB5") or len(b)<24:
+                  info["outer_framing"]=False; return info,[]
+              root=u32(b,0x10)
+              info["header"]={"u16_06":u16(b,6),"u16_08":u16(b,8),"u16_0a":u16(b,10),"u32_0c":u32(b,12),"root_off":root}
+              if root<20 or root+4>len(b):
+                  info["outer_framing"]=False; info["outer_error"]="root_oob"; return info,[]
+              rcb=u32(b,root)
+              if rcb<4 or root+rcb>len(b):
+                  info["outer_framing"]=False; info["outer_error"]="root_length_oob"; return info,[]
+              cur=root+rcb; blocks=[]
+              while cur<len(b):
+                  if cur+4>len(b):
+                      info["outer_framing"]=False; info["outer_error"]="sub_header_oob"; return info,blocks
+                  cb=u32(b,cur)
+                  if cb<4 or cur+cb>len(b):
+                      info["outer_framing"]=False; info["outer_error"]={"kind":"sub_length_oob","at":cur,"cb":cb}; return info,blocks
+                  props,resid,stop=parse_payload(b[cur+4:cur+cb])
+                  sig=[(p["type"],p["opyid"]) for p in props]
+                  blocks.append({
+                    "index":len(blocks),"offset":cur,"cb":cb,"props":props,
+                    "residual_len":resid,"stop":stop,
+                    "signature_sha256":sha(json.dumps(sig,separators=(",",":")).encode()),
+                  })
+                  cur+=cb
+              info["outer_framing"]=cur==len(b)
+              info["root_cb"]=rcb
+              info["sub_opls"]=len(blocks)
+              info["exact_known_blocks"]=sum(1 for x in blocks if x["residual_len"]==0)
+              info["residual_blocks"]=sum(1 for x in blocks if x["residual_len"]>0)
+              info["known_property_count"]=sum(len(x["props"]) for x in blocks)
+              info["type4_count"]=sum(1 for x in blocks for p in x["props"] if p["type"]==4)
+              return info,blocks
+
+          def streams(blocks):
+              by=collections.defaultdict(list)
+              for blk in blocks:
+                  for ordinal,p in enumerate(blk["props"]):
+                      if p["type"]==4 and "u32" in p:
+                          by[p["opyid"]].append({
+                            "value":p["u32"],"block":blk["index"],"ordinal":ordinal,
+                            "block_signature_sha256":blk["signature_sha256"]
+                          })
+              return by
+          def hits(by,seq):
+              out=[]
+              if not seq: return out
+              for opy,items in sorted(by.items()):
+                  vals=[x["value"] for x in items]
+                  for i in range(0,len(vals)-len(seq)+1):
+                      if vals[i:i+len(seq)]==seq:
+                          sel=items[i:i+len(seq)]
+                          out.append({
+                            "opyid":opy,"start_stream_index":i,"length":len(seq),
+                            "block_indices":[x["block"] for x in sel],
+                            "ordinals":[x["ordinal"] for x in sel],
+                            "block_signature_sha256":[x["block_signature_sha256"] for x in sel],
+                          })
+              return out
+
+          mapping={
+            "ACCSBAR.POC":"DGACCBAR.XML",
+            "ACCTBOX.POC":"DGACCBOX.XML",
+          }
+          results={}
+          common_sets=[]
+          for pocn,xmln in mapping.items():
+              info,blocks=parse_poc(p2/pocn)
+              by=streams(blocks)
+              rows=xml[xmln]["rows"]
+              seq_opl=vector(rows,"opl")
+              seq_des=vector(rows,"desID")
+              h_opl=hits(by,seq_opl)
+              h_des=hits(by,seq_des)
+              opys=set(x["opyid"] for x in h_opl+h_des)
+              common_sets.append(opys)
+              results[pocn]={
+                "poc":info,
+                "xml":{
+                  "name":xmln,
+                  "size":len(xml[xmln]["raw"]),
+                  "sha256":sha(xml[xmln]["raw"]),
+                  "row_count":len(rows),
+                  "wids":sorted(set(r["wid"] for r in rows if r["wid"] is not None)),
+                  "desID_vector":seq_des,
+                  "opl_value_vector":seq_opl,
+                  "opl_keys":sorted(set(t[1] for r in rows for t in r["triples"])),
+                  "outer_keys":sorted(set(t[0] for r in rows for t in r["triples"])),
+                },
+                "exact_consecutive_opl_value_hits":h_opl,
+                "exact_consecutive_desID_hits":h_des,
+              }
+          common_opys=sorted(set.intersection(*common_sets)) if common_sets and all(common_sets) else []
+          families_with_hits=sum(1 for r in results.values() if r["exact_consecutive_opl_value_hits"] or r["exact_consecutive_desID_hits"])
+          if common_opys:
+              verdict="common_rule_candidate"
+          elif families_with_hits==2:
+              verdict="two_family_family_specific_candidates"
+          elif families_with_hits==1:
+              verdict="single_family_candidate_only"
+          else:
+              verdict="no_exact_consecutive_scalar_stream_candidate"
+          report={
+            "schema":"chaptera.pubwiz-p2002-office12-semantic-crosswalk.v1",
+            "source_safe":True,
+            "raw_inputs_retained":False,
+            "results":results,
+            "common_candidate_opyids":common_opys,
+            "families_with_any_exact_hit":families_with_hits,
+            "verdict":verdict,
+            "guardrail":"Numeric XML key and POC opyid equality alone is not semantic identity. Only predeclared exact consecutive vectors were tested."
+          }
+          pathlib.Path("out/report.json").write_text(json.dumps(report,indent=2))
+          summary={
+            "schema":report["schema"],
+            "source_safe":True,
+            "inputs":{k:{
+              "poc_size":v["poc"]["size"],"poc_sha256":v["poc"]["sha256"],
+              "outer_framing":v["poc"].get("outer_framing"),
+              "sub_opls":v["poc"].get("sub_opls"),
+              "exact_known_blocks":v["poc"].get("exact_known_blocks"),
+              "residual_blocks":v["poc"].get("residual_blocks"),
+              "type4_count":v["poc"].get("type4_count"),
+              "xml_name":v["xml"]["name"],"xml_size":v["xml"]["size"],"xml_sha256":v["xml"]["sha256"],
+              "xml_rows":v["xml"]["row_count"],"xml_wids":v["xml"]["wids"],
+              "desID_vector":v["xml"]["desID_vector"],"opl_value_vector":v["xml"]["opl_value_vector"],
+              "opl_value_hit_count":len(v["exact_consecutive_opl_value_hits"]),
+              "desID_hit_count":len(v["exact_consecutive_desID_hits"]),
+              "candidate_opyids":sorted(set(x["opyid"] for x in v["exact_consecutive_opl_value_hits"]+v["exact_consecutive_desID_hits"])),
+            } for k,v in results.items()},
+            "common_candidate_opyids":common_opys,
+            "families_with_any_exact_hit":families_with_hits,
+            "verdict":verdict,
+            "guardrail":report["guardrail"],
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe artifact
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.poc' -o -iname '*.xml' -o -iname '*.iso' -o -iname '*.cab' -o -iname '*.7z' \) | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          r=json.load(open("out/report.json"))
+          assert r["source_safe"] is True
+          assert r["raw_inputs_retained"] is False
+          assert set(r["results"])=={"ACCSBAR.POC","ACCTBOX.POC"}
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-p2002-office12-semantic-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
