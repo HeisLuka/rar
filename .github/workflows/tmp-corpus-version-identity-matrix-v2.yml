@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
           python tools/corpus/version_identity_matrix.py self-test
           python tools/corpus/version_identity_matrix.py build \
-            --input /tmp/t645 \
+            --input /tmp/t645/cohorts \
             --out out/matrix-v2 \
             --media-roots tools/corpus/version_identity_matrix_media_roots.json \
             --family-overrides tools/corpus/version_identity_matrix_family_overrides.json
