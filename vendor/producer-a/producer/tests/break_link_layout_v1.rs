@@ -6,8 +6,8 @@ use pub_layout::{
 };
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, EMU_PER_POINT, LengthEmu, Node, NodeHeader,
-    NodeId, NodeKind, Page, PageId, RectEmu, ResolvedGraph, Sha256Digest, Size2D,
-    SourceDescriptor, Story, StoryFrame, StoryId,
+    NodeId, NodeKind, Page, PageId, RectEmu, ResolvedGraph, Sha256Digest, Size2D, SourceDescriptor,
+    Story, StoryFrame, StoryId,
 };
 use pub_reader::{
     PubExplicitShapePaintSource, PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame,

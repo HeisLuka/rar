@@ -118,10 +118,7 @@ pub fn materialize_grounded_guides(
                     });
                 if !authoritative {
                     build.diagnostics.push(
-                        PubGuideProjectionDiagnostic::NonAuthoritativeProvenance {
-                            page_id,
-                            role,
-                        },
+                        PubGuideProjectionDiagnostic::NonAuthoritativeProvenance { page_id, role },
                     );
                     continue;
                 }
@@ -250,14 +247,8 @@ mod tests {
         );
 
         assert_eq!(build.guides.len(), 1);
-        assert_eq!(
-            build.guides[0].role,
-            PublisherGuideRole::PageRulerGuide
-        );
-        assert_eq!(
-            build.guides[0].guide.position,
-            LengthEmu::new(EMU_PER_INCH)
-        );
+        assert_eq!(build.guides[0].role, PublisherGuideRole::PageRulerGuide);
+        assert_eq!(build.guides[0].guide.position, LengthEmu::new(EMU_PER_INCH));
         assert!(build.diagnostics.iter().any(|diagnostic| matches!(
             diagnostic,
             PubGuideProjectionDiagnostic::AmbiguousSource { .. }
