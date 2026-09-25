@@ -2,6 +2,7 @@
 import json
 import unittest
 
+from author_created_story_test_fixture import bind_author_created_story_graph_v1
 from multi_story_text_transaction_v1 import (
     derive_multi_story_text_receipts_v1,
     replay_multi_story_after_v1,
@@ -29,6 +30,11 @@ from text_format_overlay_v1 import (
 
 DOC="doc:multi-story"
 SOURCE="c"*64
+STORY_A="01900000-0000-7000-8000-000000000301"
+STORY_B="01900000-0000-7000-8000-000000000302"
+FRAME_A="01900000-0000-7000-8000-000000000303"
+FRAME_B="01900000-0000-7000-8000-000000000304"
+PAGE_ID="page:multi-story"
 
 
 def fmt():
@@ -66,7 +72,7 @@ def core(story_id,text,*,unsupported=()):
 
 
 def project(states):
-    return {
+    project = {
         "schema_version":"pub-editor-v0.6",
         "source_hash":SOURCE,
         "operations":[],
@@ -79,6 +85,19 @@ def project(states):
             for story_id,state in states.items()
         },
     }
+    frame_ids = {
+        STORY_A: FRAME_A,
+        STORY_B: FRAME_B,
+    }
+    for story_id, state in states.items():
+        if state.provenance == "chaptera_created":
+            bind_author_created_story_graph_v1(
+                project,
+                story_id=story_id,
+                frame_id=frame_ids[story_id],
+                page_id=PAGE_ID,
+            )
+    return project
 
 
 def story_edit_command(story_id,start,end,expected,replacement):
@@ -100,8 +119,8 @@ def story_edit_command(story_id,start,end,expected,replacement):
 class MultiStoryTextTransactionV1Tests(unittest.TestCase):
     def setUp(self):
         self.states={
-            "story:a":core("story:a","ABC"),
-            "story:b":core("story:b","XYZ"),
+            STORY_A:core(STORY_A,"ABC"),
+            STORY_B:core(STORY_B,"XYZ"),
         }
         self.kernel=RevisionKernel()
         self.baseline=self.kernel.register_baseline(
@@ -137,27 +156,27 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
 
     def test_two_story_edits_commit_as_exactly_one_revision_and_one_operation(self):
         entries=(
-            self.entry("story:b",story_edit_command("story:b",1,2,"Y","2")),
-            self.entry("story:a",story_edit_command("story:a",1,2,"B","1")),
+            self.entry(STORY_B,story_edit_command(STORY_B,1,2,"Y","2")),
+            self.entry(STORY_A,story_edit_command(STORY_A,1,2,"B","1")),
         )
         result=self.kernel.commit_multi_story_text_transaction(
             self.request(entries)
         )
         self.assertEqual("chaptera.commit-accepted.v1",result["protocol_version"])
-        self.assertEqual("A1C",self.current_text("story:a"))
-        self.assertEqual("X2Z",self.current_text("story:b"))
+        self.assertEqual("A1C",self.current_text(STORY_A))
+        self.assertEqual("X2Z",self.current_text(STORY_B))
         current=self.kernel.current_revision(DOC)
         self.assertEqual(self.baseline.revision_id,current.parent_revision_id)
         self.assertEqual(1,len(current.project["operations"]))
         self.assertEqual(
-            ["story:a","story:b"],
+            [STORY_A,STORY_B],
             result["canonical_operation"]["story_ids"],
         )
 
     def test_input_story_order_permutations_produce_identical_revision(self):
         entries_a=(
-            self.entry("story:b",story_edit_command("story:b",0,1,"X","Q")),
-            self.entry("story:a",story_edit_command("story:a",0,1,"A","P")),
+            self.entry(STORY_B,story_edit_command(STORY_B,0,1,"X","Q")),
+            self.entry(STORY_A,story_edit_command(STORY_A,0,1,"A","P")),
         )
         result_a=self.kernel.commit_multi_story_text_transaction(
             self.request(entries_a,op="multi-story-order-a")
@@ -181,16 +200,16 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
 
     def test_one_unsupported_story_aborts_all_without_partial_commit(self):
         states={
-            "story:a":core("story:a","ABC"),
-            "story:b":core("story:b","XYZ",unsupported=("hyperlink",)),
+            STORY_A:core(STORY_A,"ABC"),
+            STORY_B:core(STORY_B,"XYZ",unsupported=("hyperlink",)),
         }
         kernel=RevisionKernel()
         baseline=kernel.register_baseline(
             document_id=DOC,source_hash=SOURCE,project=project(states)
         )
         entries=(
-            self.entry("story:a",story_edit_command("story:a",1,2,"B","1")),
-            self.entry("story:b",story_edit_command("story:b",1,2,"Y","2")),
+            self.entry(STORY_A,story_edit_command(STORY_A,1,2,"B","1")),
+            self.entry(STORY_B,story_edit_command(STORY_B,1,2,"Y","2")),
         )
         result=kernel.commit_multi_story_text_transaction(
             self.request(entries,op="multi-story-fail",base=baseline.revision_id)
@@ -198,19 +217,19 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
         self.assertEqual("anchored_semantics_unsupported",result["code"])
         current=kernel.current_revision(DOC)
         self.assertEqual(baseline.revision_id,current.revision_id)
-        self.assertEqual("ABC",current.project["stories"]["story:a"])
-        self.assertEqual("XYZ",current.project["stories"]["story:b"])
+        self.assertEqual("ABC",current.project["stories"][STORY_A])
+        self.assertEqual("XYZ",current.project["stories"][STORY_B])
         self.assertEqual([],current.project["operations"])
 
     def test_mixed_story_edit_and_find_replace_producers_share_one_commit(self):
         domain=derive_story_edit_domain_v1(
-            story_id="story:b",
+            story_id=STORY_B,
             story_text="XYZ",
             provenance="chaptera_created",
         )
         snap=build_text_find_snapshot_v1(
             revision_id=self.baseline.revision_id,
-            story_id="story:b",
+            story_id=STORY_B,
             story_text="XYZ",
             domain=domain,
             external_query="Y",
@@ -218,7 +237,7 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
         )
         find_command={
             "kind":"story_find_replace",
-            "story_id":"story:b",
+            "story_id":STORY_B,
             "base_story_revision_id":self.baseline.revision_id,
             "find_snapshot":snap.to_dict(),
             "selected_match_ordinals":[0],
@@ -227,21 +246,21 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
             "format_generation_id":"multi-find-format",
         }
         entries=(
-            self.entry("story:a",story_edit_command("story:a",1,2,"B","1")),
-            self.entry("story:b",find_command,"story_find_replace"),
+            self.entry(STORY_A,story_edit_command(STORY_A,1,2,"B","1")),
+            self.entry(STORY_B,find_command,"story_find_replace"),
         )
         result=self.kernel.commit_multi_story_text_transaction(
             self.request(entries,op="multi-story-mixed")
         )
         self.assertEqual("chaptera.commit-accepted.v1",result["protocol_version"])
-        self.assertEqual("A1C",self.current_text("story:a"))
-        self.assertEqual("X22Z",self.current_text("story:b"))
+        self.assertEqual("A1C",self.current_text(STORY_A))
+        self.assertEqual("X22Z",self.current_text(STORY_B))
         self.assertEqual(1,len(self.kernel.current_revision(DOC).project["operations"]))
 
     def test_receipts_are_transient_and_inverse_is_derived_from_semantic_operation(self):
         entries=(
-            self.entry("story:a",story_edit_command("story:a",1,2,"B","LONG")),
-            self.entry("story:b",story_edit_command("story:b",1,2,"Y","")),
+            self.entry(STORY_A,story_edit_command(STORY_A,1,2,"B","LONG")),
+            self.entry(STORY_B,story_edit_command(STORY_B,1,2,"Y","")),
         )
         result=self.kernel.commit_multi_story_text_transaction(
             self.request(entries,op="multi-story-receipts")
@@ -256,12 +275,12 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
             consequence["receipt_map"],
         )
         inverse=derive_multi_story_text_receipts_v1(op,direction="inverse")
-        self.assertEqual({"story:a","story:b"},set(inverse))
+        self.assertEqual({STORY_A,STORY_B},set(inverse))
         self.assertEqual(
             (1,5),
             (
-                inverse["story:a"]["normalized_edits"][0]["base_start_scalar"],
-                inverse["story:a"]["normalized_edits"][0]["base_end_scalar"],
+                inverse[STORY_A]["normalized_edits"][0]["base_start_scalar"],
+                inverse[STORY_A]["normalized_edits"][0]["base_end_scalar"],
             ),
         )
         persisted=json.dumps(
@@ -274,20 +293,20 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
     def test_exact_before_and_after_state_maps_support_undo_redo_replay(self):
         result=self.kernel.commit_multi_story_text_transaction(
             self.request((
-                self.entry("story:a",story_edit_command("story:a",0,1,"A","Q")),
-                self.entry("story:b",story_edit_command("story:b",2,3,"Z","R")),
+                self.entry(STORY_A,story_edit_command(STORY_A,0,1,"A","Q")),
+                self.entry(STORY_B,story_edit_command(STORY_B,2,3,"Z","R")),
             ),op="multi-story-state-maps")
         )
         op=result["canonical_operation"]
         before=restore_multi_story_before_v1(op)
         after=replay_multi_story_after_v1(op)
-        self.assertEqual("ABC",before["story:a"]["paragraph_state"]["story_text"])
-        self.assertEqual("XYZ",before["story:b"]["paragraph_state"]["story_text"])
-        self.assertEqual("QBC",after["story:a"]["paragraph_state"]["story_text"])
-        self.assertEqual("XYR",after["story:b"]["paragraph_state"]["story_text"])
+        self.assertEqual("ABC",before[STORY_A]["paragraph_state"]["story_text"])
+        self.assertEqual("XYZ",before[STORY_B]["paragraph_state"]["story_text"])
+        self.assertEqual("QBC",after[STORY_A]["paragraph_state"]["story_text"])
+        self.assertEqual("XYR",after[STORY_B]["paragraph_state"]["story_text"])
 
     def test_duplicate_story_entry_rejects_before_execution(self):
-        entry=self.entry("story:a",story_edit_command("story:a",0,1,"A","Q"))
+        entry=self.entry(STORY_A,story_edit_command(STORY_A,0,1,"A","Q"))
         with self.assertRaises(ValueError):
             self.kernel.commit_multi_story_text_transaction(
                 self.request((entry,entry),op="multi-story-duplicate")
@@ -296,11 +315,11 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
 
     def test_find_replace_local_base_must_equal_common_base(self):
         domain=derive_story_edit_domain_v1(
-            story_id="story:b",story_text="XYZ",provenance="chaptera_created"
+            story_id=STORY_B,story_text="XYZ",provenance="chaptera_created"
         )
         snap=build_text_find_snapshot_v1(
             revision_id=self.baseline.revision_id,
-            story_id="story:b",
+            story_id=STORY_B,
             story_text="XYZ",
             domain=domain,
             external_query="Y",
@@ -308,7 +327,7 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
         )
         command={
             "kind":"story_find_replace",
-            "story_id":"story:b",
+            "story_id":STORY_B,
             "base_story_revision_id":"wrong-revision",
             "find_snapshot":snap.to_dict(),
             "selected_match_ordinals":[0],
@@ -318,7 +337,7 @@ class MultiStoryTextTransactionV1Tests(unittest.TestCase):
         }
         result=self.kernel.commit_multi_story_text_transaction(
             self.request((
-                self.entry("story:b",command,"story_find_replace"),
+                self.entry(STORY_B,command,"story_find_replace"),
             ),op="multi-story-wrong-local-base")
         )
         self.assertEqual("stale_revision",result["code"])
