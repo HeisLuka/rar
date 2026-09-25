@@ -120,8 +120,10 @@ jobs:
           $artifact = Join-Path $env:RUNNER_TEMP "chaptera-artifact"
           $zip = Join-Path $artifact "Chaptera-Editor-Windows-x86_64.zip"
           $manifestPath = Join-Path $artifact "Chaptera-Editor.package.json"
+          $buildPath = Join-Path $artifact "chaptera.desktop-build.json"
           if (-not (Test-Path $zip)) { throw "portable Editor ZIP is missing" }
           if (-not (Test-Path $manifestPath)) { throw "portable package manifest is missing" }
+          if (-not (Test-Path $buildPath)) { throw "desktop build receipt is missing" }
 
           $clean = Join-Path $env:RUNNER_TEMP "chaptera-portable-clean"
           if (Test-Path $clean) { Remove-Item -Recurse -Force $clean }
@@ -142,9 +144,10 @@ jobs:
             throw "source-free product smoke did not emit valid JSON"
           }
 
-          if ($smoke.protocol_version -ne "chaptera.desktop-source-free-smoke.v1") {
-            throw "source-free product smoke protocol mismatch"
+          if ($smoke.protocol_version -ne "chaptera.desktop-source-free-smoke-observation.v1") {
+            throw "source-free product smoke observation protocol mismatch"
           }
+          if ($smoke.chaptera_version -ne "0.1.0") { throw "portable binary version mismatch" }
           if ($smoke.product -ne "Chaptera Editor") { throw "portable binary is not Chaptera Editor" }
           if ($smoke.reader_only -ne $false) { throw "portable binary is reader-only" }
           if ($smoke.editor_controls_enabled -ne $true) { throw "Editor controls are disabled" }
@@ -156,15 +159,32 @@ jobs:
 
           $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $exeBytes = (Get-Item $exe).Length
-          if ($smoke.binary_sha256 -ne $exeHash) { throw "self-reported executable hash mismatch" }
-          if ([int64]$smoke.binary_byte_len -ne $exeBytes) { throw "self-reported executable byte length mismatch" }
-
           $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          $build = Get-Content -Raw $buildPath | ConvertFrom-Json
           $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($manifest.binary_sha256 -ne $exeHash) { throw "package manifest executable hash mismatch" }
           if ($manifest.zip_sha256 -ne $zipHash) { throw "package manifest ZIP hash mismatch" }
           if ([int64]$manifest.binary_size -ne $exeBytes) { throw "package manifest executable byte length mismatch" }
           if ([int64]$manifest.zip_size -ne (Get-Item $zip).Length) { throw "package manifest ZIP byte length mismatch" }
+          if ($build.sha256 -ne $exeHash) { throw "desktop build receipt executable hash mismatch" }
+          if ([int64]$build.byte_len -ne $exeBytes) { throw "desktop build receipt executable byte length mismatch" }
+          if ($build.executable -ne "chaptera.exe") { throw "desktop build receipt executable identity mismatch" }
+
+          $finalReceipt = [ordered]@{
+            protocol_version = "chaptera.desktop-source-free-smoke.v1"
+            product = $smoke.product
+            chaptera_version = $smoke.chaptera_version
+            source_commit = $build.source_commit
+            reader_only = $smoke.reader_only
+            editor_controls_enabled = $smoke.editor_controls_enabled
+            native_save_pub_claimed = $smoke.native_save_pub_claimed
+            binary_sha256 = $exeHash
+            binary_byte_len = $exeBytes
+            zip_sha256 = $zipHash
+            zip_byte_len = (Get-Item $zip).Length
+            runtime = $smoke.runtime
+          }
+          $finalReceipt | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $receipt
 
       - uses: actions/upload-artifact@v4
         with:
