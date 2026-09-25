@@ -1,7 +1,8 @@
 use std::{fmt, time::Duration};
 
 use openidconnect::{
-    ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge, RedirectUrl, Scope,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
     reqwest,
 };
@@ -35,6 +36,14 @@ impl std::error::Error for OidcAdapterError {}
 pub struct OidcLoginStart {
     pub authorization_url: String,
     pub expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OidcVerifiedIdentity {
+    pub issuer: String,
+    pub subject: String,
+    pub email_snapshot: Option<String>,
+    pub return_path: String,
 }
 
 #[derive(Clone)]
@@ -141,6 +150,72 @@ impl OidcAuthorizationAdapter {
         Ok(OidcLoginStart {
             authorization_url: authorization_url.to_string(),
             expires_at_ms,
+        })
+    }
+
+    pub async fn finish_login(
+        &self,
+        flows: &LoginFlowStore,
+        state: &str,
+        authorization_code: &str,
+        now_ms: u64,
+    ) -> Result<OidcVerifiedIdentity, OidcAdapterError> {
+        if authorization_code.is_empty()
+            || authorization_code.len() > 4096
+            || authorization_code.chars().any(char::is_control)
+        {
+            return Err(OidcAdapterError::new(
+                "oidc_authorization_code_invalid",
+                "OIDC authorization code must be a bounded non-control string",
+            ));
+        }
+
+        let flow = flows.consume(state, now_ms).map_err(authn_error)?;
+        let client = CoreClient::from_provider_metadata(
+            self.provider_metadata.clone(),
+            self.client_id.clone(),
+            self.client_secret.clone(),
+        )
+        .set_redirect_uri(self.redirect_url.clone());
+
+        let http_client = reqwest::ClientBuilder::new()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| {
+                OidcAdapterError::new("oidc_http_client_failed", bounded_message(error))
+            })?;
+
+        let token_request = client
+            .exchange_code(AuthorizationCode::new(authorization_code.to_owned()))
+            .map_err(|error| {
+                OidcAdapterError::new("oidc_token_endpoint_unavailable", bounded_message(error))
+            })?;
+
+        let token_response = token_request
+            .set_pkce_verifier(PkceCodeVerifier::new(flow.pkce_verifier))
+            .request_async(&http_client)
+            .await
+            .map_err(|error| {
+                OidcAdapterError::new("oidc_code_exchange_failed", bounded_message(error))
+            })?;
+
+        let id_token = token_response.id_token().ok_or_else(|| {
+            OidcAdapterError::new(
+                "oidc_id_token_missing",
+                "OIDC token response did not contain an ID token",
+            )
+        })?;
+        let verifier = client.id_token_verifier();
+        let nonce = Nonce::new(flow.nonce);
+        let claims = id_token.claims(&verifier, &nonce).map_err(|error| {
+            OidcAdapterError::new("oidc_id_token_invalid", bounded_message(error))
+        })?;
+
+        Ok(OidcVerifiedIdentity {
+            issuer: claims.issuer().as_str().to_owned(),
+            subject: claims.subject().as_str().to_owned(),
+            email_snapshot: claims.email().map(|email| email.as_str().to_owned()),
+            return_path: flow.return_path,
         })
     }
 }
