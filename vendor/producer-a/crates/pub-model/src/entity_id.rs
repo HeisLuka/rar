@@ -45,6 +45,14 @@ canonical_id_type!(
     TableCellId,
     "Canonical identity authored table cell, separate from visual Node identity."
 );
+canonical_id_type!(
+    TableRowId,
+    "Canonical identity authored table row, stable across coordinate shifts."
+);
+canonical_id_type!(
+    TableColumnId,
+    "Canonical identity authored table column, stable across coordinate shifts."
+);
 canonical_id_type!(StoryId, "Canonical identity logical text Story.");
 canonical_id_type!(ParagraphId, "Canonical identity paragraph.");
 canonical_id_type!(TextRunId, "Canonical identity character/text run.");
