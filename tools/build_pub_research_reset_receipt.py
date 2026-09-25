@@ -6,6 +6,11 @@ import datetime as dt
 import json
 import pathlib
 import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from tools.validate_pub_lab_2019_vmware_evidence import validate_vmware_evidence
 
