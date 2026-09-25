@@ -232,10 +232,7 @@ impl SqliteRevisionStore {
             ));
         }
 
-        if let Some(outcome) = self
-            .reconcile_edge_identity_state(&edge, &binding)
-            .await?
-        {
+        if let Some(outcome) = self.reconcile_edge_identity_state(&edge, &binding).await? {
             return Ok(outcome);
         }
 
@@ -277,10 +274,7 @@ impl SqliteRevisionStore {
         if let Err(error) = edge_result {
             let message = bounded_sqlx_message(&error);
             let _ = transaction.rollback().await;
-            if let Some(outcome) = self
-                .reconcile_edge_identity_state(&edge, &binding)
-                .await?
-            {
+            if let Some(outcome) = self.reconcile_edge_identity_state(&edge, &binding).await? {
                 return Ok(outcome);
             }
             return Err(SqliteStoreError::new("sqlite_append_failed", message));
@@ -531,10 +525,7 @@ impl SqliteRevisionStore {
         requested_binding: &RevisionIdentityBinding,
     ) -> Result<Option<AppendOutcome>, SqliteStoreError> {
         if let Some(existing_edge) = self
-            .read_edge(
-                &requested_edge.document_id,
-                &requested_edge.parent_revision,
-            )
+            .read_edge(&requested_edge.document_id, &requested_edge.parent_revision)
             .await?
         {
             if !same_retry_identity(&existing_edge, requested_edge) {
