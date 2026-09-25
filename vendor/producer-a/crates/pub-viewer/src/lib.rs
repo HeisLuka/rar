@@ -44,6 +44,7 @@ pub struct ViewerOpenTiming {
     pub layout_projection_ns: u64,
     pub visible_resource_materialization_ns: u64,
     pub scene_resolution_ns: u64,
+    pub orchestration_ns: u64,
     pub page_count: u64,
     pub story_count: u64,
     pub resource_count: u64,
@@ -298,6 +299,7 @@ pub fn open_mature_0x2c_geometry_with_timing(
     bytes: &[u8],
     environment: BoundedLayoutEnvironment,
 ) -> Result<(ViewerGeometryDocument, ViewerOpenTiming)> {
+    let viewer_started = Instant::now();
     let (pipeline, reader_timing, resolve_model_ns) =
         build_mature_0x2c_pipeline_with_timing(bytes)?;
 
@@ -438,6 +440,18 @@ pub fn open_mature_0x2c_geometry_with_timing(
     let page_count = u64::try_from(document.pages.len()).unwrap_or(u64::MAX);
     let story_count = u64::try_from(document.stories.len()).unwrap_or(u64::MAX);
     let resource_count = u64::try_from(images.len()).unwrap_or(u64::MAX);
+    let viewer_total_ns = duration_ns_u64(viewer_started.elapsed());
+    let known_viewer_ns = reader_timing
+        .input_materialization_ns
+        .saturating_add(reader_timing.logical_stream_read_ns)
+        .saturating_add(reader_timing.parse_source_graph_ns)
+        .saturating_add(resolve_model_ns)
+        .saturating_add(viewer_document_projection_ns)
+        .saturating_add(dependency_resolution_ns)
+        .saturating_add(layout_projection_ns)
+        .saturating_add(visible_resource_materialization_ns)
+        .saturating_add(scene_resolution_ns);
+    let orchestration_ns = viewer_total_ns.saturating_sub(known_viewer_ns);
 
     Ok((
         ViewerGeometryDocument {
@@ -456,6 +470,7 @@ pub fn open_mature_0x2c_geometry_with_timing(
             layout_projection_ns,
             visible_resource_materialization_ns,
             scene_resolution_ns,
+            orchestration_ns,
             page_count,
             story_count,
             resource_count,
