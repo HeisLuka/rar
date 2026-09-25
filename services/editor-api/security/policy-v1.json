@@ -1,0 +1,34 @@
+{
+  "policy_version": "chaptera.active-content.v1",
+  "limits": {
+    "max_input_bytes": 2000000,
+    "max_nodes": 20000,
+    "max_depth": 128,
+    "max_text_chars": 2000000
+  },
+  "svg": {
+    "allowed_tags": [
+      "svg", "g", "path", "rect", "circle", "ellipse", "line",
+      "polyline", "polygon", "text", "tspan", "defs", "clipPath",
+      "mask", "linearGradient", "radialGradient", "stop", "use"
+    ],
+    "allowed_attributes": [
+      "id", "x", "y", "dx", "dy", "width", "height", "viewBox",
+      "d", "points", "transform", "opacity", "fill", "stroke",
+      "stroke-width", "fill-opacity", "stroke-opacity", "clip-path",
+      "mask", "font-family", "font-size", "text-anchor", "cx", "cy",
+      "r", "rx", "ry", "x1", "y1", "x2", "y2", "offset",
+      "gradientUnits", "gradientTransform", "stop-color",
+      "stop-opacity", "preserveAspectRatio", "href"
+    ]
+  },
+  "html": {
+    "allowed_tags": [
+      "div", "span", "p", "br", "strong", "em", "b", "i", "u",
+      "table", "thead", "tbody", "tfoot", "tr", "td", "th",
+      "ul", "ol", "li", "pre", "code"
+    ],
+    "global_attributes": ["id", "title", "lang", "dir", "role"],
+    "table_cell_attributes": ["colspan", "rowspan"]
+  }
+}

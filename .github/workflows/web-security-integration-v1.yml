@@ -1,0 +1,38 @@
+name: Web Security Integration V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/security/policy-v1.json"
+      - "services/editor-api/security/sanitize_active_content.py"
+      - "services/editor-api/security/web-security-profile-v1.json"
+      - "services/editor-api/security/web_security_boundary.py"
+      - "services/editor-api/security/web_security_integration_v1.py"
+      - "services/editor-api/security/test_web_security_integration_v1.py"
+      - "services/editor-api/security/test_web_security_boundary.py"
+      - "services/editor-api/security/test_active_content.py"
+      - "services/editor-api/security/test_web_security_http_path_v1.py"
+      - "services/editor-api/security/tenant_isolation.py"
+      - "services/editor-api/security/authz_v1.py"
+      - "services/editor-api/web_shell_http_harness.py"
+      - "tools/migration_pdf_worker_isolation.py"
+      - ".github/workflows/web-security-integration-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run web security integration and inherited security regressions
+        working-directory: services/editor-api/security
+        run: |
+          python -m unittest -v             test_web_security_integration_v1             test_tenant_isolation             test_authz_v1
+      - name: Run existing real worker isolation regressions
+        run: python -m unittest -v tools.test_migration_pdf_worker_isolation

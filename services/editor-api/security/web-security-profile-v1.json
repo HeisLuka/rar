@@ -1,0 +1,40 @@
+{
+  "policy_version": "chaptera.web-security.v1",
+  "upload": {
+    "max_content_length_bytes": 536870912,
+    "required_magic_hex": "d0cf11e0a1b11ae1"
+  },
+  "parse_worker": {
+    "network_access": false,
+    "wall_time_seconds": 120,
+    "memory_bytes": 2147483648,
+    "max_output_bytes": 536870912,
+    "max_object_count": 1000000,
+    "max_stream_count": 100000,
+    "max_graph_depth": 256,
+    "temp_storage": "disposable"
+  },
+  "resource_delivery": {
+    "token_ttl_seconds": 300,
+    "max_resource_bytes": 104857600,
+    "allowed_states": ["safe_direct", "sanitized", "safe_derivative"]
+  },
+  "external_fetch": {
+    "default": "deny"
+  },
+  "cache": {
+    "scope": "tenant"
+  },
+  "telemetry": {
+    "allowed_metadata_keys": [
+      "stage",
+      "status",
+      "error_code",
+      "duration_ms",
+      "input_bytes",
+      "output_bytes",
+      "object_count",
+      "page_count"
+    ]
+  }
+}
