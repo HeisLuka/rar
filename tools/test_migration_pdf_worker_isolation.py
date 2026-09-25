@@ -7,6 +7,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
@@ -83,6 +84,21 @@ out.mkdir(parents=True, exist_ok=True)
 (out / "late.pdf").write_bytes(b"late")
 """
 
+ENV_PROBE = r"""#!/usr/bin/env python3
+import json
+import os
+import pathlib
+
+out = pathlib.Path(os.environ["CHAPTERA_WORKER_OUTPUT_DIR"])
+out.mkdir(parents=True, exist_ok=True)
+(out / "env.json").write_text(json.dumps({
+    "secret_present": "CHAPTERA_TEST_SECRET" in os.environ,
+    "explicit_value": os.environ.get("CHAPTERA_SCAN_MODE"),
+    "network_policy": os.environ.get("CHAPTERA_NETWORK_POLICY"),
+    "input_present": "CHAPTERA_WORKER_INPUT" in os.environ,
+}), encoding="utf-8")
+"""
+
 
 @unittest.skipUnless(sys.platform == "linux", "Linux security slice")
 class MigrationPdfWorkerIsolationTests(unittest.TestCase):
@@ -142,6 +158,36 @@ class MigrationPdfWorkerIsolationTests(unittest.TestCase):
             receipt = json.loads((final / "network.json").read_text(encoding="utf-8"))
             self.assertTrue(receipt["blocked"])
             self.assertEqual(errno.EPERM, receipt["errno"])
+
+    def test_clear_environment_drops_parent_secrets_but_keeps_explicit_worker_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            worker = self.write_worker(tmp, "env_probe.py", ENV_PROBE)
+            source = tmp / "source.pub"
+            source.write_bytes(b"pub")
+            final = tmp / "env-result"
+
+            with mock.patch.dict(
+                os.environ,
+                {"CHAPTERA_TEST_SECRET": "must-not-leak"},
+                clear=False,
+            ):
+                result = run_isolated_worker(
+                    [sys.executable, str(worker)],
+                    final_output_dir=final,
+                    timeout_seconds=5,
+                    limits=self.limits(),
+                    input_path=source,
+                    extra_env={"CHAPTERA_SCAN_MODE": "cloud-source"},
+                    inherit_environment=False,
+                )
+
+            self.assertTrue(result.succeeded, result.stderr_tail)
+            receipt = json.loads((final / "env.json").read_text(encoding="utf-8"))
+            self.assertFalse(receipt["secret_present"])
+            self.assertEqual("cloud-source", receipt["explicit_value"])
+            self.assertEqual("seccomp_default_deny", receipt["network_policy"])
+            self.assertTrue(receipt["input_present"])
 
     def test_forced_zero_timeout_never_publishes_or_runs_worker(self):
         with tempfile.TemporaryDirectory() as tmp:
