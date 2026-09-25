@@ -89,6 +89,41 @@ except ModuleNotFoundError:
 
 
 try:
+    from create_picture_frame_v1 import (
+        canonical_create_picture_frame_operation_v1,
+        validate_create_picture_frame_intent_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _create_picture_path = pathlib.Path(__file__).with_name("create_picture_frame_v1.py")
+    _create_picture_spec = importlib.util.spec_from_file_location(
+        "chaptera_create_picture_frame_v1",
+        _create_picture_path,
+    )
+    if _create_picture_spec is None or _create_picture_spec.loader is None:
+        raise ImportError("cannot load create_picture_frame_v1 sibling module")
+    _create_picture_module = importlib.util.module_from_spec(_create_picture_spec)
+    sys.modules[_create_picture_spec.name] = _create_picture_module
+    _create_picture_sibling_dir = str(_create_picture_path.parent)
+    _create_picture_added_path = _create_picture_sibling_dir not in sys.path
+    if _create_picture_added_path:
+        sys.path.insert(0, _create_picture_sibling_dir)
+    try:
+        _create_picture_spec.loader.exec_module(_create_picture_module)
+    finally:
+        if _create_picture_added_path:
+            sys.path.remove(_create_picture_sibling_dir)
+    canonical_create_picture_frame_operation_v1 = (
+        _create_picture_module.canonical_create_picture_frame_operation_v1
+    )
+    validate_create_picture_frame_intent_v1 = (
+        _create_picture_module.validate_create_picture_frame_intent_v1
+    )
+
+
+try:
     from create_shape_v1 import (
         validate_create_shape_intent_v1,
         validate_creation_paint_v1,
@@ -486,6 +521,18 @@ class RevisionKernel:
             request_validator=self._validate_text_frame_columns_request_shape,
             canonical_validator=self._validate_canonical_text_frame_columns,
             pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_create_picture_frame(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_create_picture_frame_request_shape,
+            canonical_validator=self._validate_canonical_create_picture_frame,
         )
 
     def commit_create_shape(
@@ -1615,6 +1662,23 @@ class RevisionKernel:
             )
         if before == after:
             raise ValueError("canonical SetTextFrameColumns must change column state")
+
+    @staticmethod
+    def _validate_create_picture_frame_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.create-picture-frame-intent.v1":
+            raise ValueError("V1 CreatePictureFrame protocol_version is required")
+        validate_create_picture_frame_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_create_picture_frame(
+        command: dict,
+        operation: dict,
+    ) -> None:
+        expected = canonical_create_picture_frame_operation_v1(command)
+        if operation != expected:
+            raise ValueError(
+                "authoritative executor returned non-canonical CreatePictureFrame operation"
+            )
 
     @staticmethod
     def _validate_create_shape_request_shape(request: dict) -> None:
