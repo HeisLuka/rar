@@ -1,0 +1,703 @@
+name: TEMP CORPUS Publisher95-97 migration-law paired census
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-xver-migration95-97-census-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Census paired Publisher95 to 97 migration laws
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import concurrent.futures
+          import difflib
+          import hashlib
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          from collections import Counter
+          from pathlib import Path
+
+          import olefile
+
+          UA = "rar-migration95-97-census/1.0"
+          ISO_SECTOR = 2048
+
+          MEDIA = {
+              "pub95": {
+                  "url": "https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+                  "source_page": "https://archive.org/details/microsoft-home-collection-1993-1995-",
+                  "root_sha256": "36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a",
+                  "expected_generation": "Publisher95",
+                  "version_num": 3,
+              },
+              "pub97": {
+                  "url": "https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+                  "source_page": "https://archive.org/details/MSPublisher97-EN",
+                  "root_sha256": "41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab",
+                  "expected_generation": "Publisher97",
+                  "version_num": 5,
+              },
+          }
+
+          EXPECTED = {
+              0x15: "0b225b1bacb39383893c98ecbdc6dd72679adf57362b667f3c1ef37feb949375",
+              0x16: "41c900869a8256f569d8cafc5ed0a23724c319d58d9353551f4aa37cd6c3c737",
+              0x23: "7cba3b282e136c22b9776da81e527b36f0ae62f3de4254b2062221e13ab747f1",
+              0x26: "2e052530e0880adb932def660f8a9b10e498a53430324f9c94d74bb61a99403c",
+              0x2A: "5852d313831f43ae3a7d0a2165bccd7146a6a07e3f8eca434b6a36b90cddf203",
+              0x32: "9f65ad83eb5c5146b2b0d64f40f975224ad60d021f2b57607f9ca67dc772c892",
+          }
+
+          def sha(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def u16(data: bytes, off: int) -> int:
+              return int.from_bytes(data[off:off + 2], "little")
+
+          def u32(data: bytes, off: int) -> int:
+              return int.from_bytes(data[off:off + 4], "little")
+
+          class ISO:
+              def __init__(self, url: str):
+                  self.url = url
+                  self.cache = {}
+                  self.delivery = self._choose()
+
+              def candidates(self):
+                  parsed = urllib.parse.urlparse(self.url)
+                  bits = parsed.path.split("/")
+                  ident = bits[2]
+                  filename = "/".join(bits[3:])
+                  req = urllib.request.Request(
+                      f"https://archive.org/metadata/{ident}",
+                      headers={"User-Agent": UA},
+                  )
+                  last = None
+                  for attempt in range(4):
+                      try:
+                          with urllib.request.urlopen(req, timeout=45) as r:
+                              meta = json.load(r)
+                          break
+                      except Exception as exc:
+                          last = exc
+                          if attempt == 3:
+                              raise
+                          time.sleep(2 ** attempt)
+                  out = []
+                  directory = str(meta.get("dir") or "")
+                  for key in ("d1", "d2"):
+                      host = str(meta.get(key) or "")
+                      if host and directory:
+                          out.append(
+                              "https://"
+                              + host
+                              + directory.rstrip("/")
+                              + "/"
+                              + urllib.parse.quote(filename, safe="/")
+                          )
+                  out += [self.url, self.url + "?download=1"]
+                  return list(dict.fromkeys(out))
+
+              def rr(self, url: str, start: int, length: int) -> bytes:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": UA,
+                          "Range": f"bytes={start}-{start + length - 1}",
+                          "Accept-Encoding": "identity",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=45) as r:
+                      if getattr(r, "status", None) != 206 and not r.headers.get("Content-Range"):
+                          raise ValueError("range unsupported")
+                      data = r.read(length + 1)
+                  if len(data) != length:
+                      raise ValueError(f"range length {len(data)} != {length}")
+                  return data
+
+              def _choose(self):
+                  last = None
+                  for url in self.candidates():
+                      for attempt in range(3):
+                          try:
+                              pvd = self.rr(url, 16 * ISO_SECTOR, ISO_SECTOR)
+                              if pvd[:6] != b"\x01CD001":
+                                  raise ValueError("bad ISO9660 PVD")
+                              return url
+                          except Exception as exc:
+                              last = exc
+                              if attempt < 2:
+                                  time.sleep(2 ** attempt)
+                  raise last
+
+              def read(self, start: int, length: int) -> bytes:
+                  last = None
+                  for attempt in range(4):
+                      try:
+                          return self.rr(self.delivery, start, length)
+                      except Exception as exc:
+                          last = exc
+                          if attempt == 3:
+                              raise
+                          time.sleep(2 ** attempt)
+                  raise last
+
+              @staticmethod
+              def rec(rec: bytes):
+                  name = rec[33:33 + rec[32]].decode("ascii", "replace")
+                  extent = int.from_bytes(rec[2:6], "little")
+                  size = int.from_bytes(rec[10:14], "little")
+                  flags = rec[25]
+                  return name, extent, size, flags
+
+              def directory(self, extent: int, size: int):
+                  key = (extent, size)
+                  if key in self.cache:
+                      return self.cache[key]
+                  data = self.read(extent * ISO_SECTOR, size)
+                  out = {}
+                  pos = 0
+                  while pos < len(data):
+                      n = data[pos]
+                      if not n:
+                          pos = ((pos // ISO_SECTOR) + 1) * ISO_SECTOR
+                          continue
+                      name, ex, sz, flags = self.rec(data[pos:pos + n])
+                      if name not in ("\x00", "\x01"):
+                          out[name.split(";")[0].upper()] = (ex, sz, flags)
+                      pos += n
+                  self.cache[key] = out
+                  return out
+
+              def root(self):
+                  pvd = self.read(16 * ISO_SECTOR, ISO_SECTOR)
+                  rl = pvd[156]
+                  _, extent, size, flags = self.rec(pvd[156:156 + rl])
+                  return extent, size, flags
+
+              def listing(self, path: str):
+                  extent, size, flags = self.root()
+                  for part in [x.upper() for x in path.strip("/").split("/") if x]:
+                      extent, size, flags = self.directory(extent, size)[part]
+                      if not flags & 2:
+                          raise ValueError(f"{part} is not a directory")
+                  return self.directory(extent, size)
+
+          def cfb(pub: bytes):
+              streams = {}
+              storages = []
+              with olefile.OleFileIO(pub) as ole:
+                  for parts in ole.listdir(streams=True, storages=False):
+                      path = "/" + "/".join(parts)
+                      streams[path] = ole.openstream(parts).read()
+                  storages = sorted("/" + "/".join(parts) for parts in ole.listdir(streams=False, storages=True))
+              return streams, storages
+
+          def parse(contents: bytes):
+              if contents[:4] != b"\xe8\xac\x22\x00":
+                  raise ValueError("not old22")
+              sig = contents[0x0C:0x0E].hex()
+              cv = u16(contents, 4)
+              generation = {
+                  ("7d00", 300): "Publisher95",
+                  ("8800", 300): "Publisher97",
+              }.get((sig, cv), "unknown")
+
+              root = u32(contents, 0x12)
+              meta = root + 14
+              if meta + 14 > len(contents):
+                  raise ValueError("bad text metadata")
+              text = {
+                  "root": root,
+                  "start": u32(contents, meta),
+                  "end": u32(contents, meta + 4),
+                  "char": u16(contents, meta + 8),
+                  "para": u16(contents, meta + 10),
+                  "cell": u16(contents, meta + 12),
+              }
+              if not (0 <= text["start"] <= text["end"] <= len(contents)):
+                  raise ValueError("bad text range")
+
+              directory_offset = u32(contents, 0x16)
+              if not (0 < directory_offset < len(contents) - 2):
+                  raise ValueError("bad directory offset")
+              count = u16(contents, directory_offset)
+              if count > 512 or directory_offset + 2 + count * 10 > len(contents):
+                  raise ValueError("bad directory")
+
+              rows = []
+              for i in range(count):
+                  pos = directory_offset + 2 + i * 10
+                  row = {
+                      "service": u16(contents, pos),
+                      "id": u16(contents, pos + 2),
+                      "parent": u16(contents, pos + 4),
+                      "offset": u32(contents, pos + 6),
+                  }
+                  if row["offset"] + 2 > len(contents):
+                      raise ValueError("chunk offset outside Contents")
+                  row["marker"] = u16(contents, row["offset"])
+                  rows.append(row)
+
+              offsets = sorted(set(row["offset"] for row in rows))
+              chunks = {}
+              for row in rows:
+                  greater = [x for x in offsets if x > row["offset"]]
+                  end = min(greater) if greater else len(contents)
+                  raw = contents[row["offset"]:end]
+                  chunks[row["id"]] = raw
+
+              text_bytes = contents[text["start"]:text["end"]]
+              return {
+                  "generation": generation,
+                  "sig": sig,
+                  "cv": cv,
+                  "rows": rows,
+                  "by_id": {row["id"]: row for row in rows},
+                  "chunks": chunks,
+                  "text": text,
+                  "text_len": len(text_bytes),
+                  "text_sha256": sha(text_bytes),
+                  "directory_offset": directory_offset,
+              }
+
+          def normalized_chunk(raw: bytes, ids: set[int], physical_values: set[int]) -> bytes:
+              buf = bytearray(raw)
+              if len(buf) >= 2:
+                  buf[0:2] = b"\x00\x00"
+              for pos in range(0, len(buf) - 1, 2):
+                  if int.from_bytes(buf[pos:pos + 2], "little") in ids:
+                      buf[pos:pos + 2] = b"\xfe\xff"
+              for pos in range(0, max(0, len(buf) - 3)):
+                  if int.from_bytes(buf[pos:pos + 4], "little") in physical_values:
+                      buf[pos:pos + 4] = b"\xfd\xfd\xfd\xfd"
+              return bytes(buf)
+
+          def delta_sig(left: bytes, right: bytes):
+              matcher = difflib.SequenceMatcher(None, left, right, autojunk=False)
+              ops = []
+              for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                  if tag == "equal":
+                      continue
+                  ops.append((tag, i2 - i1, j2 - j1, sha(left[i1:i2]), sha(right[j1:j2])))
+              return sha(json.dumps(ops, separators=(",", ":")).encode())
+
+          def ptr_size(chunk: bytes, version_num: int):
+              if len(chunk) < 4:
+                  return None
+              data_off = chunk[3]
+              if not (4 <= data_off < len(chunk)):
+                  return None
+              data = chunk[data_off:]
+              if len(data) < 10:
+                  return None
+              n16 = u16(data, 0)
+              max16 = u16(data, 2)
+              if n16 > max16:
+                  return 4
+              if n16 != 0:
+                  return 2
+              return 4 if version_num >= 5 else 2
+
+          isos = {key: ISO(spec["url"]) for key, spec in MEDIA.items()}
+          listings = {key: isos[key].listing("PAGEWIZ") for key in MEDIA}
+          names_by_media = {
+              key: sorted(
+                  name
+                  for name, (_, _, flags) in listings[key].items()
+                  if name.endswith(".PUB") and not (flags & 2)
+              )
+              for key in MEDIA
+          }
+          common_names = sorted(set(names_by_media["pub95"]) & set(names_by_media["pub97"]))
+
+          def analyze_pair(name: str):
+              pubs = {}
+              streams = {}
+              storages = {}
+              parsed = {}
+
+              for side in ("pub95", "pub97"):
+                  extent, size, flags = listings[side][name]
+                  pub = isos[side].read(extent * ISO_SECTOR, size)
+                  pubs[side] = pub
+                  streams[side], storages[side] = cfb(pub)
+                  if "/Contents" not in streams[side]:
+                      raise ValueError(f"{side}:missing Contents")
+                  parsed[side] = parse(streams[side]["/Contents"])
+
+              left = parsed["pub95"]
+              right = parsed["pub97"]
+
+              all_stream_paths = sorted(set(streams["pub95"]) | set(streams["pub97"]))
+              changed_streams = [
+                  path
+                  for path in all_stream_paths
+                  if streams["pub95"].get(path) != streams["pub97"].get(path)
+              ]
+              added_streams = sorted(set(streams["pub97"]) - set(streams["pub95"]))
+              removed_streams = sorted(set(streams["pub95"]) - set(streams["pub97"]))
+
+              if left["generation"] != "Publisher95" or right["generation"] != "Publisher97":
+                  return {
+                      "name": name,
+                      "status": "generation-mismatch",
+                      "generations": {"pub95": left["generation"], "pub97": right["generation"]},
+                      "sha256": {"pub95": sha(pubs["pub95"]), "pub97": sha(pubs["pub97"])},
+                      "byte_len": {"pub95": len(pubs["pub95"]), "pub97": len(pubs["pub97"])},
+                  }
+
+              left_ids = set(left["by_id"])
+              right_ids = set(right["by_id"])
+              common_ids = sorted(left_ids & right_ids)
+              added_ids = sorted(right_ids - left_ids)
+              removed_ids = sorted(left_ids - right_ids)
+              tuple_changed_ids = []
+              for oid in common_ids:
+                  a = left["by_id"][oid]
+                  b = right["by_id"][oid]
+                  if (a["service"], a["id"], a["parent"], a["marker"]) != (
+                      b["service"], b["id"], b["parent"], b["marker"]
+                  ):
+                      tuple_changed_ids.append(oid)
+
+              ids = left_ids | right_ids
+              left_phys = {
+                  left["text"]["root"],
+                  left["text"]["start"],
+                  left["text"]["end"],
+                  left["directory_offset"],
+              } | {row["offset"] for row in left["rows"]}
+              right_phys = {
+                  right["text"]["root"],
+                  right["text"]["start"],
+                  right["text"]["end"],
+                  right["directory_offset"],
+              } | {row["offset"] for row in right["rows"]}
+
+              laws = {}
+              for marker, expected in EXPECTED.items():
+                  marker_common = [
+                      oid
+                      for oid in common_ids
+                      if left["by_id"][oid]["marker"] == marker
+                      and right["by_id"][oid]["marker"] == marker
+                  ]
+                  changed = []
+                  for oid in marker_common:
+                      a = left["chunks"][oid]
+                      b = right["chunks"][oid]
+                      if a == b:
+                          continue
+                      na = normalized_chunk(a, ids, left_phys)
+                      nb = normalized_chunk(b, ids, right_phys)
+                      sig = delta_sig(na, nb)
+                      changed.append(
+                          {
+                              "id": oid,
+                              "left_len": len(a),
+                              "right_len": len(b),
+                              "delta_signature": sig,
+                              "matches_expected": sig == expected,
+                          }
+                      )
+
+                  if not marker_common:
+                      status = "absent"
+                  elif not changed:
+                      status = "present-unchanged"
+                  elif all(row["matches_expected"] for row in changed):
+                      status = "repeated"
+                  else:
+                      status = "falsified"
+
+                  laws[f"0x{marker:02X}"] = {
+                      "status": status,
+                      "present_common_count": len(marker_common),
+                      "changed_count": len(changed),
+                      "observations": changed,
+                  }
+
+              added_rows = [right["by_id"][oid] for oid in added_ids]
+              chain = {
+                  "status": "different-cardinality" if added_rows else "absent",
+                  "added_count": len(added_rows),
+                  "added_ids": added_ids,
+              }
+              if len(added_rows) == 2:
+                  added_set = {row["id"] for row in added_rows}
+                  roots = [row for row in added_rows if row["parent"] not in added_set]
+                  if len(roots) == 1:
+                      root = roots[0]
+                      children = [row for row in added_rows if row["parent"] == root["id"]]
+                      parent = right["by_id"].get(root["parent"])
+                      if len(children) == 1:
+                          child = children[0]
+                          shape = {
+                              "root_service": root["service"],
+                              "root_marker": root["marker"],
+                              "parent_marker": parent["marker"] if parent else None,
+                              "child_service": child["service"],
+                              "child_marker": child["marker"],
+                          }
+                          expected_shape = {
+                              "root_service": 5856,
+                              "root_marker": 0x31,
+                              "parent_marker": 0x15,
+                              "child_service": 5856,
+                              "child_marker": 0x3A,
+                          }
+                          chain = {
+                              "status": "repeated" if shape == expected_shape else "different-two-node-shape",
+                              "added_count": 2,
+                              "added_ids": added_ids,
+                              "shape": shape,
+                              "parent_service": parent["service"] if parent else None,
+                          }
+
+              printer_rows = []
+              for oid in common_ids:
+                  a = left["by_id"][oid]
+                  b = right["by_id"][oid]
+                  if a["marker"] == 0x29 and b["marker"] == 0x29:
+                      lp = ptr_size(left["chunks"][oid], 3)
+                      rp = ptr_size(right["chunks"][oid], 5)
+                      printer_rows.append(
+                          {
+                              "id": oid,
+                              "left_pointer_size": lp,
+                              "right_pointer_size": rp,
+                              "matches_2_to_4": lp == 2 and rp == 4,
+                          }
+                      )
+              if not printer_rows:
+                  printer_status = "absent"
+              elif all(row["matches_2_to_4"] for row in printer_rows):
+                  printer_status = "repeated"
+              else:
+                  printer_status = "falsified"
+
+              falsified_laws = [
+                  key for key, value in laws.items() if value["status"] == "falsified"
+              ]
+              if chain["status"] in ("different-two-node-shape",):
+                  falsified_laws.append("added-chain")
+              if printer_status == "falsified":
+                  falsified_laws.append("printer29")
+
+              sector_size_95 = 1 << int.from_bytes(pubs["pub95"][0x1E:0x20], "little")
+              sector_size_97 = 1 << int.from_bytes(pubs["pub97"][0x1E:0x20], "little")
+
+              return {
+                  "name": name,
+                  "status": "ok",
+                  "sha256": {"pub95": sha(pubs["pub95"]), "pub97": sha(pubs["pub97"])},
+                  "byte_len": {"pub95": len(pubs["pub95"]), "pub97": len(pubs["pub97"])},
+                  "whole_file_delta": len(pubs["pub97"]) - len(pubs["pub95"]),
+                  "cfb_sector_size": {"pub95": sector_size_95, "pub97": sector_size_97},
+                  "stream_paths_equal": sorted(streams["pub95"]) == sorted(streams["pub97"]),
+                  "storage_paths_equal": storages["pub95"] == storages["pub97"],
+                  "changed_streams": changed_streams,
+                  "added_streams": added_streams,
+                  "removed_streams": removed_streams,
+                  "contents_len": {
+                      "pub95": len(streams["pub95"]["/Contents"]),
+                      "pub97": len(streams["pub97"]["/Contents"]),
+                  },
+                  "contents_len_delta": len(streams["pub97"]["/Contents"]) - len(streams["pub95"]["/Contents"]),
+                  "directory_counts": {
+                      "pub95": len(left_ids),
+                      "pub97": len(right_ids),
+                      "common": len(common_ids),
+                  },
+                  "added_ids": added_ids,
+                  "removed_ids": removed_ids,
+                  "tuple_changed_ids": tuple_changed_ids,
+                  "text": {
+                      "pub95_len": left["text_len"],
+                      "pub97_len": right["text_len"],
+                      "len_delta": right["text_len"] - left["text_len"],
+                      "pub95_sha256": left["text_sha256"],
+                      "pub97_sha256": right["text_sha256"],
+                      "equal": left["text_sha256"] == right["text_sha256"] and left["text_len"] == right["text_len"],
+                  },
+                  "laws": laws,
+                  "added_chain": chain,
+                  "printer29": {"status": printer_status, "observations": printer_rows},
+                  "falsified_laws": falsified_laws,
+              }
+
+          rows = []
+          failures = []
+          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+              futures = {pool.submit(analyze_pair, name): name for name in common_names}
+              for future in concurrent.futures.as_completed(futures):
+                  name = futures[future]
+                  try:
+                      rows.append(future.result())
+                  except Exception as exc:
+                      failures.append({"name": name, "error": f"{type(exc).__name__}:{exc}"})
+
+          rows.sort(key=lambda row: row["name"])
+          failures.sort(key=lambda row: row["name"])
+          good = [row for row in rows if row["status"] == "ok"]
+
+          law_counts = {}
+          for marker in [f"0x{x:02X}" for x in EXPECTED]:
+              law_counts[marker] = dict(
+                  Counter(row["laws"][marker]["status"] for row in good)
+              )
+
+          stream_patterns = Counter(
+              json.dumps(row["changed_streams"], separators=(",", ":"))
+              for row in good
+          )
+          added_count_distribution = Counter(str(len(row["added_ids"])) for row in good)
+          file_delta_distribution = Counter(str(row["whole_file_delta"]) for row in good)
+          text_len_delta_distribution = Counter(str(row["text"]["len_delta"]) for row in good)
+          chain_status_counts = Counter(row["added_chain"]["status"] for row in good)
+          printer_status_counts = Counter(row["printer29"]["status"] for row in good)
+
+          law_falsification_candidates = [
+              {"name": row["name"], "falsified_laws": row["falsified_laws"]}
+              for row in good
+              if row["falsified_laws"]
+          ]
+          nonzero_text_len_candidates = [
+              {
+                  "name": row["name"],
+                  "text_len_delta": row["text"]["len_delta"],
+                  "whole_file_delta": row["whole_file_delta"],
+                  "contents_len_delta": row["contents_len_delta"],
+                  "falsified_laws": row["falsified_laws"],
+                  "added_count": len(row["added_ids"]),
+              }
+              for row in good
+              if row["text"]["len_delta"] != 0
+          ]
+          non_two_node_candidates = [
+              {
+                  "name": row["name"],
+                  "added_count": len(row["added_ids"]),
+                  "added_chain_status": row["added_chain"]["status"],
+                  "falsified_laws": row["falsified_laws"],
+                  "text_len_delta": row["text"]["len_delta"],
+              }
+              for row in good
+              if len(row["added_ids"]) != 2
+          ]
+          tuple_divergence_candidates = [
+              {
+                  "name": row["name"],
+                  "removed_count": len(row["removed_ids"]),
+                  "tuple_changed_count": len(row["tuple_changed_ids"]),
+              }
+              for row in good
+              if row["removed_ids"] or row["tuple_changed_ids"]
+          ]
+
+          summary = {
+              "schema": "chaptera.migration95-97-paired-census-summary.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "pagewiz_pub_count": {
+                  key: len(names_by_media[key]) for key in MEDIA
+              },
+              "exact_name_intersection_count": len(common_names),
+              "analyzed_row_count": len(rows),
+              "failure_count": len(failures),
+              "generation_pair_count": len(good),
+              "contents_only_changed_count": sum(
+                  row["changed_streams"] == ["/Contents"] for row in good
+              ),
+              "full_tuple_preservation_count": sum(
+                  not row["removed_ids"] and not row["tuple_changed_ids"]
+                  for row in good
+              ),
+              "stream_change_patterns": dict(stream_patterns),
+              "law_status_counts": law_counts,
+              "added_count_distribution": dict(added_count_distribution),
+              "added_chain_status_counts": dict(chain_status_counts),
+              "printer29_status_counts": dict(printer_status_counts),
+              "whole_file_delta_distribution": dict(file_delta_distribution),
+              "text_len_delta_distribution": dict(text_len_delta_distribution),
+              "law_falsification_candidate_count": len(law_falsification_candidates),
+              "law_falsification_candidates": law_falsification_candidates,
+              "tuple_divergence_candidate_count": len(tuple_divergence_candidates),
+              "tuple_divergence_candidates": tuple_divergence_candidates,
+              "nonzero_text_len_candidate_count": len(nonzero_text_len_candidates),
+              "nonzero_text_len_candidates": nonzero_text_len_candidates,
+              "non_two_node_extension_candidate_count": len(non_two_node_candidates),
+              "non_two_node_extension_candidates": non_two_node_candidates,
+          }
+
+          report = {
+              "schema": "chaptera.migration95-97-paired-census.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "scope": "exact-name PAGEWIZ Publisher95-vs-Publisher97 pairs",
+              "media": {
+                  key: {
+                      "source_page": MEDIA[key]["source_page"],
+                      "root_sha256": MEDIA[key]["root_sha256"],
+                      "delivery_url": isos[key].delivery,
+                      "pagewiz_pub_count": len(names_by_media[key]),
+                  }
+                  for key in MEDIA
+              },
+              "summary": summary,
+              "pairs": rows,
+              "failures": failures,
+          }
+
+          out = Path("out")
+          out.mkdir(exist_ok=True)
+          (out / "migration-census.json").write_text(
+              json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+      - name: Enforce source-safe census
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained census" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path("out/migration-census.json").read_text())
+          summary=report["summary"]
+          assert report["source_safe"] is True
+          assert report["raw_pub_retained"] is False
+          assert summary["exact_name_intersection_count"] > 0
+          assert summary["generation_pair_count"] > 0
+          assert summary["analyzed_row_count"] + summary["failure_count"] == summary["exact_name_intersection_count"]
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-xver-migration95-97-census-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
