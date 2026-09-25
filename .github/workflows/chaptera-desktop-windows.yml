@@ -50,6 +50,15 @@ jobs:
       - name: Test Chaptera agent protocol core
         run: cargo test -p chaptera-desktop
 
+      - name: Prove VTPE supporter eframe persistence roundtrip
+        run: cargo test -p chaptera-desktop tests::supporter_persistence_wiring_round_trips_through_eframe_storage -- --exact
+
+      - name: Prove VTPE malformed and future state fail closed
+        run: cargo test -p chaptera-desktop tests::malformed_supporter_storage_falls_back_to_conservative_default -- --exact
+
+      - name: Emit VTPE supporter state validation receipt
+        run: python tools/run_chaptera_vtpe_state_receipt.py
+
       - name: Test canonical desktop Story range wire
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test story_range_v1
 
@@ -132,6 +141,7 @@ jobs:
             target/release/Chaptera-Editor.package.json
             target/release/editor-live-trial-package.real.json
             target/release/editor-agent-control.real.json
+            target/chaptera-vtpe-state-v1/receipt.json
           if-no-files-found: error
 
   validate-portable-editor:
