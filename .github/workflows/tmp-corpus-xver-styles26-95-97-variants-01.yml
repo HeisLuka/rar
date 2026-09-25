@@ -302,17 +302,32 @@ jobs:
                   pos = data_start + i * pointer_size
                   positions.append(int.from_bytes(raw[pos:pos + pointer_size], "little"))
 
-              monotonic = all(positions[i] <= positions[i + 1] for i in range(len(positions) - 1))
-              in_bounds = all(0 <= x <= len(raw) - data_start for x in positions)
+              # re-lab pub98ptrlistheader does not require the entire N+1 vector
+              # to be monotone. Some Styles families mix actual payload offsets with
+              # sentinel/index-like entries. A payload offset must point beyond the
+              # pointer table itself and remain inside the chunk-relative data area.
+              table_bytes = need
+              data_extent = len(raw) - data_start
+              payload_positions = [
+                  x for x in positions
+                  if table_bytes <= x <= data_extent
+              ]
+              monotonic_payload = (
+                  len(payload_positions) >= 2
+                  and all(
+                      payload_positions[i] < payload_positions[i + 1]
+                      for i in range(len(payload_positions) - 1)
+                  )
+              )
               segments = []
-              if monotonic and in_bounds:
-                  for i in range(n):
-                      start = data_start + positions[i]
-                      end = data_start + positions[i + 1]
+              if monotonic_payload:
+                  for i in range(len(payload_positions) - 1):
+                      start = data_start + payload_positions[i]
+                      end = data_start + payload_positions[i + 1]
                       segments.append(raw[start:end])
 
               return {
-                  "valid": monotonic and in_bounds,
+                  "valid": monotonic_payload,
                   "data_offset": data_off,
                   "pointer_size": pointer_size,
                   "n": n,
@@ -320,7 +335,9 @@ jobs:
                   "value0": value0,
                   "value1": value1,
                   "data_start": data_start,
+                  "pointer_table_bytes": table_bytes,
                   "relative_positions": positions,
+                  "payload_positions": payload_positions,
                   "segment_lengths": [len(seg) for seg in segments],
                   "segment_sha256s": [sha(seg) for seg in segments],
                   "_segments": segments,
