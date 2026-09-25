@@ -64,7 +64,7 @@ def main() -> int:
 
     receipt = {
         "receipt_version": "chaptera.editor-desktop-ux-snapshots.v1",
-        "renderer": "chaptera-eframe-real-window",
+        "renderer": "chaptera-egui-kittest-wgpu-headless-windows",
         "windows_scale_assumption": "100_percent",
         "screenshots": {
             "default_1280x820": default,
