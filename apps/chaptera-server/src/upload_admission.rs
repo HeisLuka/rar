@@ -399,14 +399,13 @@ impl SqliteUploadAdmissionAuthority {
     pub async fn reacquire_exact(
         &self,
         request: UploadAdmissionRequest,
-        expected_generation: i64,
         now_ms: i64,
     ) -> Result<UploadAdmissionReservation, UploadAdmissionError> {
         validate_request(&request)?;
-        if expected_generation < 0 || now_ms < 0 {
+        if now_ms < 0 {
             return Err(UploadAdmissionError::new(
                 "upload_admission_reacquire_invalid",
-                "generation and now_ms must be non-negative",
+                "now_ms must be non-negative",
             ));
         }
         if request.expected_bytes > self.config.max_single_upload_bytes {
@@ -448,12 +447,6 @@ impl SqliteUploadAdmissionAuthority {
             return Err(UploadAdmissionError::new(
                 "upload_admission_idempotency_conflict",
                 "upload reservation fingerprint does not match durable job payload",
-            ));
-        }
-        if existing.lease_generation != expected_generation {
-            return Err(UploadAdmissionError::new(
-                "upload_admission_reacquire_conflict",
-                "upload reservation generation is stale",
             ));
         }
         if existing.released_at_ms.is_some() {
@@ -507,7 +500,7 @@ impl SqliteUploadAdmissionAuthority {
         .bind(request.principal_id.as_bytes())
         .bind(request.expected_bytes)
         .bind(request.request_hash.as_bytes())
-        .bind(expected_generation)
+        .bind(existing.lease_generation)
         .execute(&mut *tx)
         .await
         .map_err(sqlite_error)?;
@@ -528,6 +521,81 @@ impl SqliteUploadAdmissionAuthority {
                     "reacquired upload reservation disappeared",
                 )
             })
+    }
+
+    /// Release one exact durable reservation fingerprint without exposing its
+    /// mutable lease generation to durable job payloads.
+    pub async fn release_exact(
+        &self,
+        request: UploadAdmissionRequest,
+        now_ms: i64,
+    ) -> Result<ReleaseUploadOutcome, UploadAdmissionError> {
+        validate_request(&request)?;
+        if now_ms < 0 {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_release_invalid",
+                "now_ms must be non-negative",
+            ));
+        }
+
+        let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
+        let mut tx = (*connection)
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlite_error)?;
+        let existing = fetch_reservation(&mut tx, &request.reservation_id)
+            .await?
+            .ok_or_else(|| {
+                UploadAdmissionError::new(
+                    "upload_admission_not_found",
+                    "upload reservation does not exist",
+                )
+            })?;
+        if existing.tenant_id != request.tenant_id
+            || existing.principal_id != request.principal_id
+            || existing.expected_bytes != request.expected_bytes
+            || existing.request_hash != request.request_hash
+        {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_release_conflict",
+                "upload reservation fingerprint does not match",
+            ));
+        }
+        if existing.released_at_ms.is_some() {
+            tx.commit().await.map_err(sqlite_error)?;
+            return Ok(ReleaseUploadOutcome::AlreadyReleased);
+        }
+
+        let result = sqlx::query(
+            r#"
+            UPDATE upload_admission_reservations
+            SET released_at_ms = ?, updated_at_ms = ?
+            WHERE reservation_id = ?
+              AND tenant_id = ?
+              AND principal_id = ?
+              AND expected_bytes = ?
+              AND request_hash = ?
+              AND released_at_ms IS NULL
+            "#,
+        )
+        .bind(now_ms)
+        .bind(now_ms)
+        .bind(request.reservation_id.as_bytes())
+        .bind(request.tenant_id.as_bytes())
+        .bind(request.principal_id.as_bytes())
+        .bind(request.expected_bytes)
+        .bind(request.request_hash.as_bytes())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlite_error)?;
+        if result.rows_affected() != 1 {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_release_conflict",
+                "upload reservation changed during exact release",
+            ));
+        }
+        tx.commit().await.map_err(sqlite_error)?;
+        Ok(ReleaseUploadOutcome::Released)
     }
 
     pub async fn release(
@@ -1186,26 +1254,29 @@ mod tests {
         };
 
         let reacquired = authority
-            .reacquire_exact(
-                original.clone(),
-                reserved.lease_generation,
-                reserved.lease_expires_at_ms,
-            )
+            .reacquire_exact(original.clone(), reserved.lease_expires_at_ms)
             .await
             .unwrap();
         assert_eq!(reacquired.reservation_id, original.reservation_id);
         assert_eq!(reacquired.lease_generation, reserved.lease_generation + 1);
         assert!(reacquired.lease_expires_at_ms > reserved.lease_expires_at_ms);
 
-        let stale = authority
-            .reacquire_exact(
-                original,
-                reserved.lease_generation,
-                reacquired.lease_expires_at_ms,
-            )
+        let replay = authority
+            .reacquire_exact(original.clone(), reacquired.lease_expires_at_ms - 1)
             .await
-            .unwrap_err();
-        assert_eq!(stale.code, "upload_admission_reacquire_conflict");
+            .unwrap();
+        assert_eq!(replay.lease_generation, reacquired.lease_generation + 1);
+
+        let mut changed = original;
+        changed.request_hash = "f".repeat(64);
+        assert_eq!(
+            authority
+                .reacquire_exact(changed, replay.lease_expires_at_ms)
+                .await
+                .unwrap_err()
+                .code,
+            "upload_admission_idempotency_conflict"
+        );
 
         authority.close().await;
         cleanup(&path);
@@ -1244,11 +1315,38 @@ mod tests {
         };
 
         let denied = authority
-            .reacquire_exact(original, reserved.lease_generation, expiry)
+            .reacquire_exact(original, expiry)
             .await
             .unwrap_err();
         assert_eq!(denied.code, "upload_principal_capacity");
         assert_eq!(denied.retry_at_ms, Some(live.lease_expires_at_ms));
+
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn exact_release_is_idempotent_across_reacquire_generation_changes() {
+        let (path, authority) = setup("release-exact").await;
+        let request = request("release-exact", "principal-a", 400);
+        let reserved = match authority.reserve(request.clone(), 10).await.unwrap() {
+            ReserveUploadOutcome::Reserved(record) => record,
+            other => panic!("unexpected reserve outcome: {other:?}"),
+        };
+        let reacquired = authority
+            .reacquire_exact(request.clone(), reserved.lease_expires_at_ms)
+            .await
+            .unwrap();
+        assert!(reacquired.lease_generation > reserved.lease_generation);
+
+        assert_eq!(
+            authority.release_exact(request.clone(), 200).await.unwrap(),
+            ReleaseUploadOutcome::Released
+        );
+        assert_eq!(
+            authority.release_exact(request, 300).await.unwrap(),
+            ReleaseUploadOutcome::AlreadyReleased
+        );
 
         authority.close().await;
         cleanup(&path);
