@@ -534,12 +534,18 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Mutex,
+            atomic::{AtomicU64, Ordering},
+        },
     };
+
+    use tokio::io::AsyncRead;
 
     use crate::{
         blob_store::{
             BindingLifecycle, BlobBindingRepository, BlobNamespace, PhysicalBlobRecord,
+            ProviderCapabilities, ProviderGrant, ProviderGrantRequest, ProviderObjectMetadata,
             ResourceBinding, ResourceKind,
         },
         schema_migration::SqliteMigrationRuntime,
@@ -641,6 +647,137 @@ mod tests {
             created_at_ms: 1,
             completed_at_ms: None,
         }
+    }
+
+    struct FakeProvider {
+        head: Mutex<Option<ProviderObjectMetadata>>,
+        delete_error: Mutex<Option<ProviderError>>,
+    }
+
+    impl FakeProvider {
+        fn new(
+            head: Option<ProviderObjectMetadata>,
+            delete_error: Option<ProviderError>,
+        ) -> Self {
+            Self {
+                head: Mutex::new(head),
+                delete_error: Mutex::new(delete_error),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BlobProvider for FakeProvider {
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                hard_create_only: true,
+                hard_exact_or_max_upload_size: true,
+                signed_content_type: true,
+                strong_head_after_put: true,
+            }
+        }
+
+        async fn create_immutable(
+            &self,
+            _object_locator: &str,
+            _expected_byte_len: u64,
+            _input: Box<dyn AsyncRead + Unpin + Send>,
+        ) -> Result<ProviderObjectMetadata, ProviderError> {
+            Err(ProviderError::new(
+                ProviderErrorKind::Other,
+                "unused_create",
+            ))
+        }
+
+        async fn head_exact(
+            &self,
+            _object_locator: &str,
+        ) -> Result<Option<ProviderObjectMetadata>, ProviderError> {
+            Ok(self.head.lock().unwrap().clone())
+        }
+
+        async fn open_read(
+            &self,
+            _object_locator: &str,
+            _generation: &str,
+        ) -> Result<Box<dyn AsyncRead + Unpin + Send>, ProviderError> {
+            Err(ProviderError::new(
+                ProviderErrorKind::Other,
+                "unused_read",
+            ))
+        }
+
+        async fn delete_exact(
+            &self,
+            _object_locator: &str,
+            _generation: &str,
+        ) -> Result<(), ProviderError> {
+            match self.delete_error.lock().unwrap().clone() {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        }
+
+        async fn issue_grant(
+            &self,
+            _request: &ProviderGrantRequest,
+        ) -> Result<ProviderGrant, ProviderError> {
+            Err(ProviderError::new(
+                ProviderErrorKind::Other,
+                "unused_grant",
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_adapter_maps_delete_outcomes_and_fails_closed_on_generation_drift() {
+        let provider = Arc::new(FakeProvider::new(
+            Some(ProviderObjectMetadata {
+                generation: "generation-new".into(),
+                byte_len: 123,
+                etag: "generation-new".into(),
+            }),
+            Some(ProviderError::new(
+                ProviderErrorKind::UnknownOutcome,
+                "delete_ambiguous",
+            )),
+        ));
+        let objects = ProviderBlobGcObjectStore::new(provider);
+
+        assert_eq!(
+            objects
+                .delete_exact("canonical/tenant-a/blob-1", "generation-old")
+                .await
+                .unwrap(),
+            GcDeleteOutcome::UnknownOutcome
+        );
+        let error = objects
+            .exists_exact("canonical/tenant-a/blob-1", "generation-old")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "provider_generation_changed");
+
+        let provider = Arc::new(FakeProvider::new(
+            None,
+            Some(ProviderError::new(
+                ProviderErrorKind::NotFound,
+                "delete_missing",
+            )),
+        ));
+        let objects = ProviderBlobGcObjectStore::new(provider);
+        assert_eq!(
+            objects
+                .delete_exact("canonical/tenant-a/blob-2", "generation-1")
+                .await
+                .unwrap(),
+            GcDeleteOutcome::NotFound
+        );
+        assert!(
+            !objects
+                .exists_exact("canonical/tenant-a/blob-2", "generation-1")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
