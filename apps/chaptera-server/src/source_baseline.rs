@@ -732,6 +732,64 @@ mod tests {
     const SOURCE_SHA: &str = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf";
 
     #[test]
+    fn child_commit_identity_matches_web_revision_and_authoring_laws() {
+        let project = json!({
+            "schema_version": "pub-editor-v0.4",
+            "source_hash": SOURCE_SHA,
+            "assets": [],
+            "table_grids": [],
+            "operations": [{
+                "kind": "move_node",
+                "node_id": "007d9898-568b-5125-b519-8d88243aabfb",
+                "before": {
+                    "x": 526710,
+                    "y": 1191292,
+                    "width": 4436165,
+                    "height": 587274
+                },
+                "after": {
+                    "x": 653710,
+                    "y": 1445292,
+                    "width": 4436165,
+                    "height": 587274
+                }
+            }]
+        });
+        let operation = project["operations"][0].clone();
+        let ids = derive_commit_identities(
+            "doc-product-api-test",
+            SOURCE_SHA,
+            "pub-editor-v0.4",
+            &project,
+            &operation,
+            &format!("sha256:{}", "1".repeat(64)),
+            &"2".repeat(64),
+        )
+        .unwrap();
+
+        assert_eq!(
+            ids.project_hash,
+            "sha256:cc53d0447c69bc6f90f445413e05f0c5c457ca2ddff1d6d73f0059856edba04e"
+        );
+        assert_eq!(
+            ids.state_id,
+            "sha256:368ee0fbc02284b74e770a9c47c94778e4797bb6cfbd52596b3c2b237145d534"
+        );
+        assert_eq!(
+            ids.transition_hash,
+            "sha256:fb86cd4312887d4d0466ff879f8fd1bd60398c07be10e13258c442aa4e4b08ae"
+        );
+        assert_eq!(
+            ids.service_revision_id,
+            "sha256:0b87cd1ec1564cec86ff9c15be6fb470211370e04c382860048582c62ad52be5"
+        );
+        assert_eq!(
+            ids.canonical_authoring_revision_id,
+            "5cbbe3bdb0f04d347761bb7f4767f5d8e068290645e66cbfed1fdc0f8172ccf4"
+        );
+    }
+
+    #[test]
     fn sample_newsletter_baseline_matches_existing_web_and_authoring_goldens() {
         let project = json!({
             "operations": [],
