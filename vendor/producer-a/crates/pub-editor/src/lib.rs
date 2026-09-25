@@ -32,7 +32,7 @@ use pub_model::{
     ResourceId, SourceDerivedIdInput, Story, StoryFrame, TableColumnId, TableRowId,
     derive_source_canonical_id, validate_story_frames,
 };
-pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
+pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
@@ -54,7 +54,9 @@ pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
 pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
 pub const EDITOR_PROJECT_VERSION_V0_7: &str = "pub-editor-v0.7";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_7;
+pub const EDITOR_PROJECT_VERSION_V0_8: &str = "pub-editor-v0.8";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_8;
+pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -763,6 +765,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesBreakLinkOperation {
         index: usize,
     },
+    LegacyProjectCarriesMoveNodesOperation {
+        index: usize,
+    },
     LegacyProjectCarriesTableGrids,
     TableGridMismatch,
     MissingAssetBytes {
@@ -802,7 +807,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, or {EDITOR_PROJECT_VERSION_V0_7:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, or {EDITOR_PROJECT_VERSION_V0_8:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -829,6 +834,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesBreakLinkOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses BreakTextFrameForwardLink but the project schema predates pub-editor-v0.7"
+            ),
+            Self::LegacyProjectCarriesMoveNodesOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses MoveNodes but the project schema predates pub-editor-v0.8"
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
@@ -1090,7 +1099,13 @@ impl EditorSession {
     pub fn project(&self) -> EditorProject {
         let table_grids = effective_table_grids(&self.graph);
         let schema_version =
-            if self.undo.iter().any(|operation| {
+            if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_8
+            } else if self.undo.iter().any(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
             }) {
                 EDITOR_PROJECT_VERSION_V0_7
@@ -1175,6 +1190,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1198,6 +1214,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
         {
             if let Some(index) = project
                 .operations
@@ -1210,6 +1227,7 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_5
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
         {
             if let Some(index) = project
                 .operations
@@ -1221,15 +1239,27 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_7 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_7
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+        {
             if let Some(index) = project.operations.iter().position(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
             }) {
                 return Err(EditorProjectError::LegacyProjectCarriesBreakLinkOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_8 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesMoveNodesOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
@@ -1290,6 +1320,7 @@ impl EditorSession {
 
         if project.schema_version == EDITOR_PROJECT_VERSION_V0_6
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_7
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_8
         {
             let actual_grids = effective_table_grids(&candidate.graph);
             if actual_grids != project.table_grids {
