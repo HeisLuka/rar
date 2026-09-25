@@ -6,8 +6,12 @@ on:
       - "tools/build_editor_fixed_pdf_receipt.py"
       - "tools/test_build_editor_fixed_pdf_receipt.py"
       - "tools/editor_fixed_output_current_state_v1.py"
+      - "tools/cmo_slot_runtime_bridge_v1.py"
+      - "tools/test_cmo_slot_runtime_bridge_v1.py"
       - "tools/fixed_pdf_shaped_flow_bridge_v1.py"
       - "tools/resolved_graph_scene_bridge_v1.py"
+      - "crates/chaptera-layout-projection/**"
+      - "crates/chaptera-scene-instance/**"
       - "services/editor-api/story_range_v1.py"
       - ".github/workflows/editor-fixed-pdf-producer-boundary.yml"
   workflow_dispatch:
