@@ -1818,6 +1818,115 @@ impl EditorSession {
         Ok(operation)
     }
 
+    pub fn can_break_text_frame_forward_link(
+        &self,
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+        new_story_id: StoryId,
+    ) -> Result<(), EditorError> {
+        self.validate_source_identity()?;
+
+        if !is_editor_created_uuid_v7_story_id(new_story_id) {
+            return Err(EditorError::NewStoryIdInvalid {
+                story_id: new_story_id,
+            });
+        }
+        if self.graph.stories.contains_key(&new_story_id) {
+            return Err(EditorError::NewStoryIdConflict {
+                story_id: new_story_id,
+            });
+        }
+
+        let chain = explicit_story_chain_for_break(
+            &self.graph,
+            upstream_frame_id,
+            downstream_frame_id,
+        )?;
+        let source_story_id = chain
+            .first()
+            .expect("explicit chain must be non-empty")
+            .story_id;
+        if source_story_id == new_story_id {
+            return Err(EditorError::NewStoryIdConflict {
+                story_id: new_story_id,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn break_text_frame_forward_link(
+        &mut self,
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+        new_story_id: StoryId,
+    ) -> Result<EditOperation, EditorError> {
+        self.can_break_text_frame_forward_link(
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+        )?;
+
+        let before_frames = explicit_story_chain_for_break(
+            &self.graph,
+            upstream_frame_id,
+            downstream_frame_id,
+        )?;
+        let story_id = before_frames
+            .first()
+            .expect("capability check verified non-empty chain")
+            .story_id;
+        let break_index = before_frames
+            .iter()
+            .position(|frame| {
+                frame.frame_id == upstream_frame_id
+                    && frame.next == Some(downstream_frame_id)
+            })
+            .expect("capability check verified explicit break edge");
+
+        let mut after_frames = before_frames.clone();
+        after_frames[break_index].next = None;
+        for (index, frame) in after_frames.iter_mut().enumerate().skip(break_index + 1) {
+            frame.story_id = new_story_id;
+            if index == break_index + 1 {
+                frame.previous = None;
+            }
+        }
+
+        let upstream_after = after_frames
+            .iter()
+            .filter(|frame| frame.story_id == story_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let downstream_after = after_frames
+            .iter()
+            .filter(|frame| frame.story_id == new_story_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !validate_story_frames(&upstream_after).is_empty()
+            || !validate_story_frames(&downstream_after).is_empty()
+            || downstream_after.is_empty()
+        {
+            return Err(EditorError::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            });
+        }
+
+        let operation = EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+            before_frames,
+            after_frames,
+        };
+        apply_forward(&mut self.graph, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
     pub fn replace_story_range(
         &mut self,
         story_id: StoryId,
@@ -1995,6 +2104,18 @@ fn replay_canonical_operation(
         } => session
             .replace_story_text(*story_id, after.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::BreakTextFrameForwardLink {
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+            ..
+        } => session
+            .break_text_frame_forward_link(
+                *upstream_frame_id,
+                *downstream_frame_id,
+                *new_story_id,
+            )
+            .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ReplaceTableCellText {
             node_id,
             story_id,
@@ -2045,6 +2166,160 @@ fn replay_canonical_operation(
         EditOperation::ResizeNode { node_id, after, .. } => session
             .resize_node_to(*node_id, *after)
             .map_err(|error| EditorProjectError::Operation { index, error }),
+    }
+}
+
+fn is_editor_created_uuid_v7_story_id(story_id: StoryId) -> bool {
+    let bytes = story_id.as_canonical().as_bytes();
+    (bytes[6] & 0xf0) == 0x70 && (bytes[8] & 0xc0) == 0x80
+}
+
+fn frame_snapshot(
+    graph: &PubResolvedGraph,
+    node_id: NodeId,
+) -> Option<StoryFrame<StoryId, NodeId>> {
+    let node = graph.nodes.get(&node_id)?;
+    frame_from_payload(node_id, &node.payload)
+}
+
+fn explicit_story_chain_for_break(
+    graph: &PubResolvedGraph,
+    upstream_frame_id: NodeId,
+    downstream_frame_id: NodeId,
+) -> Result<Vec<StoryFrame<StoryId, NodeId>>, EditorError> {
+    let upstream = frame_snapshot(graph, upstream_frame_id).ok_or(
+        EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        },
+    )?;
+    let downstream = frame_snapshot(graph, downstream_frame_id).ok_or(
+        EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        },
+    )?;
+
+    if upstream.story_id != downstream.story_id
+        || upstream.next != Some(downstream_frame_id)
+        || downstream.previous != Some(upstream_frame_id)
+        || !graph.stories.contains_key(&upstream.story_id)
+    {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    let frames = graph
+        .nodes
+        .iter()
+        .filter_map(|(node_id, node)| {
+            let frame = frame_from_payload(*node_id, &node.payload)?;
+            (frame.story_id == upstream.story_id).then_some(frame)
+        })
+        .collect::<Vec<_>>();
+    if frames.len() < 2 || !validate_story_frames(&frames).is_empty() {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    let heads = frames
+        .iter()
+        .filter(|frame| frame.previous.is_none())
+        .map(|frame| frame.frame_id)
+        .collect::<Vec<_>>();
+    if heads.len() != 1 {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    let by_id = frames
+        .iter()
+        .map(|frame| (frame.frame_id, frame.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered = Vec::with_capacity(frames.len());
+    let mut seen = BTreeSet::new();
+    let mut cursor = Some(heads[0]);
+
+    while let Some(frame_id) = cursor {
+        if !seen.insert(frame_id) {
+            return Err(EditorError::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            });
+        }
+        let frame = by_id.get(&frame_id).ok_or(
+            EditorError::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            },
+        )?;
+        ordered.push(frame.clone());
+        cursor = frame.next;
+    }
+
+    if ordered.len() != frames.len()
+        || !ordered.iter().any(|frame| {
+            frame.frame_id == upstream_frame_id
+                && frame.next == Some(downstream_frame_id)
+        })
+    {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    Ok(ordered)
+}
+
+fn set_story_frame_snapshot(
+    graph: &mut PubResolvedGraph,
+    snapshot: &StoryFrame<StoryId, NodeId>,
+) -> Result<(), EditorError> {
+    let node = graph
+        .nodes
+        .get_mut(&snapshot.frame_id)
+        .ok_or(EditorError::StaleFrameTopology {
+            story_id: snapshot.story_id,
+        })?;
+    let frame = node
+        .payload
+        .story_frame
+        .as_mut()
+        .ok_or(EditorError::StaleFrameTopology {
+            story_id: snapshot.story_id,
+        })?;
+    frame.story_id = Some(snapshot.story_id);
+    frame.ordinal = snapshot.ordinal;
+    frame.previous_frame = snapshot.previous;
+    frame.next_frame = snapshot.next;
+    Ok(())
+}
+
+fn frames_match_snapshots(
+    graph: &PubResolvedGraph,
+    snapshots: &[StoryFrame<StoryId, NodeId>],
+) -> bool {
+    snapshots.iter().all(|expected| {
+        frame_snapshot(graph, expected.frame_id).as_ref() == Some(expected)
+    })
+}
+
+fn empty_editor_story(story_id: StoryId) -> Story {
+    Story {
+        id: story_id,
+        text: String::new(),
+        paragraphs: Vec::new(),
+        runs: Vec::new(),
+        fields: Vec::new(),
+        hyperlinks: Vec::new(),
+        source_refs: Vec::new(),
     }
 }
 
@@ -2293,6 +2568,47 @@ fn apply_forward(
             }
             story.text.clone_from(after);
         }
+        EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            new_story_id,
+            before_frames,
+            after_frames,
+            ..
+        } => {
+            if !graph.stories.contains_key(story_id)
+                || graph.stories.contains_key(new_story_id)
+                || !frames_match_snapshots(graph, before_frames)
+            {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            let current_source_frames = graph
+                .nodes
+                .iter()
+                .filter_map(|(node_id, node)| {
+                    let frame = frame_from_payload(*node_id, &node.payload)?;
+                    (frame.story_id == *story_id).then_some(frame.frame_id)
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_source_frames = before_frames
+                .iter()
+                .map(|frame| frame.frame_id)
+                .collect::<BTreeSet<_>>();
+            if current_source_frames != expected_source_frames {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            graph
+                .stories
+                .insert(*new_story_id, empty_editor_story(*new_story_id));
+            for frame in after_frames {
+                set_story_frame_snapshot(graph, frame)?;
+            }
+        }
         EditOperation::ReplaceTableCellText {
             node_id,
             story_id,
@@ -2417,6 +2733,47 @@ fn apply_inverse(
                 });
             }
             story.text.clone_from(before);
+        }
+        EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            new_story_id,
+            before_frames,
+            after_frames,
+            ..
+        } => {
+            let expected_empty = empty_editor_story(*new_story_id);
+            if !graph.stories.contains_key(story_id)
+                || graph.stories.get(new_story_id) != Some(&expected_empty)
+                || !frames_match_snapshots(graph, after_frames)
+            {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            let current_new_story_frames = graph
+                .nodes
+                .iter()
+                .filter_map(|(node_id, node)| {
+                    let frame = frame_from_payload(*node_id, &node.payload)?;
+                    (frame.story_id == *new_story_id).then_some(frame.frame_id)
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_new_story_frames = after_frames
+                .iter()
+                .filter(|frame| frame.story_id == *new_story_id)
+                .map(|frame| frame.frame_id)
+                .collect::<BTreeSet<_>>();
+            if current_new_story_frames != expected_new_story_frames {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            graph.stories.remove(new_story_id);
+            for frame in before_frames {
+                set_story_frame_snapshot(graph, frame)?;
+            }
         }
         EditOperation::ReplaceTableCellText {
             node_id,
