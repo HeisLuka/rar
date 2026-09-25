@@ -73,9 +73,16 @@ fn ns_ms(value: u64) -> f64 {
     value as f64 / 1_000_000.0
 }
 
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn hash_json<T: Serialize>(value: &T) -> Result<String, String> {
     let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(sha256_hex(&bytes))
 }
 
 fn decode_visible_resources(visual: &ViewerGeometryDocument) -> Result<(), String> {
@@ -136,7 +143,7 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
     let bytes = fs::read(path).map_err(|error| format!("read fixture: {error}"))?;
     let source_open_ms = elapsed_ms(file_started);
     let source_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-    let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let source_sha256 = sha256_hex(&bytes);
 
     let (visual, timing) = open_mature_0x2c_geometry_with_timing(
         &bytes,
