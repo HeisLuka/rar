@@ -755,14 +755,8 @@ mod tests {
         let per_lookup_bound = 9u64;
         assert_eq!(stats.story_frame_count, u64::from(count));
         assert_eq!(stats.additional_index_bytes, 0);
-        assert!(
-            stats.total_membership_comparisons()
-                <= u64::from(count) * per_lookup_bound * 2
-        );
-        assert!(
-            stats.total_membership_comparisons()
-                < u64::from(count) * u64::from(count)
-        );
+        assert!(stats.total_membership_comparisons() <= u64::from(count) * per_lookup_bound * 2);
+        assert!(stats.total_membership_comparisons() < u64::from(count) * u64::from(count));
     }
 
     #[test]
