@@ -8,6 +8,10 @@ on:
       - "tools/visreg_v1.py"
       - "tools/test_visreg_v1.py"
       - "tools/run_visreg_contract.py"
+      - "tools/render_equivalence_v1.py"
+      - "tools/test_render_equivalence_v1.py"
+      - "tools/run_render_equivalence_contract.py"
+      - "tools/optimization_receipt_v1.py"
       - "tools/scene_v1.py"
       - "tools/adapt_viewer_scene_v1.py"
       - "docs/visreg-v1.md"
@@ -32,6 +36,16 @@ jobs:
         run: python test_visreg_v1.py
       - name: Produce structured visual regression receipt
         run: python tools/run_visreg_contract.py
+      - name: Unit-test renderer differential consumer
+        working-directory: tools
+        run: python test_render_equivalence_v1.py
+      - name: Produce renderer equivalence receipt
+        run: mkdir -p target/render-equivalence && PYTHONPATH=tools python tools/run_render_equivalence_contract.py | tee target/render-equivalence/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-equivalence-${{ github.run_id }}
+          path: target/render-equivalence/receipt.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: visreg-v1-contract
