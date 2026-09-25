@@ -16,7 +16,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends p7zip-full iat
+          sudo apt-get install -y --no-install-recommends p7zip-full iat msitools
       - name: Rehydrate exact P2002 and P2003 target POC bytes
         run: |
           set -euo pipefail
@@ -46,33 +46,30 @@ jobs:
           test "$(sha256sum /tmp/poc/p3.iso | awk '{print $1}')" = '23c495d63e2d4f4486dd28cbeebf423518d7af77f28f9abdae8484da2de13036'
           test "$(sha1sum /tmp/poc/p3.iso | awk '{print $1}')" = 'a108158fe57f7bf0ff5b45c34fe4593acf320454'
           7z x -y /tmp/poc/p3.iso -o/tmp/poc/p3disc >/tmp/poc/p3-disc.log
+          P3MSI="$(find /tmp/poc/p3disc -type f -iname 'PUB11N.MSI' | head -n1)"
+          test -n "$P3MSI"
+          msiextract -C /tmp/poc/p3extract "$P3MSI" >/tmp/poc/p3-msiextract.log
           python3 - <<'PY'
-          import pathlib, subprocess, sys
-          root=pathlib.Path("/tmp/poc/p3disc")
+          import json, pathlib, shutil
+          root=pathlib.Path("/tmp/poc/p3extract")
+          out=pathlib.Path("/tmp/poc/p3out")
+          out.mkdir(parents=True,exist_ok=True)
           targets={"ACCSBAR.POC","ACCTBOX.POC"}
           found={}
-          for cab in sorted(root.rglob("*.CAB"))+sorted(root.rglob("*.cab")):
-              try:
-                  p=subprocess.run(["7z","l","-slt",str(cab)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
-              except Exception:
+          for p in root.rglob("*"):
+              if not p.is_file():
                   continue
-              text=p.stdout.decode("utf-8","replace")
-              paths=[]
-              for line in text.splitlines():
-                  if line.startswith("Path = "):
-                      paths.append(line[7:])
-              for target in targets:
-                  matches=[x for x in paths if pathlib.PurePath(x).name.upper()==target]
-                  if matches and target not in found:
-                      out=pathlib.Path("/tmp/poc/p3out")/target
-                      q=subprocess.run(["7z","e","-y",f"-o{out.parent}",str(cab),matches[0]],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-                      if q.returncode==0 and out.exists():
-                          found[target]={"cab":str(cab.relative_to(root)),"member":matches[0]}
+              name=p.name.upper()
+              if name in targets and name not in found:
+                  dst=out/name
+                  shutil.copyfile(p,dst)
+                  found[name]={"extracted_path":str(p.relative_to(root))}
           missing=targets-set(found)
           if missing:
-              raise SystemExit("missing P2003 targets: "+",".join(sorted(missing)))
-          pathlib.Path("/tmp/poc/p3-locators.json").write_text(__import__("json").dumps(found,indent=2))
-          print(__import__("json").dumps(found,indent=2))
+              candidates=[str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and ("ACCSBAR" in p.name.upper() or "ACCTBOX" in p.name.upper())]
+              raise SystemExit("missing P2003 targets: "+",".join(sorted(missing))+"; candidates="+json.dumps(candidates[:20]))
+          pathlib.Path("/tmp/poc/p3-locators.json").write_text(json.dumps(found,indent=2))
+          print(json.dumps(found,indent=2))
           PY
 
           python3 - <<'PY'
