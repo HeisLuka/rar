@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_10,
-    EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorError, EditorProject, EditorProjectError,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorError, EditorProject, EditorProjectError,
     EditorSession, LengthEmu, RectEmu, ResizeNodeBatchEntry,
 };
 use pub_model::{
