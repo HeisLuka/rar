@@ -264,6 +264,21 @@ impl SqliteRevisionIdentityStore {
         row.map(decode_binding).transpose()
     }
 
+    pub async fn require_binding(
+        &self,
+        document_id: &str,
+        service_revision_id: &str,
+    ) -> Result<RevisionIdentityBinding, RevisionIdentityError> {
+        self.resolve(document_id, service_revision_id)
+            .await?
+            .ok_or_else(|| {
+                RevisionIdentityError::new(
+                    "canonical_revision_unbound",
+                    "service revision has no canonical AuthoringRevisionId binding for this document",
+                )
+            })
+    }
+
     pub async fn resolve_service_revision(
         &self,
         document_id: &str,
@@ -834,6 +849,81 @@ mod tests {
 
         identity.close().await;
         revisions.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn historical_mapping_remains_exact_and_wrong_document_is_unbound() {
+        let (identity, revisions, path) = migrated_store("historical").await;
+        let canonical_r0 = "1".repeat(64);
+        let canonical_r1 = "2".repeat(64);
+        let canonical_r2 = "3".repeat(64);
+
+        identity
+            .bind_baseline("doc-a", "service-r0", &canonical_r0, 1)
+            .await
+            .unwrap();
+        revisions
+            .append_edge(edge("service-r0", "service-r1"))
+            .await
+            .unwrap();
+        identity
+            .bind_child(
+                "doc-a",
+                "service-r0",
+                "service-r1",
+                &canonical_r0,
+                &canonical_r1,
+                2,
+            )
+            .await
+            .unwrap();
+
+        let mut second = edge("service-r1", "service-r2");
+        second.parent_cursor = 1;
+        second.child_cursor = 2;
+        revisions.append_edge(second).await.unwrap();
+        identity
+            .bind_child(
+                "doc-a",
+                "service-r1",
+                "service-r2",
+                &canonical_r1,
+                &canonical_r2,
+                3,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            identity
+                .require_binding("doc-a", "service-r1")
+                .await
+                .unwrap()
+                .canonical_revision_id,
+            canonical_r1
+        );
+        let wrong_document = identity
+            .require_binding("doc-other", "service-r1")
+            .await
+            .unwrap_err();
+        assert_eq!(wrong_document.code, "canonical_revision_unbound");
+
+        identity.close().await;
+        revisions.close().await;
+
+        let reopened = SqliteRevisionIdentityStore::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened
+                .require_binding("doc-a", "service-r1")
+                .await
+                .unwrap()
+                .canonical_revision_id,
+            canonical_r1
+        );
+        reopened.close().await;
         cleanup(&path);
     }
 
