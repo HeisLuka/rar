@@ -1,0 +1,117 @@
+name: TEMP INTUIT Publisher XP pack recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-intuit-xp-recovery-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install static OLE parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Download and statically inspect bounded Publisher pack
+        run: |
+          set -euo pipefail
+          mkdir -p work out
+          python - <<'PY'
+          import hashlib, json, pathlib, urllib.request, zipfile, shutil
+          import olefile
+
+          URL='https://intuit.ru/upload/lections/course/228/1/publisher.zip'
+          CAP=10*1024*1024
+          ua={'User-Agent':'rar-pub-training-intuit-recovery/1.0'}
+          req=urllib.request.Request(URL,headers=ua)
+          with urllib.request.urlopen(req,timeout=60) as r:
+              data=r.read(CAP+1)
+              final=r.geturl()
+              ctype=r.headers.get('Content-Type')
+          if len(data)>CAP:
+              raise SystemExit('carrier exceeds 10 MiB cap')
+          zpath=pathlib.Path('work/publisher.zip')
+          zpath.write_bytes(data)
+          carrier_sha=hashlib.sha256(data).hexdigest()
+
+          rows=[]
+          with zipfile.ZipFile(zpath) as z:
+              infos=z.infolist()
+              for info in infos:
+                  name=info.filename
+                  if info.is_dir() or not name.lower().endswith('.pub'):
+                      continue
+                  if info.file_size>50*1024*1024:
+                      rows.append({'path':name,'status':'skip_too_large','size':info.file_size})
+                      continue
+                  raw=z.read(info)
+                  sha=hashlib.sha256(raw).hexdigest()
+                  tmp=pathlib.Path('work/current.pub')
+                  tmp.write_bytes(raw)
+                  rec={
+                      'path':name,
+                      'size':len(raw),
+                      'sha256':sha,
+                      'cfb_magic':raw[:8].hex(),
+                      'is_cfb':raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1'),
+                  }
+                  if rec['is_cfb']:
+                      try:
+                          ole=olefile.OleFileIO(str(tmp))
+                          streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                          rec['streams']=streams
+                          contents_name=next((x for x in ole.listdir(streams=True,storages=False) if x and x[-1]=='Contents'),None)
+                          rec['has_contents']=contents_name is not None
+                          if contents_name:
+                              b=ole.openstream(contents_name).read(64)
+                              rec['contents_prefix_hex']=b.hex()
+                              rec['contents_len']=ole.get_size(contents_name)
+                          ole.close()
+                      except Exception as e:
+                          rec['ole_error']=f'{type(e).__name__}: {e}'
+                  rows.append(rec)
+                  tmp.unlink(missing_ok=True)
+
+          summary={
+              'schema':'chaptera.corpus-training-intuit-publisher-xp-recovery.v1',
+              'source_safe':True,
+              'raw_pub_retained':False,
+              'source_url':URL,
+              'final_url':final,
+              'content_type':ctype,
+              'carrier_size':len(data),
+              'carrier_sha256':carrier_sha,
+              'pub_count':sum(1 for r in rows if r.get('sha256')),
+              'unique_pub_sha256':len({r.get('sha256') for r in rows if r.get('sha256')}),
+              'files':rows,
+              'guardrail':'INTUIT course provenance is independent from Microsoft Press XP Step by Step provenance; writer/version inference must come from file bytes, not course labeling.'
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          shutil.rmtree('work',ignore_errors=True)
+          PY
+
+      - name: Source-safe artifact guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected raw payload leaked into artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-intuit-publisher-xp-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
