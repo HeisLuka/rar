@@ -4,9 +4,12 @@ on:
   pull_request:
     paths:
       - 'tools/corpus/receipts/corpus-current-authority-2026-09-24.json'
+      - 'tools/corpus/receipts/corpus-current-authority-2026-09-25-v3.json'
       - 'tools/corpus/receipts/corpus-current-authority-2026-09-25.json'
       - 'tools/corpus/receipts/current-rar-1515.sha256.txt'
+      - 'tools/corpus/receipts/current-rar-1521.sha256.txt'
       - 'tools/corpus/receipts/version-labelled-training-29-input-2026-09-25.json'
+      - 'tools/corpus/receipts/publisher2002-sbs-06-input-2026-09-25.json'
       - 'tools/corpus/receipts/container-net-new-407-part-*.sha256.txt'
       - 'tools/corpus/test_corpus_current_authority.py'
       - '.github/workflows/corpus-current-authority.yml'
@@ -14,9 +17,12 @@ on:
     branches: [main]
     paths:
       - 'tools/corpus/receipts/corpus-current-authority-2026-09-24.json'
+      - 'tools/corpus/receipts/corpus-current-authority-2026-09-25-v3.json'
       - 'tools/corpus/receipts/corpus-current-authority-2026-09-25.json'
       - 'tools/corpus/receipts/current-rar-1515.sha256.txt'
+      - 'tools/corpus/receipts/current-rar-1521.sha256.txt'
       - 'tools/corpus/receipts/version-labelled-training-29-input-2026-09-25.json'
+      - 'tools/corpus/receipts/publisher2002-sbs-06-input-2026-09-25.json'
       - 'tools/corpus/receipts/container-net-new-407-part-*.sha256.txt'
       - 'tools/corpus/test_corpus_current_authority.py'
       - '.github/workflows/corpus-current-authority.yml'

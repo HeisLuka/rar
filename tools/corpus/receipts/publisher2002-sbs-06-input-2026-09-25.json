@@ -1,0 +1,44 @@
+{
+  "schema": "chaptera.corpus-publisher2002-sbs-register-input.v1",
+  "date": "2026-09-25",
+  "provenance": {
+    "source_class": "INTUIT Publisher XP training pack / Publisher 2002 SBS practice identities",
+    "upstream_task": "PUB-T-716",
+    "upstream_pr": 646,
+    "upstream_run_id": 36159842901,
+    "upstream_artifact_id": 10874149235,
+    "upstream_artifact_digest": "sha256:cf09c3946c735030138d62953d5f2e982be6f1906706bcc8e0a4995a8a517f60",
+    "guardrail": "course/package wording is acquisition provenance only; do not infer writer version solely from package wording"
+  },
+  "files": [
+    {
+      "filename": "BusinessCard.pub",
+      "sha256": "58c0746aafd2dd3507e5d423e0517907b3102d01e51b89c5edb8e5bd2b41990b"
+    },
+    {
+      "filename": "PrintDoc1.pub",
+      "sha256": "fc17e25db2121cf67d4ed7fea9796187d2a8469d720a30fa1dfa545402e9d386"
+    },
+    {
+      "filename": "PrintDoc2.pub",
+      "sha256": "5ca332349e7c51295daf1feb765522e6fbc3268b29757465a00e8e92afdff017"
+    },
+    {
+      "filename": "ProcessColor.pub",
+      "sha256": "878006a356b55de273c65f88e731c8610fda37c2ab7985a3b528e5d4e65c7f4b"
+    },
+    {
+      "filename": "SpotColor.pub",
+      "sha256": "66fc3c1c08c8041a873cd890a7bba157af83a6271f221fd0976e5f467481a147"
+    },
+    {
+      "filename": "SpotColor2.pub",
+      "sha256": "2ba7cb71c9637eafe185bde36d0dd0f18a98cc1869ff1c6df6cd86dae0dd4c10"
+    }
+  ],
+  "expected_unique_sha_count": 6,
+  "expected_predecessor_count": 1515,
+  "expected_predecessor_digest": "sha256:3151155207344da1e611b690c0c7c80dfcb08fd3edf3191da59e2f14be45675c",
+  "expected_new_tranche_digest": "sha256:74eccc943b9187a6a351b27ecdb3b666880953f8cbfeb9aa45cec8794afc0f15",
+  "expected_successor_count": 1521
+}
