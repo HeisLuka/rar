@@ -85,14 +85,7 @@ pub async fn run_with_auth(
 
     let listener = TcpListener::bind(config.listen).await?;
     eprintln!("chaptera serve listening on {}", listener.local_addr()?);
-    run_with_listener_policy_and_auth(
-        listener,
-        state,
-        edge_policy,
-        auth,
-        shutdown::signal(),
-    )
-    .await
+    run_with_listener_policy_and_auth(listener, state, edge_policy, auth, shutdown::signal()).await
 }
 
 pub async fn run_with_listener<F>(
@@ -103,14 +96,8 @@ pub async fn run_with_listener<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    run_with_listener_policy_and_auth(
-        listener,
-        state,
-        EdgePolicy::development(),
-        None,
-        shutdown,
-    )
-    .await
+    run_with_listener_policy_and_auth(listener, state, EdgePolicy::development(), None, shutdown)
+        .await
 }
 
 async fn run_with_listener_policy_and_auth<F>(
