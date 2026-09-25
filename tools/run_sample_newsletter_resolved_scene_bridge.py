@@ -43,6 +43,7 @@ from projection_context_sidecar_v1 import (
 from validate_viewer_geometry_receipt import validate_schema as validate_viewer_schema
 
 REDO_STATE = "chaptera-layout-redo-operation.json"
+BASELINE_PROJECT_STATE = "chaptera-layout-baseline-project.json"
 
 
 class SampleNewsletterSceneEngineError(RuntimeError):
@@ -261,6 +262,10 @@ def main() -> int:
                     "baseline requires launcher-verified fixture"
                 )
             project = baseline_project(source_hash)
+            (args.state_dir / BASELINE_PROJECT_STATE).write_text(
+                json.dumps(project, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
             _, scene = project_for_scene(graph, project, projection_context)
             equivalence = compare_viewer_and_adapter_scene(viewer, scene)
             candidate = move_candidate(
@@ -360,7 +365,23 @@ def main() -> int:
                 if not operations:
                     raise SampleNewsletterSceneEngineError("nothing to undo")
                 removed = copy.deepcopy(operations[-1])
-                result["operations"] = copy.deepcopy(operations[:-1])
+                remaining = copy.deepcopy(operations[:-1])
+                if remaining:
+                    result["operations"] = remaining
+                else:
+                    baseline_path = args.state_dir / BASELINE_PROJECT_STATE
+                    if not baseline_path.is_file():
+                        raise SampleNewsletterSceneEngineError(
+                            "baseline project state missing"
+                        )
+                    result = load_json(baseline_path, "baseline project state")
+                    if (
+                        result.get("source_hash") != source_hash
+                        or result.get("operations") != []
+                    ):
+                        raise SampleNewsletterSceneEngineError(
+                            "baseline project state is invalid"
+                        )
                 redo_path.write_text(
                     json.dumps(removed, sort_keys=True, separators=(",", ":")) + "\n",
                     encoding="utf-8",
@@ -369,7 +390,7 @@ def main() -> int:
                 if not redo_path.is_file():
                     raise SampleNewsletterSceneEngineError("nothing to redo")
                 operation = load_json(redo_path, "redo operation")
-                result["operations"] = list(copy.deepcopy(operations)) + [operation]
+                result = append_operation(base_project, operation)
             _, scene = project_for_scene(graph, result, projection_context)
             return emit({
                 "resulting_project": result,
