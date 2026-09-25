@@ -199,8 +199,11 @@ if ($manifest.vm_name -ne "PUB-LAB-2019") {
 if ($manifest.restore_nonce -ne $challenge.restore_nonce) {
     throw "EnvironmentManifest is not bound to this restore challenge"
 }
-if ($manifest.publisher_version -ne "16.0" -or $manifest.publisher_build -ne "16.0.12527.22145") {
+if ($manifest.publisher.version -ne "16.0" -or $manifest.publisher.build -ne "16.0.12527.22145") {
     throw "EnvironmentManifest Publisher build mismatch"
+}
+if ([int]$manifest.publisher.process_count -ne 0) {
+    throw "EnvironmentManifest reports a stale Publisher process"
 }
 if ($manifest.environment_fingerprint -ne $expectedFingerprint) {
     throw "EnvironmentManifest environment fingerprint mismatch"
