@@ -234,6 +234,70 @@ jobs:
           if ($manifest.agent_catalog_sha256 -ne $catalogHash) { throw "package manifest Agent catalog hash mismatch" }
           if ([int64]$manifest.agent_catalog_size -ne $catalogBytes) { throw "package manifest Agent catalog byte length mismatch" }
 
+          $agentInput = Join-Path $env:RUNNER_TEMP "chaptera-portable-agent-input.ndjson"
+          $agentOutput = Join-Path $env:RUNNER_TEMP "chaptera-portable-agent-output.ndjson"
+          $agentError = Join-Path $env:RUNNER_TEMP "chaptera-portable-agent-stderr.txt"
+          @(
+            '{"request_id":"portable-describe","command":"protocol.describe"}',
+            '{"request_id":"portable-shutdown","command":"shutdown"}'
+          ) | Set-Content -Encoding utf8 $agentInput
+          $agentProcess = Start-Process -FilePath $exe -ArgumentList @("--agent-v1") -RedirectStandardInput $agentInput -RedirectStandardOutput $agentOutput -RedirectStandardError $agentError -Wait -PassThru
+          if ($agentProcess.ExitCode -ne 0) {
+            $stderr = if (Test-Path $agentError) { (Get-Content -Raw $agentError).Trim() } else { "" }
+            throw "portable Agent V1 handshake failed with exit code $($agentProcess.ExitCode): $stderr"
+          }
+          $describeLines = @(Get-Content $agentOutput | Where-Object { $_.Trim() })
+          if ($describeLines.Count -ne 2) {
+            throw "portable Agent V1 handshake expected exactly 2 result envelopes, got $($describeLines.Count)"
+          }
+          try {
+            $describeEnvelope = $describeLines[0] | ConvertFrom-Json
+            $shutdownEnvelope = $describeLines[1] | ConvertFrom-Json
+          } catch {
+            throw "portable Agent V1 handshake did not return valid NDJSON"
+          }
+          if ($describeEnvelope.message_type -ne "result" -or $describeEnvelope.ok -ne $true -or $describeEnvelope.request_id -ne "portable-describe") {
+            throw "portable Agent V1 protocol.describe returned a non-success envelope"
+          }
+          if ($shutdownEnvelope.message_type -ne "result" -or $shutdownEnvelope.ok -ne $true -or $shutdownEnvelope.request_id -ne "portable-shutdown" -or $shutdownEnvelope.result.shutdown -ne $true) {
+            throw "portable Agent V1 shutdown returned a non-success envelope"
+          }
+          $describe = $describeEnvelope.result
+          if ($describe.protocol_version -ne "chaptera.agent-control.v1") { throw "portable runtime Agent protocol mismatch" }
+          if ($describe.catalog_schema -ne "chaptera.agent-control.catalog.v1") { throw "portable runtime Agent catalog schema mismatch" }
+          if ($describe.executable -ne "chaptera-editor.exe") { throw "portable runtime Agent executable identity mismatch" }
+          if ($describe.catalog_sha256 -ne $catalogHash) { throw "portable runtime embedded catalog SHA does not match packaged catalog" }
+          if ($describe.native_pub_write -ne $false) { throw "portable runtime unexpectedly exposes native PUB write" }
+          if ($describe.global_laws.source_pub_immutable -ne $true) { throw "portable runtime lost immutable-source law" }
+          if ($describe.global_laws.native_pub_write -ne $false) { throw "portable runtime catalog widened native PUB write" }
+
+          $commandNames = @($describe.commands)
+          $contractNames = @($describe.command_contracts.PSObject.Properties.Name)
+          if ($commandNames.Count -ne 21 -or $contractNames.Count -ne 21) {
+            throw "portable runtime Agent command catalog does not contain exactly 21 commands"
+          }
+          $commandSet = @($commandNames | Sort-Object -Unique)
+          $contractSet = @($contractNames | Sort-Object -Unique)
+          if (($commandSet -join "`n") -ne ($contractSet -join "`n")) {
+            throw "portable runtime Agent command list differs from embedded command contracts"
+          }
+
+          $handshakePath = Join-Path $artifact "chaptera.agent-portable-handshake.json"
+          [ordered]@{
+            schema = "chaptera.agent-portable-handshake.v1"
+            executable_sha256 = $exeHash
+            catalog_sha256 = $catalogHash
+            runtime_catalog_sha256 = [string]$describe.catalog_sha256
+            protocol_version = [string]$describe.protocol_version
+            catalog_schema = [string]$describe.catalog_schema
+            command_count = $commandNames.Count
+            source_pub_immutable = [bool]$describe.global_laws.source_pub_immutable
+            native_pub_write = [bool]$describe.global_laws.native_pub_write
+            checkout_present = $false
+            catalog_binding_verified = $true
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $handshakePath
+
+
       - uses: actions/upload-artifact@v4
         with:
           name: chaptera-editor-portable-windows-x86_64
