@@ -15,9 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     blob_store::{BlobStoreService, CreateBindingRequest, ResourceKind},
     derived_artifacts::{DerivedArtifactFenceV1, SqliteDerivedArtifactStore},
-    export_publication::{
-        ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1, SqliteExportPublicationStore,
-    },
+    export_publication::ExportPublicationInputV1,
     job_queue::{JobKind, JobRecord},
     job_worker::{CancellationFlag, JobExecutor, JobFailure, JobFuture, JobSuccess},
     revision_materializer::{
@@ -250,6 +248,7 @@ pub type ExportPublishAuthFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), ExportExecutorError>> + Send + 'a>>;
 
 pub trait ExportPublishAuthorizer: Send + Sync {
+    /// Early fail-closed preflight. This is not the final revoke barrier.
     fn authorize<'a>(
         &'a self,
         job: &'a JobRecord,
@@ -257,11 +256,31 @@ pub trait ExportPublishAuthorizer: Send + Sync {
     ) -> ExportPublishAuthFuture<'a>;
 }
 
+pub type ExportPublicationCommitFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<String, ExportExecutorError>> + Send + 'a>>;
+
+pub trait ExportPublicationCommitter: Send + Sync {
+    /// Final publication authority.
+    ///
+    /// A production implementation must verify current document.export
+    /// authorization for payload.requesting_principal_id and prepare the
+    /// durable logical publication under the same access-generation
+    /// barrier/fence. A separate authorize-then-write sequence is not
+    /// sufficient for live-revocation correctness.
+    fn commit_authorized<'a>(
+        &'a self,
+        job: &'a JobRecord,
+        payload: &'a ExportJobPayloadV1,
+        input: ExportPublicationInputV1,
+        created_at_ms: i64,
+    ) -> ExportPublicationCommitFuture<'a>;
+}
+
 pub struct PublishedExportJobExecutor {
     producer: Arc<ExactRevisionEditableExporter>,
     blob_store: BlobStoreService,
     artifacts: SqliteDerivedArtifactStore,
-    publications: SqliteExportPublicationStore,
+    publication_committer: Arc<dyn ExportPublicationCommitter>,
     authorizer: Arc<dyn ExportPublishAuthorizer>,
 }
 
@@ -270,14 +289,14 @@ impl PublishedExportJobExecutor {
         producer: Arc<ExactRevisionEditableExporter>,
         blob_store: BlobStoreService,
         artifacts: SqliteDerivedArtifactStore,
-        publications: SqliteExportPublicationStore,
+        publication_committer: Arc<dyn ExportPublicationCommitter>,
         authorizer: Arc<dyn ExportPublishAuthorizer>,
     ) -> Self {
         Self {
             producer,
             blob_store,
             artifacts,
-            publications,
+            publication_committer,
             authorizer,
         }
     }
@@ -369,40 +388,32 @@ impl PublishedExportJobExecutor {
             ));
         }
 
-        // Re-check authorization immediately before preparing the logical
-        // publication identity. The prepared row is not user-visible until
-        // WorkerLoop atomically publishes the matching job_effect under the
-        // still-live queue lease/cancellation barrier.
-        self.authorizer.authorize(job, &payload).await?;
-
-        let prepared = self
-            .publications
-            .prepare(
-                ExportPublicationInputV1 {
-                    tenant_id: payload.tenant_id.clone(),
-                    job_id: job.job_id.clone(),
-                    document_id: payload.document_id.clone(),
-                    exact_revision_id: payload.exact_revision_id.clone(),
-                    canonical_revision_id: payload.canonical_authoring_revision_id.clone(),
-                    target_profile: payload.target_profile.clone(),
-                    layout_environment_id: payload.layout_environment_id.clone(),
-                    fence_id,
-                    artifact_binding_id: artifact_binding.binding_id,
-                    artifact_content_hash: produced.artifact_sha256,
-                    loss_binding_id: loss_binding.binding_id,
-                    loss_report_hash: produced.loss_report_sha256,
-                },
+        let publication_input = ExportPublicationInputV1 {
+            tenant_id: payload.tenant_id.clone(),
+            job_id: job.job_id.clone(),
+            document_id: payload.document_id.clone(),
+            exact_revision_id: payload.exact_revision_id.clone(),
+            canonical_revision_id: payload.canonical_authoring_revision_id.clone(),
+            target_profile: payload.target_profile.clone(),
+            layout_environment_id: payload.layout_environment_id.clone(),
+            fence_id,
+            artifact_binding_id: artifact_binding.binding_id,
+            artifact_content_hash: produced.artifact_sha256,
+            loss_binding_id: loss_binding.binding_id,
+            loss_report_hash: produced.loss_report_sha256,
+        };
+        let effect_key = self
+            .publication_committer
+            .commit_authorized(
+                job,
+                &payload,
+                publication_input,
                 i64::try_from(now_ms).map_err(|_| {
                     ExportExecutorError::new("clock_overflow", "publication time does not fit i64")
                 })?,
             )
-            .await
-            .map_err(|error| ExportExecutorError::new(error.code, error.message))?;
+            .await?;
 
-        let effect_key = match prepared {
-            ExportPublicationPrepareOutcomeV1::Prepared(record)
-            | ExportPublicationPrepareOutcomeV1::AlreadyPrepared(record) => record.effect_key,
-        };
         Ok(JobSuccess { effect_key })
     }
 
