@@ -1,0 +1,36 @@
+name: PUB-QUILL-TOKN-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-quill/src/story.rs"
+      - "vendor/producer-a/crates/pub-quill/src/tokn.rs"
+      - "vendor/producer-a/crates/pub-quill/src/lib.rs"
+      - "vendor/producer-a/crates/pub-quill/tests/tokn_real_fixtures.rs"
+      - "vendor/producer-a/crates/pub-quill/tests/fixtures/**"
+      - ".github/workflows/pub-quill-tokn-v1.yml"
+  push:
+    branches:
+      - pub-quill-tokn-01
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-tokn-reader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: |
+          rustfmt --edition 2024 --check \
+            vendor/producer-a/crates/pub-quill/src/lib.rs \
+            vendor/producer-a/crates/pub-quill/src/story.rs \
+            vendor/producer-a/crates/pub-quill/src/tokn.rs \
+            vendor/producer-a/crates/pub-quill/tests/tokn_real_fixtures.rs
+      - name: Check pub-quill
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-quill
+      - name: Test pub-quill
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill
