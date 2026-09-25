@@ -10,13 +10,13 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Inspect observed PSPP second-level HTML captures
+      - name: Inspect proven PSPP second-level HTML captures
         shell: bash
         run: |
           set -euo pipefail
@@ -24,122 +24,87 @@ jobs:
           python - <<'PY'
           import html, json, re, time
           from pathlib import Path
-          from urllib.parse import urlencode, urljoin
+          from urllib.parse import urljoin
           from urllib.request import Request, urlopen
 
-          UA="rar-pub-pspp-second-level/1.0"
-          targets=[
-            "http://office.microsoft.com/publisher/prepress/default.htm",
-            "http://office.microsoft.com/publisher/prepress/AboutPSPP.htm",
-            "http://microsoft.saltmine.com/publisher/pspp/list/usersearchcriteria.asp",
+          UA="rar-pub-pspp-second-level/2.0"
+          # Twelve exact prepress/default captures were proven by #725.
+          proven=[
+            ("20000521152700","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20000925125640","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20001011004151","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20011112120001","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20011117034621","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20011205094135","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20020204190029","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20020406004115","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20021014102307","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20030417165339","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20030604153844","http://office.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20081203191701","http://office.microsoft.com/publisher/prepress/default.htm"),
+            # Parent redirect timestamps from #725; raw replay may resolve to nearest target capture.
+            ("20010814023300","http://office.microsoft.com/publisher/prepress/AboutPSPP.htm"),
+            ("20010504171753","http://microsoft.saltmine.com/publisher/pspp/list/usersearchcriteria.asp"),
           ]
           attr_re=re.compile(r'''(?is)\b(?:href|src|action)\s*=\s*["']([^"']+)["']''')
           refresh_re=re.compile(r'''(?is)http-equiv\s*=\s*["']refresh["'][^>]*content\s*=\s*["'][^"']*url\s*=\s*([^"';>\s]+)''')
           carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|bin|cue|7z|rar)(?:$|[?#])',re.I)
-          relevant_re=re.compile(r'(publisher|pspp|prepress|printer|service.?provider|training|download|sample|exercise|kit|resource|support|member)',re.I)
+          relevant_re=re.compile(r'(publisher|pspp|prepress|printer|service.?provider|training|download|sample|exercise|kit|resource|support|member|file)',re.I)
 
-          def get_json(url, tries=3):
-            last=None
-            for i in range(tries):
-              try:
-                req=Request(url,headers={"User-Agent":UA,"Accept":"application/json"})
-                with urlopen(req,timeout=90) as r:
-                  return json.load(r)
-              except Exception as e:
-                last=e; time.sleep(1.5*(i+1))
-            raise last
-
-          def cdx_exact(u):
-            params=[
-              ("url",u),("matchType","exact"),("output","json"),
-              ("fl","timestamp,original,mimetype,statuscode,digest,length"),
-              ("filter","statuscode:200"),("collapse","digest"),("limit","200"),("gzip","false")
-            ]
-            data=get_json("https://web.archive.org/cdx/search/cdx?"+urlencode(params))
-            return [dict(zip(data[0],x)) for x in data[1:]] if data else []
-
-          target_rows=[]; pages=[]; observed=[]; errors=[]
-          for target in targets:
-            captures=[]
-            variants=[target]
-            if target.startswith("http://"):
-              variants += [target.replace("http://","http://www.",1) if "microsoft.saltmine.com" not in target and "office.microsoft.com" not in target else target]
-            seen_cap=set()
-            for v in variants:
-              try:
-                for c in cdx_exact(v):
-                  k=(c.get("timestamp"),c.get("digest"),c.get("original"))
-                  if k not in seen_cap:
-                    seen_cap.add(k); captures.append(c)
-              except Exception as e:
-                errors.append({"surface":"cdx-target","url":v,"error":f"{type(e).__name__}: {e}"})
-            target_rows.append({"target":target,"capture_count":len(captures),"captures":captures})
-
-            for c in captures:
-              ts=c.get("timestamp",""); original=c.get("original") or target
-              replay=f"https://web.archive.org/web/{ts}id_/{original}"
-              row={"target":target,"timestamp":ts,"original":original,"replay":replay}
-              try:
-                req=Request(replay,headers={"User-Agent":UA,"Accept":"text/html,*/*;q=0.1"})
-                with urlopen(req,timeout=90) as r:
-                  body=r.read(2*1024*1024)
-                  row["status"]=getattr(r,"status",None)
-                  row["content_type"]=r.headers.get("Content-Type")
-                ctype=(row.get("content_type") or "").lower()
-                row["length"]=len(body)
-                if "html" not in ctype and "text" not in ctype and not body[:256].lstrip().startswith(b"<"):
-                  row["skipped_non_text"]=True
-                  pages.append(row); continue
-                text=body.decode("utf-8","replace")
-                row["preview"]=text[:2500]
-                vals=[]
-                for m in attr_re.finditer(text): vals.append(m.group(1))
-                for m in refresh_re.finditer(text): vals.append(m.group(1))
-                links=[]
-                for v in vals:
-                  v=html.unescape(v.strip())
-                  if not v or v.startswith(("#","javascript:","mailto:")): continue
-                  u=urljoin(original,v)
-                  links.append(u)
-                  observed.append({"source_target":target,"source_timestamp":ts,"source_page":original,"url":u})
-                row["links"]=sorted(set(links))
-              except Exception as e:
-                row["error"]=f"{type(e).__name__}: {e}"
-                errors.append({"surface":"replay","url":original,"timestamp":ts,"error":row["error"]})
-              pages.append(row)
-              time.sleep(.35)
+          pages=[]; observed=[]; errors=[]
+          for ts,original in proven:
+            replay=f"https://web.archive.org/web/{ts}id_/{original}"
+            row={"timestamp":ts,"original":original,"replay":replay}
+            try:
+              req=Request(replay,headers={"User-Agent":UA,"Accept":"text/html,*/*;q=0.1"})
+              with urlopen(req,timeout=20) as r:
+                body=r.read(1024*1024)
+                row["status"]=getattr(r,"status",None)
+                row["final_url"]=r.geturl()
+                row["content_type"]=r.headers.get("Content-Type")
+              row["length"]=len(body)
+              text=body.decode("utf-8","replace")
+              vals=[m.group(1) for m in attr_re.finditer(text)]
+              vals += [m.group(1) for m in refresh_re.finditer(text)]
+              links=[]
+              for v in vals:
+                v=html.unescape(v.strip())
+                if not v or v.startswith(("#","javascript:","mailto:")): continue
+                u=urljoin(original,v)
+                links.append(u)
+                observed.append({"source_timestamp":ts,"source_page":original,"url":u})
+              row["links"]=sorted(set(links))
+              row["preview"]=text[:2000]
+            except Exception as e:
+              row["error"]=f"{type(e).__name__}: {e}"
+              errors.append({"timestamp":ts,"url":original,"error":row["error"]})
+            pages.append(row)
+            time.sleep(.15)
 
           seen=set(); links=[]
           for r in observed:
             k=r["url"].casefold()
             if k in seen: continue
-            seen.add(k); links.append(r)
-
-          interesting=[]
-          for r in links:
+            seen.add(k)
             u=r["url"]
-            if not (carrier_re.search(u) or relevant_re.search(u)):
-              continue
-            item={**r,"carrier_like":bool(carrier_re.search(u)),"relevant_like":bool(relevant_re.search(u))}
-            try:
-              item["captures"]=cdx_exact(u)
-            except Exception as e:
-              item["error"]=f"{type(e).__name__}: {e}"
-            interesting.append(item)
-            time.sleep(.2)
+            links.append({**r,
+              "carrier_like":bool(carrier_re.search(u)),
+              "relevant_like":bool(relevant_re.search(u))
+            })
 
+          carriers=[x for x in links if x["carrier_like"]]
+          relevant=[x for x in links if x["relevant_like"]]
           summary={
-            "schema":"chaptera.corpus-pspp-second-level.v1",
+            "schema":"chaptera.corpus-pspp-second-level.v2",
             "source_safe":True,
             "raw_binary_retained":False,
-            "targets":target_rows,
-            "html_pages_fetched":len(pages),
+            "proven_replay_count":len(proven),
+            "pages_fetched":sum("error" not in x for x in pages),
             "unique_observed_links":len(links),
-            "interesting_rows":len(interesting),
-            "carrier_rows":[x for x in interesting if x["carrier_like"]],
-            "interesting":interesting,
+            "carrier_rows":carriers,
+            "relevant_rows":relevant,
             "errors":errors,
-            "guardrail":"Only observed second-level PSPP/prepress HTML captures are opened. No linked carrier body is downloaded or executed."
+            "guardrail":"Only exact/proven PSPP/prepress replay surfaces are opened. No observed linked body is downloaded or executed."
           }
           Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
           Path("out/pages.json").write_text(json.dumps(pages,indent=2,ensure_ascii=False),encoding="utf-8")
