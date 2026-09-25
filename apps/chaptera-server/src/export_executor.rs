@@ -16,13 +16,10 @@ use crate::{
     blob_store::{BlobStoreService, CreateBindingRequest, ResourceKind},
     derived_artifacts::{DerivedArtifactFenceV1, SqliteDerivedArtifactStore},
     export_publication::{
-        ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1,
-        SqliteExportPublicationStore,
+        ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1, SqliteExportPublicationStore,
     },
     job_queue::{JobKind, JobRecord},
-    job_worker::{
-        CancellationFlag, JobExecutor, JobFailure, JobFuture, JobSuccess,
-    },
+    job_worker::{CancellationFlag, JobExecutor, JobFailure, JobFuture, JobSuccess},
     revision_materializer::{
         ExactRevisionMaterializedState, ExactRevisionMaterializer, RevisionMaterializerError,
     },
@@ -247,7 +244,6 @@ impl ExactRevisionEditableExporter {
     }
 }
 
-
 pub type ExportPublishAuthFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), ExportExecutorError>> + Send + 'a>>;
 
@@ -354,9 +350,13 @@ impl PublishedExportJobExecutor {
             .fence_id()
             .map_err(|error| ExportExecutorError::new(error.code, error.message))?;
         self.artifacts
-            .publish(fence, produced.artifact_sha256.clone(), i64::try_from(now_ms).map_err(|_| {
-                ExportExecutorError::new("clock_overflow", "publication time does not fit i64")
-            })?)
+            .publish(
+                fence,
+                produced.artifact_sha256.clone(),
+                i64::try_from(now_ms).map_err(|_| {
+                    ExportExecutorError::new("clock_overflow", "publication time does not fit i64")
+                })?,
+            )
             .await
             .map_err(|error| ExportExecutorError::new(error.code, error.message))?;
 
@@ -441,11 +441,7 @@ impl PublishedExportJobExecutor {
 }
 
 impl JobExecutor for PublishedExportJobExecutor {
-    fn execute<'a>(
-        &'a self,
-        job: &'a JobRecord,
-        cancellation: CancellationFlag,
-    ) -> JobFuture<'a> {
+    fn execute<'a>(&'a self, job: &'a JobRecord, cancellation: CancellationFlag) -> JobFuture<'a> {
         Box::pin(async move {
             self.execute_export(job, &cancellation)
                 .await
@@ -493,7 +489,10 @@ fn unix_now_ms() -> Result<u64, ExportExecutorError> {
         ExportExecutorError::new("clock_before_epoch", "system clock is before UNIX epoch")
     })?;
     u64::try_from(elapsed.as_millis()).map_err(|_| {
-        ExportExecutorError::new("clock_overflow", "system clock does not fit u64 milliseconds")
+        ExportExecutorError::new(
+            "clock_overflow",
+            "system clock does not fit u64 milliseconds",
+        )
     })
 }
 
