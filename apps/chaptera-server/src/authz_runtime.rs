@@ -134,6 +134,12 @@ struct AuthorizationDenied {
     authz_version: i64,
 }
 
+#[derive(Debug)]
+enum AuthorizationCheckError {
+    Denied(AuthorizationDenied),
+    Internal(AuthzError),
+}
+
 #[derive(Clone)]
 pub struct SqliteAuthzAuthority {
     path: PathBuf,
@@ -352,7 +358,7 @@ impl SqliteAuthzAuthority {
                 .await;
                 finish_transaction(&mut conn, result).await
             }
-            Err(denied) => {
+            Err(AuthorizationCheckError::Denied(denied)) => {
                 insert_audit(
                     &mut conn,
                     tenant_id,
@@ -369,6 +375,10 @@ impl SqliteAuthzAuthority {
                 .await?;
                 commit(&mut conn).await?;
                 Err(AuthzError::new(denied.code, denied.message))
+            }
+            Err(AuthorizationCheckError::Internal(error)) => {
+                rollback(&mut conn).await?;
+                Err(error)
             }
         }
     }
@@ -485,7 +495,7 @@ impl ExportPublicationCommitter for SqliteAuthorizedExportPublicationCommitter {
             .await
             {
                 Ok(decision) => decision,
-                Err(denied) => {
+                Err(AuthorizationCheckError::Denied(denied)) => {
                     insert_audit(
                         &mut conn,
                         &payload.tenant_id,
@@ -506,6 +516,10 @@ impl ExportPublicationCommitter for SqliteAuthorizedExportPublicationCommitter {
                         "export_publish_unauthorized",
                         denied.message,
                     ));
+                }
+                Err(AuthorizationCheckError::Internal(error)) => {
+                    rollback(&mut conn).await.map_err(export_error)?;
+                    return Err(export_error(error));
                 }
             };
 
@@ -561,7 +575,7 @@ async fn check_authorization(
     principal_id: &str,
     capability: &str,
     now_ms: i64,
-) -> Result<AuthzDecision, AuthorizationDenied> {
+) -> Result<AuthzDecision, AuthorizationCheckError> {
     let version: Option<i64> = sqlx::query_scalar(
         r#"
         SELECT authz_version
@@ -573,11 +587,7 @@ async fn check_authorization(
     .bind(document_id.as_bytes())
     .fetch_optional(&mut **conn)
     .await
-    .map_err(|_| AuthorizationDenied {
-        code: "sqlite_authz_error",
-        message: "could not read document access generation",
-        authz_version: 0,
-    })?;
+    .map_err(|error| AuthorizationCheckError::Internal(sqlite_error(error)))?;
     let authz_version = version.unwrap_or(0);
 
     let row = sqlx::query(
@@ -592,49 +602,36 @@ async fn check_authorization(
     .bind(principal_id.as_bytes())
     .fetch_optional(&mut **conn)
     .await
-    .map_err(|_| AuthorizationDenied {
-        code: "sqlite_authz_error",
-        message: "could not read principal grant",
-        authz_version,
-    })?;
+    .map_err(|error| AuthorizationCheckError::Internal(sqlite_error(error)))?;
 
     let Some(row) = row else {
-        return Err(AuthorizationDenied {
+        return Err(AuthorizationCheckError::Denied(AuthorizationDenied {
             code: "grant_missing",
             message: "principal has no grant for the document",
             authz_version,
-        });
+        }));
     };
-    let role_raw: String = row.try_get("role").map_err(|_| AuthorizationDenied {
-        code: "authz_row_corrupt",
-        message: "persisted grant role is unreadable",
-        authz_version,
-    })?;
-    let expires_at_ms: Option<i64> =
-        row.try_get("expires_at_ms").map_err(|_| AuthorizationDenied {
-            code: "authz_row_corrupt",
-            message: "persisted grant expiry is unreadable",
-            authz_version,
-        })?;
+    let role_raw: String = row
+        .try_get("role")
+        .map_err(|error| AuthorizationCheckError::Internal(sqlite_error(error)))?;
+    let expires_at_ms: Option<i64> = row
+        .try_get("expires_at_ms")
+        .map_err(|error| AuthorizationCheckError::Internal(sqlite_error(error)))?;
     if expires_at_ms.is_some_and(|expiry| now_ms >= expiry) {
-        return Err(AuthorizationDenied {
+        return Err(AuthorizationCheckError::Denied(AuthorizationDenied {
             code: "grant_expired",
             message: "principal grant has expired",
             authz_version,
-        });
+        }));
     }
 
-    let role = DocumentRole::parse(&role_raw).map_err(|_| AuthorizationDenied {
-        code: "authz_row_corrupt",
-        message: "persisted grant role is outside the canonical role set",
-        authz_version,
-    })?;
+    let role = DocumentRole::parse(&role_raw).map_err(AuthorizationCheckError::Internal)?;
     if !role.allows(capability) {
-        return Err(AuthorizationDenied {
+        return Err(AuthorizationCheckError::Denied(AuthorizationDenied {
             code: "capability_denied",
             message: "principal role does not grant the requested capability",
             authz_version,
-        });
+        }));
     }
 
     Ok(AuthzDecision {
