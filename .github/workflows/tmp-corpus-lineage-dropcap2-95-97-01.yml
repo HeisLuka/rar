@@ -279,7 +279,7 @@ jobs:
           if chain["status"]=="falsified":falsified.append("added-chain")
           if printer_status=="falsified":falsified.append("printer29")
           natural=(not removed and not tuple_changed and text_equal and all(v["returncode"]==0 for v in render.values()))
-          classification="third-natural-lineage-laws-repeated" if natural and not falsified else ("natural-lineage-with-law-falsification" if natural else "not-confirmed-natural-lineage")
+          classification="fourth-natural-lineage-laws-repeated" if natural and not falsified else ("natural-lineage-with-law-falsification" if natural else "not-confirmed-natural-lineage")
 
           summary={
             "schema":"chaptera.dropcap2-95-97-lawcheck-summary.v1","source_safe":True,"all_exact_members_verified":True,
