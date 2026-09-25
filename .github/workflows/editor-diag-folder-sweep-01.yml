@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - editor-diag-folder-sweep-01
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/**"
+      - ".github/workflows/editor-diag-folder-sweep-01.yml"
   workflow_dispatch:
 
 permissions:
