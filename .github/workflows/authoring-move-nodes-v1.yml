@@ -3,7 +3,6 @@ name: Authoring MoveNodes V1
 on:
   pull_request:
     paths:
-      - "services/editor-api/revision_store.py"
       - "services/editor-api/test_move_nodes.py"
       - ".github/workflows/authoring-move-nodes-v1.yml"
   workflow_dispatch:

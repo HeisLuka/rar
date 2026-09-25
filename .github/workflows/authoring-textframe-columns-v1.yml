@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "packages/protocol/authoring-textframe-columns/**"
-      - "services/editor-api/revision_store.py"
       - "services/editor-api/test_text_frame_columns.py"
       - "tools/build_text_frame_columns_runtime_receipt.py"
       - "tools/test_build_text_frame_columns_runtime_receipt.py"

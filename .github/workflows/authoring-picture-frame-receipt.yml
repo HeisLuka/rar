@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "packages/protocol/authoring-picture-frame/**"
-      - "services/editor-api/revision_store.py"
       - "services/editor-api/test_revision_store.py"
       - "tools/validate_authoring_picture_frame_receipt.py"
       - "tools/test_authoring_picture_frame_receipt.py"

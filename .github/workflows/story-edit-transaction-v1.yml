@@ -5,7 +5,6 @@ on:
     paths:
       - "services/editor-api/story_edit_transaction_v1.py"
       - "services/editor-api/test_story_edit_transaction_v1.py"
-      - "services/editor-api/revision_store.py"
       - "services/editor-api/story_range_v1.py"
       - "services/editor-api/story_edit_domain_v1.py"
       - "services/editor-api/paragraph_lifecycle_v1.py"
