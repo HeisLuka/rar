@@ -99,10 +99,11 @@ impl ExportPublicationInputV1 {
 
     pub fn effect_key(&self) -> Result<String, ExportPublicationError> {
         self.validate()?;
-        // Preserve the existing export-job logical identity: tenant + job +
-        // exact revision + artifact content hash. Physical BlobStore binding IDs
-        // are intentionally excluded because dedupe retry may allocate new
-        // tenant-local bindings for identical bytes.
+        // Versioned WorkerLoop effect identity. The older export_job_v1
+        // reference contract has no effect_key; it derives its stable artifact
+        // binding from the same semantic tuple (tenant + job + exact revision +
+        // artifact content hash). Physical BlobStore binding IDs are excluded
+        // because dedupe retry may allocate fresh tenant-local handles.
         hash_envelope(
             "chaptera-export-effect-v1\0",
             [
