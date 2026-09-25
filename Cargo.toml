@@ -14,7 +14,7 @@ members = [
   "crates/pub-paint-bridge",
   "crates/pub-plccmob-projection",
 ]
-exclude = ["vendor/producer-a"]
+exclude = ["vendor/producer-a", "crates/chaptera-suite-handoff"]
 resolver = "2"
 
 [workspace.package]

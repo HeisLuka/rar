@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/suite-handoff.v1.json",
+  "title": "Chaptera local cross-app handoff packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version","sender_product_id","target_product_id","requested_job","source","context","provenance","consent"],
+  "properties": {
+    "protocol_version": {"const": "chaptera.suite-handoff.v1"},
+    "sender_product_id": {"const": "chaptera.reader"},
+    "target_product_id": {"enum": ["chaptera.editor","chaptera.rescue"]},
+    "requested_job": {"enum": ["edit_supported_pub","diagnose_or_recover"]},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path","sha256","kind"],
+      "properties": {
+        "path": {"type": "string","minLength": 1},
+        "sha256": {"type": "string","pattern": "^[0-9a-f]{64}$"},
+        "kind": {"const": "pub"}
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability","loss_state"],
+      "properties": {
+        "capability": {"enum": ["reader_supported","reader_failure_recovery_eligible"]},
+        "loss_state": {"enum": ["none_observed","unknown"]}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_identity_verified","mutable_document_state_included"],
+      "properties": {
+        "source_identity_verified": {"const": true},
+        "mutable_document_state_included": {"const": false}
+      }
+    },
+    "consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_file_handoff","user_initiated"],
+      "properties": {
+        "local_file_handoff": {"const": true},
+        "user_initiated": {"const": true}
+      }
+    }
+  }
+}

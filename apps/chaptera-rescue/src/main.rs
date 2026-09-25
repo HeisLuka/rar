@@ -1,4 +1,5 @@
 use eframe::egui;
+use pub_reader::{FailureIntakeClass, classify_failure_candidate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::env;
@@ -365,12 +366,46 @@ fn self_check() -> SelfCheck {
     }
 }
 
+fn rescue_handoff_admitted(path: &Path) -> Result<bool, String> {
+    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    Ok(matches!(
+        classify_failure_candidate(&bytes).class,
+        FailureIntakeClass::PubDamaged
+    ))
+}
+
 fn run_cli(args: &[String]) -> Result<Option<i32>, String> {
     if args.iter().any(|arg| arg == "--self-check") {
         println!(
             "{}",
             serde_json::to_string_pretty(&self_check())
                 .map_err(|error| format!("serialize self-check: {error}"))?
+        );
+        return Ok(Some(0));
+    }
+
+    if let Some(index) = args.iter().position(|arg| arg == "--handoff-accept-v1") {
+        let values = args.get(index + 1..index + 3).ok_or_else(|| {
+            "usage: chaptera-rescue --handoff-accept-v1 PACKET.json ACCEPTANCE.json".to_owned()
+        })?;
+        if values.len() != 2 {
+            return Err(
+                "usage: chaptera-rescue --handoff-accept-v1 PACKET.json ACCEPTANCE.json".to_owned(),
+            );
+        }
+        let packet_path = PathBuf::from(&values[0]);
+        let output = PathBuf::from(&values[1]);
+        let validated = chaptera_suite_handoff::load_for_receiver(
+            &packet_path,
+            chaptera_suite_handoff::RESCUE_PRODUCT_ID,
+        )?;
+        let receiver_admitted = rescue_handoff_admitted(validated.source_path())?;
+        let receipt = chaptera_suite_handoff::finish_acceptance(validated, receiver_admitted)?;
+        chaptera_suite_handoff::write_acceptance(&receipt, &output)?;
+        println!(
+            "{}",
+            serde_json::to_string(&receipt)
+                .map_err(|error| format!("serialize suite handoff acceptance: {error}"))?
         );
         return Ok(Some(0));
     }
@@ -479,6 +514,34 @@ mod tests {
         assert!(!check.migration_batch_ui_present);
         assert!(!check.recovery_execution_embedded);
         assert_eq!(check.canonical_executable, "chaptera-rescue.exe");
+    }
+
+    #[test]
+    fn handoff_admission_reclassifies_damaged_source_independently() {
+        let path = env::temp_dir().join(format!(
+            "chaptera-rescue-handoff-damaged-{}.pub",
+            std::process::id()
+        ));
+        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        bytes.extend_from_slice(b"Microsoft Publisher");
+        fs::write(&path, bytes).expect("write damaged classifier witness");
+        assert!(rescue_handoff_admitted(&path).expect("classify damaged witness"));
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn handoff_admission_rejects_unknown_unsupported_source() {
+        let path = env::temp_dir().join(format!(
+            "chaptera-rescue-handoff-unknown-{}.pub",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            [0x00, 0xFF, 0x10, 0x80, 0x00, 0x7F, 0xAA, 0x55, 0x13, 0x37],
+        )
+        .expect("write unknown witness");
+        assert!(!rescue_handoff_admitted(&path).expect("classify unknown witness"));
+        fs::remove_file(path).ok();
     }
 
     #[test]
