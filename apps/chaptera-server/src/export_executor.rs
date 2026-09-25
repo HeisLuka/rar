@@ -435,6 +435,15 @@ impl PublishedExportJobExecutor {
                 "export resource length does not fit u64",
             )
         })?;
+        let storage_content_sha256 = content_sha256
+            .strip_prefix("sha256:")
+            .ok_or_else(|| {
+                ExportExecutorError::new(
+                    "export_artifact_hash_invalid",
+                    "export resource fingerprint must use sha256:<64 lowercase hex>",
+                )
+            })?
+            .to_owned();
         let mut input = bytes;
         self.blob_store
             .create_canonical_binding(
@@ -442,7 +451,7 @@ impl PublishedExportJobExecutor {
                     tenant_id: payload.tenant_id.clone(),
                     project_id: None,
                     document_id: Some(payload.document_id.clone()),
-                    content_sha256,
+                    content_sha256: storage_content_sha256,
                     byte_len,
                     canonical_mime: Some(canonical_mime),
                     resource_kind: ResourceKind::ExportArtifact,
