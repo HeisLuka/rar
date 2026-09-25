@@ -10,6 +10,11 @@ on:
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_create_shape.py"
       - "packages/protocol/authoring-create-shape/v1/**"
+      - "vendor/producer-a/crates/pub-editor/src/create_shape_runtime_v1.rs"
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/src/writer_assessment.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/create_shape_runtime_v1.rs"
+      - "apps/chaptera-desktop/src/agent.rs"
       - ".github/workflows/authoring-create-shape-v1.yml"
   workflow_dispatch:
 
@@ -55,3 +60,34 @@ jobs:
         run: cargo clippy -p pub-model -p pub-paint-bridge --all-targets -- -D warnings
       - name: Test workspace
         run: cargo test -p pub-model -p pub-paint-bridge
+
+
+  producer_runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Re-run canonical CreateShape V1 contract
+        working-directory: services/editor-api
+        run: python -m unittest -v test_create_shape
+      - name: Check pub-editor formatting
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -- --check
+      - name: Lint pub-editor runtime
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --all-targets -- -D warnings
+      - name: Run CreateShape runtime tests
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test create_shape_runtime_v1
+      - name: Re-run ResizeNodes schema inheritance
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test resize_nodes_v1
+      - name: Re-run MoveNodes schema inheritance
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test move_nodes_v1
+      - name: Re-run TableGrid schema inheritance
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test effective_table_grid_v1
+      - name: Re-run BreakLink schema inheritance
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test break_text_frame_forward_link_v1
