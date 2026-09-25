@@ -7,6 +7,7 @@ on:
       - 'tools/corpus/version_identity_matrix.py'
       - 'tools/corpus/version_identity_matrix_media_roots.json'
       - 'tools/corpus/version_identity_matrix_family_overrides.json'
+      - 'tools/corpus/version_identity_matrix_producer_dsi.json'
       - '.github/workflows/corpus-version-identity-matrix.yml'
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - 'tools/corpus/version_identity_matrix.py'
       - 'tools/corpus/version_identity_matrix_media_roots.json'
       - 'tools/corpus/version_identity_matrix_family_overrides.json'
+      - 'tools/corpus/version_identity_matrix_producer_dsi.json'
       - '.github/workflows/corpus-version-identity-matrix.yml'
   workflow_dispatch:
 
