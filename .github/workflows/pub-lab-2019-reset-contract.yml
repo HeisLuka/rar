@@ -12,8 +12,8 @@ on:
       - "tools/test_pub_lab_2019_restore_pair.py"
       - "tools/build_pub_research_reset_receipt.py"
       - "tools/test_build_pub_research_reset_receipt.py"
-      - "tools/research_runner_verify_reset_receipt_compat.py"
       - "tools/research-runner/verify_reset_receipt.py"
+      - "tools/test_research_reset_receipt.py"
       - ".github/workflows/pub-lab-2019-reset-contract.yml"
   workflow_dispatch:
 
@@ -44,6 +44,7 @@ jobs:
           packet="$(printf '55%.0s' {1..32})"
           receipt="$RUNNER_TEMP/pub-research-reset-receipt.json"
           python -m unittest tools/test_build_pub_research_reset_receipt.py -v
+          python -m unittest tools/test_research_reset_receipt.py -v
           python tools/build_pub_research_reset_receipt.py             --evidence packages/protocol/pub-lab-2019/v1/synthetic-vmware-restore-evidence.json             --baseline-id publisher-2019-build12527-golden-v1             --snapshot-id MODERN-2019-12527-GOLDEN-v1             --experiment-id PUB-LAB-CI-01             --packet-sha256 "$packet"             --output "$receipt"
           python tools/research-runner/verify_reset_receipt.py             --receipt "$receipt"             --expected-baseline publisher-2019-build12527-golden-v1             --expected-snapshot MODERN-2019-12527-GOLDEN-v1             --expected-experiment PUB-LAB-CI-01             --expected-packet-sha256 "$packet"
 
