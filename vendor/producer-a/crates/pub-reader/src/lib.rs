@@ -106,10 +106,10 @@ const OFFICEART_PROPERTY_ROTATION: u16 = 0x0004;
 const OFFICEART_FSP_FLIP_H: u32 = 1 << 6;
 const OFFICEART_FSP_FLIP_V: u32 = 1 << 7;
 
-const FIELD_STORY_ID: u8 = 0x27;
-const FIELD_FRAME_ORDINAL: u8 = 0x28;
-const FIELD_PREVIOUS_FRAME: u8 = 0x36;
-const FIELD_NEXT_FRAME: u8 = 0x37;
+const FIELD_STORY_ID: u16 = 0x27;
+const FIELD_FRAME_ORDINAL: u16 = 0x28;
+const FIELD_PREVIOUS_FRAME: u16 = 0x36;
+const FIELD_NEXT_FRAME: u16 = 0x37;
 
 const ROLE_DOCUMENT: &str = "cdm.document";
 const ROLE_PAGE: &str = "cdm.page";
@@ -569,7 +569,7 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
         });
         if let Some(story_id) = decoded_story_id.filter(|value| syids.contains(value)) {
             let seq_num = seq_u32(reference.seq_num)?;
-            let mut scalars = BTreeMap::<(u8, u8), Vec<u32>>::new();
+            let mut scalars = BTreeMap::<(u16, u8), Vec<u32>>::new();
             for field in &chunk.fields {
                 let value = match &field.body {
                     RawContentsBlockBody::U16 { value, .. } => Some(u32::from(*value)),
@@ -1966,7 +1966,7 @@ fn chunk_for_reference(
         .with_context(|| format!("parse Contents chunk seq {}", reference.seq_num))
 }
 
-fn unique_block(chunk: &Contents0x2cChunk, id: u8) -> Result<&RawContentsBlock> {
+fn unique_block(chunk: &Contents0x2cChunk, id: u16) -> Result<&RawContentsBlock> {
     let mut matches = chunk.fields.iter().filter(|field| field.id == id);
     let first = matches
         .next()
@@ -2569,7 +2569,7 @@ fn unique_story_id_scalar(chunk: &Contents0x2cChunk) -> Result<Option<u32>> {
     }
 }
 
-fn unique_u32_field(chunk: &Contents0x2cChunk, id: u8) -> Result<Option<(u32, RawSpan)>> {
+fn unique_u32_field(chunk: &Contents0x2cChunk, id: u16) -> Result<Option<(u32, RawSpan)>> {
     let mut matches = chunk.fields.iter().filter(|field| field.id == id);
     let Some(field) = matches.next() else {
         return Ok(None);
