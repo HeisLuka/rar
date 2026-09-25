@@ -134,6 +134,7 @@ impl EditorSession {
                 EditOperation::BreakTextFrameForwardLink { .. }
                 | EditOperation::ReplaceImage { .. }
                 | EditOperation::MoveNode { .. }
+                | EditOperation::MoveNodes { .. }
                 | EditOperation::ResizeNode { .. } => {}
             }
         }
@@ -224,6 +225,7 @@ impl EditorSession {
                 | EditOperation::ReplaceTableCellText { .. }
                 | EditOperation::ReplaceImage { .. }
                 | EditOperation::MoveNode { .. }
+                | EditOperation::MoveNodes { .. }
                 | EditOperation::ResizeNode { .. } => {
                     requirements.extend(operation.persistence_requirements());
                 }

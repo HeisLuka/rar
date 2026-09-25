@@ -2024,6 +2024,15 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "before":rect_json(*before),
             "after":rect_json(*after)
         }),
+        EditOperation::MoveNodes { page_id, entries } => json!({
+            "kind":"move_nodes",
+            "page_id":page_id.as_canonical().to_string(),
+            "entries":entries.iter().map(|entry| json!({
+                "node_id":entry.node_id.as_canonical().to_string(),
+                "before":rect_json(entry.before),
+                "after":rect_json(entry.after)
+            })).collect::<Vec<_>>()
+        }),
         EditOperation::ResizeNode { node_id, before, after } => json!({
             "kind":"resize_node",
             "node_id":node_id.as_canonical().to_string(),
