@@ -120,10 +120,61 @@ def _projection_context(context: Any) -> dict[str, Any]:
     for key in ("master_relations", "cmo_relations"):
         if not isinstance(context[key], list):
             raise ResolvedGraphSceneError(f"projection context {key} must be an array")
-    if context["cmo_relations"]:
-        raise ResolvedGraphSceneError(
-            "non-empty cmo_relations is outside resolved-geometry-v1 semantics"
+    seen_cmo_orders: set[int] = set()
+    for index, relation in enumerate(context["cmo_relations"]):
+        expected = {
+            "source_order",
+            "cmo_id",
+            "carrier_ohpo",
+            "carrier_cmo_id",
+            "target_qsid",
+            "carrier_node_id",
+            "carrier_story_id",
+            "target_story_id",
+            "target_frame_node_id",
+        }
+        if not isinstance(relation, dict) or set(relation) != expected:
+            raise ResolvedGraphSceneError(
+                f"cmo_relations[{index}] fields mismatch"
+            )
+        source_order = require_int(
+            relation["source_order"],
+            f"cmo_relations[{index}].source_order",
         )
+        if source_order < 0 or source_order in seen_cmo_orders:
+            raise ResolvedGraphSceneError(
+                f"cmo_relations[{index}].source_order must be unique and non-negative"
+            )
+        seen_cmo_orders.add(source_order)
+        for key in ("cmo_id", "carrier_ohpo", "carrier_cmo_id", "target_qsid"):
+            value = require_int(
+                relation[key],
+                f"cmo_relations[{index}].{key}",
+            )
+            if value <= 0:
+                raise ResolvedGraphSceneError(
+                    f"cmo_relations[{index}].{key} must be positive"
+                )
+        require_uuid(
+            relation["carrier_node_id"],
+            f"cmo_relations[{index}].carrier_node_id",
+        )
+        carrier_story_id = relation["carrier_story_id"]
+        if carrier_story_id is not None:
+            require_uuid(
+                carrier_story_id,
+                f"cmo_relations[{index}].carrier_story_id",
+            )
+        require_uuid(
+            relation["target_story_id"],
+            f"cmo_relations[{index}].target_story_id",
+        )
+        target_frame_node_id = relation["target_frame_node_id"]
+        if target_frame_node_id is not None:
+            require_uuid(
+                target_frame_node_id,
+                f"cmo_relations[{index}].target_frame_node_id",
+            )
 
     seen_sources: set[str] = set()
     for index, relation in enumerate(context["master_relations"]):
@@ -200,6 +251,10 @@ def project_resolved_graph_scene(
         raise ResolvedGraphSceneError("resolved graph document.pages must be an array")
 
     master_relations = projection_context["master_relations"]
+    cmo_relations = projection_context["cmo_relations"]
+    cmo_carrier_node_ids = {
+        relation["carrier_node_id"] for relation in cmo_relations
+    }
     master_page_ids = {relation["master_page_id"] for relation in master_relations}
     source_master = {
         relation["source_page_id"]: relation["master_page_id"]
@@ -267,7 +322,7 @@ def project_resolved_graph_scene(
             ),
         }
         source_nodes[node_id] = projected
-        if parent not in master_page_ids:
+        if parent not in master_page_ids and node_id not in cmo_carrier_node_ids:
             nodes.append(projected)
 
     projected_master_instances: list[dict[str, Any]] = []
@@ -365,6 +420,15 @@ def project_resolved_graph_scene(
         }
         for story_id in story_ids
     ]
+    for story_id in sorted({
+        relation["target_story_id"] for relation in cmo_relations
+    }):
+        diagnostics.append({
+            "code": "cmo_slot_flow_not_materialized",
+            "severity": "fidelity_warning",
+            "origin": story_id,
+            "message": "Cmo carrier source node is withheld until bounded slot-flow materializes a target Story instance",
+        })
 
     return {
         "environment": env,
