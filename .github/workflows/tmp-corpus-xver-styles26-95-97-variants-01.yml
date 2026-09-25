@@ -1,0 +1,652 @@
+name: TEMP CORPUS Publisher95-97 Styles 0x26 variant generalization
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-xver-styles26-95-97-variants-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Generalize Styles 0x26 migration over clean long forms
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          import olefile
+
+          UA = "rar-styles26-variants/1.0"
+          ISO_SECTOR = 2048
+          TARGETS = [
+              "BOOKMARK.PUB",
+              "CBASIC.PUB",
+              "CGRYFLNL.PUB",
+              "EBASIC.PUB",
+              "EGRYFLNL.PUB",
+              "FAX4.PUB",
+              "ROUTE2.PUB",
+          ]
+          LONG_FORMS = set(TARGETS) - {"BOOKMARK.PUB"}
+
+          MEDIA = {
+              "pub95": {
+                  "url": "https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+                  "source_page": "https://archive.org/details/microsoft-home-collection-1993-1995-",
+                  "root_sha256": "36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a",
+                  "expected_generation": "Publisher95",
+              },
+              "pub97": {
+                  "url": "https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+                  "source_page": "https://archive.org/details/MSPublisher97-EN",
+                  "root_sha256": "41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab",
+                  "expected_generation": "Publisher97",
+              },
+          }
+
+          def sha(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def u16(data: bytes, off: int) -> int:
+              return int.from_bytes(data[off:off + 2], "little")
+
+          def u32(data: bytes, off: int) -> int:
+              return int.from_bytes(data[off:off + 4], "little")
+
+          class ISO:
+              def __init__(self, url: str):
+                  self.url = url
+                  self.cache = {}
+                  self.delivery = self._choose()
+
+              def candidates(self):
+                  parsed = urllib.parse.urlparse(self.url)
+                  parts = parsed.path.split("/")
+                  ident = parts[2]
+                  filename = "/".join(parts[3:])
+                  req = urllib.request.Request(
+                      f"https://archive.org/metadata/{ident}",
+                      headers={"User-Agent": UA},
+                  )
+                  last = None
+                  for attempt in range(4):
+                      try:
+                          with urllib.request.urlopen(req, timeout=45) as r:
+                              meta = json.load(r)
+                          break
+                      except Exception as exc:
+                          last = exc
+                          if attempt == 3:
+                              raise
+                          time.sleep(2 ** attempt)
+                  out = []
+                  directory = str(meta.get("dir") or "")
+                  for key in ("d1", "d2"):
+                      host = str(meta.get(key) or "")
+                      if host and directory:
+                          out.append(
+                              "https://"
+                              + host
+                              + directory.rstrip("/")
+                              + "/"
+                              + urllib.parse.quote(filename, safe="/")
+                          )
+                  out += [self.url, self.url + "?download=1"]
+                  return list(dict.fromkeys(out))
+
+              def rr(self, url: str, start: int, length: int) -> bytes:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": UA,
+                          "Range": f"bytes={start}-{start + length - 1}",
+                          "Accept-Encoding": "identity",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=45) as r:
+                      if getattr(r, "status", None) != 206 and not r.headers.get("Content-Range"):
+                          raise ValueError("range unsupported")
+                      data = r.read(length + 1)
+                  if len(data) != length:
+                      raise ValueError(f"range length {len(data)} != {length}")
+                  return data
+
+              def _choose(self):
+                  last = None
+                  for url in self.candidates():
+                      for attempt in range(3):
+                          try:
+                              pvd = self.rr(url, 16 * ISO_SECTOR, ISO_SECTOR)
+                              if pvd[:6] != b"\x01CD001":
+                                  raise ValueError("bad PVD")
+                              return url
+                          except Exception as exc:
+                              last = exc
+                              if attempt < 2:
+                                  time.sleep(2 ** attempt)
+                  raise last
+
+              def read(self, start: int, length: int) -> bytes:
+                  last = None
+                  for attempt in range(4):
+                      try:
+                          return self.rr(self.delivery, start, length)
+                      except Exception as exc:
+                          last = exc
+                          if attempt == 3:
+                              raise
+                          time.sleep(2 ** attempt)
+                  raise last
+
+              @staticmethod
+              def rec(rec: bytes):
+                  name = rec[33:33 + rec[32]].decode("ascii", "replace")
+                  extent = int.from_bytes(rec[2:6], "little")
+                  size = int.from_bytes(rec[10:14], "little")
+                  flags = rec[25]
+                  return name, extent, size, flags
+
+              def directory(self, extent: int, size: int):
+                  key = (extent, size)
+                  if key in self.cache:
+                      return self.cache[key]
+                  data = self.read(extent * ISO_SECTOR, size)
+                  out = {}
+                  pos = 0
+                  while pos < len(data):
+                      n = data[pos]
+                      if not n:
+                          pos = ((pos // ISO_SECTOR) + 1) * ISO_SECTOR
+                          continue
+                      name, ex, sz, flags = self.rec(data[pos:pos + n])
+                      if name not in ("\x00", "\x01"):
+                          out[name.split(";")[0].upper()] = (ex, sz, flags)
+                      pos += n
+                  self.cache[key] = out
+                  return out
+
+              def root(self):
+                  pvd = self.read(16 * ISO_SECTOR, ISO_SECTOR)
+                  rl = pvd[156]
+                  _, extent, size, flags = self.rec(pvd[156:156 + rl])
+                  return extent, size, flags
+
+              def listing(self, path: str):
+                  extent, size, flags = self.root()
+                  for part in [x.upper() for x in path.strip("/").split("/") if x]:
+                      extent, size, flags = self.directory(extent, size)[part]
+                      if not flags & 2:
+                          raise ValueError(f"{part} is not directory")
+                  return self.directory(extent, size)
+
+          def get_contents(pub: bytes) -> bytes:
+              with olefile.OleFileIO(pub) as ole:
+                  if not ole.exists(["Contents"]):
+                      raise ValueError("missing Contents")
+                  return ole.openstream(["Contents"]).read()
+
+          def parse_old22(contents: bytes):
+              if contents[:4] != b"\xe8\xac\x22\x00":
+                  raise ValueError("not old22")
+              sig = contents[0x0C:0x0E].hex()
+              cv = u16(contents, 4)
+              generation = {
+                  ("7d00", 300): "Publisher95",
+                  ("8800", 300): "Publisher97",
+              }.get((sig, cv), "unknown")
+
+              directory_offset = u32(contents, 0x16)
+              if not (0 < directory_offset < len(contents) - 2):
+                  raise ValueError("bad directory offset")
+              count = u16(contents, directory_offset)
+              if count > 512 or directory_offset + 2 + count * 10 > len(contents):
+                  raise ValueError("bad directory")
+
+              rows = []
+              for i in range(count):
+                  pos = directory_offset + 2 + i * 10
+                  row = {
+                      "service": u16(contents, pos),
+                      "id": u16(contents, pos + 2),
+                      "parent": u16(contents, pos + 4),
+                      "offset": u32(contents, pos + 6),
+                  }
+                  if row["offset"] + 2 > len(contents):
+                      raise ValueError("chunk outside Contents")
+                  row["marker"] = u16(contents, row["offset"])
+                  rows.append(row)
+
+              offsets = sorted(set(row["offset"] for row in rows))
+              chunks = {}
+              for row in rows:
+                  next_offsets = [x for x in offsets if x > row["offset"]]
+                  end = min(next_offsets) if next_offsets else len(contents)
+                  chunks[row["id"]] = contents[row["offset"]:end]
+              return {
+                  "generation": generation,
+                  "rows": rows,
+                  "by_id": {row["id"]: row for row in rows},
+                  "chunks": chunks,
+              }
+
+          def position_list_header(raw: bytes):
+              if len(raw) < 4:
+                  return {"valid": False, "reason": "short-chunk"}
+              data_off = raw[3]
+              if not (4 <= data_off < len(raw)):
+                  return {"valid": False, "reason": "bad-data-offset", "data_offset": data_off}
+              off = data_off
+              if off + 10 > len(raw):
+                  return {"valid": False, "reason": "short-list-header", "data_offset": data_off}
+
+              n16 = u16(raw, off)
+              m16 = u16(raw, off + 2)
+              if m16 >= n16:
+                  pointer_size = 2
+                  n = n16
+                  maxn = m16
+                  cursor = off + 4
+                  cursor += 2
+                  if cursor + 4 > len(raw):
+                      return {"valid": False, "reason": "short-u16-position-header"}
+                  value0 = u16(raw, cursor)
+                  cursor += 2
+                  value1 = int.from_bytes(raw[cursor:cursor + 2], "little", signed=True)
+                  cursor += 2
+              else:
+                  if off + 18 > len(raw):
+                      return {"valid": False, "reason": "short-u32-position-header"}
+                  pointer_size = 4
+                  n = u32(raw, off)
+                  maxn = u32(raw, off + 4)
+                  if maxn < n:
+                      return {"valid": False, "reason": "maxn-lt-n", "n": n, "maxn": maxn}
+                  cursor = off + 8
+                  cursor += 4
+                  value0 = u16(raw, cursor)
+                  cursor += 2
+                  value1 = int.from_bytes(raw[cursor:cursor + 4], "little", signed=True)
+                  cursor += 4
+
+              if n > 128:
+                  return {"valid": False, "reason": "count-too-large", "n": n}
+              data_start = cursor
+              need = (n + 1) * pointer_size
+              if data_start + need > len(raw):
+                  return {
+                      "valid": False,
+                      "reason": "short-position-table",
+                      "pointer_size": pointer_size,
+                      "n": n,
+                      "maxn": maxn,
+                  }
+
+              positions = []
+              for i in range(n + 1):
+                  pos = data_start + i * pointer_size
+                  positions.append(int.from_bytes(raw[pos:pos + pointer_size], "little"))
+
+              monotonic = all(positions[i] <= positions[i + 1] for i in range(len(positions) - 1))
+              in_bounds = all(0 <= x <= len(raw) - data_start for x in positions)
+              segments = []
+              if monotonic and in_bounds:
+                  for i in range(n):
+                      start = data_start + positions[i]
+                      end = data_start + positions[i + 1]
+                      segments.append(raw[start:end])
+
+              return {
+                  "valid": monotonic and in_bounds,
+                  "data_offset": data_off,
+                  "pointer_size": pointer_size,
+                  "n": n,
+                  "maxn": maxn,
+                  "value0": value0,
+                  "value1": value1,
+                  "data_start": data_start,
+                  "relative_positions": positions,
+                  "segment_lengths": [len(seg) for seg in segments],
+                  "segment_sha256s": [sha(seg) for seg in segments],
+                  "_segments": segments,
+              }
+
+          def exact_internal_widen(left: bytes, right: bytes):
+              # Search for a bounded offset table widened from k u16 entries to k u32 entries.
+              # A positive candidate must account for the entire record length delta and preserve
+              # prefix, bridge, every boundary-defined zone, and tail byte-for-byte.
+              candidates = []
+              max_start = min(24, len(left), len(right))
+              for start in range(max_start + 1):
+                  if left[:start] != right[:start]:
+                      continue
+                  max_k = min(16, (len(left) - start) // 2, (len(right) - start) // 4)
+                  for k in range(2, max_k + 1):
+                      growth = 2 * k
+                      if len(right) - len(left) != growth:
+                          continue
+                      left_values = [u16(left, start + 2 * i) for i in range(k)]
+                      right_values = [u32(right, start + 4 * i) for i in range(k)]
+                      if not all(left_values[i] <= left_values[i + 1] for i in range(k - 1)):
+                          continue
+                      if not all(right_values[i] <= right_values[i + 1] for i in range(k - 1)):
+                          continue
+                      if not all(r == l + growth for l, r in zip(left_values, right_values)):
+                          continue
+
+                      left_table_end = start + 2 * k
+                      right_table_end = start + 4 * k
+                      if left_values[0] < left_table_end or right_values[0] < right_table_end:
+                          continue
+                      if left_values[-1] > len(left) or right_values[-1] > len(right):
+                          continue
+
+                      bridge_equal = (
+                          left[left_table_end:left_values[0]]
+                          == right[right_table_end:right_values[0]]
+                      )
+                      zones_equal = []
+                      for i in range(k - 1):
+                          zones_equal.append(
+                              left[left_values[i]:left_values[i + 1]]
+                              == right[right_values[i]:right_values[i + 1]]
+                          )
+                      tail_equal = left[left_values[-1]:] == right[right_values[-1]:]
+                      exact = bridge_equal and all(zones_equal) and tail_equal
+                      if exact:
+                          candidates.append(
+                              {
+                                  "table_start": start,
+                                  "entry_count": k,
+                                  "growth": growth,
+                                  "left_offsets": left_values,
+                                  "right_offsets": right_values,
+                                  "offset_deltas": [
+                                      r - l for l, r in zip(left_values, right_values)
+                                  ],
+                                  "bridge_len_left": left_values[0] - left_table_end,
+                                  "bridge_len_right": right_values[0] - right_table_end,
+                                  "zone_count": len(zones_equal),
+                                  "payload_preserved": True,
+                              }
+                          )
+
+              if not candidates:
+                  return {"matched": False}
+              candidates.sort(key=lambda row: (-row["entry_count"], row["table_start"]))
+              return {"matched": True, "best": candidates[0], "candidate_count": len(candidates)}
+
+          def compare_record(left: bytes, right: bytes, ordinal: int):
+              widening = exact_internal_widen(left, right)
+              if left == right:
+                  classification = "byte-identical"
+              elif widening["matched"]:
+                  classification = "pure-internal-offset-widening"
+              else:
+                  classification = "residual-record-rewrite"
+
+              # Source-safe fallback metrics only; no payload bytes retained.
+              common_prefix = 0
+              while (
+                  common_prefix < min(len(left), len(right))
+                  and left[common_prefix] == right[common_prefix]
+              ):
+                  common_prefix += 1
+              common_suffix = 0
+              while (
+                  common_suffix < min(len(left), len(right)) - common_prefix
+                  and left[-1 - common_suffix] == right[-1 - common_suffix]
+              ):
+                  common_suffix += 1
+
+              return {
+                  "ordinal": ordinal,
+                  "left_len": len(left),
+                  "right_len": len(right),
+                  "growth": len(right) - len(left),
+                  "left_sha256": sha(left),
+                  "right_sha256": sha(right),
+                  "common_prefix": common_prefix,
+                  "common_suffix": common_suffix,
+                  "classification": classification,
+                  "internal_widening": widening,
+              }
+
+          isos = {key: ISO(spec["url"]) for key, spec in MEDIA.items()}
+          listings = {key: isos[key].listing("PAGEWIZ") for key in MEDIA}
+
+          results = []
+          for name in TARGETS:
+              parsed = {}
+              file_receipts = {}
+              for side in ("pub95", "pub97"):
+                  if name not in listings[side]:
+                      raise ValueError(f"{side}:{name}:missing from PAGEWIZ")
+                  extent, size, flags = listings[side][name]
+                  pub = isos[side].read(extent * ISO_SECTOR, size)
+                  contents = get_contents(pub)
+                  parsed[side] = parse_old22(contents)
+                  if parsed[side]["generation"] != MEDIA[side]["expected_generation"]:
+                      raise ValueError(f"{name}:{side}:generation mismatch")
+                  file_receipts[side] = {
+                      "sha256": sha(pub),
+                      "byte_len": len(pub),
+                      "contents_len": len(contents),
+                  }
+
+              left = parsed["pub95"]
+              right = parsed["pub97"]
+              common_ids = sorted(set(left["by_id"]) & set(right["by_id"]))
+              styles_ids = [
+                  oid
+                  for oid in common_ids
+                  if left["by_id"][oid]["marker"] == 0x26
+                  and right["by_id"][oid]["marker"] == 0x26
+              ]
+              if not styles_ids:
+                  raise ValueError(f"{name}:no preserved 0x26 Styles object")
+
+              style_pairs = []
+              for oid in styles_ids:
+                  left_raw = left["chunks"][oid]
+                  right_raw = right["chunks"][oid]
+                  lh = position_list_header(left_raw)
+                  rh = position_list_header(right_raw)
+                  if not lh.get("valid") or not rh.get("valid"):
+                      style_pairs.append(
+                          {
+                              "id": oid,
+                              "service": left["by_id"][oid]["service"],
+                              "parent": left["by_id"][oid]["parent"],
+                              "left_chunk_len": len(left_raw),
+                              "right_chunk_len": len(right_raw),
+                              "left_header": {k: v for k, v in lh.items() if k != "_segments"},
+                              "right_header": {k: v for k, v in rh.items() if k != "_segments"},
+                              "classification": "invalid-position-list-header",
+                          }
+                      )
+                      continue
+
+                  metadata_equal = (
+                      lh["n"] == rh["n"]
+                      and lh["maxn"] == rh["maxn"]
+                      and lh["value0"] == rh["value0"]
+                      and lh["value1"] == rh["value1"]
+                  )
+                  pointer_widen = lh["pointer_size"] == 2 and rh["pointer_size"] == 4
+                  records = []
+                  if lh["n"] == rh["n"]:
+                      for ordinal, (lseg, rseg) in enumerate(zip(lh["_segments"], rh["_segments"])):
+                          records.append(compare_record(lseg, rseg, ordinal))
+
+                  all_records_explained = bool(records) and all(
+                      row["classification"] in (
+                          "byte-identical",
+                          "pure-internal-offset-widening",
+                      )
+                      for row in records
+                  )
+                  if (
+                      metadata_equal
+                      and pointer_widen
+                      and lh["n"] == rh["n"]
+                      and all_records_explained
+                  ):
+                      classification = "pure-list-and-record-offset-widening"
+                  elif metadata_equal and pointer_widen and lh["n"] == rh["n"]:
+                      classification = "list-widening-with-record-residual"
+                  else:
+                      classification = "styles-topology-or-header-change"
+
+                  style_pairs.append(
+                      {
+                          "id": oid,
+                          "service": left["by_id"][oid]["service"],
+                          "parent": left["by_id"][oid]["parent"],
+                          "left_chunk_len": len(left_raw),
+                          "right_chunk_len": len(right_raw),
+                          "chunk_growth": len(right_raw) - len(left_raw),
+                          "metadata_equal": metadata_equal,
+                          "pointer_widen_2_to_4": pointer_widen,
+                          "left_header": {
+                              k: v for k, v in lh.items() if k != "_segments"
+                          },
+                          "right_header": {
+                              k: v for k, v in rh.items() if k != "_segments"
+                          },
+                          "records": records,
+                          "classification": classification,
+                      }
+                  )
+
+              results.append(
+                  {
+                      "name": name,
+                      "control": name == "BOOKMARK.PUB",
+                      "files": file_receipts,
+                      "styles_object_count": len(style_pairs),
+                      "styles": style_pairs,
+                  }
+              )
+
+          long_rows = [row for row in results if row["name"] in LONG_FORMS]
+          long_style_pairs = [style for row in long_rows for style in row["styles"]]
+          class_counts = {}
+          for style in [style for row in results for style in row["styles"]]:
+              key = style["classification"]
+              class_counts[key] = class_counts.get(key, 0) + 1
+
+          residual_records = []
+          for row in results:
+              for style in row["styles"]:
+                  for rec in style.get("records", []):
+                      if rec["classification"] == "residual-record-rewrite":
+                          residual_records.append(
+                              {
+                                  "name": row["name"],
+                                  "style_id": style["id"],
+                                  "ordinal": rec["ordinal"],
+                                  "left_len": rec["left_len"],
+                                  "right_len": rec["right_len"],
+                                  "growth": rec["growth"],
+                                  "common_prefix": rec["common_prefix"],
+                                  "common_suffix": rec["common_suffix"],
+                                  "left_sha256": rec["left_sha256"],
+                                  "right_sha256": rec["right_sha256"],
+                              }
+                          )
+
+          summary = {
+              "schema": "chaptera.styles26-95-97-variants-summary.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "target_count": len(TARGETS),
+              "long_form_count": len(LONG_FORMS),
+              "classification_counts": class_counts,
+              "all_long_forms_outer_pointer_widen_2_to_4": all(
+                  style.get("pointer_widen_2_to_4") is True for style in long_style_pairs
+              ),
+              "all_long_forms_metadata_preserved": all(
+                  style.get("metadata_equal") is True for style in long_style_pairs
+              ),
+              "all_long_forms_record_count_preserved": all(
+                  style.get("left_header", {}).get("n")
+                  == style.get("right_header", {}).get("n")
+                  for style in long_style_pairs
+              ),
+              "all_long_forms_fully_explained": all(
+                  style["classification"] == "pure-list-and-record-offset-widening"
+                  for style in long_style_pairs
+              ),
+              "residual_record_count": len(residual_records),
+              "residual_records": residual_records,
+          }
+
+          report = {
+              "schema": "chaptera.styles26-95-97-variants.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "media": {
+                  key: {
+                      "source_page": MEDIA[key]["source_page"],
+                      "root_sha256": MEDIA[key]["root_sha256"],
+                      "delivery_url": isos[key].delivery,
+                  }
+                  for key in MEDIA
+              },
+              "summary": summary,
+              "files": results,
+          }
+
+          out = Path("out")
+          out.mkdir(exist_ok=True)
+          (out / "styles26.json").write_text(
+              json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path("out/styles26.json").read_text())
+          summary=report["summary"]
+          assert report["source_safe"] is True
+          assert report["raw_pub_retained"] is False
+          assert summary["target_count"] == 7
+          assert summary["long_form_count"] == 6
+          assert summary["all_long_forms_outer_pointer_widen_2_to_4"] is True
+          assert summary["all_long_forms_metadata_preserved"] is True
+          assert summary["all_long_forms_record_count_preserved"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-xver-styles26-95-97-variants-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
