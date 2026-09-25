@@ -1,4 +1,7 @@
-use pub_editor::{EDITOR_PROJECT_VERSION_V0_6, EditorProject, EditorSession};
+use pub_editor::{
+    EDITOR_PROJECT_VERSION_V0_6, EDITOR_PROJECT_VERSION_V0_7, EditorProject, EditorProjectError,
+    EditorSession,
+};
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, LengthEmu, Node, NodeHeader, NodeId, NodeKind,
     Page, PageId, RectEmu, ResolvedGraph, Sha256Digest, SimpleRectangularTable, SimpleTableCell,
@@ -233,4 +236,19 @@ fn legacy_v0_5_project_replays_on_table_source_without_v0_6_grid_payload() {
     let current = replay.project();
     assert_eq!(current.schema_version, EDITOR_PROJECT_VERSION_V0_6);
     assert_eq!(current.table_grids.len(), 1);
+}
+
+#[test]
+fn v0_7_inherits_table_grid_replay_integrity() {
+    let baseline_session = EditorSession::new(graph()).unwrap();
+    let mut project = baseline_session.project();
+    project.schema_version = EDITOR_PROJECT_VERSION_V0_7.into();
+    project.table_grids[0].rows[0].extent = Some(LengthEmu::new(501));
+
+    let mut replay = EditorSession::new(graph()).unwrap();
+    let error = replay
+        .apply_project(&project)
+        .expect_err("v0.7 must not bypass v0.6 table-grid integrity");
+
+    assert!(matches!(error, EditorProjectError::TableGridMismatch));
 }
