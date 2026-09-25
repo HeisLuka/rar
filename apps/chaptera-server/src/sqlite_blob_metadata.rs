@@ -77,7 +77,7 @@ impl SqliteBlobBindingRepository {
     }
 
     async fn require_schema(&self) -> Result<(), BlobStoreError> {
-        for table in ["schema_migrations", "physical_blobs", "resource_bindings"] {
+        for table in ["chaptera_schema_migrations", "physical_blobs", "resource_bindings"] {
             let exists: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
             )
@@ -96,7 +96,7 @@ impl SqliteBlobBindingRepository {
         }
 
         let blob_migration: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM schema_migrations WHERE version = 2")
+            sqlx::query_scalar("SELECT COUNT(*) FROM chaptera_schema_migrations WHERE version = 2 AND name = 'blob_store'")
                 .fetch_one(&self.pool)
                 .await
                 .map_err(sqlite_error)?;
