@@ -255,10 +255,18 @@ impl ExportPublishAuthorizer for AllowPublish {
     fn authorize<'a>(
         &'a self,
         _job: &'a chaptera_server::job_queue::JobRecord,
-        _payload: &'a ExportJobPayloadV1,
+        payload: &'a ExportJobPayloadV1,
     ) -> ExportPublishAuthFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            if payload.requesting_principal_id != "principal:export-vertical" {
+                return Err(ExportExecutorError::new(
+                    "export_publish_unauthorized",
+                    "requesting principal identity was not preserved into worker execution",
+                ));
+            }
+            Ok(())
+        })
     }
 }
 
@@ -347,6 +355,7 @@ fn build_materialized_state() -> (ExactRevisionMaterializedState, ExportJobPaylo
         schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.to_owned(),
         tenant_id: "tenant:export-vertical".to_owned(),
         document_id: "document:export-vertical".to_owned(),
+        requesting_principal_id: "principal:export-vertical".to_owned(),
         exact_revision_id: service_revision.clone(),
         canonical_authoring_revision_id: canonical_revision.clone(),
         target_profile: IDML_BOUNDED_EDITABLE_PROFILE.to_owned(),
