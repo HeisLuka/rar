@@ -297,10 +297,6 @@ def build(
         version_label = "|".join(labels) if labels else "unlabelled"
         provenance_class = "|".join(provenance_classes) if provenance_classes else "unlabelled"
 
-        producer = producer_projection.get(logical)
-        if producer is None:
-            raise ValueError(f"logical identity {logical} missing producer projection")
-
         logical_row = {
             "logical_identity": logical,
             "physical_sha_count": len(shas),
