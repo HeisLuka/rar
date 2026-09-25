@@ -1642,4 +1642,167 @@ mod tests {
             id
         );
     }
+
+    fn deep_receipt(source_hash: &str) -> Value {
+        json!({
+            "schema_version":"chaptera.operation-blast-radius.v1",
+            "operation":{
+                "kind":"MoveNode",
+                "operation_id":"op-1",
+                "node_id":"node-1",
+                "raw_text":"SECRET-MUST-NOT-ESCAPE"
+            },
+            "artifacts":{
+                "source":{
+                    "sha256":source_hash,
+                    "byte_len":1000,
+                    "producer":{"local_path":"C:\\private\\source.pub"}
+                },
+                "control":{"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","byte_len":1000},
+                "mutation":{"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_len":1000}
+            },
+            "cfb":{
+                "source_control_topology_delta":[],
+                "control_mutation_topology_delta":[],
+                "source_control_stream_delta":[],
+                "control_mutation_stream_delta":[{
+                    "stream_id":"dir:1:Contents",
+                    "before_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "after_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "before_size":100,
+                    "after_size":100,
+                    "classification":"requested_semantic",
+                    "raw_bytes":"SECRET"
+                }],
+                "control_mutation_byte_ranges":[{
+                    "offset":10,
+                    "length":4,
+                    "physical_label":"stream_payload:Contents",
+                    "classification":"requested_semantic"
+                }]
+            },
+            "parsed_record_family_delta":[{
+                "family":"Escher",
+                "id":"shape-1",
+                "before_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "after_sha256":"1111111111111111111111111111111111111111111111111111111111111111",
+                "classification":"requested_semantic"
+            }],
+            "semantic_graph_delta":[{
+                "kind":"node",
+                "id":"node-1",
+                "before_sha256":"2222222222222222222222222222222222222222222222222222222222222222",
+                "after_sha256":"3333333333333333333333333333333333333333333333333333333333333333",
+                "classification":"requested_semantic"
+            }],
+            "parser_outcomes":{
+                "source":{"status":"accepted","diagnostic_codes":[]},
+                "control":{"status":"accepted","diagnostic_codes":["save.normalized"]},
+                "mutation":{"status":"accepted","diagnostic_codes":[]}
+            },
+            "second_save_convergence":{"status":"unavailable"},
+            "classification_counts":{
+                "requested_semantic":4,
+                "save_normalization":1,
+                "expected_derived":0,
+                "unexplained_collateral":0,
+                "unavailable":0
+            },
+            "invariants":{
+                "raw_byte_inequality_is_not_semantic_evidence":true,
+                "matched_noop_control_used":true,
+                "unexplained_collateral_preserved":true,
+                "public_receipt_contains_raw_document_bytes":false,
+                "native_pub_writer_capability_granted":false
+            }
+        })
+    }
+
+    fn write_deep_receipt(value: &Value, suffix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-agent-deep-{}-{}-{suffix}.json",
+            std::process::id(),
+            sha256_hex(suffix.as_bytes())
+        ));
+        fs::write(
+            &path,
+            serde_json::to_vec(value).expect("serialize diagnostic fixture"),
+        )
+        .expect("write diagnostic fixture");
+        path
+    }
+
+    #[test]
+    fn deep_diagnostics_requires_explicit_local_file_consent() {
+        let mut server = AgentServer::default();
+        let responses = server.handle_line(
+            r#"{"request_id":"r1","command":"diagnostics.deep","receipt_path":"receipt.json"}"#,
+        );
+        assert_eq!(responses[0]["ok"], false);
+        assert_eq!(
+            responses[0]["error"]["code"],
+            "local_file_consent_required"
+        );
+    }
+
+    #[test]
+    fn deep_diagnostics_without_receipt_is_explicitly_not_loaded() {
+        let mut server = AgentServer::default();
+        let responses =
+            server.handle_line(r#"{"request_id":"r1","command":"diagnostics.deep"}"#);
+        assert_eq!(responses[0]["ok"], true);
+        assert_eq!(responses[0]["result"]["available"], false);
+        assert_eq!(
+            responses[0]["result"]["reason"],
+            "deep_diagnostics_receipt_not_loaded"
+        );
+    }
+
+    #[test]
+    fn deep_diagnostics_summary_is_source_bound_and_source_free() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let fixture = deep_receipt(source_hash);
+        let path = write_deep_receipt(&fixture, "allowlist");
+        let summary =
+            deep_diagnostics_summary(&path, source_hash).expect("valid deep receipt");
+        let encoded = serde_json::to_string(&summary).expect("serialize summary");
+        assert_eq!(summary["available"], true);
+        assert_eq!(summary["source_hash"], source_hash);
+        assert_eq!(
+            summary["operation"]["kind"],
+            "MoveNode"
+        );
+        assert!(!encoded.contains("SECRET"));
+        assert!(!encoded.contains("private"));
+        assert!(!encoded.contains(path.to_string_lossy().as_ref()));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deep_diagnostics_rejects_receipt_for_another_pub() {
+        let receipt_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let current_hash =
+            "9999999999999999999999999999999999999999999999999999999999999999";
+        let fixture = deep_receipt(receipt_hash);
+        let path = write_deep_receipt(&fixture, "mismatch");
+        let error = deep_diagnostics_summary(&path, current_hash)
+            .expect_err("different source must fail");
+        assert_eq!(error.0, "deep_diagnostics_source_mismatch");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deep_diagnostics_rejects_writer_capability_escalation() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut fixture = deep_receipt(source_hash);
+        fixture["invariants"]["native_pub_writer_capability_granted"] = Value::Bool(true);
+        let path = write_deep_receipt(&fixture, "writer-escalation");
+        let error = deep_diagnostics_summary(&path, source_hash)
+            .expect_err("writer capability escalation must fail");
+        assert_eq!(error.0, "deep_diagnostics_invalid_receipt");
+        let _ = fs::remove_file(path);
+    }
 }
