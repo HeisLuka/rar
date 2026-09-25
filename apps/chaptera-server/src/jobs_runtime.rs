@@ -302,7 +302,10 @@ impl JobsRuntime {
 
 fn validate_request_identity(request: &CreateExportJobRequestV1) -> Result<(), JobsRuntimeError> {
     if request.now_ms < 0 {
-        return Err(JobsRuntimeError::new("invalid_now", "timestamp must be non-negative"));
+        return Err(JobsRuntimeError::new(
+            "invalid_now",
+            "timestamp must be non-negative",
+        ));
     }
     if request.client_request_id.is_empty()
         || request.client_request_id.len() > MAX_CLIENT_REQUEST_ID_BYTES
