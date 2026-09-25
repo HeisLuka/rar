@@ -6,6 +6,10 @@ on:
       - "packages/protocol/pub-lab-2019/**"
       - "tools/pub_lab_2019_vmware_reset.ps1"
       - "tools/pub_lab_2019_vmware_reset_provider.ps1"
+      - "tools/pub_lab_2019_capture_environment_guest.ps1"
+      - "tools/pub_lab_2019_vmware_env_capture_provider.ps1"
+      - "tools/finalize_pub_lab_2019_environment_manifest.py"
+      - "tools/test_finalize_pub_lab_2019_environment_manifest.py"
       - "tools/validate_pub_lab_2019_vmware_evidence.py"
       - "tools/test_pub_lab_2019_vmware_evidence.py"
       - "tools/validate_pub_lab_2019_restore_pair.py"
@@ -34,6 +38,7 @@ jobs:
         run: |
           python -m unittest tools/test_pub_lab_2019_vmware_evidence.py -v
           python -m unittest tools/test_pub_lab_2019_restore_pair.py -v
+          python -m unittest tools/test_finalize_pub_lab_2019_environment_manifest.py -v
           python tools/validate_pub_lab_2019_vmware_evidence.py packages/protocol/pub-lab-2019/v1/synthetic-vmware-restore-evidence.json
           python tools/validate_pub_lab_2019_restore_pair.py packages/protocol/pub-lab-2019/v1/synthetic-restore-challenge.json packages/protocol/pub-lab-2019/v1/synthetic-environment-manifest.json
 
@@ -53,7 +58,9 @@ jobs:
         run: |
           foreach ($path in @(
             "tools/pub_lab_2019_vmware_reset.ps1",
-            "tools/pub_lab_2019_vmware_reset_provider.ps1"
+            "tools/pub_lab_2019_vmware_reset_provider.ps1",
+            "tools/pub_lab_2019_capture_environment_guest.ps1",
+            "tools/pub_lab_2019_vmware_env_capture_provider.ps1"
           )) {
             $tokens = $null
             $errors = $null
