@@ -302,10 +302,7 @@ impl SqliteRevisionStore {
         if let Err(error) = binding_result {
             let message = bounded_sqlx_message(&error);
             let _ = transaction.rollback().await;
-            if let Some(outcome) = self
-                .reconcile_edge_identity_state(&edge, &binding)
-                .await?
-            {
+            if let Some(outcome) = self.reconcile_edge_identity_state(&edge, &binding).await? {
                 return Ok(outcome);
             }
             return Err(SqliteStoreError::new(
