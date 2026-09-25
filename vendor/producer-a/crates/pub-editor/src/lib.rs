@@ -1980,13 +1980,13 @@ impl EditorSession {
 
         let page_parent = page_id.into_canonical();
         for entry in &entries {
-            let node = self
-                .graph
-                .nodes
-                .get(&entry.node_id)
-                .ok_or(EditorError::NodeMoveUnsupported {
-                    node_id: entry.node_id,
-                })?;
+            let node =
+                self.graph
+                    .nodes
+                    .get(&entry.node_id)
+                    .ok_or(EditorError::NodeMoveUnsupported {
+                        node_id: entry.node_id,
+                    })?;
             if node.header.parent_id != page_parent {
                 return Err(EditorError::MoveNodesPageMismatch {
                     node_id: entry.node_id,
@@ -1998,8 +1998,7 @@ impl EditorSession {
                     node_id: entry.node_id,
                 });
             }
-            if entry.before.width != entry.after.width
-                || entry.before.height != entry.after.height
+            if entry.before.width != entry.after.width || entry.before.height != entry.after.height
             {
                 return Err(EditorError::MoveNodesSizeChanged {
                     node_id: entry.node_id,
@@ -2919,9 +2918,7 @@ fn validate_move_nodes_transition(
         }
         previous = Some(entry.node_id);
 
-        if entry.before.width != entry.after.width
-            || entry.before.height != entry.after.height
-        {
+        if entry.before.width != entry.after.width || entry.before.height != entry.after.height {
             return Err(EditorError::MoveNodesSizeChanged {
                 node_id: entry.node_id,
             });
