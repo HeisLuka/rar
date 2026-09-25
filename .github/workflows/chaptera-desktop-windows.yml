@@ -46,18 +46,6 @@ jobs:
       - name: Validate suite product identity
         run: python tools/validate_chaptera_desktop_suite_manifest.py packages/product/desktop-suite/v1/product-manifest.json --editor-cargo apps/chaptera-desktop/Cargo.toml
 
-      - name: Check desktop package
-        run: cargo check -p chaptera-desktop --all-targets
-
-      - name: Test current scene-instance mutation gate
-        run: cargo test -p chaptera-scene-instance
-
-      - name: Test Chaptera agent protocol core
-        run: cargo test -p chaptera-desktop
-
-      - name: Test canonical desktop Story range wire
-        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test story_range_v1
-
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: pwsh
         run: |
@@ -76,6 +64,18 @@ jobs:
 
       - name: Test GUI-only Desktop V0 walkthrough
         run: cargo test -p chaptera-desktop gui_only_v0_walkthrough_uses_real_widgets -- --ignored --nocapture
+
+      - name: Check desktop package
+        run: cargo check -p chaptera-desktop --all-targets
+
+      - name: Test current scene-instance mutation gate
+        run: cargo test -p chaptera-scene-instance
+
+      - name: Test Chaptera agent protocol core
+        run: cargo test -p chaptera-desktop
+
+      - name: Test canonical desktop Story range wire
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test story_range_v1
 
       - name: Build Chaptera desktop release
         run: cargo build -p chaptera-desktop --release
