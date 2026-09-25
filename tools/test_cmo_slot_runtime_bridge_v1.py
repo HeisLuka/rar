@@ -11,6 +11,7 @@ sys.path.insert(0, str(TOOLS))
 from cmo_slot_runtime_bridge_v1 import (
     CmoSlotRuntimeError,
     build_cmo_slot_runtime_v1,
+    merge_cmo_runtime_into_scene_v1,
 )
 from resolved_graph_scene_bridge_v1 import project_resolved_graph_scene
 
@@ -197,6 +198,35 @@ class CmoSlotRuntimeBridgeTests(unittest.TestCase):
                 for diagnostic in scene["diagnostics"]
             )
         )
+
+    def test_runtime_merge_replaces_pending_diagnostic_with_projected_instance(self):
+        g = graph()
+        ctx = context([relation(3, 7, CARRIER_A)])
+        scene = project_resolved_graph_scene(g, context=ctx)
+        runtime = build(g, ctx)
+        merged = merge_cmo_runtime_into_scene_v1(scene, runtime)
+
+        projected = [
+            item
+            for item in merged["nodes"]
+            if item.get("projection_kind") == "cmo_story_slot"
+        ]
+        self.assertEqual(1, len(projected))
+        self.assertEqual(CARRIER_A, projected[0]["origin"])
+        self.assertEqual(PAGE, projected[0]["parent_origin"])
+        self.assertFalse(
+            any(
+                item["code"] == "cmo_slot_flow_not_materialized"
+                and item["origin"] == STORY
+                for item in merged["diagnostics"]
+            )
+        )
+        mapping = [
+            item
+            for item in merged["origin_mapping"]
+            if item.get("projection_kind") == "cmo_story_slot"
+        ]
+        self.assertEqual(projected[0]["instance_id"], mapping[0]["resolved_instance_id"])
 
     def test_first_nonfit_slot_blocks_later_smaller_slot(self):
         g = graph("\uFFFC\uFFFC")
