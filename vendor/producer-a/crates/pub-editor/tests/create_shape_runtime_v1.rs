@@ -362,7 +362,7 @@ fn persisted_source_backed_provenance_is_rejected_and_v0_9_cannot_smuggle_create
 }
 
 #[test]
-fn native_pub_persistence_is_explicitly_writer_blocked_for_created_shape() {
+fn native_pub_persistence_does_not_overclaim_created_shape_support() {
     let mut session = EditorSession::new(graph()).expect("session");
     session
         .create_shape(
@@ -382,13 +382,15 @@ fn native_pub_persistence_is_explicitly_writer_blocked_for_created_shape() {
         })
         .expect("assessment");
 
-    assert_eq!(assessment.state, PersistenceCompatibilityState::WriterBlocked);
+    assert_eq!(assessment.state, PersistenceCompatibilityState::NotEvaluated);
     assert!(assessment.items.iter().any(|item| {
         item.requirement.feature == "node.created_identity"
-            && item.state == PersistenceCompatibilityState::WriterBlocked
+            && item.state == PersistenceCompatibilityState::NotEvaluated
+            && item.format.is_none()
     }));
     assert!(assessment.items.iter().any(|item| {
         item.requirement.feature == "shape.paint"
-            && item.state == PersistenceCompatibilityState::WriterBlocked
+            && item.state == PersistenceCompatibilityState::NotEvaluated
+            && item.format.is_none()
     }));
 }
