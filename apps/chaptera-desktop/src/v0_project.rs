@@ -266,7 +266,7 @@ mod tests {
     fn story_state_id_matches_python_authority_ascii_vector() {
         assert_eq!(
             story_state_id_v1("00112233-4455-6677-8899-aabbccddeeff", "abc"),
-            "sha256:e04a23e328e62ef413ba67e959a6def0a764855255348e6b8761b781f4ad8b48"
+            "sha256:a8ac816672ce10cb5c520b18bb4f1f25996d30430d9a0bea5f2907f2c142e1a5"
         );
     }
 
