@@ -25,3 +25,7 @@ pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+
+[target.'cfg(target_os = "windows")'.dependencies]
+rfd = { version = "=0.17.2", default-features = false }
