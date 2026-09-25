@@ -241,12 +241,7 @@ impl SqliteAuthnStore {
         .bind(request.now_ms)
         .execute(&mut *tx)
         .await
-        .map_err(|error| {
-            AuthnError::new(
-                "principal_insert_failed",
-                bounded_sqlx_message(&error),
-            )
-        })?;
+        .map_err(|error| AuthnError::new("principal_insert_failed", bounded_sqlx_message(&error)))?;
 
         sqlx::query(
             r#"
@@ -262,12 +257,7 @@ impl SqliteAuthnStore {
         .bind(request.now_ms)
         .execute(&mut *tx)
         .await
-        .map_err(|error| {
-            AuthnError::new(
-                "identity_insert_failed",
-                bounded_sqlx_message(&error),
-            )
-        })?;
+        .map_err(|error| AuthnError::new("identity_insert_failed", bounded_sqlx_message(&error)))?;
 
         let principal = PrincipalRecord {
             principal_id: request.proposed_principal_id.clone(),
@@ -357,12 +347,7 @@ impl SqliteAuthnStore {
         .bind(request.absolute_expires_at_ms)
         .execute(&self.pool)
         .await
-        .map_err(|error| {
-            AuthnError::new(
-                "session_insert_failed",
-                bounded_sqlx_message(&error),
-            )
-        })?;
+        .map_err(|error| AuthnError::new("session_insert_failed", bounded_sqlx_message(&error)))?;
 
         Ok(SessionRecord {
             principal_id: request.principal_id,
@@ -662,7 +647,9 @@ fn decode_session_row(row: sqlx::sqlite::SqliteRow) -> Result<SessionRecord, Aut
             .try_get("session_generation")
             .map_err(sqlite_decode_error)?,
         created_at_ms: row.try_get("created_at_ms").map_err(sqlite_decode_error)?,
-        last_seen_at_ms: row.try_get("last_seen_at_ms").map_err(sqlite_decode_error)?,
+        last_seen_at_ms: row
+            .try_get("last_seen_at_ms")
+            .map_err(sqlite_decode_error)?,
         idle_expires_at_ms: row
             .try_get("idle_expires_at_ms")
             .map_err(sqlite_decode_error)?,
@@ -675,19 +662,12 @@ fn decode_session_row(row: sqlx::sqlite::SqliteRow) -> Result<SessionRecord, Aut
 
 fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, AuthnError> {
     let bytes: Vec<u8> = row.try_get(column).map_err(sqlite_decode_error)?;
-    String::from_utf8(bytes).map_err(|_| {
-        AuthnError::new(
-            "authn_row_corrupt",
-            format!("{column} is not UTF-8"),
-        )
-    })
+    String::from_utf8(bytes)
+        .map_err(|_| AuthnError::new("authn_row_corrupt", format!("{column} is not UTF-8")))
 }
 
 fn validate_identity(value: &str, label: &'static str) -> Result<(), AuthnError> {
-    if value.is_empty()
-        || value.len() > MAX_IDENTITY_BYTES
-        || value.chars().any(char::is_control)
-    {
+    if value.is_empty() || value.len() > MAX_IDENTITY_BYTES || value.chars().any(char::is_control) {
         return Err(AuthnError::new(
             "identity_invalid",
             format!("{label} must be a bounded non-control string"),
@@ -713,7 +693,9 @@ fn validate_principal_id(value: &str) -> Result<(), AuthnError> {
 
 fn validate_email(email: Option<&str>) -> Result<(), AuthnError> {
     if let Some(email) = email
-        && (email.is_empty() || email.len() > MAX_EMAIL_BYTES || email.chars().any(char::is_control))
+        && (email.is_empty()
+            || email.len() > MAX_EMAIL_BYTES
+            || email.chars().any(char::is_control))
     {
         return Err(AuthnError::new(
             "email_snapshot_invalid",
@@ -905,9 +887,7 @@ fn validate_flow(flow: &LoginFlow, now_ms: u64) -> Result<(), AuthnError> {
 }
 
 fn validate_flow_token(value: &str, label: &'static str) -> Result<(), AuthnError> {
-    if value.is_empty()
-        || value.len() > MAX_FLOW_TOKEN_BYTES
-        || value.chars().any(char::is_control)
+    if value.is_empty() || value.len() > MAX_FLOW_TOKEN_BYTES || value.chars().any(char::is_control)
     {
         return Err(AuthnError::new(
             "login_flow_token_invalid",
@@ -974,7 +954,13 @@ mod tests {
         (path, store)
     }
 
-    async fn principal(store: &SqliteAuthnStore, id: &str, issuer: &str, subject: &str, email: &str) {
+    async fn principal(
+        store: &SqliteAuthnStore,
+        id: &str,
+        issuer: &str,
+        subject: &str,
+        email: &str,
+    ) {
         store
             .resolve_principal(ResolvePrincipalRequest {
                 issuer: issuer.into(),
@@ -1117,15 +1103,16 @@ mod tests {
             .await
             .unwrap();
 
-        let authenticated = store
-            .authenticate_session(active, 200, 600)
-            .await
-            .unwrap();
+        let authenticated = store.authenticate_session(active, 200, 600).await.unwrap();
         assert_eq!(authenticated.principal_id, "principal-a");
 
         assert!(store.revoke_session(active, 250).await.unwrap());
         assert_eq!(
-            store.authenticate_session(active, 300, 650).await.unwrap_err().code,
+            store
+                .authenticate_session(active, 300, 650)
+                .await
+                .unwrap_err()
+                .code,
             "session_invalid"
         );
 
@@ -1143,7 +1130,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.authenticate_session(expired, 200, 600).await.unwrap_err().code,
+            store
+                .authenticate_session(expired, 200, 600)
+                .await
+                .unwrap_err()
+                .code,
             "session_invalid"
         );
 
@@ -1162,7 +1153,11 @@ mod tests {
             .unwrap();
         assert!(store.disable_principal("principal-a", 250).await.unwrap());
         assert_eq!(
-            store.authenticate_session(disabled, 300, 600).await.unwrap_err().code,
+            store
+                .authenticate_session(disabled, 300, 600)
+                .await
+                .unwrap_err()
+                .code,
             "session_invalid"
         );
 
@@ -1201,7 +1196,11 @@ mod tests {
         store.verify_csrf(session, old_csrf, 200).await.unwrap();
         store.rotate_csrf(session, new_csrf, 200).await.unwrap();
         assert_eq!(
-            store.verify_csrf(session, old_csrf, 200).await.unwrap_err().code,
+            store
+                .verify_csrf(session, old_csrf, 200)
+                .await
+                .unwrap_err()
+                .code,
             "csrf_invalid"
         );
         store.verify_csrf(session, new_csrf, 200).await.unwrap();
