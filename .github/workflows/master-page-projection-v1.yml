@@ -5,7 +5,7 @@ on:
     paths:
       - "Cargo.toml"
       - "crates/pub-model/src/projection_context.rs"
-      - "crates/pub-model/src/lib.rs"
+      - "crates/pub-model/src/source_identity.rs"
       - "crates/pub-master-projection/**"
       - "tools/resolved_graph_scene_bridge_v1.py"
       - "tools/test_resolved_graph_scene_bridge_v1.py"
