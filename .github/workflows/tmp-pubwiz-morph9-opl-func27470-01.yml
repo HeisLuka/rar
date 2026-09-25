@@ -1,0 +1,250 @@
+name: TEMP PUBWIZ MORPH9 OPL function slice
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-morph9-opl-func27470-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+      - name: Rehydrate exact MORPH9 and bound decoder function
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/morph/{src,module} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800             'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z'             -o /tmp/morph/source.7z
+          test "$(sha1sum /tmp/morph/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          7z x -y /tmp/morph/source.7z -o/tmp/morph/src >/dev/null
+          MDF="$(find /tmp/morph/src -type f -iname '*.mdf' | head -n1)"
+          iat "$MDF" /tmp/morph/disc.iso >/dev/null
+          test "$(sha256sum /tmp/morph/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z e -y -o/tmp/morph/module /tmp/morph/disc.iso 'PFILES/MSOFFICE/OFFICE/MORPH9.DLL' >/dev/null
+          test "$(sha256sum /tmp/morph/module/MORPH9.DLL | awk '{print $1}')" = 'd154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          python3 - <<'PY'
+          import json, hashlib, pathlib, collections
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_32
+          from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
+
+          p=pathlib.Path('/tmp/morph/module/MORPH9.DLL')
+          data=p.read_bytes()
+          pe=pefile.PE(data=data, fast_load=False)
+          ib=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86, CS_MODE_32); md.detail=True
+
+          ins=[]
+          for sec in pe.sections:
+              if not (sec.Characteristics & 0x20000000):
+                  continue
+              secname=sec.Name.rstrip(b'\0').decode('ascii','replace')
+              for x in md.disasm(sec.get_data(), ib+sec.VirtualAddress):
+                  ins.append((secname,x))
+          ins.sort(key=lambda z:z[1].address)
+          idx_by_rva={x.address-ib:i for i,(_,x) in enumerate(ins)}
+
+          def row(x):
+              return {'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str,'size':x.size}
+
+          def classic_prologue(i):
+              if i+1>=len(ins): return False
+              x=ins[i][1]; y=ins[i+1][1]
+              return x.mnemonic=='push' and x.op_str=='ebp' and y.mnemonic=='mov' and y.op_str.replace(' ','')=='ebp,esp'
+
+          def find_func_bounds(rva):
+              i=idx_by_rva.get(rva)
+              if i is None:
+                  # nearest instruction at/before
+                  cand=[j for j,(_,x) in enumerate(ins) if x.address-ib<=rva]
+                  i=cand[-1]
+              start=None
+              for j in range(i, max(-1,i-1200), -1):
+                  if classic_prologue(j):
+                      start=j; break
+                  if j<i and ins[j][1].mnemonic.startswith('ret'):
+                      start=j+1; break
+              if start is None: start=max(0,i-400)
+              end=None
+              for j in range(i, min(len(ins),i+1600)):
+                  if ins[j][1].mnemonic.startswith('ret'):
+                      end=j; break
+              if end is None: end=min(len(ins)-1,i+800)
+              return start,end,i
+
+          def direct_target(x):
+              if x.mnemonic!='call' or not x.operands or x.operands[0].type!=X86_OP_IMM:
+                  return None
+              return (x.operands[0].imm & 0xffffffff)-ib
+
+          imports={}
+          if hasattr(pe,'DIRECTORY_ENTRY_IMPORT'):
+              for dll in pe.DIRECTORY_ENTRY_IMPORT:
+                  dn=dll.dll.decode('ascii','replace')
+                  for imp in dll.imports:
+                      if imp.address:
+                          imports[imp.address-ib]={'dll':dn,'name':(imp.name.decode('ascii','replace') if imp.name else None),'ordinal':imp.ordinal}
+
+          cluster_rvas=[0x6a40,0x6af2]
+          bounds=[find_func_bounds(r) for r in cluster_rvas]
+          same_function=(bounds[0][0],bounds[0][1])==(bounds[1][0],bounds[1][1])
+          main_start=min(b[0] for b in bounds); main_end=max(b[1] for b in bounds)
+          main_ins=ins[main_start:main_end+1]
+          main_start_rva=main_ins[0][1].address-ib
+          main_end_rva=main_ins[-1][1].address-ib
+
+          callee_counts=collections.Counter()
+          call_rows=[]
+          for _,x in main_ins:
+              t=direct_target(x)
+              if t is not None:
+                  callee_counts[t]+=1
+                  call_rows.append({'call_rva':x.address-ib,'target_rva':t,'import':imports.get(t)})
+          caller_rows=[]
+          for _,x in ins:
+              t=direct_target(x)
+              if t==main_start_rva:
+                  caller_rows.append({'call_rva':x.address-ib,'target_rva':t})
+
+          helper_start,helper_end,helper_i=find_func_bounds(0x27470)
+          helper_ins=ins[helper_start:helper_end+1]
+          helper_start_rva=helper_ins[0][1].address-ib
+          helper_end_rva=helper_ins[-1][1].address-ib
+          helper_callers=[]
+          for _,x in ins:
+              t=direct_target(x)
+              if t==0x27470 or t==helper_start_rva:
+                  helper_callers.append({'call_rva':x.address-ib,'target_rva':t})
+
+          def mem_signals(seq):
+              word_reads=[]; dword_reads=[]; root10=[]; ptr_adv=[]; length_use=[]
+              for k,(sec,x) in enumerate(seq):
+                  for oi,op in enumerate(x.operands):
+                      if op.type!=X86_OP_MEM: continue
+                      base=x.reg_name(op.mem.base) if op.mem.base else None
+                      idx=x.reg_name(op.mem.index) if op.mem.index else None
+                      disp=op.mem.disp
+                      stackish=base in ('ebp','esp')
+                      sig={'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str,'base':base,'index':idx,'disp':disp,'size':op.size}
+                      if op.size==2 and not stackish: word_reads.append(sig)
+                      if op.size==4 and not stackish:
+                          dword_reads.append(sig)
+                          if disp==0x10: root10.append(sig)
+                  # pointer-ish arithmetic, exclude stack/frame
+                  if x.mnemonic in ('add','sub','inc','dec','lea'):
+                      txt=x.op_str.lower()
+                      if not any(r in txt for r in ('esp','ebp')):
+                          ptr_adv.append(row(x))
+              # local bounded dataflow: dword load into reg then reg used in pointer arithmetic within 12 insns
+              for k,(sec,x) in enumerate(seq):
+                  if x.mnemonic!='mov' or len(x.operands)<2: continue
+                  dst,src=x.operands[0],x.operands[1]
+                  if dst.type!=X86_OP_REG or src.type!=X86_OP_MEM or src.size!=4: continue
+                  base=x.reg_name(src.mem.base) if src.mem.base else None
+                  if base in ('ebp','esp',None): continue
+                  reg=x.reg_name(dst.reg)
+                  for _,y in seq[k+1:min(len(seq),k+13)]:
+                      if y.mnemonic not in ('add','sub','lea','cmp'): continue
+                      if reg in y.op_str.lower():
+                          length_use.append({'load':row(x),'load_base':base,'use':row(y)})
+              return {
+                'word_nonstack_reads':word_reads[:128],
+                'dword_nonstack_reads':dword_reads[:128],
+                'dword_disp_0x10_reads':root10[:64],
+                'pointer_arithmetic':ptr_adv[:128],
+                'dword_load_near_arithmetic':length_use[:64],
+              }
+
+          def window(rva,before=20,after=28):
+              i=idx_by_rva.get(rva)
+              if i is None: return []
+              return [row(x) for _,x in ins[max(0,i-before):min(len(ins),i+after+1)]]
+
+          main_signals=mem_signals(main_ins)
+          helper_signals=mem_signals(helper_ins)
+
+          # explicitly verify T693 decoder sequences are within main slice
+          decode_hits=[]
+          for _,x in main_ins:
+              r=x.address-ib
+              if r in (0x6a40,0x6af2,0x6a43,0x6af5,0x6a51,0x6b00,0x6a60,0x6b0f):
+                  decode_hits.append(row(x))
+
+          # conservative evidence classifier
+          has_word_reads=len(main_signals['word_nonstack_reads'])>0
+          has_dword_reads=len(main_signals['dword_nonstack_reads'])>0
+          has_length_flow=len(main_signals['dword_load_near_arithmetic'])>0
+          has_root10=len(main_signals['dword_disp_0x10_reads'])>0
+          if has_word_reads and has_dword_reads and has_length_flow:
+              classification='poc-compatible-stream-consumer-candidate'
+          elif has_word_reads:
+              classification='generic-opl-utility-or-unresolved'
+          else:
+              classification='no-buffer-framing-evidence'
+
+          out={
+            'schema':'chaptera.pubwiz-morph9-opl-func27470.v1',
+            'module_sha256':hashlib.sha256(data).hexdigest(),
+            'cluster_rvas':cluster_rvas,
+            'clusters_share_bounded_function':same_function,
+            'main_function':{
+              'start_rva':main_start_rva,'end_rva':main_end_rva,
+              'instruction_count':len(main_ins),
+              'direct_callers':caller_rows[:128],
+              'direct_callees':[{'target_rva':t,'count':n,'import':imports.get(t)} for t,n in callee_counts.most_common()],
+              'signals':main_signals,
+              'decode_anchor_rows':decode_hits,
+              'entry_window':[row(x) for _,x in main_ins[:40]],
+              'exit_window':[row(x) for _,x in main_ins[-40:]],
+            },
+            'helper_27470':{
+              'resolved_function_start_rva':helper_start_rva,'end_rva':helper_end_rva,
+              'instruction_count':len(helper_ins),
+              'direct_callers':helper_callers[:256],
+              'signals':helper_signals,
+              'entry_window':[row(x) for _,x in helper_ins[:64]],
+              'exit_window':[row(x) for _,x in helper_ins[-40:]],
+            },
+            'cluster_windows':{hex(r):window(r) for r in cluster_rvas},
+            'classification':classification,
+            'classifier_inputs':{
+              'main_word_nonstack_read_count':len(main_signals['word_nonstack_reads']),
+              'main_dword_nonstack_read_count':len(main_signals['dword_nonstack_reads']),
+              'main_dword_length_flow_count':len(main_signals['dword_load_near_arithmetic']),
+              'main_dword_disp_0x10_count':len(main_signals['dword_disp_0x10_reads']),
+            },
+            'source_safe':True,'raw_module_retained':False
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          brief={k:v for k,v in out.items() if k not in ('cluster_windows',)}
+          brief['main_function']={k:v for k,v in out['main_function'].items() if k not in ('signals','entry_window','exit_window')}
+          brief['helper_27470']={k:v for k,v in out['helper_27470'].items() if k not in ('signals','entry_window','exit_window')}
+          print(json.dumps(brief,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then exit 1; fi
+          python3 - <<'PY'
+          import json
+          x=json.load(open('out/summary.json'))
+          assert x['source_safe'] is True
+          assert x['raw_module_retained'] is False
+          assert x['module_sha256']=='d154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          assert set(x['cluster_rvas'])=={0x6a40,0x6af2}
+          PY
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-morph9-opl-func27470-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
