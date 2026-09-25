@@ -72,6 +72,7 @@ pub use resolve::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::time::{Duration, Instant};
 pub use structural_base::{
     PUB_STRUCTURAL_BASE_SCHEMA_V1, PubStructuralBaseCandidate, PubStructuralBaseManifest,
     PubStructuralBaseStreamDigest, build_mature_0x2c_structural_base_manifest,
@@ -94,6 +95,19 @@ pub const CONTENTS_STREAM_PATH: &str = "/Contents";
 pub const QUILL_STREAM_PATH: &str = "/Quill/QuillSub/CONTENTS";
 pub const ESCHER_STREAM_PATH: &str = "/Escher/EscherStm";
 pub const ESCHER_DELAY_STREAM_PATH: &str = "/Escher/EscherDelayStm";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PubReaderOpenTiming {
+    pub input_materialization_ns: u64,
+    pub logical_stream_read_ns: u64,
+    pub parse_source_graph_ns: u64,
+    pub source_bytes: u64,
+    pub logical_stream_bytes: u64,
+}
+
+fn duration_ns_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
 
 const RAW_TYPE_SHAPE: u16 = 0x01;
 const RAW_TYPE_GROUP: u16 = 0x30;
@@ -442,13 +456,23 @@ pub fn derive_pub_story_id(source_hash: &Sha256Digest, syid: u32) -> Result<Stor
 /// The caller supplies a verified SHA-256 digest. This function deliberately
 /// does not pretend that a representation type is a hashing implementation.
 pub fn build_mature_0x2c_source_graph<R: Read + Seek>(
-    mut reader: R,
+    reader: R,
     source_hash: Sha256Digest,
 ) -> Result<PubSourceGraphBuild> {
+    Ok(build_mature_0x2c_source_graph_with_timing(reader, source_hash)?.0)
+}
+
+pub fn build_mature_0x2c_source_graph_with_timing<R: Read + Seek>(
+    mut reader: R,
+    source_hash: Sha256Digest,
+) -> Result<(PubSourceGraphBuild, PubReaderOpenTiming)> {
+    let materialize_started = Instant::now();
     reader.seek(SeekFrom::Start(0))?;
     let mut pub_bytes = Vec::new();
     reader.read_to_end(&mut pub_bytes)?;
+    let input_materialization_ns = duration_ns_u64(materialize_started.elapsed());
 
+    let streams_started = Instant::now();
     let contents =
         pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), CONTENTS_STREAM_PATH)
             .with_context(|| format!("read {CONTENTS_STREAM_PATH}"))?;
@@ -456,8 +480,27 @@ pub fn build_mature_0x2c_source_graph<R: Read + Seek>(
         .with_context(|| format!("read {QUILL_STREAM_PATH}"))?;
     let escher = pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), ESCHER_STREAM_PATH)
         .with_context(|| format!("read {ESCHER_STREAM_PATH}"))?;
+    let logical_stream_read_ns = duration_ns_u64(streams_started.elapsed());
 
-    build_mature_0x2c_from_streams(source_hash, &contents, &quill, &escher)
+    let parse_started = Instant::now();
+    let build = build_mature_0x2c_from_streams(source_hash, &contents, &quill, &escher)?;
+    let parse_source_graph_ns = duration_ns_u64(parse_started.elapsed());
+
+    let logical_stream_bytes = contents
+        .len()
+        .saturating_add(quill.len())
+        .saturating_add(escher.len());
+
+    Ok((
+        build,
+        PubReaderOpenTiming {
+            input_materialization_ns,
+            logical_stream_read_ns,
+            parse_source_graph_ns,
+            source_bytes: u64::try_from(pub_bytes.len()).unwrap_or(u64::MAX),
+            logical_stream_bytes: u64::try_from(logical_stream_bytes).unwrap_or(u64::MAX),
+        },
+    ))
 }
 
 /// Research-only correlation scan for the Story ↔ shape ownership bridge.
