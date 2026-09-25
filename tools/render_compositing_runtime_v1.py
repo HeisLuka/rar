@@ -383,6 +383,7 @@ class CompositingRuntimeV1:
 
         for page in segment_scene_plan["pages"]:
             for segment in page["segments"]:
+                segment_coherent = True
                 barrier = segment["barrier_key"]
                 clip_id = barrier[0]
                 leaf_group_id = barrier[1]
@@ -391,11 +392,13 @@ class CompositingRuntimeV1:
                     clip = clips.get(clip_id)
                     if clip is None:
                         coherent = False
+                        segment_coherent = False
                         unsupported.append({"code": "missing_clip", "clip_id": clip_id})
                     elif clip.get("kind") == "rect":
                         rect = clip.get("rect")
                         if not isinstance(rect, dict):
                             coherent = False
+                            segment_coherent = False
                             unsupported.append({"code": "malformed_rect_clip", "clip_id": clip_id})
                         else:
                             records.append({"op": "PushScissor", "clip_id": clip_id, "rect": copy.deepcopy(rect)})
@@ -413,6 +416,7 @@ class CompositingRuntimeV1:
                             mask_clips += 1
                         except ValueError as exc:
                             coherent = False
+                            segment_coherent = False
                             unsupported.append({"code": "unsupported_complex_clip", "clip_id": clip_id, "detail": str(exc)})
 
                 chain = self._group_chain(leaf_group_id, groups)
@@ -423,6 +427,7 @@ class CompositingRuntimeV1:
                     if effect_ids:
                         group_unsupported = True
                         coherent = False
+                        segment_coherent = False
                         kinds = [effects[eid]["kind"] for eid in effect_ids if eid in effects]
                         unsupported.append({
                             "code": "advanced_effect_execution_not_admitted_v1",
@@ -448,6 +453,7 @@ class CompositingRuntimeV1:
                         or not isinstance(size.get("height_px"), int)
                     ):
                         coherent = False
+                        segment_coherent = False
                         group_unsupported = True
                         unsupported.append({
                             "code": "missing_bounded_group_surface_size",
@@ -479,7 +485,7 @@ class CompositingRuntimeV1:
                         },
                     })
 
-                if not group_unsupported and coherent:
+                if not group_unsupported and segment_coherent:
                     records.append({
                         "op": "DrawSegment",
                         "page_id": page["page_id"],
