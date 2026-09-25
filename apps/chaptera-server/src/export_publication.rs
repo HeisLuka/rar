@@ -225,7 +225,7 @@ impl SqliteExportPublicationStore {
             "#,
         )
         .bind(&publication_id)
-        .bind(&effect_key)
+        .bind(effect_key.as_bytes())
         .bind(input.tenant_id.as_bytes())
         .bind(input.job_id.as_bytes())
         .bind(input.document_id.as_bytes())
@@ -396,7 +396,7 @@ fn decode_record(
     input.validate()?;
 
     let publication_id: String = row.try_get("publication_id").map_err(sqlite_error)?;
-    let effect_key: String = row.try_get("effect_key").map_err(sqlite_error)?;
+    let effect_key = blob_text(&row, "effect_key")?;
     let created_at_ms: i64 = row.try_get("created_at_ms").map_err(sqlite_error)?;
     require_prefixed_sha256(&publication_id, "publication_id")?;
     require_prefixed_sha256(&effect_key, "effect_key")?;
