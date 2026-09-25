@@ -1,0 +1,26 @@
+name: Editor agent control catalog V1
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/editor-agent-control/**"
+      - "tools/test_editor_agent_control_catalog.py"
+      - ".github/workflows/editor-agent-control-catalog-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate catalog JSON
+        run: python -m json.tool packages/protocol/editor-agent-control/v1.catalog.json > /dev/null
+      - name: Run catalog contract tests
+        run: python tools/test_editor_agent_control_catalog.py -v
