@@ -99,6 +99,9 @@ impl Default for EdgeConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthConfig {
+    pub login_flow_ttl_seconds: u64,
+    pub session_idle_ttl_seconds: u64,
+    pub session_absolute_ttl_seconds: u64,
     pub oidc: OidcConfig,
 }
 
@@ -325,7 +328,7 @@ impl ChapteraConfig {
         }
 
         match (&self.auth, self.environment) {
-            (Some(auth), mode) => validate_oidc(mode, &auth.oidc)?,
+            (Some(auth), mode) => validate_auth(mode, auth)?,
             (None, EnvironmentMode::Prod) => {
                 return Err(ConfigError::new(
                     "prod_auth_required",
@@ -475,6 +478,48 @@ fn validate_origin(mode: EnvironmentMode, raw_origin: Option<&str>) -> Result<()
         }
         _ => Ok(()),
     }
+}
+
+fn validate_auth(mode: EnvironmentMode, auth: &AuthConfig) -> Result<(), ConfigError> {
+    validate_positive_ttl(
+        "auth.login_flow_ttl_seconds",
+        auth.login_flow_ttl_seconds,
+        "auth_login_flow_ttl_invalid",
+    )?;
+    validate_positive_ttl(
+        "auth.session_idle_ttl_seconds",
+        auth.session_idle_ttl_seconds,
+        "auth_session_idle_ttl_invalid",
+    )?;
+    validate_positive_ttl(
+        "auth.session_absolute_ttl_seconds",
+        auth.session_absolute_ttl_seconds,
+        "auth_session_absolute_ttl_invalid",
+    )?;
+    if auth.session_absolute_ttl_seconds < auth.session_idle_ttl_seconds {
+        return Err(ConfigError::new(
+            "auth_session_ttl_order_invalid",
+            "auth.session_absolute_ttl_seconds must be >= auth.session_idle_ttl_seconds",
+        ));
+    }
+    validate_oidc(mode, &auth.oidc)
+}
+
+fn validate_positive_ttl(
+    field: &str,
+    seconds: u64,
+    code: &'static str,
+) -> Result<(), ConfigError> {
+    if seconds == 0 {
+        return Err(ConfigError::new(code, format!("{field} must be positive")));
+    }
+    if seconds > (i64::MAX as u64) / 1000 {
+        return Err(ConfigError::new(
+            code,
+            format!("{field} exceeds the supported millisecond timestamp range"),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_oidc(mode: EnvironmentMode, oidc: &OidcConfig) -> Result<(), ConfigError> {
@@ -912,6 +957,11 @@ max_api_body_bytes = 8388608
 max_upload_body_bytes = 268435456
 request_timeout_ms = 30000
 
+[auth]
+login_flow_ttl_seconds = 600
+session_idle_ttl_seconds = 1800
+session_absolute_ttl_seconds = 86400
+
 [auth.oidc]
 issuer = "https://id.example.invalid"
 client_id = "chaptera-cloud"
@@ -931,6 +981,44 @@ client_secret = {secret_source}
         config.validate().unwrap();
         assert_eq!(config.environment, EnvironmentMode::Prod);
         assert_eq!(config.runtime_config().listen, DEFAULT_LISTEN);
+    }
+
+    #[test]
+    fn auth_ttls_are_explicit_positive_and_ordered() {
+        let mut config: ChapteraConfig = toml::from_str(&prod_toml(
+            r#"{ source = "env", name = "OIDC_SECRET" }"#,
+        ))
+        .unwrap();
+
+        let auth = config.auth.as_mut().unwrap();
+        auth.login_flow_ttl_seconds = 0;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "auth_login_flow_ttl_invalid"
+        );
+
+        let auth = config.auth.as_mut().unwrap();
+        auth.login_flow_ttl_seconds = 600;
+        auth.session_idle_ttl_seconds = 0;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "auth_session_idle_ttl_invalid"
+        );
+
+        let auth = config.auth.as_mut().unwrap();
+        auth.session_idle_ttl_seconds = 1800;
+        auth.session_absolute_ttl_seconds = 1799;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "auth_session_ttl_order_invalid"
+        );
+
+        let auth = config.auth.as_mut().unwrap();
+        auth.session_absolute_ttl_seconds = (i64::MAX as u64) / 1000 + 1;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "auth_session_absolute_ttl_invalid"
+        );
     }
 
     #[test]
