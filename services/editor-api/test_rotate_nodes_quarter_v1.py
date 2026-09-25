@@ -468,7 +468,10 @@ class RotateNodesQuarterV1Tests(unittest.TestCase):
 
         replay_operation, replayed, _ = apply_rotate_nodes_quarter_v1(
             copy.deepcopy(self.project),
-            self.request("rotate-nodes-replay")["command"],
+            self.request(
+                "rotate-nodes-replay",
+                entries=[entry(NODE_A), entry(NODE_B)],
+            )["command"],
         )
         self.assertEqual(accepted["canonical_operation"], replay_operation)
         self.assertEqual(
