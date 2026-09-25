@@ -26,9 +26,7 @@ use chaptera_server::{
     },
     export_publication::SqliteExportPublicationStore,
     job_queue::{EnqueueRequest, JobKind, JobStatus, SqliteJobQueue},
-    job_worker::{
-        CancellationFlag, JobExecutor, WorkerControl, WorkerLoop, WorkerLoopConfig,
-    },
+    job_worker::{CancellationFlag, JobExecutor, WorkerControl, WorkerLoop, WorkerLoopConfig},
     quota_admission::{SqliteQuotaAdmissionConfig, SqliteQuotaJobAdmission},
     quota_store::{QuotaConfig, SqliteQuotaAuthority},
     revision_materializer::{
@@ -174,13 +172,16 @@ impl BlobProvider for MemoryBlobProvider {
         &self,
         object_locator: &str,
     ) -> Result<Option<ProviderObjectMetadata>, ProviderError> {
-        Ok(self.objects.lock().unwrap().get(object_locator).map(|object| {
-            ProviderObjectMetadata {
+        Ok(self
+            .objects
+            .lock()
+            .unwrap()
+            .get(object_locator)
+            .map(|object| ProviderObjectMetadata {
                 generation: object.generation.clone(),
                 byte_len: u64::try_from(object.bytes.len()).unwrap(),
                 etag: "memory-etag".to_owned(),
-            }
-        }))
+            }))
     }
 
     async fn open_read(
@@ -189,9 +190,9 @@ impl BlobProvider for MemoryBlobProvider {
         generation: &str,
     ) -> Result<Box<dyn AsyncRead + Unpin + Send>, ProviderError> {
         let objects = self.objects.lock().unwrap();
-        let object = objects.get(object_locator).ok_or_else(|| {
-            ProviderError::new(ProviderErrorKind::NotFound, "memory_not_found")
-        })?;
+        let object = objects
+            .get(object_locator)
+            .ok_or_else(|| ProviderError::new(ProviderErrorKind::NotFound, "memory_not_found"))?;
         if object.generation != generation {
             return Err(ProviderError::new(
                 ProviderErrorKind::NotFound,
@@ -412,10 +413,9 @@ async fn real_queue_quota_executor_blob_publication_terminal_vertical() {
     let artifacts = SqliteDerivedArtifactStore::open(&db, 4, Duration::from_secs(2))
         .await
         .unwrap();
-    let publications =
-        SqliteExportPublicationStore::open(&db, 4, Duration::from_secs(2))
-            .await
-            .unwrap();
+    let publications = SqliteExportPublicationStore::open(&db, 4, Duration::from_secs(2))
+        .await
+        .unwrap();
 
     let (state, payload) = build_materialized_state();
     let producer = Arc::new(ExactRevisionEditableExporter::new(Arc::new(
@@ -512,7 +512,10 @@ async fn real_queue_quota_executor_blob_publication_terminal_vertical() {
         .unwrap()
         .expect("artifact physical exists");
     let artifact_bytes = provider.bytes(&artifact_physical.object_locator);
-    assert!(artifact_bytes.starts_with(b"PK"), "published IDML is a ZIP package");
+    assert!(
+        artifact_bytes.starts_with(b"PK"),
+        "published IDML is a ZIP package"
+    );
     assert_eq!(
         format!("sha256:{}", sha256_hex(&artifact_bytes)),
         visible.input.artifact_content_hash
@@ -520,7 +523,10 @@ async fn real_queue_quota_executor_blob_publication_terminal_vertical() {
     assert!(provider.object_count() >= 2);
 
     let usage = quota.usage(&payload.tenant_id, now_ms()).await.unwrap();
-    assert_eq!(usage.export, 0, "WorkerLoop releases export quota after terminal success");
+    assert_eq!(
+        usage.export, 0,
+        "WorkerLoop releases export quota after terminal success"
+    );
 
     // A duplicate executor delivery over the same durable job must converge to
     // the same logical effect/publication even if BlobStore allocates new
@@ -536,7 +542,11 @@ async fn real_queue_quota_executor_blob_publication_terminal_vertical() {
         .unwrap()
         .expect("publication remains visible");
     assert_eq!(visible_after_retry, visible);
-    assert_eq!(provider.object_count(), 2, "physical bytes are deduped on retry");
+    assert_eq!(
+        provider.object_count(),
+        2,
+        "physical bytes are deduped on retry"
+    );
 
     publications.close().await;
     quota.close().await;
