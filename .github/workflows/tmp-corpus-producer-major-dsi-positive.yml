@@ -1,0 +1,65 @@
+name: TEMP CORPUS DSI producer-major census
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/tmp_producer_major_dsi_positive.py'
+      - '.github/workflows/tmp-corpus-producer-major-dsi-positive.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tmp-corpus-producer-major-dsi-positive-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Compile execution helper
+        run: python -m py_compile tools/corpus/tmp_producer_major_dsi_positive.py
+      - name: Decode exact unique DSI hashes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/corpus/tmp_producer_major_dsi_positive.py --out out
+      - name: Enforce source-safe receipt
+        if: always()
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          if [ -f out/summary.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text(encoding="utf-8"))
+          assert s["source_safe"] is True
+          assert s["raw_pub_retained"] is False
+          assert s["logical_identity_count"] == 1314
+          assert s["dsi_positive_logical_identity_count"] == 551
+          assert s["dsi_absent_logical_identity_count"] == 763
+          assert s["unique_dsi_hash_count"] == 98
+          assert s["unique_dsi_state_counts"].get("rehydrate_failure",0) == 0
+          PY
+            sha256sum out/*.json | tee out/sha256sums.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-producer-major-dsi-positive-01-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
