@@ -145,6 +145,11 @@ jobs:
           if (-not (Test-Path $exe)) { throw "portable ZIP did not contain Chaptera.exe" }
           if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "portable ZIP leaked a Cargo checkout" }
 
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $exeBytes = (Get-Item $exe).Length
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $exeHash
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$exeBytes
+
           $receipt = Join-Path $artifact "chaptera.desktop-source-free-smoke.json"
           $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $receipt) -Wait -PassThru
           if ($process.ExitCode -ne 0) {
@@ -169,10 +174,8 @@ jobs:
             if ($smoke.runtime.$field -ne $false) { throw "source-free runtime dependency detected: $field" }
           }
 
-          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $exeBytes = (Get-Item $exe).Length
-          if ($smoke.binary_sha256 -ne $exeHash) { throw "self-reported executable hash mismatch" }
-          if ([int64]$smoke.binary_byte_len -ne $exeBytes) { throw "self-reported executable byte length mismatch" }
+          if ($smoke.binary_sha256 -ne $exeHash) { throw "bound executable hash mismatch" }
+          if ([int64]$smoke.binary_byte_len -ne $exeBytes) { throw "bound executable byte length mismatch" }
 
           $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
           $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
