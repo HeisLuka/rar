@@ -30,10 +30,9 @@ use pub_export::{
 };
 use pub_idml::{
     IDML_ADAPTER_VERSION_V0_1, IDML_SCHEMA_FENCE_LEGACY_DOM_7, IMAGE_BYTES_FEATURE,
-    IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE,
-    IdmlAuthoredRectanglePlacement, IdmlEmbeddedImagePlacement, IdmlRgb8, IdmlWireProfile,
-    add_authored_rectangles_to_idml, add_embedded_images_to_idml,
-    project_resolved_graph_to_idml, write_idml_ucf,
+    IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlAuthoredRectanglePlacement,
+    IdmlEmbeddedImagePlacement, IdmlRgb8, IdmlWireProfile, add_authored_rectangles_to_idml,
+    add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
 };
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
@@ -43,8 +42,8 @@ use pub_model::{
 pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgAuthoredRectanglePlacement,
-    OdgEmbeddedImagePlacement, OdgRgb8, add_authored_rectangles_to_odg,
-    add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
+    OdgEmbeddedImagePlacement, OdgRgb8, add_authored_rectangles_to_odg, add_embedded_images_to_odg,
+    project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
     PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
