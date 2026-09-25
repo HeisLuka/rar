@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "reader-only")]
 const APP_TITLE: &str = "Chaptera PUB Reader — Technical Preview";
 #[cfg(not(feature = "reader-only"))]
-const APP_TITLE: &str = "Chaptera Editor — Technical Preview";
+const APP_TITLE: &str = "Chaptera Editor";
 
 fn reader_only_mode() -> bool {
     cfg!(feature = "reader-only")
