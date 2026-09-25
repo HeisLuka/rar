@@ -8,6 +8,8 @@ on:
       - "crates/chaptera-scene-instance/**"
       - "vendor/producer-a/**"
       - ".github/workflows/chaptera-desktop-windows.yml"
+      - "tools/package_editor_live_trial.py"
+      - "packages/product/editor-live-trial/v1/**"
   workflow_dispatch:
 
 permissions:
@@ -89,6 +91,9 @@ jobs:
           python tools/validate_editor_desktop_vertical_receipt.py "$receipt"
           Copy-Item "$receipt" "target/release/editor-desktop-vertical.real.json"
 
+      - name: Package portable Editor ZIP
+        run: python tools/package_editor_live_trial.py --editor-exe target/release/chaptera.exe --output-zip target/release/Chaptera-Editor-Windows-x86_64.zip --manifest target/release/Chaptera-Editor.package.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: chaptera-editor-windows-x86_64
@@ -96,4 +101,77 @@ jobs:
             target/release/chaptera.exe
             target/release/chaptera.desktop-build.json
             target/release/editor-desktop-vertical.real.json
+            target/release/Chaptera-Editor-Windows-x86_64.zip
+            target/release/Chaptera-Editor.package.json
+          if-no-files-found: error
+
+  validate-portable-editor:
+    needs: build-windows-editor
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chaptera-editor-windows-x86_64
+          path: ${{ runner.temp }}/chaptera-artifact
+
+      - name: Validate clean extracted Editor
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:RUNNER_TEMP "chaptera-artifact"
+          $zip = Join-Path $artifact "Chaptera-Editor-Windows-x86_64.zip"
+          $manifestPath = Join-Path $artifact "Chaptera-Editor.package.json"
+          if (-not (Test-Path $zip)) { throw "portable Editor ZIP is missing" }
+          if (-not (Test-Path $manifestPath)) { throw "portable package manifest is missing" }
+
+          $clean = Join-Path $env:RUNNER_TEMP "chaptera-portable-clean"
+          if (Test-Path $clean) { Remove-Item -Recurse -Force $clean }
+          New-Item -ItemType Directory -Force -Path $clean | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $clean
+
+          $exe = Join-Path $clean "Chaptera.exe"
+          if (-not (Test-Path $exe)) { throw "portable ZIP did not contain Chaptera.exe" }
+          if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "portable ZIP leaked a Cargo checkout" }
+
+          $raw = & $exe --product-smoke-v1
+          if ($LASTEXITCODE -ne 0) { throw "source-free Chaptera product smoke failed" }
+          try {
+            $smoke = $raw | ConvertFrom-Json
+          } catch {
+            throw "source-free product smoke did not emit valid JSON"
+          }
+
+          if ($smoke.protocol_version -ne "chaptera.desktop-source-free-smoke.v1") {
+            throw "source-free product smoke protocol mismatch"
+          }
+          if ($smoke.product -ne "Chaptera Editor") { throw "portable binary is not Chaptera Editor" }
+          if ($smoke.reader_only -ne $false) { throw "portable binary is reader-only" }
+          if ($smoke.editor_controls_enabled -ne $true) { throw "Editor controls are disabled" }
+          if ($smoke.native_save_pub_claimed -ne $false) { throw "portable V0 widened native Save PUB claims" }
+
+          foreach ($field in @("checkout_required", "cargo_required", "vendor_path_required", "external_runtime_assets_required")) {
+            if ($smoke.runtime.$field -ne $false) { throw "source-free runtime dependency detected: $field" }
+          }
+
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $exeBytes = (Get-Item $exe).Length
+          if ($smoke.binary_sha256 -ne $exeHash) { throw "self-reported executable hash mismatch" }
+          if ([int64]$smoke.binary_byte_len -ne $exeBytes) { throw "self-reported executable byte length mismatch" }
+
+          $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($manifest.binary_sha256 -ne $exeHash) { throw "package manifest executable hash mismatch" }
+          if ($manifest.zip_sha256 -ne $zipHash) { throw "package manifest ZIP hash mismatch" }
+          if ([int64]$manifest.binary_size -ne $exeBytes) { throw "package manifest executable byte length mismatch" }
+          if ([int64]$manifest.zip_size -ne (Get-Item $zip).Length) { throw "package manifest ZIP byte length mismatch" }
+
+          $receipt = Join-Path $artifact "chaptera.desktop-source-free-smoke.json"
+          $smoke | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $receipt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-editor-portable-windows-x86_64
+          path: |
+            ${{ runner.temp }}/chaptera-artifact/Chaptera-Editor-Windows-x86_64.zip
+            ${{ runner.temp }}/chaptera-artifact/Chaptera-Editor.package.json
+            ${{ runner.temp }}/chaptera-artifact/chaptera.desktop-source-free-smoke.json
           if-no-files-found: error
