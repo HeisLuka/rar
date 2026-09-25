@@ -10,7 +10,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$stateRoot = Join-Path $repoRoot ".chaptera-local"
+$localBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }
+$stateRoot = Join-Path $localBase "Chaptera\local"
 $logRoot = Join-Path $stateRoot "logs"
 $pidPath = Join-Path $stateRoot "chaptera.pid"
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
