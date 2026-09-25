@@ -1,12 +1,10 @@
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
-    EditOperation, EditorError,
-    LengthEmu, NodeId, RectEmu,
+    EditOperation, EditorError, LengthEmu, NodeId, RectEmu,
 };
 
 fn node_id() -> NodeId {
-    serde_json::from_str("\"20000000-0000-4000-8000-000000000001\"")
-        .expect("canonical NodeId JSON")
+    serde_json::from_str("\"20000000-0000-4000-8000-000000000001\"").expect("canonical NodeId JSON")
 }
 
 fn rect(x: i64, y: i64, width: i64, height: i64) -> RectEmu {
