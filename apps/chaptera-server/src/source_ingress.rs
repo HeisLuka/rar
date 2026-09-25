@@ -263,10 +263,7 @@ pub trait ProjectCreationPort: Send + Sync {
 /// if the process dies after reserving upload capacity but before inserting the
 /// UploadRecord, a retry must reconstruct the exact same reservation_id rather
 /// than leaking a second lease until the first one expires.
-pub fn derive_upload_id_v1(
-    tenant_id: &str,
-    idempotency_key: &str,
-) -> Result<String, IngressError> {
+pub fn derive_upload_id_v1(tenant_id: &str, idempotency_key: &str) -> Result<String, IngressError> {
     require_ident(tenant_id, "tenant_id")?;
     require_ident(idempotency_key, "idempotency_key")?;
 
