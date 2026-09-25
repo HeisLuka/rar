@@ -387,7 +387,6 @@ fn validate_applied(applied: &[AppliedMigration]) -> Result<(), MigrationError> 
                 ),
             ));
         }
-
     }
 
     Ok(())
