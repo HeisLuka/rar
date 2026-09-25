@@ -3319,7 +3319,10 @@ mod tests {
         assert!(source.contains("ViewerApp::new_with_storage(Some(fixture)"));
         assert!(source.contains("with_min_inner_size([width, height])"));
         assert!(source.contains("with_max_inner_size([width, height])"));
-        assert!(!source.contains("or start with: chaptera FILE.pub"));
+        let production_source = source
+            .split_once("#[cfg(test)]")
+            .map_or(source, |(production, _)| production);
+        assert!(!production_source.contains("or start with: chaptera FILE.pub"));
     }
 
     #[test]
