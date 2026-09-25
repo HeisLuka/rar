@@ -40,6 +40,7 @@ pub mod source_ingress_sqlite;
 pub mod sqlite_blob_metadata;
 pub mod sqlite_store;
 pub mod state;
+pub mod upload_admission;
 pub mod worker;
 pub mod worker_runtime;
 pub mod workspace_context;
