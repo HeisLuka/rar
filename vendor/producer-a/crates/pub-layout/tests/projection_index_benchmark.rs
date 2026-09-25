@@ -4,9 +4,7 @@ use pub_layout::{
     BoundedAuthoringSlice, BoundedNodeGeometryInput, ProjectionSeverity,
     project_bounded_with_membership_stats,
 };
-use pub_model::{
-    Affine2D, CanonicalId, LengthEmu, NodeId, RectEmu, Story, StoryFrame, StoryId,
-};
+use pub_model::{Affine2D, CanonicalId, LengthEmu, NodeId, RectEmu, Story, StoryFrame, StoryId};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -131,11 +129,8 @@ fn legacy_linear_visits(size: usize, case: MatrixCase) -> u64 {
     let size = u64::try_from(size).expect("benchmark size fits u64");
     match case {
         MatrixCase::Present => triangular(size).saturating_mul(2),
-        MatrixCase::MissingStory => size
-            .saturating_mul(size)
-            .saturating_add(triangular(size)),
-        MatrixCase::MissingFrame => triangular(size)
-            .saturating_add(size.saturating_mul(size)),
+        MatrixCase::MissingStory => size.saturating_mul(size).saturating_add(triangular(size)),
+        MatrixCase::MissingFrame => triangular(size).saturating_add(size.saturating_mul(size)),
     }
 }
 
@@ -230,5 +225,8 @@ fn projection_membership_benchmark_matrix() {
         fs::write(path, &json).expect("write benchmark receipt");
     }
 
-    println!("{}", String::from_utf8(json).expect("receipt is UTF-8 JSON"));
+    println!(
+        "{}",
+        String::from_utf8(json).expect("receipt is UTF-8 JSON")
+    );
 }
