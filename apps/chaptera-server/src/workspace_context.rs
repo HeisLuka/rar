@@ -173,7 +173,9 @@ impl SqliteWorkspaceContextResolver {
 fn require_ident(value: &str, label: &str) -> Result<(), WorkspaceContextError> {
     if value.is_empty()
         || value.len() > 256
-        || value.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
     {
         return Err(WorkspaceContextError::new(
             "workspace_context_identity_invalid",
@@ -183,10 +185,7 @@ fn require_ident(value: &str, label: &str) -> Result<(), WorkspaceContextError> 
     Ok(())
 }
 
-fn blob_text(
-    row: &sqlx::sqlite::SqliteRow,
-    column: &str,
-) -> Result<String, WorkspaceContextError> {
+fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, WorkspaceContextError> {
     let bytes: Vec<u8> = row.try_get(column).map_err(sqlite_error)?;
     String::from_utf8(bytes).map_err(|_| {
         WorkspaceContextError::new(
@@ -258,10 +257,9 @@ mod tests {
         .await
         .unwrap();
 
-        let resolver =
-            SqliteWorkspaceContextResolver::open(&path, 2, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let resolver = SqliteWorkspaceContextResolver::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
         (path, resolver)
     }
 
@@ -325,7 +323,13 @@ mod tests {
     #[tokio::test]
     async fn client_cannot_substitute_tenant_because_resolver_has_no_tenant_input() {
         let (path, resolver) = setup("tenant").await;
-        insert_workspace(&resolver, "workspace-a", "tenant-authoritative", "principal-a").await;
+        insert_workspace(
+            &resolver,
+            "workspace-a",
+            "tenant-authoritative",
+            "principal-a",
+        )
+        .await;
 
         let context = resolver
             .resolve("principal-a", "workspace-a")
@@ -421,10 +425,9 @@ mod tests {
         insert_workspace(&resolver, "workspace-a", "tenant-a", "principal-a").await;
         resolver.close().await;
 
-        let reopened =
-            SqliteWorkspaceContextResolver::open(&path, 2, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let reopened = SqliteWorkspaceContextResolver::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
         assert_eq!(
             reopened
                 .resolve("principal-a", "workspace-a")
