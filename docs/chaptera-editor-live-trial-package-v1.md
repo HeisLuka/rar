@@ -4,7 +4,20 @@ This document defines the public-safe handoff for `EDITOR-LOCAL-PRODUCER-01`.
 
 The real Chaptera desktop binary and real PUB fixture may remain private/local. The public Rar workspace owns the receipt schema, validation, and the small builder that turns a local runtime proof into a source-free receipt.
 
-## Command
+## Stage the portable ZIP
+
+If the local Chaptera Editor binary already exists, package it from the active Rar checkout instead of hand-building a ZIP:
+
+```powershell
+python tools/package_editor_live_trial.py `
+  --editor-exe "D:\path\to\Chaptera.exe" `
+  --output-zip "D:\path\to\Chaptera-Editor.zip" `
+  --manifest "D:\path\to\Chaptera-Editor.package.json"
+```
+
+The packager is deliberately narrow: it writes only the Editor executable and the canonical trial README, uses stable ZIP metadata, rejects non-PE input and unsafe entry names, and produces deterministic artifact hashes. It does not claim that the supplied executable is product-authoritative; the real runtime producer still has to prove the editor loop.
+
+## Build the receipt
 
 Run from the active `HeisLuka/rar` checkout on the authorized Windows machine:
 

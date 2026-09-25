@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - "packages/product/editor-live-trial/**"
+      - "tools/package_editor_live_trial.py"
       - "tools/build_editor_live_trial_package_receipt.py"
       - "tools/validate_editor_live_trial_package_receipt.py"
+      - "tools/test_package_editor_live_trial.py"
       - "tools/test_build_editor_live_trial_package_receipt.py"
       - "tools/test_editor_live_trial_package_receipt.py"
       - "docs/chaptera-editor-live-trial-package-v1.md"
@@ -26,6 +28,7 @@ jobs:
       - run: python -m pip install jsonschema
       - name: Validate package receipt builder and contract
         run: |
+          python -m unittest tools/test_package_editor_live_trial.py
           python -m unittest tools/test_build_editor_live_trial_package_receipt.py
           python -m unittest tools/test_editor_live_trial_package_receipt.py
       - name: Validate retained real package receipts
