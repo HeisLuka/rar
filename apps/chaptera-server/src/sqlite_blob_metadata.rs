@@ -536,14 +536,12 @@ async fn require_gc_fence_clear_tx(
     tx: &mut Transaction<'_, Sqlite>,
     physical_blob_id: &str,
 ) -> Result<(), BlobStoreError> {
-    let row = sqlx::query(
-        "SELECT gc_delete_fence FROM physical_blobs WHERE physical_blob_id = ?",
-    )
-    .bind(physical_blob_id.as_bytes())
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(sqlite_error)?
-    .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
+    let row = sqlx::query("SELECT gc_delete_fence FROM physical_blobs WHERE physical_blob_id = ?")
+        .bind(physical_blob_id.as_bytes())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(sqlite_error)?
+        .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
 
     let fence: Option<Vec<u8>> = row.try_get("gc_delete_fence").map_err(sqlite_error)?;
     if fence.is_some() {
