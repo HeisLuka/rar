@@ -1,0 +1,52 @@
+name: Authoring Overset State V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/authoring-overset-state-v1.yml'
+      - 'tools/build_authoring_overset_receipt.py'
+      - 'tools/test_build_authoring_overset_receipt.py'
+      - 'tools/validate_authoring_overset_receipt.py'
+      - 'packages/protocol/authoring-overset/**'
+      - 'vendor/producer-a/producer/**'
+      - 'vendor/producer-a/crates/pub-editor/**'
+      - 'vendor/producer-a/crates/pub-layout/**'
+  push:
+    branches:
+      - feat/authoring-overset-state-v1
+
+permissions:
+  contents: read
+
+jobs:
+  overset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate revision-kernel receipt builder
+        run: |
+          python3 tools/test_build_authoring_overset_receipt.py
+      - name: Build bounded producer
+        run: |
+          cargo build --manifest-path vendor/producer-a/Cargo.toml -p chaptera-producer-a
+      - name: Run real EditorSession + shaped-flow receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 tools/build_authoring_overset_receipt.py \
+            --source-hash aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --document-id 30000000-0000-4000-8000-000000000001 \
+            --output out/authoring-overset-receipt.json \
+            --implementation chaptera-producer-a \
+            --commit-or-build "$GITHUB_SHA" \
+            -- vendor/producer-a/target/debug/chaptera-producer-a authoring-overset
+          python3 tools/validate_authoring_overset_receipt.py out/authoring-overset-receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: authoring-overset-state-v1
+          path: out/authoring-overset-receipt.json
+          if-no-files-found: error
+          retention-days: 90
