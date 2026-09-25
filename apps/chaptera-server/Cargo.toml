@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+chaptera-untrusted-pub-scan = { path = "../../crates/chaptera-untrusted-pub-scan" }
 aws-config = "=1.12.0"
 aws-sdk-s3 = "=1.149.0"
 aws-smithy-types = { version = "=1.8.0", features = ["http-body-1-x"] }
@@ -28,7 +29,7 @@ rand = "=0.8.5"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "=1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "=1.1.6+spec-1.1.0"
 url = "=2.5.8"
 zeroize = "=1.9.0"
