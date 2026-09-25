@@ -24,6 +24,7 @@ const BLOB_GC_SQL: &str = include_str!("../migrations/0004_blob_gc.sql");
 const REVISION_STREAM_SQL: &str = include_str!("../migrations/0005_revision_stream.sql");
 const AUTHN_SQL: &str = include_str!("../migrations/0006_authn.sql");
 const DERIVED_ARTIFACTS_SQL: &str = include_str!("../migrations/0007_derived_artifacts.sql");
+const QUOTA_RESERVATIONS_SQL: &str = include_str!("../migrations/0008_quota_reservations.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -68,9 +69,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "derived_artifacts",
         sql: DERIVED_ARTIFACTS_SQL,
     },
+    MigrationSpec {
+        version: 8,
+        name: "quota_reservations",
+        sql: QUOTA_RESERVATIONS_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+pub const CURRENT_SCHEMA_VERSION: i64 = 8;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -484,7 +490,8 @@ async fn known_schema_tables_present(
             'principals',
             'principal_identities',
             'sessions',
-            'derived_artifacts'
+            'derived_artifacts',
+            'quota_reservations'
           )
         "#,
     )
@@ -571,7 +578,7 @@ mod tests {
         assert_eq!(report.state, "pending");
         assert_eq!(report.current_version, 0);
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(!path.exists());
     }
 
@@ -582,7 +589,7 @@ mod tests {
 
         let first = runtime.migrate_up().await.unwrap();
         assert_eq!(first.state, "current");
-        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
         let second = runtime.migrate_up().await.unwrap();
         assert_eq!(second, first);
@@ -675,7 +682,7 @@ mod tests {
                 .status_report()
                 .await
                 .unwrap();
-            assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7]);
+            assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
             cleanup(&path);
         }

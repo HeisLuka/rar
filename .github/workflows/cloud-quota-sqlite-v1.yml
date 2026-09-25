@@ -1,0 +1,35 @@
+name: CLOUD-QUOTA-SQLITE-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/quota_store.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/migrations/0008_quota_reservations.sql"
+      - "apps/chaptera-server/tests/quota_crash_boundary.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - ".github/workflows/cloud-quota-sqlite-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quota-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Format chaptera-server
+        run: cargo fmt --package chaptera-server -- --check
+      - name: Clippy chaptera-server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Quota authority unit tests
+        run: cargo test -p chaptera-server quota_store --lib
+      - name: Quota process crash acceptance
+        run: cargo test -p chaptera-server --test quota_crash_boundary -- --nocapture
+      - name: Migration compatibility tests
+        run: cargo test -p chaptera-server schema_migration
