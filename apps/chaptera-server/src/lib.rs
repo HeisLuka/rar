@@ -41,4 +41,4 @@ pub mod sqlite_blob_metadata;
 pub mod sqlite_store;
 pub mod state;
 pub mod worker;
-pub mod worker_runtime;
+pub mod worker_runtime;\npub mod workspace_context;
