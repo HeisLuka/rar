@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS authz_audit_events (
     tenant_id        BLOB NOT NULL,
     document_id      BLOB NOT NULL,
     principal_id     BLOB NOT NULL,
+    operation_id     BLOB NOT NULL,
     action           TEXT NOT NULL,
     result           TEXT NOT NULL CHECK (result IN ('allowed', 'denied')),
     capability       TEXT NOT NULL,
