@@ -71,10 +71,18 @@ pub enum SceneInstanceError {
 impl std::fmt::Display for SceneInstanceError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidIdentity { field } => write!(formatter, "{field} must be canonical lowercase UUID"),
-            Self::MasterTargetMismatch => formatter.write_str("master relation does not target requested customer page"),
-            Self::CmoTargetMismatch => formatter.write_str("Cmo relation does not target requested Story"),
-            Self::CmoFrameUnresolved => formatter.write_str("Cmo relation target frame is unresolved"),
+            Self::InvalidIdentity { field } => {
+                write!(formatter, "{field} must be canonical lowercase UUID")
+            }
+            Self::MasterTargetMismatch => {
+                formatter.write_str("master relation does not target requested customer page")
+            }
+            Self::CmoTargetMismatch => {
+                formatter.write_str("Cmo relation does not target requested Story")
+            }
+            Self::CmoFrameUnresolved => {
+                formatter.write_str("Cmo relation target frame is unresolved")
+            }
         }
     }
 }
@@ -142,8 +150,7 @@ pub fn inherited_master_instance_v1(
     require_uuid(origin_node_id, "origin_node_id")?;
     require_uuid(source_master_page_id, "source_master_page_id")?;
     require_uuid(target_page_id, "target_page_id")?;
-    if relation.master_page_id != source_master_page_id
-        || relation.source_page_id != target_page_id
+    if relation.master_page_id != source_master_page_id || relation.source_page_id != target_page_id
     {
         return Err(SceneInstanceError::MasterTargetMismatch);
     }
@@ -235,9 +242,7 @@ pub fn admit_object_mutation_v1(
 
 pub fn geometry_sync_policy_v1(instance: &SceneInstanceV1) -> GeometrySyncPolicyV1 {
     match instance.projection_kind {
-        SceneProjectionKindV1::DirectPageLocal => {
-            GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
-        }
+        SceneProjectionKindV1::DirectPageLocal => GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry,
         SceneProjectionKindV1::InheritedMaster | SceneProjectionKindV1::CmoStorySlot => {
             GeometrySyncPolicyV1::ReprojectFromContext
         }
@@ -265,9 +270,11 @@ mod tests {
 
     #[test]
     fn direct_instance_is_the_only_object_mutation_admission() {
-        let instance =
-            direct_page_local_instance_v1(SHAPE_380, PAGE_266).expect("direct instance");
-        for mutation in [ObjectMutationKindV1::MoveNode, ObjectMutationKindV1::ReplaceImage] {
+        let instance = direct_page_local_instance_v1(SHAPE_380, PAGE_266).expect("direct instance");
+        for mutation in [
+            ObjectMutationKindV1::MoveNode,
+            ObjectMutationKindV1::ReplaceImage,
+        ] {
             let decision = admit_object_mutation_v1(&instance, mutation);
             assert!(decision.admitted);
             assert_eq!(decision.origin_node_id.as_deref(), Some(SHAPE_380));
@@ -294,7 +301,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert!(instances.iter().all(|item| item.origin_node_id == SHAPE_380));
+        assert!(
+            instances
+                .iter()
+                .all(|item| item.origin_node_id == SHAPE_380)
+        );
         assert_eq!(
             instances
                 .iter()
@@ -304,9 +315,7 @@ mod tests {
             3
         );
         for instance in &instances {
-            assert!(
-                !admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode).admitted
-            );
+            assert!(!admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode).admitted);
             assert_eq!(
                 geometry_sync_policy_v1(instance),
                 GeometrySyncPolicyV1::ReprojectFromContext
@@ -348,13 +357,10 @@ mod tests {
             target_story_id: target_story.to_owned(),
             target_frame_node_id: Some(frame.to_owned()),
         };
-        let instance =
-            cmo_story_slot_instance_v1(&relation, PAGE_266, 0, 0).expect("Cmo instance");
+        let instance = cmo_story_slot_instance_v1(&relation, PAGE_266, 0, 0).expect("Cmo instance");
         assert_eq!(instance.story_authority_id.as_deref(), Some(story));
         assert!(!admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode).admitted);
-        assert!(
-            !admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage).admitted
-        );
+        assert!(!admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage).admitted);
         assert_eq!(
             geometry_sync_policy_v1(&instance),
             GeometrySyncPolicyV1::ReprojectFromContext
@@ -365,8 +371,7 @@ mod tests {
     fn exact_carlton_shape380_has_three_read_only_customer_page_instances() {
         use pub_model::{derive_pub_node_id_v1, derive_pub_page_id_v1};
 
-        let source_hash =
-            "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3";
+        let source_hash = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3";
         let origin = derive_pub_node_id_v1(source_hash, 380).expect("shape380");
         let master = derive_pub_page_id_v1(source_hash, 263).expect("PAGE263");
         let page_specs = [(266_u32, "PAGE266"), (361, "PAGE361"), (406, "PAGE406")];
@@ -380,15 +385,12 @@ mod tests {
                 master_page_id: master.clone(),
                 master_page_seq_num: 263,
             };
-            let instance =
-                inherited_master_instance_v1(&origin, &master, &target, &relation)
-                    .expect("Carlton inherited footer instance");
+            let instance = inherited_master_instance_v1(&origin, &master, &target, &relation)
+                .expect("Carlton inherited footer instance");
             assert!(instance_ids.insert(instance.instance_id.clone()));
             assert_eq!(instance.origin_node_id, origin);
             assert_eq!(instance.target_page_id, target);
-            assert!(
-                !admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode).admitted
-            );
+            assert!(!admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode).admitted);
         }
 
         assert_eq!(instance_ids.len(), 3);
@@ -410,8 +412,7 @@ mod tests {
             target_story_id: target_story.to_owned(),
             target_frame_node_id: Some(frame.to_owned()),
         };
-        let first =
-            cmo_story_slot_instance_v1(&relation, PAGE_266, 0, 0).expect("first instance");
+        let first = cmo_story_slot_instance_v1(&relation, PAGE_266, 0, 0).expect("first instance");
         let second =
             cmo_story_slot_instance_v1(&relation, PAGE_266, 1, 3).expect("second instance");
         assert_ne!(first.instance_id, second.instance_id);
