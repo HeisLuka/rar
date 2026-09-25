@@ -623,6 +623,7 @@ mod tests {
                 schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.into(),
                 tenant_id: "tenant:1".into(),
                 document_id: "doc:1".into(),
+                requesting_principal_id: "principal:1".into(),
                 exact_revision_id: format!("sha256:{}", "a".repeat(64)),
                 canonical_authoring_revision_id: "c".repeat(64),
                 target_profile: profile.into(),
