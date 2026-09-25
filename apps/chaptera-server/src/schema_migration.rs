@@ -31,6 +31,7 @@ const EXPORT_PUBLICATIONS_SQL: &str = include_str!("../migrations/0010_export_pu
 const AUTHZ_PRINCIPAL_GRANTS_SQL: &str =
     include_str!("../migrations/0011_authz_principal_grants.sql");
 const BLOB_GC_DELETE_FENCE_SQL: &str = include_str!("../migrations/0012_blob_gc_delete_fence.sql");
+const PROJECT_PERSISTENCE_SQL: &str = include_str!("../migrations/0013_project_persistence.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -100,9 +101,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "blob_gc_delete_fence",
         sql: BLOB_GC_DELETE_FENCE_SQL,
     },
+    MigrationSpec {
+        version: 13,
+        name: "project_persistence",
+        sql: PROJECT_PERSISTENCE_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 12;
+pub const CURRENT_SCHEMA_VERSION: i64 = 13;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -522,7 +528,9 @@ async fn known_schema_tables_present(
             'export_publications',
             'authz_documents',
             'authz_principal_grants',
-            'authz_audit_events'
+            'authz_audit_events',
+            'projects',
+            'documents'
           )
         "#,
     )
@@ -611,7 +619,7 @@ mod tests {
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(
             report.pending_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         );
         assert!(!path.exists());
     }
