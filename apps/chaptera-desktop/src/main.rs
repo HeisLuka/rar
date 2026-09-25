@@ -3612,11 +3612,8 @@ mod tests {
         }
         harness.step();
         {
-            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
-            export
-                .get_by_role(egui::accesskit::Role::Menu)
-                .get_by_label("Preview IDML")
-                .click();
+            let preview_idml = harness.get_by_label("Preview IDML");
+            preview_idml.click();
         }
         harness.step();
         assert!(
@@ -3637,11 +3634,8 @@ mod tests {
         }
         harness.step();
         {
-            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
-            export
-                .get_by_role(egui::accesskit::Role::Menu)
-                .get_by_label("Export edited IDML copy")
-                .click();
+            let export_idml = harness.get_by_label("Export edited IDML copy");
+            export_idml.click();
         }
         harness.step();
 
