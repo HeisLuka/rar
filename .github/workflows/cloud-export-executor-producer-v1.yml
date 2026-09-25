@@ -46,6 +46,9 @@ jobs:
       - name: Prove published export JobExecutor
         run: cargo test -p chaptera-server export_executor::
 
+      - name: Prove real queue quota executor artifact terminal vertical
+        run: cargo test -p chaptera-server --test export_publication_vertical -- --ignored --nocapture
+
       - name: Build chaptera server for migration receipt
         run: cargo build -p chaptera-server
 
