@@ -1,0 +1,47 @@
+name: CLOUD-AUTHZ-01 Rust principal barrier
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0011_authz_principal_grants.sql"
+      - "apps/chaptera-server/src/authz_runtime.rs"
+      - "apps/chaptera-server/src/export_executor.rs"
+      - "apps/chaptera-server/src/export_publication.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "tools/run_cloud_migration_receipt.py"
+      - ".github/workflows/cloud-authz-rust-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authz-principal-barrier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check chaptera-server formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint AuthZ runtime
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Run AuthZ runtime tests
+        run: cargo test -p chaptera-server authz_runtime::
+      - name: Run export publication tests
+        run: cargo test -p chaptera-server export_publication::
+      - name: Run export executor tests
+        run: cargo test -p chaptera-server export_executor::
+      - name: Build chaptera server
+        run: cargo build -p chaptera-server
+      - name: Verify schema v11 migration
+        run: |
+          python tools/run_cloud_migration_receipt.py             --binary target/debug/chaptera             --out target/cloud-authz-rust-v1/migration
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-authz-rust-v1
+          path: target/cloud-authz-rust-v1
+          if-no-files-found: error
