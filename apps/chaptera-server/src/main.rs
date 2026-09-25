@@ -8,7 +8,7 @@ use chaptera_server::{
     edge::EdgePolicy,
     jobs::UnconfiguredWorkerRuntime,
     migrate,
-    runtime_readiness::ports_with_revision_stream_and_authn,
+    runtime_readiness::{ports_with_revision_stream, ports_with_revision_stream_and_authn},
     schema_migration::SqliteMigrationRuntime,
     serve,
     sqlite_store::SqliteRevisionStore,
@@ -51,18 +51,24 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     Duration::from_millis(config.sqlite.busy_timeout_ms),
                 )
                 .await?;
-                let auth_runtime = AuthRuntime::open(&config, &secrets).await?;
-                let auth_http = auth_runtime.http_state();
-                let assembled =
-                    ports_with_revision_stream_and_authn(revision_stream, auth_runtime);
-                let state = AppState::new(assembled.ports);
-                serve::run_with_auth(
-                    config.runtime_config(),
-                    edge_policy,
-                    state,
-                    Some(auth_http),
-                )
-                .await?;
+                if config.auth.is_some() {
+                    let auth_runtime = AuthRuntime::open(&config, &secrets).await?;
+                    let auth_http = auth_runtime.http_state();
+                    let assembled =
+                        ports_with_revision_stream_and_authn(revision_stream, auth_runtime);
+                    let state = AppState::new(assembled.ports);
+                    serve::run_with_auth(
+                        config.runtime_config(),
+                        edge_policy,
+                        state,
+                        Some(auth_http),
+                    )
+                    .await?;
+                } else {
+                    let assembled = ports_with_revision_stream(revision_stream);
+                    let state = AppState::new(assembled.ports);
+                    serve::run(config.runtime_config(), edge_policy, state).await?;
+                }
             } else {
                 let state = AppState::new(RuntimePorts::unconfigured());
                 serve::run(config.runtime_config(), edge_policy, state).await?;
