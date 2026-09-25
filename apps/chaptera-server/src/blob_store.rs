@@ -651,10 +651,7 @@ impl BlobStoreService {
             .inspect_quarantine_upload(tenant_id, upload_id)
             .await?
             .ok_or_else(|| {
-                BlobStoreError::new(
-                    "quarantine_object_missing",
-                    "quarantine object is missing",
-                )
+                BlobStoreError::new("quarantine_object_missing", "quarantine object is missing")
             })?;
         if metadata.storage_generation != expected_generation {
             return Err(BlobStoreError::new(
@@ -1585,7 +1582,11 @@ mod tests {
         let locator = "quarantine/tenant-a/upload-1";
 
         provider
-            .create_immutable(locator, bytes.len() as u64, Box::new(Cursor::new(bytes.to_vec())))
+            .create_immutable(
+                locator,
+                bytes.len() as u64,
+                Box::new(Cursor::new(bytes.to_vec())),
+            )
             .await
             .unwrap();
 
