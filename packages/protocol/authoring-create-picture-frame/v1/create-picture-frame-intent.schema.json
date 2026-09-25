@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.local/protocol/authoring-create-picture-frame/v1/create-picture-frame-intent.schema.json",
+  "title": "Chaptera CreatePictureFrame intent V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "source_hash",
+    "base_revision_id",
+    "client_operation_id",
+    "command"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.create-picture-frame-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "client_operation_id": {"type": "string", "minLength": 1},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "node_id",
+        "page_id",
+        "frame",
+        "asset_sha256",
+        "intrinsic_width_px",
+        "intrinsic_height_px"
+      ],
+      "properties": {
+        "kind": {"const": "create_picture_frame"},
+        "node_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "page_id": {"type": "string", "minLength": 1},
+        "frame": {"$ref": "#/$defs/rect"},
+        "asset_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "intrinsic_width_px": {"type": "integer", "minimum": 1},
+        "intrinsic_height_px": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "$defs": {
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        "y": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        "width": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "height": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+      }
+    }
+  }
+}
