@@ -1,5 +1,9 @@
-# Example only. CLOUD-EDGE-01 owns final Host/Origin/CORS/CSRF/header policy.
+# Canonical CLOUD-EDGE-01 first-host edge shape.
+# Requires Caddy >= 2.10.0 because request_body max_size is used below.
+# CLOUD-EDGE-01 acceptance is pinned to caddy:2.10.2-alpine.
 # Replace cloud.example.invalid with the canonical test/production origin.
+# Chaptera independently revalidates Host/Origin and trusts X-Forwarded-* only
+# from its configured immediate proxy peer.
 cloud.example.invalid {
     encode
 
@@ -21,10 +25,18 @@ cloud.example.invalid {
     header {
         X-Content-Type-Options "nosniff"
         Referrer-Policy "same-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
     }
 
     # Caddy reverse_proxy handles WebSocket upgrade/tunnelling itself.
     reverse_proxy 127.0.0.1:8080 {
+        # Collapse client-supplied proxy chains at the only trusted ingress.
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {host}
+
         transport http {
             dial_timeout 2s
             response_header_timeout 30s

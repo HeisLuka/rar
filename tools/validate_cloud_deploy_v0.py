@@ -92,6 +92,10 @@ def main() -> int:
     require(caddy, "max_size 256MB", "caddy")
     require(caddy, "max_size 8MB", "caddy")
     require(caddy, "/v1/uploads/*/content", "caddy")
+    require(caddy, "header_up X-Forwarded-For {remote_host}", "caddy")
+    require(caddy, "header_up X-Forwarded-Proto https", "caddy")
+    require(caddy, "header_up X-Forwarded-Host {host}", "caddy")
+    require(caddy, 'Strict-Transport-Security "max-age=31536000; includeSubDomains"', "caddy")
 
     require(config, 'listen = "127.0.0.1:8080"', "config")
     require(config, "heavy_concurrency = 1", "config")
@@ -100,6 +104,12 @@ def main() -> int:
     require(config, '[auth.oidc]', "config")
     require(config, 'source = "systemd"', "config")
     require(config, 'name = "oidc_client_secret"', "config")
+    require(config, '[edge]', "config")
+    require(config, 'trusted_proxy_ips = ["127.0.0.1", "::1"]', "config")
+    require(config, "max_header_bytes = 32768", "config")
+    require(config, "max_api_body_bytes = 8388608", "config")
+    require(config, "max_upload_body_bytes = 268435456", "config")
+    require(config, "request_timeout_ms = 30000", "config")
     if "0.0.0.0:8080" in config or "[::]:8080" in config:
         raise AssertionError("example config exposes the app listener publicly")
 
@@ -129,6 +139,8 @@ def main() -> int:
             "websocket_proxy_owned_by_caddy": True,
             "stream_upload_bounded": True,
             "ordinary_api_bounded": True,
+            "proxy_authority_rewritten_at_edge": True,
+            "typed_rust_edge_limits": True,
             "heavy_worker_concurrency": 1,
             "typed_production_config": True,
             "web_oidc_secret_via_systemd_credential": True,
@@ -144,7 +156,7 @@ def main() -> int:
         "limitations": [
             "Static packet only; no Rust Chaptera server is claimed.",
             "Memory limits are provisional until real hot-memory/capacity receipts.",
-            "Final Host/Origin/CORS/CSRF/CSP/HSTS remains CLOUD-EDGE-01.",
+            "Rust enforces Host/Origin/proxy/body/header/timeout policy; route-owned auth still verifies CSRF tokens against sessions.",
             "CLOUD-DEPLOY-01 requires a real 2 GiB Linux acceptance host before closure.",
         ],
     }

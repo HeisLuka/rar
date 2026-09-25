@@ -26,6 +26,14 @@ private_namespace = "chaptera-private"
 worker_spool_bytes = 4294967296
 min_free_disk_bytes = 1073741824
 
+[edge]
+# Only these immediate peers may assert X-Forwarded-* authority to Chaptera.
+trusted_proxy_ips = ["127.0.0.1", "::1"]
+max_header_bytes = 32768
+max_api_body_bytes = 8388608
+max_upload_body_bytes = 268435456
+request_timeout_ms = 30000
+
 [auth.oidc]
 issuer = "https://id.example.invalid"
 client_id = "chaptera-cloud"

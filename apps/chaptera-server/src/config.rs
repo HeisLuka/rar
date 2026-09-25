@@ -33,6 +33,8 @@ pub struct ChapteraConfig {
     pub worker: WorkerConfig,
     pub storage: StorageConfig,
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub edge: EdgeConfig,
     pub auth: Option<AuthConfig>,
     pub key_ring: Option<KeyRingConfig>,
 }
@@ -67,6 +69,31 @@ pub struct StorageConfig {
 pub struct LimitsConfig {
     pub worker_spool_bytes: u64,
     pub min_free_disk_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EdgeConfig {
+    pub trusted_proxy_ips: Vec<IpAddr>,
+    pub max_header_bytes: u64,
+    pub max_api_body_bytes: u64,
+    pub max_upload_body_bytes: u64,
+    pub request_timeout_ms: u64,
+}
+
+impl Default for EdgeConfig {
+    fn default() -> Self {
+        Self {
+            trusted_proxy_ips: vec![
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ],
+            max_header_bytes: 32 * 1024,
+            max_api_body_bytes: 8 * 1024 * 1024,
+            max_upload_body_bytes: 256 * 1024 * 1024,
+            request_timeout_ms: 30_000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,6 +234,7 @@ impl ChapteraConfig {
                 worker_spool_bytes: 4 * 1024 * 1024 * 1024,
                 min_free_disk_bytes: 1024 * 1024 * 1024,
             },
+            edge: EdgeConfig::default(),
             auth: None,
             key_ring: None,
         };
@@ -224,6 +252,7 @@ impl ChapteraConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         validate_listener(self.listen)?;
         validate_origin(self.environment, self.public_origin.as_deref())?;
+        validate_edge(self.environment, &self.edge)?;
 
         if self.sqlite.path.as_os_str().is_empty() {
             return Err(ConfigError::new(
@@ -334,6 +363,60 @@ impl ChapteraConfig {
             key_ring,
         })
     }
+}
+
+fn validate_edge(mode: EnvironmentMode, edge: &EdgeConfig) -> Result<(), ConfigError> {
+    if mode == EnvironmentMode::Prod && edge.trusted_proxy_ips.is_empty() {
+        return Err(ConfigError::new(
+            "trusted_proxy_required",
+            "prod edge requires at least one configured trusted proxy peer",
+        ));
+    }
+
+    let mut peers = BTreeSet::new();
+    for peer in &edge.trusted_proxy_ips {
+        if !is_private_listener(*peer) {
+            return Err(ConfigError::new(
+                "trusted_proxy_public_forbidden",
+                format!("trusted proxy peer {peer} must be loopback or private"),
+            ));
+        }
+        if !peers.insert(*peer) {
+            return Err(ConfigError::new(
+                "trusted_proxy_duplicate",
+                format!("trusted proxy peer {peer} is duplicated"),
+            ));
+        }
+    }
+
+    if !(1024..=64 * 1024).contains(&edge.max_header_bytes) {
+        return Err(ConfigError::new(
+            "edge_header_limit_invalid",
+            "edge.max_header_bytes must be between 1024 and 65536",
+        ));
+    }
+    if !(1024..=16 * 1024 * 1024).contains(&edge.max_api_body_bytes) {
+        return Err(ConfigError::new(
+            "edge_api_body_limit_invalid",
+            "edge.max_api_body_bytes must be between 1024 and 16777216",
+        ));
+    }
+    if edge.max_upload_body_bytes < edge.max_api_body_bytes
+        || edge.max_upload_body_bytes > 512 * 1024 * 1024
+    {
+        return Err(ConfigError::new(
+            "edge_upload_body_limit_invalid",
+            "edge.max_upload_body_bytes must be >= API limit and <= 536870912",
+        ));
+    }
+    if !(100..=120_000).contains(&edge.request_timeout_ms) {
+        return Err(ConfigError::new(
+            "edge_request_timeout_invalid",
+            "edge.request_timeout_ms must be between 100 and 120000",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_listener(listen: SocketAddr) -> Result<(), ConfigError> {
@@ -822,6 +905,13 @@ private_namespace = "chaptera-private"
 worker_spool_bytes = 4294967296
 min_free_disk_bytes = 1073741824
 
+[edge]
+trusted_proxy_ips = ["127.0.0.1", "::1"]
+max_header_bytes = 32768
+max_api_body_bytes = 8388608
+max_upload_body_bytes = 268435456
+request_timeout_ms = 30000
+
 [auth.oidc]
 issuer = "https://id.example.invalid"
 client_id = "chaptera-cloud"
@@ -859,6 +949,32 @@ client_secret = {secret_source}
         assert_eq!(
             config.validate().unwrap_err().code,
             "public_origin_https_required"
+        );
+    }
+
+    #[test]
+    fn edge_policy_rejects_public_or_unbounded_proxy_configuration() {
+        let mut config: ChapteraConfig =
+            toml::from_str(&prod_toml(r#"{ source = "env", name = "OIDC_SECRET" }"#)).unwrap();
+
+        config.edge.trusted_proxy_ips = vec!["8.8.8.8".parse().unwrap()];
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "trusted_proxy_public_forbidden"
+        );
+
+        config.edge.trusted_proxy_ips = vec!["127.0.0.1".parse().unwrap()];
+        config.edge.max_header_bytes = 1024 * 1024;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "edge_header_limit_invalid"
+        );
+
+        config.edge.max_header_bytes = 32 * 1024;
+        config.edge.max_upload_body_bytes = 512;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "edge_upload_body_limit_invalid"
         );
     }
 

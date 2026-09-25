@@ -4,6 +4,7 @@ use chaptera_server::{
     cli::{Cli, Command},
     config::{ChapteraConfig, SecretResolver},
     doctor,
+    edge::EdgePolicy,
     jobs::UnconfiguredWorkerRuntime,
     migrate,
     runtime_readiness::ports_with_revision_stream,
@@ -55,7 +56,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 AppState::new(RuntimePorts::unconfigured())
             };
 
-            serve::run(config.runtime_config(), state).await?;
+            let edge_policy = EdgePolicy::from_config(&config)?;
+            serve::run(config.runtime_config(), edge_policy, state).await?;
         }
         Command::Worker => {
             worker::run(&UnconfiguredWorkerRuntime)?;
