@@ -159,7 +159,10 @@ impl std::fmt::Display for CmoSlotFlowError {
                 write!(f, "carrier {carrier_node_id} extent must be positive")
             }
             Self::NestedCmoUnsupported { carrier_node_id } => {
-                write!(f, "carrier {carrier_node_id} requires nested Cmo projection")
+                write!(
+                    f,
+                    "carrier {carrier_node_id} requires nested Cmo projection"
+                )
             }
             Self::InvalidTextLine { index } => write!(f, "text line {index} is invalid"),
             Self::TextLineCoversObjectMarker { index, scalar } => write!(
@@ -313,10 +316,7 @@ pub fn resolve_cmo_slot_flow_v1(
         {
             return Err(CmoSlotFlowError::InvalidTextLine { index });
         }
-        if let Some(&scalar) = marker_set
-            .range(line.scalar_start..line.scalar_end)
-            .next()
-        {
+        if let Some(&scalar) = marker_set.range(line.scalar_start..line.scalar_end).next() {
             return Err(CmoSlotFlowError::TextLineCoversObjectMarker { index, scalar });
         }
         items.push(FlowItemV1::Text {
@@ -514,7 +514,11 @@ fn slot_instance_id_v1(
     hash_part(&mut hasher, target_story_id.as_bytes());
     hash_part(&mut hasher, target_frame_node_id.as_bytes());
     hasher.update(scalar_index.to_be_bytes());
-    hasher.update(u64::try_from(relation.source_order).unwrap_or(u64::MAX).to_be_bytes());
+    hasher.update(
+        u64::try_from(relation.source_order)
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
     hasher.update(relation.cmo_id.to_be_bytes());
     hash_part(&mut hasher, relation.carrier_node_id.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
@@ -540,9 +544,7 @@ mod tests {
             carrier_cmo_id: cmo_id,
             target_qsid: 49,
             carrier_node_id: node.to_owned(),
-            carrier_story_id: Some(format!(
-                "50000000-0000-4000-8000-{cmo_id:012x}"
-            )),
+            carrier_story_id: Some(format!("50000000-0000-4000-8000-{cmo_id:012x}")),
             target_story_id: STORY.to_owned(),
             target_frame_node_id: Some(FRAME.to_owned()),
         }
@@ -579,19 +581,14 @@ mod tests {
     fn exact_fit_is_visible_but_plus_one_height_is_overset() {
         let node = "10000000-0000-4000-8000-000000000001";
         let ctx = context(vec![relation(3, 7, node)]);
-        let exact = resolve_cmo_slot_flow_v1(
-            &ctx,
-            &input(vec![0], vec![extent(node, 100, 100)]),
-        )
-        .expect("exact fit");
+        let exact = resolve_cmo_slot_flow_v1(&ctx, &input(vec![0], vec![extent(node, 100, 100)]))
+            .expect("exact fit");
         assert_eq!(exact.visible_slots.len(), 1);
         assert!(!exact.overset.story_overset);
 
-        let too_tall = resolve_cmo_slot_flow_v1(
-            &ctx,
-            &input(vec![0], vec![extent(node, 100, 101)]),
-        )
-        .expect("bounded overset");
+        let too_tall =
+            resolve_cmo_slot_flow_v1(&ctx, &input(vec![0], vec![extent(node, 100, 101)]))
+                .expect("bounded overset");
         assert!(too_tall.visible_slots.is_empty());
         assert_eq!(
             too_tall.overset.failure_reason,
@@ -650,11 +647,8 @@ mod tests {
     fn marker_cardinality_is_not_guessed() {
         let node = "10000000-0000-4000-8000-000000000001";
         let ctx = context(vec![relation(3, 7, node)]);
-        let error = resolve_cmo_slot_flow_v1(
-            &ctx,
-            &input(vec![0, 3], vec![extent(node, 50, 50)]),
-        )
-        .expect_err("must reject mismatch");
+        let error = resolve_cmo_slot_flow_v1(&ctx, &input(vec![0, 3], vec![extent(node, 50, 50)]))
+            .expect_err("must reject mismatch");
         assert_eq!(
             error,
             CmoSlotFlowError::MarkerCardinalityMismatch {
@@ -728,10 +722,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![7]
         );
-        assert_eq!(
-            output.visible_slots[0].used_height_after_emu,
-            1_469_908
-        );
+        assert_eq!(output.visible_slots[0].used_height_after_emu, 1_469_908);
         assert_eq!(value.host_height_emu - 1_469_908, 323_122);
         assert_eq!(
             output.overset.failure_reason,
