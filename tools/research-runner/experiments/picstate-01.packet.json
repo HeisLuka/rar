@@ -1,0 +1,27 @@
+{
+  "schema": "pub-research-experiment.v1",
+  "id": "PICSTATE-01",
+  "publisher_environment": "publisher-2019",
+  "requires_publisher": true,
+  "publisher": {
+    "version_prefix": "16.0.12527.",
+    "exe_sha256": "e1ef8811b85b82045f37c4173b92726101be3a25e550b0dcb9f178df834ab20b"
+  },
+  "fixture": {
+    "source": "runner-root",
+    "relative_path": "pubgen-create-20260923/minimal-blank-v1-generated.pub",
+    "sha256": "5bf6057b8b11c8ee4a421d93885ae6e9e7c03a7a42d541e6d0df33497c08c33b"
+  },
+  "operation": {
+    "shell": "pwsh",
+    "script": "tools/research-runner/operations/picstate_01.ps1",
+    "args": []
+  },
+  "evidence": {
+    "required": [
+      "environment.json",
+      "analysis/picstate-01.json",
+      "logs/picstate-01.txt"
+    ]
+  }
+}
