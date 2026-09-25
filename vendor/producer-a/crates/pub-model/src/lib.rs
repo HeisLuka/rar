@@ -39,7 +39,7 @@ pub use core::{
 pub use decimal::{Decimal, DecimalParseError};
 pub use entity_id::{
     DocumentId, ExtensionId, NodeId, PageId, ParagraphId, ResourceId, StoryId, StyleId,
-    TableCellId, TextRunId,
+    TableCellId, TableColumnId, TableRowId, TextRunId,
 };
 pub use geometry::{
     Affine2D, EMU_PER_CSS_PIXEL_96_DPI, EMU_PER_INCH, EMU_PER_MILLIMETER, EMU_PER_POINT, LengthEmu,
@@ -62,7 +62,11 @@ pub use source_graph::{
     CDM_VERSION_V0_1, SourceGraph, SourceGraphRegistryError, validate_source_graph_registries,
 };
 pub use story::{FlowDirection, StoryFlowError, StoryFrame, validate_story_frames};
-pub use table::{SimpleRectangularTable, SimpleTableCell, SimpleTableError, TableCellAddress};
+pub use table::{
+    EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridError, EffectiveTableGridV1,
+    EffectiveTableTrackV1, SimpleRectangularTable, SimpleTableCell, SimpleTableError,
+    TableCellAddress,
+};
 pub use text::{TextRange, TextRangeError};
 
 pub use validation::{SemanticGraphError, validate_source_graph_semantics};
