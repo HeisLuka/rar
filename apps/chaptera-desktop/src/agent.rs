@@ -202,7 +202,7 @@ impl AgentServer {
                     ],
                     "privacy_default": "source_free",
                     "native_pub_write": false,
-                    "deep_diagnostics_provider": "not_installed"
+                    "deep_diagnostics_provider": "operation_blast_radius_v1_local_receipt"
                 }),
                 vec![("observed", json!({"surface":"protocol"}))],
             )),
@@ -582,14 +582,39 @@ impl AgentServer {
                     Vec::new(),
                 ))
             }
-            "diagnostics.deep" => Ok((
-                json!({
-                    "available":false,
-                    "reason":"deep_diagnostics_provider_not_installed",
-                    "provider_task":"EDITOR-DIAGNOSTIC-WORKBENCH-01"
-                }),
-                vec![("observed", json!({"surface":"diagnostics_deep"}))],
-            )),
+            "diagnostics.deep" => {
+                let Some(receipt_path) = object.get("receipt_path").and_then(Value::as_str) else {
+                    return Ok((
+                        json!({
+                            "available":false,
+                            "reason":"deep_diagnostics_receipt_not_loaded",
+                            "provider":"operation_blast_radius_v1_local_receipt"
+                        }),
+                        vec![("observed", json!({"surface":"diagnostics_deep","available":false}))],
+                    ));
+                };
+                if receipt_path.is_empty() {
+                    return Err((
+                        "invalid_argument",
+                        "receipt_path must be a non-empty string".to_owned(),
+                    ));
+                }
+                if object.get("allow_local_file").and_then(Value::as_bool) != Some(true) {
+                    return Err((
+                        "local_file_consent_required",
+                        "diagnostics.deep requires allow_local_file=true to read a local diagnostic receipt"
+                            .to_owned(),
+                    ));
+                }
+                let session = self.require_session()?;
+                let source_hash = session.visual.document.source.source_hash.to_string();
+                let summary =
+                    deep_diagnostics_summary(Path::new(receipt_path), &source_hash)?;
+                Ok((
+                    summary,
+                    vec![("observed", json!({"surface":"diagnostics_deep","available":true}))],
+                ))
+            },
             "shutdown" => {
                 self.shutdown = true;
                 Ok((json!({"shutdown":true}), vec![("shutdown", json!({}))]))
@@ -788,6 +813,441 @@ impl AgentServer {
             .as_mut()
             .ok_or(("no_open_document", "open a PUB before this command".to_owned()))
     }
+}
+
+const BLAST_RADIUS_SCHEMA_VERSION: &str = "chaptera.operation-blast-radius.v1";
+
+fn deep_diagnostics_summary(
+    path: &Path,
+    current_source_hash: &str,
+) -> Result<Value, (&'static str, String)> {
+    let bytes = fs::read(path)
+        .map_err(|error| ("deep_diagnostics_read_failed", format!("read diagnostic receipt: {error}")))?;
+    let value = serde_json::from_slice::<Value>(&bytes)
+        .map_err(|error| ("deep_diagnostics_invalid_json", error.to_string()))?;
+    let root = value
+        .as_object()
+        .ok_or(("deep_diagnostics_invalid_receipt", "receipt must be a JSON object".to_owned()))?;
+
+    require_exact_object_keys(
+        root,
+        &[
+            "schema_version",
+            "operation",
+            "artifacts",
+            "cfb",
+            "parsed_record_family_delta",
+            "semantic_graph_delta",
+            "parser_outcomes",
+            "second_save_convergence",
+            "classification_counts",
+            "invariants",
+        ],
+        "receipt",
+    )?;
+
+    if root.get("schema_version").and_then(Value::as_str) != Some(BLAST_RADIUS_SCHEMA_VERSION) {
+        return Err((
+            "deep_diagnostics_schema_mismatch",
+            "receipt is not OperationBlastRadiusV1".to_owned(),
+        ));
+    }
+
+    let artifacts = required_object_value(root, "artifacts", "receipt")?;
+    require_exact_object_keys(artifacts, &["source", "control", "mutation"], "artifacts")?;
+    let source = diagnostic_artifact_summary(
+        required_object_value(artifacts, "source", "artifacts")?,
+        "source",
+    )?;
+    let control = diagnostic_artifact_summary(
+        required_object_value(artifacts, "control", "artifacts")?,
+        "control",
+    )?;
+    let mutation = diagnostic_artifact_summary(
+        required_object_value(artifacts, "mutation", "artifacts")?,
+        "mutation",
+    )?;
+
+    let receipt_source_hash = source
+        .get("sha256")
+        .and_then(Value::as_str)
+        .expect("diagnostic_artifact_summary always returns sha256");
+    if receipt_source_hash != current_source_hash {
+        return Err((
+            "deep_diagnostics_source_mismatch",
+            "diagnostic receipt belongs to a different source PUB".to_owned(),
+        ));
+    }
+
+    let invariants = required_object_value(root, "invariants", "receipt")?;
+    require_exact_object_keys(
+        invariants,
+        &[
+            "raw_byte_inequality_is_not_semantic_evidence",
+            "matched_noop_control_used",
+            "unexplained_collateral_preserved",
+            "public_receipt_contains_raw_document_bytes",
+            "native_pub_writer_capability_granted",
+        ],
+        "invariants",
+    )?;
+    require_bool(invariants, "matched_noop_control_used", true, "invariants")?;
+    require_bool(
+        invariants,
+        "unexplained_collateral_preserved",
+        true,
+        "invariants",
+    )?;
+    require_bool(
+        invariants,
+        "public_receipt_contains_raw_document_bytes",
+        false,
+        "invariants",
+    )?;
+    require_bool(
+        invariants,
+        "native_pub_writer_capability_granted",
+        false,
+        "invariants",
+    )?;
+
+    let counts = diagnostic_classification_counts(
+        required_object_value(root, "classification_counts", "receipt")?,
+    )?;
+    let cfb = required_object_value(root, "cfb", "receipt")?;
+    require_exact_object_keys(
+        cfb,
+        &[
+            "source_control_topology_delta",
+            "control_mutation_topology_delta",
+            "source_control_stream_delta",
+            "control_mutation_stream_delta",
+            "control_mutation_byte_ranges",
+        ],
+        "cfb",
+    )?;
+
+    let operation = required_object_value(root, "operation", "receipt")?;
+    let operation_summary = allowlisted_object(
+        operation,
+        &["kind", "operation_id", "node_id"],
+    );
+
+    let parser_outcomes =
+        diagnostic_parser_outcomes(required_object_value(root, "parser_outcomes", "receipt")?)?;
+    let second_save = diagnostic_second_save_summary(
+        required_object_value(root, "second_save_convergence", "receipt")?,
+    )?;
+
+    let parsed_record_family_delta = diagnostic_classified_array(
+        root.get("parsed_record_family_delta")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing parsed_record_family_delta".to_owned()))?,
+        &["family", "id", "before_sha256", "after_sha256", "classification"],
+        "parsed_record_family_delta",
+    )?;
+    let semantic_graph_delta = diagnostic_classified_array(
+        root.get("semantic_graph_delta")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing semantic_graph_delta".to_owned()))?,
+        &["kind", "id", "before_sha256", "after_sha256", "classification"],
+        "semantic_graph_delta",
+    )?;
+
+    let source_control_topology_delta = diagnostic_classified_array(
+        cfb.get("source_control_topology_delta")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing source_control_topology_delta".to_owned()))?,
+        &["stream_id", "change", "classification"],
+        "source_control_topology_delta",
+    )?;
+    let control_mutation_topology_delta = diagnostic_classified_array(
+        cfb.get("control_mutation_topology_delta")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing control_mutation_topology_delta".to_owned()))?,
+        &["stream_id", "change", "classification"],
+        "control_mutation_topology_delta",
+    )?;
+    let source_control_stream_delta = diagnostic_classified_array(
+        cfb.get("source_control_stream_delta")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing source_control_stream_delta".to_owned()))?,
+        &[
+            "stream_id",
+            "before_sha256",
+            "after_sha256",
+            "before_size",
+            "after_size",
+            "classification",
+        ],
+        "source_control_stream_delta",
+    )?;
+    let control_mutation_stream_delta = diagnostic_classified_array(
+        cfb.get("control_mutation_stream_delta")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing control_mutation_stream_delta".to_owned()))?,
+        &[
+            "stream_id",
+            "before_sha256",
+            "after_sha256",
+            "before_size",
+            "after_size",
+            "classification",
+        ],
+        "control_mutation_stream_delta",
+    )?;
+    let control_mutation_byte_ranges = diagnostic_classified_array(
+        cfb.get("control_mutation_byte_ranges")
+            .ok_or(("deep_diagnostics_invalid_receipt", "missing control_mutation_byte_ranges".to_owned()))?,
+        &["offset", "length", "physical_label", "classification"],
+        "control_mutation_byte_ranges",
+    )?;
+
+    Ok(json!({
+        "available":true,
+        "provider":"operation_blast_radius_v1_local_receipt",
+        "receipt_sha256":sha256_hex(&bytes),
+        "schema_version":BLAST_RADIUS_SCHEMA_VERSION,
+        "source_hash":current_source_hash,
+        "operation":operation_summary,
+        "artifacts":{
+            "source":source,
+            "control":control,
+            "mutation":mutation
+        },
+        "classification_counts":counts,
+        "cfb":{
+            "source_control_topology_delta":source_control_topology_delta,
+            "control_mutation_topology_delta":control_mutation_topology_delta,
+            "source_control_stream_delta":source_control_stream_delta,
+            "control_mutation_stream_delta":control_mutation_stream_delta,
+            "control_mutation_byte_ranges":control_mutation_byte_ranges
+        },
+        "parsed_record_family_delta":parsed_record_family_delta,
+        "semantic_graph_delta":semantic_graph_delta,
+        "parser_outcomes":parser_outcomes,
+        "second_save_convergence":second_save,
+        "invariants":{
+            "source_bound":true,
+            "matched_noop_control_used":true,
+            "unexplained_collateral_preserved":true,
+            "raw_document_content_emitted":false,
+            "local_path_emitted":false,
+            "native_pub_write":false
+        }
+    }))
+}
+
+fn required_object_value<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+    label: &str,
+) -> Result<&'a Map<String, Value>, (&'static str, String)> {
+    object
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("{label}.{field} must be an object"),
+        ))
+}
+
+fn require_exact_object_keys(
+    object: &Map<String, Value>,
+    expected: &[&str],
+    label: &str,
+) -> Result<(), (&'static str, String)> {
+    let actual = object.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>();
+    let wanted = expected.iter().copied().collect::<std::collections::BTreeSet<_>>();
+    if actual != wanted {
+        return Err((
+            "deep_diagnostics_invalid_receipt",
+            format!("{label} fields do not match OperationBlastRadiusV1"),
+        ));
+    }
+    Ok(())
+}
+
+fn require_bool(
+    object: &Map<String, Value>,
+    field: &str,
+    expected: bool,
+    label: &str,
+) -> Result<(), (&'static str, String)> {
+    if object.get(field).and_then(Value::as_bool) != Some(expected) {
+        return Err((
+            "deep_diagnostics_invalid_receipt",
+            format!("{label}.{field} must be {expected}"),
+        ));
+    }
+    Ok(())
+}
+
+fn diagnostic_artifact_summary(
+    artifact: &Map<String, Value>,
+    label: &str,
+) -> Result<Value, (&'static str, String)> {
+    let hash = artifact
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("artifacts.{label}.sha256 missing"),
+        ))?;
+    if !is_sha256_hex(hash) {
+        return Err((
+            "deep_diagnostics_invalid_receipt",
+            format!("artifacts.{label}.sha256 invalid"),
+        ));
+    }
+    let byte_len = artifact
+        .get("byte_len")
+        .and_then(Value::as_u64)
+        .ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("artifacts.{label}.byte_len invalid"),
+        ))?;
+    Ok(json!({"sha256":hash,"byte_len":byte_len}))
+}
+
+fn diagnostic_classification_counts(
+    object: &Map<String, Value>,
+) -> Result<Value, (&'static str, String)> {
+    let fields = [
+        "requested_semantic",
+        "save_normalization",
+        "expected_derived",
+        "unexplained_collateral",
+        "unavailable",
+    ];
+    require_exact_object_keys(object, &fields, "classification_counts")?;
+    let mut out = Map::new();
+    for field in fields {
+        let value = object.get(field).and_then(Value::as_u64).ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("classification_counts.{field} must be a non-negative integer"),
+        ))?;
+        out.insert(field.to_owned(), Value::from(value));
+    }
+    Ok(Value::Object(out))
+}
+
+fn diagnostic_classified_array(
+    value: &Value,
+    allowlist: &[&str],
+    label: &str,
+) -> Result<Value, (&'static str, String)> {
+    let items = value.as_array().ok_or((
+        "deep_diagnostics_invalid_receipt",
+        format!("{label} must be an array"),
+    ))?;
+    let mut out = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let object = item.as_object().ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("{label}[{index}] must be an object"),
+        ))?;
+        let classification = object.get("classification").and_then(Value::as_str).ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("{label}[{index}].classification missing"),
+        ))?;
+        if !matches!(
+            classification,
+            "requested_semantic"
+                | "save_normalization"
+                | "expected_derived"
+                | "unexplained_collateral"
+                | "unavailable"
+        ) {
+            return Err((
+                "deep_diagnostics_invalid_receipt",
+                format!("{label}[{index}].classification invalid"),
+            ));
+        }
+        out.push(allowlisted_object(object, allowlist));
+    }
+    Ok(Value::Array(out))
+}
+
+fn diagnostic_parser_outcomes(
+    object: &Map<String, Value>,
+) -> Result<Value, (&'static str, String)> {
+    require_exact_object_keys(object, &["source", "control", "mutation"], "parser_outcomes")?;
+    let mut out = Map::new();
+    for arm in ["source", "control", "mutation"] {
+        let value = required_object_value(object, arm, "parser_outcomes")?;
+        require_exact_object_keys(value, &["status", "diagnostic_codes"], &format!("parser_outcomes.{arm}"))?;
+        let status = value.get("status").and_then(Value::as_str).ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("parser_outcomes.{arm}.status missing"),
+        ))?;
+        if !matches!(status, "accepted" | "rejected" | "unavailable") {
+            return Err((
+                "deep_diagnostics_invalid_receipt",
+                format!("parser_outcomes.{arm}.status invalid"),
+            ));
+        }
+        let codes = value.get("diagnostic_codes").and_then(Value::as_array).ok_or((
+            "deep_diagnostics_invalid_receipt",
+            format!("parser_outcomes.{arm}.diagnostic_codes invalid"),
+        ))?;
+        if !codes.iter().all(|value| value.as_str().is_some()) {
+            return Err((
+                "deep_diagnostics_invalid_receipt",
+                format!("parser_outcomes.{arm}.diagnostic_codes must be strings"),
+            ));
+        }
+        out.insert(arm.to_owned(), json!({"status":status,"diagnostic_codes":codes}));
+    }
+    Ok(Value::Object(out))
+}
+
+fn diagnostic_second_save_summary(
+    object: &Map<String, Value>,
+) -> Result<Value, (&'static str, String)> {
+    let status = object.get("status").and_then(Value::as_str).ok_or((
+        "deep_diagnostics_invalid_receipt",
+        "second_save_convergence.status missing".to_owned(),
+    ))?;
+    if !matches!(status, "unavailable" | "converged" | "changed") {
+        return Err((
+            "deep_diagnostics_invalid_receipt",
+            "second_save_convergence.status invalid".to_owned(),
+        ));
+    }
+    let mut out = Map::new();
+    out.insert("status".to_owned(), Value::String(status.to_owned()));
+    for field in ["changed_stream_count", "different_byte_count"] {
+        if let Some(value) = object.get(field) {
+            let count = value.as_u64().ok_or((
+                "deep_diagnostics_invalid_receipt",
+                format!("second_save_convergence.{field} invalid"),
+            ))?;
+            out.insert(field.to_owned(), Value::from(count));
+        }
+    }
+    if let Some(artifact) = object.get("artifact") {
+        let artifact = artifact.as_object().ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "second_save_convergence.artifact invalid".to_owned(),
+        ))?;
+        out.insert(
+            "artifact".to_owned(),
+            diagnostic_artifact_summary(artifact, "second_save")?,
+        );
+    }
+    Ok(Value::Object(out))
+}
+
+fn allowlisted_object(object: &Map<String, Value>, fields: &[&str]) -> Value {
+    let mut out = Map::new();
+    for field in fields {
+        if let Some(value) = object.get(*field) {
+            out.insert((*field).to_owned(), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn required_string<'a>(
@@ -1181,5 +1641,168 @@ mod tests {
                 .to_string(),
             id
         );
+    }
+
+    fn deep_receipt(source_hash: &str) -> Value {
+        json!({
+            "schema_version":"chaptera.operation-blast-radius.v1",
+            "operation":{
+                "kind":"MoveNode",
+                "operation_id":"op-1",
+                "node_id":"node-1",
+                "raw_text":"SECRET-MUST-NOT-ESCAPE"
+            },
+            "artifacts":{
+                "source":{
+                    "sha256":source_hash,
+                    "byte_len":1000,
+                    "producer":{"local_path":"C:\\private\\source.pub"}
+                },
+                "control":{"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","byte_len":1000},
+                "mutation":{"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_len":1000}
+            },
+            "cfb":{
+                "source_control_topology_delta":[],
+                "control_mutation_topology_delta":[],
+                "source_control_stream_delta":[],
+                "control_mutation_stream_delta":[{
+                    "stream_id":"dir:1:Contents",
+                    "before_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "after_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "before_size":100,
+                    "after_size":100,
+                    "classification":"requested_semantic",
+                    "raw_bytes":"SECRET"
+                }],
+                "control_mutation_byte_ranges":[{
+                    "offset":10,
+                    "length":4,
+                    "physical_label":"stream_payload:Contents",
+                    "classification":"requested_semantic"
+                }]
+            },
+            "parsed_record_family_delta":[{
+                "family":"Escher",
+                "id":"shape-1",
+                "before_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "after_sha256":"1111111111111111111111111111111111111111111111111111111111111111",
+                "classification":"requested_semantic"
+            }],
+            "semantic_graph_delta":[{
+                "kind":"node",
+                "id":"node-1",
+                "before_sha256":"2222222222222222222222222222222222222222222222222222222222222222",
+                "after_sha256":"3333333333333333333333333333333333333333333333333333333333333333",
+                "classification":"requested_semantic"
+            }],
+            "parser_outcomes":{
+                "source":{"status":"accepted","diagnostic_codes":[]},
+                "control":{"status":"accepted","diagnostic_codes":["save.normalized"]},
+                "mutation":{"status":"accepted","diagnostic_codes":[]}
+            },
+            "second_save_convergence":{"status":"unavailable"},
+            "classification_counts":{
+                "requested_semantic":4,
+                "save_normalization":1,
+                "expected_derived":0,
+                "unexplained_collateral":0,
+                "unavailable":0
+            },
+            "invariants":{
+                "raw_byte_inequality_is_not_semantic_evidence":true,
+                "matched_noop_control_used":true,
+                "unexplained_collateral_preserved":true,
+                "public_receipt_contains_raw_document_bytes":false,
+                "native_pub_writer_capability_granted":false
+            }
+        })
+    }
+
+    fn write_deep_receipt(value: &Value, suffix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-agent-deep-{}-{}-{suffix}.json",
+            std::process::id(),
+            sha256_hex(suffix.as_bytes())
+        ));
+        fs::write(
+            &path,
+            serde_json::to_vec(value).expect("serialize diagnostic fixture"),
+        )
+        .expect("write diagnostic fixture");
+        path
+    }
+
+    #[test]
+    fn deep_diagnostics_requires_explicit_local_file_consent() {
+        let mut server = AgentServer::default();
+        let responses = server.handle_line(
+            r#"{"request_id":"r1","command":"diagnostics.deep","receipt_path":"receipt.json"}"#,
+        );
+        assert_eq!(responses[0]["ok"], false);
+        assert_eq!(
+            responses[0]["error"]["code"],
+            "local_file_consent_required"
+        );
+    }
+
+    #[test]
+    fn deep_diagnostics_without_receipt_is_explicitly_not_loaded() {
+        let mut server = AgentServer::default();
+        let responses =
+            server.handle_line(r#"{"request_id":"r1","command":"diagnostics.deep"}"#);
+        assert_eq!(responses[0]["ok"], true);
+        assert_eq!(responses[0]["result"]["available"], false);
+        assert_eq!(
+            responses[0]["result"]["reason"],
+            "deep_diagnostics_receipt_not_loaded"
+        );
+    }
+
+    #[test]
+    fn deep_diagnostics_summary_is_source_bound_and_source_free() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let fixture = deep_receipt(source_hash);
+        let path = write_deep_receipt(&fixture, "allowlist");
+        let summary =
+            deep_diagnostics_summary(&path, source_hash).expect("valid deep receipt");
+        let encoded = serde_json::to_string(&summary).expect("serialize summary");
+        assert_eq!(summary["available"], true);
+        assert_eq!(summary["source_hash"], source_hash);
+        assert_eq!(
+            summary["operation"]["kind"],
+            "MoveNode"
+        );
+        assert!(!encoded.contains("SECRET"));
+        assert!(!encoded.contains("private"));
+        assert!(!encoded.contains(path.to_string_lossy().as_ref()));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deep_diagnostics_rejects_receipt_for_another_pub() {
+        let receipt_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let current_hash =
+            "9999999999999999999999999999999999999999999999999999999999999999";
+        let fixture = deep_receipt(receipt_hash);
+        let path = write_deep_receipt(&fixture, "mismatch");
+        let error = deep_diagnostics_summary(&path, current_hash)
+            .expect_err("different source must fail");
+        assert_eq!(error.0, "deep_diagnostics_source_mismatch");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deep_diagnostics_rejects_writer_capability_escalation() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut fixture = deep_receipt(source_hash);
+        fixture["invariants"]["native_pub_writer_capability_granted"] = Value::Bool(true);
+        let path = write_deep_receipt(&fixture, "writer-escalation");
+        let error = deep_diagnostics_summary(&path, source_hash)
+            .expect_err("writer capability escalation must fail");
+        assert_eq!(error.0, "deep_diagnostics_invalid_receipt");
+        let _ = fs::remove_file(path);
     }
 }
