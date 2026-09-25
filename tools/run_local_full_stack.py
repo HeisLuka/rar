@@ -99,7 +99,8 @@ def render_config(issuer: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--no-browser", action="store_true")\n    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
 
     STATE.mkdir(parents=True, exist_ok=True)
