@@ -1641,7 +1641,8 @@ mod tests {
                 metadata.byte_len,
             )
             .await
-            .unwrap_err();
+            .err()
+            .expect("stale generation must fail closed");
         assert_eq!(error.code, "quarantine_generation_mismatch");
 
         let error = service
@@ -1653,7 +1654,8 @@ mod tests {
                 metadata.byte_len,
             )
             .await
-            .unwrap_err();
+            .err()
+            .expect("stale etag must fail closed");
         assert_eq!(error.code, "quarantine_etag_mismatch");
 
         let error = service
@@ -1665,7 +1667,8 @@ mod tests {
                 metadata.byte_len + 1,
             )
             .await
-            .unwrap_err();
+            .err()
+            .expect("stale length must fail closed");
         assert_eq!(error.code, "quarantine_length_mismatch");
 
         assert!(
