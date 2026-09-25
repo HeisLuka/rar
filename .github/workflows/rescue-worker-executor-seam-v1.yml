@@ -1,0 +1,104 @@
+name: Chaptera Rescue authorized executor seam V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-recovery-worker/**"
+      - "packages/product/rescue-recovery/**"
+      - "packages/product/rescue-worker/**"
+      - "tools/run_rescue_worker_authorized_windows.py"
+      - "tools/probe_rescue_worker_windows_fence.py"
+      - "tools/validate_rescue_recovery_receipt.py"
+      - "docs/chaptera-rescue-worker-v1.md"
+      - ".github/workflows/rescue-worker-executor-seam-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-external-executor-seam:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Check worker formatting
+        run: cargo fmt --manifest-path apps/chaptera-recovery-worker/Cargo.toml -- --check
+
+      - name: Check and test worker
+        run: |
+          cargo check --manifest-path apps/chaptera-recovery-worker/Cargo.toml --all-targets
+          cargo test --manifest-path apps/chaptera-recovery-worker/Cargo.toml
+
+      - name: Build worker and non-recovery fixture executor
+        run: cargo build --manifest-path apps/chaptera-recovery-worker/Cargo.toml --release
+
+      - name: Acquire pinned healthy Publisher control
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "rescue-worker-executor-seam"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $source = Join-Path $root "51318.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/51318.pub" -OutFile $source
+          $hash = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "3ab75a6a9196e0a51fc9b0aa759459501c71d313030c06652aabffbae0a2ab09") {
+            throw "healthy control hash mismatch: $hash"
+          }
+          "RESCUE_EXECUTOR_SEAM_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run external executor through fenced worker tree
+        shell: pwsh
+        run: |
+          $worker = "apps/chaptera-recovery-worker/target/release/chaptera-recovery-worker.exe"
+          $executor = "apps/chaptera-recovery-worker/target/release/chaptera-recovery-fixture-executor.exe"
+          $source = Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "51318.pub"
+          $job = Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "job"
+          $launch = Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "worker-launch.json"
+          python tools/run_rescue_worker_authorized_windows.py --worker $worker --executor $executor --source $source --source-sha256 3ab75a6a9196e0a51fc9b0aa759459501c71d313030c06652aabffbae0a2ab09 --job-directory $job --output-json $launch
+
+      - name: Validate producer receipt through canonical Rescue consumer
+        shell: pwsh
+        run: |
+          $job = Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "job"
+          $producer = Join-Path $job "producer-receipt.json"
+          $product = Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "product-validation.json"
+          python tools/validate_rescue_recovery_receipt.py $producer --output $product
+
+          $launch = Get-Content -Raw (Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "worker-launch.json") | ConvertFrom-Json
+          $validation = Get-Content -Raw $product | ConvertFrom-Json
+          $producerHash = (Get-FileHash $producer -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          if ($launch.status -ne "succeeded") { throw "worker/executor transport did not succeed" }
+          if ($launch.source_unchanged -ne $true) { throw "worker/executor tree did not preserve source" }
+          if ($launch.executor.available -ne $true) { throw "worker did not report configured executor" }
+          if (-not ([string]$launch.executor.id).StartsWith("external-sha256:")) { throw "executor identity is not hash-bound" }
+          if ($launch.producer_receipt.relative_path -ne "producer-receipt.json") { throw "unexpected producer receipt path" }
+          if ($launch.producer_receipt.sha256 -ne $producerHash) { throw "worker producer receipt hash mismatch" }
+
+          if ($validation.outcome -ne "unsupported/no_safe_recovery") { throw "healthy control was incorrectly promoted to recovery success" }
+          if ($validation.artifact_count -ne 0) { throw "healthy control emitted recovery artifacts" }
+          if ($validation.source_immutable -ne $true) { throw "consumer lost source immutability" }
+          if ($validation.native_pub_delivery_allowed -ne $false) { throw "healthy control unexpectedly permits native PUB delivery" }
+
+      - name: Stage source-free seam evidence
+        shell: pwsh
+        run: |
+          $out = "rescue-worker-executor-seam-evidence"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item (Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "worker-launch.json") (Join-Path $out "worker-launch.json")
+          Copy-Item (Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "job/producer-receipt.json") (Join-Path $out "producer-receipt.json")
+          Copy-Item (Join-Path $env:RESCUE_EXECUTOR_SEAM_ROOT "product-validation.json") (Join-Path $out "product-validation.json")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rescue-worker-executor-seam-v1
+          path: rescue-worker-executor-seam-evidence/*.json
+          if-no-files-found: error
