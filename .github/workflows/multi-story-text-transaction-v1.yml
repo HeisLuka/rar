@@ -5,7 +5,6 @@ on:
     paths:
       - "services/editor-api/multi_story_text_transaction_v1.py"
       - "services/editor-api/test_multi_story_text_transaction_v1.py"
-      - "services/editor-api/story_edit_transaction_v1.py"
       - "services/editor-api/story_find_replace_v1.py"
       - ".github/workflows/multi-story-text-transaction-v1.yml"
   workflow_dispatch:
