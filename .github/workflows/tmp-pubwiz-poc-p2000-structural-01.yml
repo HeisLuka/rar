@@ -57,21 +57,27 @@ jobs:
           IMAGE="$(find /tmp/x05/image -type f | head -n1)"
           if [[ "${IMAGE,,}" == *.mdf ]]; then iat "$IMAGE" /tmp/x05/converted.iso >/dev/null; IMAGE=/tmp/x05/converted.iso; fi
           mkdir -p /tmp/x05/install
-          7z x -y -o/tmp/x05/install "$IMAGE" -r '*.MSI' '*.msi' >/dev/null || true
-          mkdir -p /tmp/x05/msiout
+          7z x -y -o/tmp/x05/install "$IMAGE" -r '*.MSI' '*.msi' '*.CAB' '*.cab' '*.POC' '*.poc' >/dev/null || true
+          mkdir -p /tmp/x05/msiout /tmp/x05/cabout
           n=0
           while IFS= read -r msi; do
             n=$((n+1)); mkdir -p "/tmp/x05/msiout/$n"
             msiextract -C "/tmp/x05/msiout/$n" "$msi" >/dev/null 2>&1 || true
           done < <(find /tmp/x05/install -type f \( -iname '*.msi' \))
+          n=0
+          while IFS= read -r cab; do
+            n=$((n+1)); mkdir -p "/tmp/x05/cabout/$n"
+            7z x -y -o"/tmp/x05/cabout/$n" "$cab" '*.POC' '*.poc' >/dev/null 2>&1 || true
+          done < <(find /tmp/x05/install -type f \( -iname '*.cab' \))
           python - <<'PY'
           import pathlib,hashlib,json,collections
-          root=pathlib.Path("/tmp/x05/msiout")
+          roots=[pathlib.Path("/tmp/x05/install"),pathlib.Path("/tmp/x05/msiout"),pathlib.Path("/tmp/x05/cabout")]
           targets={}
-          for p in root.rglob("*"):
-              if p.is_file() and p.name.upper() in {"ACCSBAR.POC","ACCTBOX.POC"}:
-                  b=p.read_bytes(); h=hashlib.sha256(b).hexdigest()
-                  targets[p.name.upper()] = (p,b,h)
+          for root in roots:
+              for p in root.rglob("*"):
+                  if p.is_file() and p.name.upper() in {"ACCSBAR.POC","ACCTBOX.POC"}:
+                      b=p.read_bytes(); h=hashlib.sha256(b).hexdigest()
+                      targets[p.name.upper()] = (p,b,h)
           if set(targets)!={"ACCSBAR.POC","ACCTBOX.POC"}: raise SystemExit(f"missing targets: {targets.keys()}")
           def u16(b,o): return int.from_bytes(b[o:o+2],"little")
           def analyze(name,b,h):
