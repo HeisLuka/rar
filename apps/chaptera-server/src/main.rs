@@ -6,8 +6,10 @@ use chaptera_server::{
     doctor,
     jobs::UnconfiguredWorkerRuntime,
     migrate,
+    runtime_readiness::ports_with_revision_stream,
     schema_migration::SqliteMigrationRuntime,
     serve,
+    sqlite_store::SqliteRevisionStore,
     state::{AppState, RuntimePorts},
     worker,
 };
@@ -31,8 +33,6 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         .map(ChapteraConfig::load)
         .transpose()?;
 
-    let state = AppState::new(RuntimePorts::unconfigured());
-
     match cli.command {
         Command::Serve => {
             let config = match explicit_config.as_ref() {
@@ -41,6 +41,19 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             };
             let secrets = config.resolve_required_secrets(&SecretResolver::from_process())?;
             drop(secrets);
+
+            let state = if explicit_config.is_some() {
+                let revision_stream = SqliteRevisionStore::open(
+                    &config.sqlite.path,
+                    config.sqlite.pool_max,
+                    Duration::from_millis(config.sqlite.busy_timeout_ms),
+                )
+                .await?;
+                let assembled = ports_with_revision_stream(revision_stream);
+                AppState::new(assembled.ports)
+            } else {
+                AppState::new(RuntimePorts::unconfigured())
+            };
 
             serve::run(config.runtime_config(), state).await?;
         }
@@ -64,7 +77,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 let secrets = config.resolve_required_secrets(&SecretResolver::from_process())?;
                 drop(secrets);
             }
-            doctor::run(&state)?;
+            doctor::run(&AppState::new(RuntimePorts::unconfigured()))?;
         }
     }
 
