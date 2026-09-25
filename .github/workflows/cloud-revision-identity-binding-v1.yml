@@ -1,0 +1,67 @@
+name: CLOUD-REVISION-IDENTITY-BINDING-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0009_revision_identity_bindings.sql"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/sqlite_store.rs"
+      - "apps/chaptera-server/src/revision_materializer.rs"
+      - "apps/chaptera-server/tests/revision_materializer.rs"
+      - "tools/run_cloud_migration_receipt.py"
+      - "docs/cloud-revision-identity-binding-v1.md"
+      - ".github/workflows/cloud-revision-identity-binding-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revision-identity-binding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check chaptera-server formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint chaptera-server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Prove durable revision identity mapping laws
+        run: cargo test -p chaptera-server revision_identity_binding -- --nocapture
+      - name: Prove materializer requires and exposes canonical mapping
+        run: cargo test -p chaptera-server --test revision_materializer -- --nocapture
+      - name: Build operator binary
+        run: cargo build -p chaptera-server --bin chaptera
+      - name: Prove operator migration chain through schema v9
+        run: |
+          python tools/run_cloud_migration_receipt.py \
+            --binary target/debug/chaptera \
+            --out target/cloud-revision-identity-binding/migration
+      - name: Fetch exact public SampleNewsletter fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/cloud-revision-identity-binding
+          fixture="target/cloud-revision-identity-binding/SampleNewsletter.pub"
+          curl -fL --retry 3 \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            -o "$fixture"
+          test "$(stat -c%s "$fixture")" = "291840"
+          echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  $fixture" | sha256sum -c -
+      - name: Prove real PUB receipt carries explicit canonical mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHAPTERA_SAMPLE_NEWSLETTER_PUB="$GITHUB_WORKSPACE/target/cloud-revision-identity-binding/SampleNewsletter.pub"
+          cargo test -p chaptera-server --test revision_materializer \
+            real_sample_newsletter_materializes_exact_historical_revision \
+            -- --ignored --exact --nocapture
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-revision-identity-binding-v1
+          path: target/cloud-revision-identity-binding
+          if-no-files-found: error
