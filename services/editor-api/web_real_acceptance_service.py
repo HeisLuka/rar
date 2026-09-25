@@ -84,6 +84,7 @@ class RealAcceptanceState:
         revision_receipt: pathlib.Path,
         exporter: pathlib.Path,
         work_dir: pathlib.Path,
+        strict_acceptance: bool = True,
     ):
         self.fixture = fixture.resolve(strict=True)
         self.resolved_graph_path = resolved_graph.resolve(strict=True)
@@ -92,6 +93,7 @@ class RealAcceptanceState:
         self.exporter = exporter.resolve(strict=True)
         self.work_dir = work_dir.resolve()
         self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.strict_acceptance = strict_acceptance
 
         if self.fixture.stat().st_size != PINNED_LEN or sha256_path(self.fixture) != PINNED_SHA:
             raise RuntimeError("pinned SampleNewsletter source identity mismatch")
@@ -246,7 +248,11 @@ class RealAcceptanceState:
                 record.project,
                 result["revision_id"],
             )
-            if protocol == "chaptera.commit-request.v1" and self.executor_calls == 1:
+            if (
+                self.strict_acceptance
+                and protocol == "chaptera.commit-request.v1"
+                and self.executor_calls == 1
+            ):
                 if self.last_operation != self.canonical_operation:
                     raise RuntimeError("browser MoveNode differs from canonical Producer B operation")
                 if result["revision_id"] != self.expected_accepted_revision:
@@ -499,6 +505,11 @@ def main():
     parser.add_argument("--revision-receipt", required=True, type=pathlib.Path)
     parser.add_argument("--exporter", required=True, type=pathlib.Path)
     parser.add_argument("--work-dir", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="allow arbitrary capability-approved MoveNode edits for local product use",
+    )
     args = parser.parse_args()
 
     STATE = RealAcceptanceState(
@@ -508,6 +519,7 @@ def main():
         revision_receipt=args.revision_receipt,
         exporter=args.exporter,
         work_dir=args.work_dir,
+        strict_acceptance=not args.interactive,
     )
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(
@@ -517,7 +529,8 @@ def main():
                 "port": server.server_address[1],
                 "receipt_class": "real_pub_browser",
                 "real_pub": True,
-                "product_acceptance": True,
+                "product_acceptance": not args.interactive,
+                "interactive": args.interactive,
             }
         ),
         flush=True,
