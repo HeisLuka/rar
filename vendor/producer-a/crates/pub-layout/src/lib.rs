@@ -772,3 +772,145 @@ mod tests {
         assert!(!json.contains("private_state_ref"));
     }
 }
+
+
+#[cfg(test)]
+mod effective_grid_projection_tests {
+    use super::*;
+    use pub_model::{
+        CanonicalId, EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1,
+        EffectiveTableTrackV1, TableColumnId, TableRowId,
+    };
+
+    fn canonical(byte: u8) -> CanonicalId {
+        CanonicalId::from_bytes([byte; 16])
+    }
+
+    fn node_id(byte: u8) -> NodeId {
+        NodeId::from_canonical(canonical(byte))
+    }
+
+    fn row_id(byte: u8) -> TableRowId {
+        TableRowId::from_canonical(canonical(byte))
+    }
+
+    fn column_id(byte: u8) -> TableColumnId {
+        TableColumnId::from_canonical(canonical(byte))
+    }
+
+    fn cell_id(byte: u8) -> TableCellId {
+        TableCellId::from_canonical(canonical(byte))
+    }
+
+    fn grid(row_extent: Option<i64>, column_extent: Option<i64>) -> EffectiveTableGridV1 {
+        let rows = vec![
+            EffectiveTableTrackV1 {
+                id: row_id(1),
+                index: 0,
+                extent: row_extent.map(LengthEmu::new),
+            },
+            EffectiveTableTrackV1 {
+                id: row_id(2),
+                index: 1,
+                extent: row_extent.map(LengthEmu::new),
+            },
+        ];
+        let columns = vec![
+            EffectiveTableTrackV1 {
+                id: column_id(3),
+                index: 0,
+                extent: column_extent.map(LengthEmu::new),
+            },
+            EffectiveTableTrackV1 {
+                id: column_id(4),
+                index: 1,
+                extent: column_extent.map(LengthEmu::new),
+            },
+        ];
+        let cells = vec![
+            EffectiveTableCellV1 {
+                id: cell_id(10),
+                row_id: rows[0].id,
+                column_id: columns[0].id,
+                address: TableCellAddress { row: 0, column: 0 },
+                row_span: 1,
+                column_span: 1,
+                story_id: None,
+                utf16_start: None,
+                utf16_end: None,
+            },
+            EffectiveTableCellV1 {
+                id: cell_id(11),
+                row_id: rows[0].id,
+                column_id: columns[1].id,
+                address: TableCellAddress { row: 0, column: 1 },
+                row_span: 1,
+                column_span: 1,
+                story_id: None,
+                utf16_start: None,
+                utf16_end: None,
+            },
+            EffectiveTableCellV1 {
+                id: cell_id(12),
+                row_id: rows[1].id,
+                column_id: columns[0].id,
+                address: TableCellAddress { row: 1, column: 0 },
+                row_span: 1,
+                column_span: 1,
+                story_id: None,
+                utf16_start: None,
+                utf16_end: None,
+            },
+            EffectiveTableCellV1 {
+                id: cell_id(13),
+                row_id: rows[1].id,
+                column_id: columns[1].id,
+                address: TableCellAddress { row: 1, column: 1 },
+                row_span: 1,
+                column_span: 1,
+                story_id: None,
+                utf16_start: None,
+                utf16_end: None,
+            },
+        ];
+        EffectiveTableGridV1 {
+            version: EFFECTIVE_TABLE_GRID_V1.into(),
+            table_id: node_id(7),
+            rows,
+            columns,
+            cells,
+        }
+    }
+
+    #[test]
+    fn effective_grid_projects_without_changing_cell_identity() {
+        let grid = grid(Some(200), Some(300));
+        let bounded = bounded_table_input_from_effective_grid(&grid).expect("valid grid");
+        assert_eq!(bounded.node_id, node_id(7));
+        assert_eq!(bounded.table.rows, 2);
+        assert_eq!(bounded.table.columns, 2);
+        assert!(bounded.table.cells.iter().any(|cell| cell.id == cell_id(13)));
+    }
+
+    #[test]
+    fn uniform_known_extents_bridge_to_existing_table_metrics() {
+        let grid = grid(Some(200), Some(300));
+        let metrics = uniform_metrics_from_effective_grid(&grid).expect("known uniform metrics");
+        assert_eq!(metrics.table_origin, node_id(7));
+        assert_eq!(metrics.row_pitch, LengthEmu::new(200));
+        assert_eq!(metrics.cell_width, LengthEmu::new(300));
+    }
+
+    #[test]
+    fn unknown_track_metrics_do_not_become_equal_split_inference() {
+        let grid = grid(None, None);
+        assert!(uniform_metrics_from_effective_grid(&grid).is_none());
+    }
+
+    #[test]
+    fn nonuniform_tracks_do_not_claim_uniform_layout_metrics() {
+        let mut grid = grid(Some(200), Some(300));
+        grid.columns[1].extent = Some(LengthEmu::new(301));
+        assert!(uniform_metrics_from_effective_grid(&grid).is_none());
+    }
+}
