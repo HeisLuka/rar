@@ -255,9 +255,7 @@ fn undo_redo_and_fresh_project_replay_are_exact_and_reuse_story_id() {
 
     let mut v0_8_project = project.clone();
     v0_8_project.schema_version = EDITOR_PROJECT_VERSION_V0_8.into();
-    let mut v0_8_reopened = EditorSession::new(reopened.graph().clone()).expect("v0.8 editor");
-    v0_8_reopened.undo().ok();
-    v0_8_reopened = EditorSession::new(graph()).expect("fresh v0.8 replay");
+    let mut v0_8_reopened = EditorSession::new(graph()).expect("fresh v0.8 replay");
     v0_8_reopened
         .apply_project(&v0_8_project)
         .expect("v0.8 must inherit v0.7 BreakLink replay");
