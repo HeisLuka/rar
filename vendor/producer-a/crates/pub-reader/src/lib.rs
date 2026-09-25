@@ -72,6 +72,7 @@ pub use resolve::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicU64, Ordering};
 pub use structural_base::{
     PUB_STRUCTURAL_BASE_SCHEMA_V1, PubStructuralBaseCandidate, PubStructuralBaseManifest,
     PubStructuralBaseStreamDigest, build_mature_0x2c_structural_base_manifest,
@@ -117,6 +118,60 @@ const ROLE_NODE: &str = "cdm.node";
 const ROLE_STORY: &str = "cdm.story";
 
 pub type PubSourceGraph = SourceGraph<PubNodePayload, (), (), (), String>;
+
+static COPY_LEDGER_OPEN_PARSE_FILE_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_OPEN_PARSE_FILE_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_CONTENTS_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_CONTENTS_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_QUILL_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_QUILL_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_ESCHER_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_ESCHER_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PubReaderCopyLedgerSnapshotV1 {
+    pub file_buffer_bytes: u64,
+    pub file_buffer_instances: u64,
+    pub contents_stream_bytes: u64,
+    pub contents_stream_instances: u64,
+    pub quill_stream_bytes: u64,
+    pub quill_stream_instances: u64,
+    pub escher_stream_bytes: u64,
+    pub escher_stream_instances: u64,
+}
+
+pub fn reset_pub_reader_copy_ledger_v1() {
+    for counter in [
+        &COPY_LEDGER_OPEN_PARSE_FILE_BYTES,
+        &COPY_LEDGER_OPEN_PARSE_FILE_INSTANCES,
+        &COPY_LEDGER_CONTENTS_BYTES,
+        &COPY_LEDGER_CONTENTS_INSTANCES,
+        &COPY_LEDGER_QUILL_BYTES,
+        &COPY_LEDGER_QUILL_INSTANCES,
+        &COPY_LEDGER_ESCHER_BYTES,
+        &COPY_LEDGER_ESCHER_INSTANCES,
+    ] {
+        counter.store(0, Ordering::Relaxed);
+    }
+}
+
+pub fn pub_reader_copy_ledger_snapshot_v1() -> PubReaderCopyLedgerSnapshotV1 {
+    PubReaderCopyLedgerSnapshotV1 {
+        file_buffer_bytes: COPY_LEDGER_OPEN_PARSE_FILE_BYTES.load(Ordering::Relaxed),
+        file_buffer_instances: COPY_LEDGER_OPEN_PARSE_FILE_INSTANCES.load(Ordering::Relaxed),
+        contents_stream_bytes: COPY_LEDGER_CONTENTS_BYTES.load(Ordering::Relaxed),
+        contents_stream_instances: COPY_LEDGER_CONTENTS_INSTANCES.load(Ordering::Relaxed),
+        quill_stream_bytes: COPY_LEDGER_QUILL_BYTES.load(Ordering::Relaxed),
+        quill_stream_instances: COPY_LEDGER_QUILL_INSTANCES.load(Ordering::Relaxed),
+        escher_stream_bytes: COPY_LEDGER_ESCHER_BYTES.load(Ordering::Relaxed),
+        escher_stream_instances: COPY_LEDGER_ESCHER_INSTANCES.load(Ordering::Relaxed),
+    }
+}
+
+fn record_copy_bytes(counter: &AtomicU64, instances: &AtomicU64, byte_len: usize) {
+    counter.fetch_add(u64::try_from(byte_len).unwrap_or(u64::MAX), Ordering::Relaxed);
+    instances.fetch_add(1, Ordering::Relaxed);
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PubSourceGraphBuild {
@@ -448,14 +503,34 @@ pub fn build_mature_0x2c_source_graph<R: Read + Seek>(
     reader.seek(SeekFrom::Start(0))?;
     let mut pub_bytes = Vec::new();
     reader.read_to_end(&mut pub_bytes)?;
+    record_copy_bytes(
+        &COPY_LEDGER_OPEN_PARSE_FILE_BYTES,
+        &COPY_LEDGER_OPEN_PARSE_FILE_INSTANCES,
+        pub_bytes.len(),
+    );
 
     let contents =
         pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), CONTENTS_STREAM_PATH)
             .with_context(|| format!("read {CONTENTS_STREAM_PATH}"))?;
+    record_copy_bytes(
+        &COPY_LEDGER_CONTENTS_BYTES,
+        &COPY_LEDGER_CONTENTS_INSTANCES,
+        contents.len(),
+    );
     let quill = pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), QUILL_STREAM_PATH)
         .with_context(|| format!("read {QUILL_STREAM_PATH}"))?;
+    record_copy_bytes(
+        &COPY_LEDGER_QUILL_BYTES,
+        &COPY_LEDGER_QUILL_INSTANCES,
+        quill.len(),
+    );
     let escher = pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), ESCHER_STREAM_PATH)
         .with_context(|| format!("read {ESCHER_STREAM_PATH}"))?;
+    record_copy_bytes(
+        &COPY_LEDGER_ESCHER_BYTES,
+        &COPY_LEDGER_ESCHER_INSTANCES,
+        escher.len(),
+    );
 
     build_mature_0x2c_from_streams(source_hash, &contents, &quill, &escher)
 }
