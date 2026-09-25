@@ -4,18 +4,16 @@ on:
   push:
     branches:
       - editor-diag-folder-sweep-01
-  pull_request:
-    paths:
-      - "apps/chaptera-desktop/**"
-      - ".github/workflows/editor-diag-folder-sweep-01.yml"
+    paths-ignore:
+      - ".ci/editor-diag-folder-sweep.status"
   workflow_dispatch:
 
 permissions:
-  contents: read
-  statuses: write
+  contents: write
 
 jobs:
   editor-diagnostic-sweep:
+    if: github.actor != 'github-actions[bot]'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -44,30 +42,36 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
-      - name: publish diagnostic sweep CI status
+      - name: publish branch-readable validation result
         if: always()
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
           FMT_OUTCOME: ${{ steps.fmt.outcome }}
           CHECK_OUTCOME: ${{ steps.check.outcome }}
           TEST_OUTCOME: ${{ steps.tests.outcome }}
           READER_OUTCOME: ${{ steps.reader.outcome }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
-          $outcomes = @(
+          New-Item -ItemType Directory -Force .ci | Out-Null
+          @(
+            "schema=editor-diag-folder-sweep-ci-v1"
+            "head=$env:HEAD_SHA"
+            "fmt=$env:FMT_OUTCOME"
+            "check=$env:CHECK_OUTCOME"
+            "tests=$env:TEST_OUTCOME"
+            "reader=$env:READER_OUTCOME"
+          ) | Set-Content -Encoding utf8 .ci/editor-diag-folder-sweep.status
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/editor-diag-folder-sweep.status
+          git commit -m "CI: record editor diagnostic sweep validation" --allow-empty
+          git push origin HEAD:editor-diag-folder-sweep-01
+          $failed = @(
             $env:FMT_OUTCOME,
             $env:CHECK_OUTCOME,
             $env:TEST_OUTCOME,
             $env:READER_OUTCOME
-          )
-          $failed = $outcomes -contains "failure"
-          $state = if ($failed) { "failure" } else { "success" }
-          $description = if ($failed) {
-            "fmt=$env:FMT_OUTCOME check=$env:CHECK_OUTCOME tests=$env:TEST_OUTCOME reader=$env:READER_OUTCOME"
-          } else {
-            "chaptera desktop diagnostic sweep validation passed"
-          }
-          gh api --method POST "repos/${{ github.repository }}/statuses/${{ github.sha }}" -f state="$state" -f context="EDITOR-DIAG-FOLDER-SWEEP-01" -f description="$description"
+          ) -contains "failure"
           if ($failed) {
             exit 1
           }
