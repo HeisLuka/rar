@@ -5,7 +5,6 @@ on:
     paths:
       - "services/editor-api/web_text_transaction_adapter_v1.py"
       - "services/editor-api/test_web_text_transaction_adapter_v1.py"
-      - "services/editor-api/story_edit_transaction_v1.py"
       - "services/editor-api/text_ingress_v1.py"
       - "services/editor-api/security/authorized_revision_gateway.py"
       - ".github/workflows/web-text-transaction-adapter-v1.yml"
