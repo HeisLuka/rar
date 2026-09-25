@@ -659,6 +659,19 @@ mod tests {
     }
 
     #[test]
+    fn copy_ledger_counter_stays_zero_for_region_only_work() {
+        reset_layout_copy_ledger_v1();
+        resolve_line_regions_v1(&frame(100), &[]).expect("region-only work");
+        assert_eq!(
+            layout_copy_ledger_snapshot_v1(),
+            LayoutCopyLedgerSnapshotV1 {
+                prepared_units_clone_bytes: 0,
+                prepared_units_clone_instances: 0,
+            }
+        );
+    }
+
+    #[test]
     fn rectangular_obstacle_produces_multiple_ordered_intervals() {
         let region = resolve_line_regions_v1(
             &frame(100),
