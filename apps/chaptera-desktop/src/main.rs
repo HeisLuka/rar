@@ -238,66 +238,6 @@ fn main() -> eframe::Result<()> {
         }
     }
 
-    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--ux-snapshot-v1")) {
-        let Some(fixture) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera --ux-snapshot-v1 FIXTURE OUTPUT.png WIDTH HEIGHT");
-            std::process::exit(2);
-        };
-        let Some(output) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera --ux-snapshot-v1 FIXTURE OUTPUT.png WIDTH HEIGHT");
-            std::process::exit(2);
-        };
-        let Some(width) = args
-            .next()
-            .and_then(|value| value.to_str().and_then(|value| value.parse::<f32>().ok()))
-        else {
-            eprintln!("ux snapshot WIDTH must be a positive number");
-            std::process::exit(2);
-        };
-        let Some(height) = args
-            .next()
-            .and_then(|value| value.to_str().and_then(|value| value.parse::<f32>().ok()))
-        else {
-            eprintln!("ux snapshot HEIGHT must be a positive number");
-            std::process::exit(2);
-        };
-        if args.next().is_some() || width < 1.0 || height < 1.0 {
-            eprintln!("usage: chaptera --ux-snapshot-v1 FIXTURE OUTPUT.png WIDTH HEIGHT");
-            std::process::exit(2);
-        }
-        if output.extension().and_then(|value| value.to_str()) != Some("png") {
-            eprintln!("ux snapshot output must end in .png");
-            std::process::exit(2);
-        }
-
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title(APP_TITLE)
-                .with_inner_size([width, height])
-                .with_min_inner_size([width, height])
-                .with_max_inner_size([width, height])
-                .with_resizable(false)
-                .with_drag_and_drop(false),
-            renderer: eframe::Renderer::Wgpu,
-            ..Default::default()
-        };
-        let error_output = output.with_extension("error.txt");
-        let result = eframe::run_native(
-            APP_TITLE,
-            options,
-            Box::new(move |cc| {
-                Ok(Box::new(SnapshotApp::new(
-                    ViewerApp::new_with_storage(Some(fixture), cc.storage),
-                    output,
-                )))
-            }),
-        );
-        if let Err(error) = &result {
-            let _ = fs::write(&error_output, format!("{error:#}\n"));
-        }
-        return result;
-    }
-
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         let Some(path) = args.next().map(PathBuf::from) else {
             std::process::exit(2);
@@ -346,80 +286,6 @@ fn smoke_check(path: &Path) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-struct SnapshotApp {
-    inner: ViewerApp,
-    output: PathBuf,
-    settle_frames: u8,
-    requested: bool,
-}
-
-impl SnapshotApp {
-    fn new(inner: ViewerApp, output: PathBuf) -> Self {
-        Self {
-            inner,
-            output,
-            settle_frames: 0,
-            requested: false,
-        }
-    }
-
-    fn write_png(&self, color_image: &egui::ColorImage) -> Result<(), String> {
-        if let Some(parent) = self.output.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("create {}: {error}", parent.display()))?;
-        }
-        let width = u32::try_from(color_image.size[0])
-            .map_err(|_| "screenshot width exceeds u32".to_owned())?;
-        let height = u32::try_from(color_image.size[1])
-            .map_err(|_| "screenshot height exceeds u32".to_owned())?;
-        let mut rgba = Vec::with_capacity(color_image.pixels.len() * 4);
-        for pixel in &color_image.pixels {
-            rgba.extend_from_slice(&pixel.to_array());
-        }
-        let image = image::RgbaImage::from_raw(width, height, rgba)
-            .ok_or_else(|| "screenshot RGBA dimensions are inconsistent".to_owned())?;
-        image
-            .save(&self.output)
-            .map_err(|error| format!("write {}: {error}", self.output.display()))
-    }
-}
-
-impl eframe::App for SnapshotApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.inner.update(ctx, frame);
-
-        let screenshot = ctx.input(|input| {
-            input.raw.events.iter().find_map(|event| match event {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
-        if let Some(image) = screenshot {
-            if let Err(error) = self.write_png(&image) {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-
-        if !self.requested {
-            if self.settle_frames < 3 {
-                self.settle_frames += 1;
-                ctx.request_repaint();
-            } else {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
-                    egui::UserData::default(),
-                ));
-                self.requested = true;
-                ctx.request_repaint();
-            }
-        }
-    }
 }
 
 struct ViewerApp {
@@ -3308,20 +3174,6 @@ mod tests {
         assert!(source.contains("Reopen never discards unsaved operations."));
         assert!(source.contains("Technical details"));
         assert!(source.contains("Match details"));
-    }
-
-    #[test]
-    fn ux_snapshot_mode_is_bounded_and_source_driven() {
-        let source = include_str!("main.rs");
-        assert!(source.contains("--ux-snapshot-v1"));
-        assert!(source.contains("ViewportCommand::Screenshot"));
-        assert!(source.contains("ViewerApp::new_with_storage(Some(fixture)"));
-        assert!(source.contains("with_min_inner_size([width, height])"));
-        assert!(source.contains("with_max_inner_size([width, height])"));
-        let production_source = source
-            .split_once("#[cfg(test)]")
-            .map_or(source, |(production, _)| production);
-        assert!(!production_source.contains("or start with: chaptera FILE.pub"));
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
