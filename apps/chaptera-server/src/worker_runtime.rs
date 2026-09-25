@@ -130,7 +130,7 @@ impl ConfiguredWorkerRuntime {
 }
 
 impl WorkerRuntime for ConfiguredWorkerRuntime {
-    fn run<'a>(&'a self) -> WorkerRuntimeFuture<'a> {
+    fn run(&self) -> WorkerRuntimeFuture<'_> {
         Box::pin(async move { self.run_configured().await })
     }
 }
