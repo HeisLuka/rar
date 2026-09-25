@@ -92,10 +92,11 @@ jobs:
               }
               assert row["surfaces"]["webgl2"]["requested"]["premultipliedAlpha"] is False
               assert row["surfaces"]["webgl2"]["requested"]["alpha"] is True
-              assert row["surfaces"]["svg"]["requested"]["bitmapOptions"] == {
-                  "imageOrientation": "none",
-                  "premultiplyAlpha": "none",
-                  "colorSpaceConversion": "none",
+              assert row["surfaces"]["svg"]["requested"] == {
+                  "color_space": "srgb_css_svg",
+                  "alpha": True,
+                  "rasterizer": "HTMLImageElement",
+                  "color_conversion_control": "not_exposed",
               }
               assert row["capture_boundary"]["absolute_monitor_colorimetry_claimed"] is False
               assert row["capture_boundary"]["screenshot_used_as_ground_truth"] is False
