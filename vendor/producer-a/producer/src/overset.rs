@@ -520,6 +520,8 @@ pub fn run() -> Result<()> {
     };
 
     serde_json::to_writer(std::io::stdout(), &output).context("write producer response")?;
-    std::io::stdout().flush().context("flush producer response")?;
+    std::io::stdout()
+        .flush()
+        .context("flush producer response")?;
     Ok(())
 }
