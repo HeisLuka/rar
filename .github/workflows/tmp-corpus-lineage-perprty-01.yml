@@ -1,0 +1,240 @@
+name: TEMP CORPUS PERPRTY OlePres lineage check
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-perprty-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parsers
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y libmspub-tools
+      - name: Compare exact PERPRTY pair
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import difflib,hashlib,json,subprocess,tempfile,time,urllib.parse,urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-perprty-lineage/1.0";SECTOR=2048
+          TARGET="/Objects/Object 16/\x02OlePres000"
+          SPECS={
+            "divergent":{
+              "sha256":"3de34ba7075ddb22e31abe094c0776bbdccd57791e6cef775ecbf03a935860d8",
+              "size":212992,
+              "member":"PageWiz/PERPRTY.PUB",
+              "url":"https://archive.org/download/pub-40-cd/PUB_40_CD.iso",
+              "root_sha256":"3abd372fd3a1def03cf17ca6277533a8a1bcfbe88b56a213f9c389035020a78b",
+              "root_size":138719232,
+              "source_page":"https://archive.org/details/pub-40-cd"
+            },
+            "canonical":{
+              "sha256":"660e8dbc4812c851db966c5294009bea58893076565273035267f4cf52142b48",
+              "size":212992,
+              "member":"PAGEWIZ/PERPRTY.PUB",
+              "url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+              "root_sha256":"41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab",
+              "root_size":138315776,
+              "source_page":"https://archive.org/details/MSPublisher97-EN",
+              "additional_exact_media":[
+                {"source_page":"https://archive.org/details/MSPublisher97ThaiEdition","root_sha256":"0e30e5f0817cb94ff78780ac34b386c4c87c475ead40227758c387e985560e4c"},
+                {"source_page":"https://archive.org/details/PUB40CD","root_sha256":"cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59"}
+              ]
+            }
+          }
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+          def s32(b,o):
+            v=u32(b,o);return v-(1<<32) if v>=1<<31 else v
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              last=None
+              for a in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception as e:
+                  last=e
+                  if a==3:raise
+                  time.sleep(2**a)
+              out=[];d=str(m.get("dir") or "")
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError(f"range length {len(d)} != {n}")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              last=None
+              for a in range(4):
+                try:return self.rr(self.delivery,start,n)
+                except Exception as e:
+                  last=e
+                  if a==3:raise
+                  time.sleep(2**a)
+              raise last
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","replace"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              k=(e,s)
+              if k in self.cache:return self.cache[k]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[k]=out;return out
+            def root(self):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl]);return e,s,fl
+            def member(self,path):
+              e,s,fl=self.root();parts=[x.upper() for x in path.strip("/").split("/") if x]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2:raise ValueError(f"{x} not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def probe(pub):
+            with olefile.OleFileIO(pub) as ole:
+              streams={}
+              for parts in ole.listdir(streams=True,storages=False):
+                p="/"+"/".join(parts);d=ole.openstream(parts).read();streams[p]=d
+              storages=["/"+"/".join(parts) for parts in ole.listdir(streams=False,storages=True)]
+            return streams,sorted(storages)
+
+          def olepres(data):
+            out={"byte_len":len(data),"sha256":sha(data)}
+            out["first_28_sha256"]=sha(data[:28]) if len(data)>=28 else None
+            if len(data)>=40:
+              ex=s32(data,28);ey=s32(data,32);sz=u32(data,36)
+              payload=data[40:40+sz] if 40+sz<=len(data) else b""
+              out.update({"extent_x":ex,"extent_y":ey,"declared_payload_size":sz,"payload_fits":40+sz<=len(data),"exact_size_match":40+sz==len(data),"payload_sha256":sha(payload) if payload else None,"trailing_len":max(0,len(data)-(40+sz))})
+              if len(payload)>=4:
+                if payload[:4]==b"\x01\x00\x00\x00" and len(payload)>=44 and payload[40:44]==b" EMF":kind="emf"
+                elif payload[:4]==b"\xd7\xcd\xc6\x9a":kind="placeable-wmf"
+                else:kind="opaque-or-standard-wmf"
+                out["payload_kind_hint"]=kind
+            return out
+
+          def diff(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False);sp=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag!="equal":sp.append({"tag":tag,"left_offset":i1,"left_len":i2-i1,"left_sha256":sha(a[i1:i2]),"right_offset":j1,"right_len":j2-j1,"right_sha256":sha(b[j1:j2])})
+            p=0
+            while p<min(len(a),len(b)) and a[p]==b[p]:p+=1
+            s=0
+            while s<min(len(a),len(b))-p and a[-1-s]==b[-1-s]:s+=1
+            return {"left_len":len(a),"right_len":len(b),"common_prefix":p,"common_suffix":s,"sequence_match_ratio":round(sm.ratio(),6),"delta_span_count":len(sp),"delta_spans":sp}
+
+          payloads={};deliveries={}
+          for k,s in SPECS.items():
+            iso=ISO(s["url"]);pub=iso.member(s["member"])
+            if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(k+" member drift")
+            payloads[k]=pub;deliveries[k]=iso.delivery
+
+          probes={};storages={}
+          for k,pub in payloads.items():
+            probes[k],storages[k]=probe(pub)
+
+          lp,rp=probes["divergent"],probes["canonical"]
+          if sorted(lp)!=sorted(rp):raise ValueError("stream path drift")
+          changed=[p for p in sorted(lp) if lp[p]!=rp[p]]
+          if changed!=[TARGET]:raise ValueError(f"unexpected changed streams: {changed}")
+          if storages["divergent"]!=storages["canonical"]:raise ValueError("storage topology drift")
+
+          lpres=lp[TARGET];rpres=rp[TARGET]
+          lop=olepres(lpres);rop=olepres(rpres)
+          authored_siblings=[p for p in sorted(lp) if p.startswith("/Objects/Object 16/") and p!=TARGET]
+          sibling_equal={p:sha(lp[p])==sha(rp[p]) for p in authored_siblings}
+
+          with tempfile.TemporaryDirectory(prefix="perprty-") as td:
+            td=Path(td)
+            parse={}
+            for k,pub in payloads.items():
+              path=td/(k+".pub");path.write_bytes(pub)
+              proc=subprocess.run(["pub2xhtml",str(path)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+              parse[k]={"returncode":proc.returncode,"stdout_len":len(proc.stdout),"stderr_len":len(proc.stderr),"stdout_sha256":sha(proc.stdout),"stderr_sha256":sha(proc.stderr)}
+
+          if all(sibling_equal.values()) and lop.get("exact_size_match") and rop.get("exact_size_match"):
+            if lop.get("payload_sha256")==rop.get("payload_sha256"):
+              cls="ole-presentation-header-only-residue"
+            else:
+              cls="ole-presentation-cache-payload-residue"
+          else:
+            cls="ole-presentation-structural-or-malformed-delta"
+
+          report={
+            "schema":"chaptera.perprty-olepres-lineage.v1",
+            "source_safe":True,"raw_pub_retained":False,
+            "files":{k:{"sha256":s["sha256"],"byte_len":s["size"],"member":s["member"],"source_page":s["source_page"],"root_sha256":s["root_sha256"],"root_size":s["root_size"],"delivery_url":deliveries[k],"additional_exact_media":s.get("additional_exact_media",[])} for k,s in SPECS.items()},
+            "stream_paths_equal":True,"storage_paths_equal":True,"changed_streams":changed,
+            "object16_sibling_streams":authored_siblings,"object16_siblings_equal":sibling_equal,
+            "olepres_left":lop,"olepres_right":rop,"olepres_diff":diff(lpres,rpres),
+            "libmspub_parse":parse,
+            "classification":cls
+          }
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"receipt.json").write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
+          summary={"schema":"chaptera.perprty-olepres-lineage-summary.v1","all_exact_members_verified":True,"changed_streams":changed,"all_object16_nonpresentation_streams_identical":all(sibling_equal.values()),"olepres_left_len":len(lpres),"olepres_right_len":len(rpres),"olepres_left_payload_kind":lop.get("payload_kind_hint"),"olepres_right_payload_kind":rop.get("payload_kind_hint"),"olepres_payload_equal":lop.get("payload_sha256")==rop.get("payload_sha256"),"libmspub_returncodes":{k:v["returncode"] for k,v in parse.items()},"classification":cls,"source_safe":True}
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["changed_streams"]==["/Objects/Object 16/\u0002OlePres000"]
+          assert s["all_object16_nonpresentation_streams_identical"] is True
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-perprty-olepres-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
