@@ -1,0 +1,112 @@
+name: TEMP PSPP publisher_logo exact recovery
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recover exact archived publisher_logo.zip as data and inspect statically
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out work
+          python - <<'PY'
+          import hashlib, io, json, time, zipfile
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          UA="rar-pub-pspp-publisher-logo-recovery/1.0"
+          target="http://office.microsoft.com:80/publisher/prepress/publisher_logo.zip"
+          params=[
+            ("url",target),("matchType","exact"),("output","json"),
+            ("fl","timestamp,original,mimetype,statuscode,digest,length"),
+            ("filter","statuscode:200"),("collapse","digest"),("limit","20"),("gzip","false")
+          ]
+          endpoint="https://web.archive.org/cdx/search/cdx?"+urlencode(params)
+          req=Request(endpoint,headers={"User-Agent":UA,"Accept":"application/json"})
+          with urlopen(req,timeout=30) as r:
+            data=json.load(r)
+          captures=[dict(zip(data[0],x)) for x in data[1:]] if data else []
+
+          receipts=[]; all_members=[]; cfb_members=[]
+          for cap in captures:
+            ts=cap["timestamp"]; original=cap["original"]
+            replay=f"https://web.archive.org/web/{ts}id_/{original}"
+            item={"capture":cap,"replay":replay}
+            try:
+              req=Request(replay,headers={"User-Agent":UA,"Accept":"application/zip,application/octet-stream,*/*;q=0.1"})
+              with urlopen(req,timeout=45) as r:
+                raw=r.read(25*1024*1024+1)
+                item["status"]=getattr(r,"status",None)
+                item["content_type"]=r.headers.get("Content-Type")
+              if len(raw)>25*1024*1024:
+                raise ValueError("archive exceeds 25 MiB bound")
+              item["size"]=len(raw)
+              item["sha256"]=hashlib.sha256(raw).hexdigest()
+              item["zip_magic"]=raw.startswith(b"PK")
+              if not zipfile.is_zipfile(io.BytesIO(raw)):
+                item["zip_error"]="not a ZIP container"
+              else:
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                  members=[]
+                  for zi in z.infolist():
+                    row={"capture_timestamp":ts,"path":zi.filename,"size":zi.file_size,"compressed_size":zi.compress_size}
+                    if zi.is_dir():
+                      row["kind"]="directory"
+                    else:
+                      b=z.read(zi)
+                      row["sha256"]=hashlib.sha256(b).hexdigest()
+                      row["kind"]="file"
+                      row["cfb_magic"]=b.startswith(bytes.fromhex("d0cf11e0a1b11ae1"))
+                      row["pub_extension"]=zi.filename.lower().endswith(".pub")
+                      if row["cfb_magic"] or row["pub_extension"]:
+                        cfb_members.append(row)
+                    members.append(row); all_members.append(row)
+                  item["members"]=members
+            except Exception as e:
+              item["error"]=f"{type(e).__name__}: {e}"
+            receipts.append(item)
+            time.sleep(.3)
+
+          summary={
+            "schema":"chaptera.corpus-pspp-publisher-logo-recovery.v1",
+            "source_safe":True,
+            "raw_payload_retained":False,
+            "target":target,
+            "capture_count":len(captures),
+            "receipts":receipts,
+            "member_count":len(all_members),
+            "cfb_or_pub_member_count":len(cfb_members),
+            "cfb_or_pub_members":cfb_members,
+            "guardrail":"Archived ZIP bytes are transient. Members are statically inventoried only; nothing is executed and no raw carrier/member bytes are uploaded."
+          }
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Source-safe artifact guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.7z' -o -iname '*.rar' \) | grep -q .; then
+            echo 'unexpected raw carrier/member bytes in artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-pspp-publisher-logo-recovery
+          path: out/**
+          retention-days: 60
+          if-no-files-found: error
