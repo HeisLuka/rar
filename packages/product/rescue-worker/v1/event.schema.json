@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/rescue-worker-event.v1.json",
+  "title": "Chaptera Rescue isolated worker event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "job_id", "event", "phase"],
+  "properties": {
+    "protocol_version": {"const": "chaptera.rescue-worker-event.v1"},
+    "job_id": {"type": "string"},
+    "event": {"enum": ["started", "phase", "finished"]},
+    "phase": {
+      "enum": [
+        "admission",
+        "source_verification",
+        "executor",
+        "result_validation",
+        "finished"
+      ]
+    },
+    "status": {
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "resource_limited",
+        "executor_unavailable"
+      ]
+    },
+    "code": {"type": "string"},
+    "message": {"type": "string"}
+  }
+}

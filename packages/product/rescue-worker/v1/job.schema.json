@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/rescue-worker-job.v1.json",
+  "title": "Chaptera Rescue isolated worker job v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "job_id",
+    "source",
+    "operation",
+    "output",
+    "limits",
+    "policy"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.rescue-worker-job.v1"},
+    "job_id": {"type": "string", "pattern": "^[0-9a-f-]{36}$"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "operation": {"const": "bounded_recovery"},
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_directory"],
+      "properties": {
+        "job_directory": {"type": "string", "minLength": 1}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wall_time_ms",
+        "cpu_time_ms",
+        "memory_bytes",
+        "output_bytes",
+        "artifact_count"
+      ],
+      "properties": {
+        "wall_time_ms": {"type": "integer", "minimum": 1000, "maximum": 86400000},
+        "cpu_time_ms": {"type": "integer", "minimum": 1000, "maximum": 86400000},
+        "memory_bytes": {"type": "integer", "minimum": 16777216},
+        "output_bytes": {"type": "integer", "minimum": 0},
+        "artifact_count": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_mutation_allowed", "native_pub_delivery_allowed"],
+      "properties": {
+        "source_mutation_allowed": {"const": false},
+        "native_pub_delivery_allowed": {"type": "boolean"}
+      }
+    }
+  }
+}

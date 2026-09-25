@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/rescue-worker-result.v1.json",
+  "title": "Chaptera Rescue isolated worker result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "job_id",
+    "status",
+    "source_sha256",
+    "source_unchanged",
+    "executor",
+    "limits",
+    "producer_receipt"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.rescue-worker-result.v1"},
+    "job_id": {"type": "string"},
+    "status": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "resource_limited",
+        "executor_unavailable"
+      ]
+    },
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_unchanged": {"const": true},
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "available"],
+      "properties": {
+        "id": {"type": "string"},
+        "available": {"type": "boolean"}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wall_time_ms", "cpu_time_ms", "memory_bytes", "output_bytes", "artifact_count"],
+      "properties": {
+        "wall_time_ms": {"type": "integer"},
+        "cpu_time_ms": {"type": "integer"},
+        "memory_bytes": {"type": "integer"},
+        "output_bytes": {"type": "integer"},
+        "artifact_count": {"type": "integer"}
+      }
+    },
+    "producer_receipt": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["relative_path", "sha256"],
+          "properties": {
+            "relative_path": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      ]
+    },
+    "code": {"type": "string"},
+    "message": {"type": "string"}
+  }
+}
