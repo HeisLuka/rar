@@ -36,6 +36,7 @@ pub mod source_authority;
 pub mod source_baseline;
 pub mod source_ingress;
 pub mod source_ingress_async;
+pub mod source_ingress_http;
 pub mod source_ingress_security;
 pub mod source_ingress_sqlite;
 pub mod sqlite_blob_metadata;
