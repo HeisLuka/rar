@@ -168,6 +168,12 @@ pub enum FailureOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdmissionDeferOutcome {
+    Requeued(JobRecord),
+    Cancelled(JobRecord),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishOutcome {
     Published(JobRecord),
     AlreadyPublished(JobRecord),
@@ -614,6 +620,73 @@ impl SqliteJobQueue {
         self.get(job_id)
             .await?
             .ok_or_else(|| JobQueueError::new("job_not_found", "job does not exist"))
+    }
+
+    pub async fn defer_admission(
+        &self,
+        lease: &Lease,
+        now_ms: i64,
+        reason_code: &str,
+    ) -> Result<AdmissionDeferOutcome, JobQueueError> {
+        require_code(reason_code)?;
+        let current = self.require_live_lease(lease, now_ms).await?;
+
+        if current.cancel_requested_at_ms.is_some() {
+            let job = self
+                .finish(lease, now_ms, JobStatus::Cancelled, "cancel_requested")
+                .await?;
+            return Ok(AdmissionDeferOutcome::Cancelled(job));
+        }
+
+        if current.attempt <= 0 {
+            return Err(JobQueueError::new(
+                "invalid_attempt_state",
+                "admission deferral requires a claimed execution attempt",
+            ));
+        }
+
+        let restored_attempt = current.attempt - 1;
+        let available_at_ms = now_ms.saturating_add(retry_delay_ms(
+            &current.job_id,
+            current.lease_generation,
+        ));
+
+        let done = sqlx::query(
+            r#"
+            UPDATE jobs
+            SET status='queued',
+                available_at_ms=?,
+                attempt=?,
+                lease_owner=NULL,
+                lease_expires_at_ms=NULL,
+                started_at_ms=CASE WHEN attempt=1 THEN NULL ELSE started_at_ms END,
+                terminal_code=?
+            WHERE job_id=? AND status='running'
+              AND lease_owner=? AND lease_generation=?
+            "#,
+        )
+        .bind(available_at_ms)
+        .bind(restored_attempt)
+        .bind(reason_code)
+        .bind(current.job_id.as_bytes())
+        .bind(&lease.lease_owner)
+        .bind(lease.lease_generation)
+        .execute(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
+
+        if done.rows_affected() != 1 {
+            return Err(JobQueueError::new(
+                "stale_lease",
+                "admission deferral lost lease ownership",
+            ));
+        }
+
+        let job = self
+            .get(&current.job_id)
+            .await?
+            .ok_or_else(|| JobQueueError::new("job_not_found", "job disappeared"))?;
+        Ok(AdmissionDeferOutcome::Requeued(job))
     }
 
     pub async fn fail(
