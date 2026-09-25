@@ -170,7 +170,7 @@ async fn open_store(label: &str) -> (SqliteRevisionStore, PathBuf) {
 async fn cleanup_store(store: &SqliteRevisionStore, path: &Path) {
     store.close().await;
     for candidate in [
-        path.clone(),
+        path.to_path_buf(),
         PathBuf::from(format!("{}-wal", path.display())),
         PathBuf::from(format!("{}-shm", path.display())),
     ] {
