@@ -145,6 +145,101 @@ pub struct LineRegionV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LineRegionFlowBridgeErrorV1 {
+    EmptyBandSet,
+    NonMonotonicBandOrder,
+    MultiIntervalConsumptionUnsupported,
+}
+
+pub fn bridge_line_region_slots_v1(
+    frame_id: &str,
+    slots: &[chaptera_line_region::LineBandSlotsV1],
+    policy: chaptera_line_region::IntervalConsumptionPolicyV1,
+) -> Result<LineRegionV1, LineRegionFlowBridgeErrorV1> {
+    if slots.is_empty() {
+        return Err(LineRegionFlowBridgeErrorV1::EmptyBandSet);
+    }
+    if policy == chaptera_line_region::IntervalConsumptionPolicyV1::AllIntervalsLeftToRight {
+        return Err(LineRegionFlowBridgeErrorV1::MultiIntervalConsumptionUnsupported);
+    }
+
+    let mut previous_bottom = None;
+    let mut bands = Vec::with_capacity(slots.len());
+    let mut dependency = Vec::new();
+    push_bytes(&mut dependency, frame_id.as_bytes());
+    let mut output = Vec::new();
+
+    for (index, slot) in slots.iter().enumerate() {
+        if let Some(bottom) = previous_bottom
+            && slot.clipped_top_emu < bottom
+        {
+            return Err(LineRegionFlowBridgeErrorV1::NonMonotonicBandOrder);
+        }
+        previous_bottom = Some(slot.clipped_bottom_emu);
+
+        push_i64(&mut dependency, slot.requested.top_emu);
+        push_i64(&mut dependency, slot.requested.bottom_emu);
+        push_i64(&mut dependency, slot.clipped_top_emu);
+        push_i64(&mut dependency, slot.clipped_bottom_emu);
+        for interval in &slot.intervals {
+            push_u32(&mut dependency, interval.column_index);
+            push_i64(&mut dependency, interval.x0_emu);
+            push_i64(&mut dependency, interval.x1_emu);
+        }
+        for diagnostic in &slot.diagnostics {
+            push_bytes(&mut dependency, diagnostic.code.as_bytes());
+            if let Some(obstacle_id) = &diagnostic.obstacle_id {
+                push_bytes(&mut dependency, obstacle_id.as_bytes());
+            }
+            if let Some(detail) = &diagnostic.detail {
+                push_bytes(&mut dependency, detail.as_bytes());
+            }
+        }
+
+        let selected = chaptera_line_region::select_line_intervals_v1(slot, policy);
+        let intervals = selected
+            .into_iter()
+            .map(|interval| IntervalV1 {
+                x0_emu: interval.x0_emu,
+                x1_emu: interval.x1_emu,
+            })
+            .collect::<Vec<_>>();
+        let row_index = u32::try_from(index).expect("slot count is bounded by slice length");
+        push_u32(&mut output, row_index);
+        push_i64(&mut output, slot.clipped_top_emu);
+        push_i64(&mut output, slot.clipped_bottom_emu);
+        push_u32(
+            &mut output,
+            u32::try_from(intervals.len()).expect("selected interval count is bounded"),
+        );
+        for interval in &intervals {
+            push_i64(&mut output, interval.x0_emu);
+            push_i64(&mut output, interval.x1_emu);
+        }
+
+        bands.push(LineBandV1 {
+            row_index,
+            y0_emu: slot.clipped_top_emu,
+            y1_emu: slot.clipped_bottom_emu,
+            intervals,
+        });
+    }
+
+    Ok(LineRegionV1 {
+        frame_id: frame_id.to_owned(),
+        dependency_fingerprint: fingerprint_v1(
+            "chaptera-line-region-flow-bridge-dependency-v1",
+            &[&dependency],
+        ),
+        output_fingerprint: fingerprint_v1(
+            "chaptera-line-region-flow-bridge-output-v1",
+            &[&output],
+        ),
+        bands,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegionErrorV1 {
     NonPositiveFrameGeometry,
     InvalidObstacle { obstacle_id: String },
@@ -882,6 +977,108 @@ mod tests {
         assert_eq!(
             scene_shard_output_fingerprint_v1("p1", &incremental),
             scene_shard_output_fingerprint_v1("p1", &clean)
+        );
+    }
+}
+
+#[cfg(test)]
+mod line_region_bridge_tests {
+    use super::*;
+    use chaptera_line_region::{
+        ColumnsV1, EffectiveWrapModeV1, EffectiveWrapObstacleV1, FrameRegionV1, InsetsEmuV1,
+        IntervalConsumptionPolicyV1, LineBandRequestV1, RectEmuV1, WrapDistancesV1,
+        resolve_line_bands_v1,
+    };
+
+    fn slots() -> Vec<chaptera_line_region::LineBandSlotsV1> {
+        let frame = FrameRegionV1 {
+            frame_id: "f-bridge".into(),
+            page_id: "p-bridge".into(),
+            bounds: RectEmuV1 {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 40,
+            },
+            insets: InsetsEmuV1 {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+        };
+        let obstacle = EffectiveWrapObstacleV1 {
+            obstacle_id: "o".into(),
+            mode: EffectiveWrapModeV1::Rectangle {
+                rect: RectEmuV1 {
+                    x: 30,
+                    y: 0,
+                    width: 30,
+                    height: 20,
+                },
+                distances: WrapDistancesV1 {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+            },
+        };
+        resolve_line_bands_v1(
+            &frame,
+            ColumnsV1 {
+                count: 1,
+                gutter_emu: 0,
+            },
+            &[obstacle],
+            &[
+                LineBandRequestV1 {
+                    top_emu: 0,
+                    bottom_emu: 20,
+                },
+                LineBandRequestV1 {
+                    top_emu: 20,
+                    bottom_emu: 40,
+                },
+            ],
+        )
+        .expect("slots")
+    }
+
+    #[test]
+    fn largest_only_bridge_feeds_existing_story_flow_shape() {
+        let bridged = bridge_line_region_slots_v1(
+            "f-bridge",
+            &slots(),
+            IntervalConsumptionPolicyV1::LargestOnly,
+        )
+        .expect("bridge");
+        assert_eq!(2, bridged.bands.len());
+        assert_eq!(
+            vec![IntervalV1 {
+                x0_emu: 60,
+                x1_emu: 100,
+            }],
+            bridged.bands[0].intervals
+        );
+        assert_eq!(
+            vec![IntervalV1 {
+                x0_emu: 0,
+                x1_emu: 100,
+            }],
+            bridged.bands[1].intervals
+        );
+    }
+
+    #[test]
+    fn multi_interval_consumption_fails_closed_at_legacy_flow_boundary() {
+        assert_eq!(
+            Err(LineRegionFlowBridgeErrorV1::MultiIntervalConsumptionUnsupported),
+            bridge_line_region_slots_v1(
+                "f-bridge",
+                &slots(),
+                IntervalConsumptionPolicyV1::AllIntervalsLeftToRight,
+            )
         );
     }
 }
