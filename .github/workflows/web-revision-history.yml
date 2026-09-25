@@ -21,9 +21,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run revision kernel tests
+      - name: Run revision kernel and dependent Editor API regressions
         working-directory: services/editor-api
-        run: python -m unittest -v test_revision_store.py
+        run: |
+          python -m unittest -v \
+            test_revision_store.py \
+            test_authored_stack.py \
+            test_editor_nudge_v1.py \
+            test_multi_story_text_transaction_v1.py \
+            test_create_picture_frame_v1.py \
+            test_create_shape_container_v2.py \
+            test_story_range_v1.py \
+            test_move_nodes.py \
+            test_text_frame_columns.py \
+            test_story_edit_transaction_v1.py \
+            test_document_text_replace_all_v1.py \
+            test_story_find_replace_v1.py \
+            test_delete_node.py \
+            test_rotate_nodes_quarter_v1.py
       - name: Produce history transition receipt
         run: python tools/run_web_revision_history_contract.py
       - uses: actions/upload-artifact@v4
