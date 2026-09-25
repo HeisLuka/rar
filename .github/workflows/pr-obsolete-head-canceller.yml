@@ -34,12 +34,12 @@ jobs:
           for status in queued in_progress; do
             gh api --paginate --method GET "repos/$GH_REPO/actions/runs" \
               -f status="$status" -f event=pull_request -f per_page=100 \
-              --jq --argjson pr "$PR_NUMBER" '
-                .workflow_runs[]
-                | select(any(.pull_requests[]?; .number == $pr))
-                | [.id, .head_sha, .name]
-                | @tsv
-              ' >>"$runs_file"
+              | jq -r --argjson pr "$PR_NUMBER" '
+                  .workflow_runs[]
+                  | select(any(.pull_requests[]?; .number == $pr))
+                  | [.id, .head_sha, .name]
+                  | @tsv
+                ' >>"$runs_file"
           done
 
           cancelled=0
