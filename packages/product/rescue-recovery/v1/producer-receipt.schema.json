@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/rescue-recovery-producer-receipt.v1.json",
+  "title": "Chaptera Rescue recovery producer receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "fixture",
+    "source_immutability",
+    "recovery",
+    "artifacts",
+    "loss",
+    "native_validation",
+    "proposed_route",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.rescue-recovery-producer-receipt.v1"
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source_sha256"],
+      "properties": {
+        "kind": {
+          "enum": ["natural_partial_cfb", "healthy_control", "partial_control"]
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "source_immutability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_sha256", "after_sha256", "unchanged"],
+      "properties": {
+        "before_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "unchanged": {"type": "boolean"}
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recovery_class",
+        "repair_plan_id",
+        "action_ids",
+        "fabricated_bytes",
+        "silent_drops"
+      ],
+      "properties": {
+        "recovery_class": {
+          "enum": [
+            "bounded_exact_salvage",
+            "partial_salvage",
+            "diagnostic_only",
+            "manual_review",
+            "unsupported"
+          ]
+        },
+        "repair_plan_id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "action_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 160},
+          "uniqueItems": true
+        },
+        "fabricated_bytes": {"type": "integer", "minimum": 0},
+        "silent_drops": {"type": "integer", "minimum": 0}
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_id", "kind", "sha256", "exact", "source_ranges"],
+        "properties": {
+          "artifact_id": {"type": "string", "minLength": 1, "maxLength": 160},
+          "kind": {
+            "enum": ["text", "media", "thumbnail", "pdf", "editable", "native_pub", "other"]
+          },
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "exact": {"type": "boolean"},
+          "source_ranges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["offset", "length", "sha256"],
+              "properties": {
+                "offset": {"type": "integer", "minimum": 0},
+                "length": {"type": "integer", "minimum": 1},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["known_loss", "items"],
+      "properties": {
+        "known_loss": {"type": "boolean"},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "severity", "count"],
+            "properties": {
+              "code": {"type": "string", "minLength": 1, "maxLength": 160},
+              "severity": {"enum": ["info", "warning", "blocking"]},
+              "count": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    },
+    "native_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {"enum": ["not_attempted", "inconclusive", "valid", "invalid"]},
+        "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "proposed_route": {
+      "enum": [
+        "bounded_recovered",
+        "partially_recovered",
+        "manual_review",
+        "unsupported_no_safe_recovery",
+        "diagnostic_only"
+      ]
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_pub_bytes",
+        "document_text",
+        "local_paths",
+        "customer_identity",
+        "credentials"
+      ],
+      "properties": {
+        "raw_pub_bytes": {"const": false},
+        "document_text": {"const": false},
+        "local_paths": {"const": false},
+        "customer_identity": {"const": false},
+        "credentials": {"const": false}
+      }
+    }
+  }
+}
