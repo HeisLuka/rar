@@ -1,0 +1,203 @@
+name: Chaptera Local Windows Portable V0
+
+on:
+  pull_request:
+    paths:
+      - "Start-Chaptera-Local.cmd"
+      - "tools/run_local_full_stack.py"
+      - "tools/run_local_real_editor.py"
+      - "tools/run_cloud_config_receipt.py"
+      - "tools/package_local_portable.py"
+      - "tools/adapt_viewer_scene_v1.py"
+      - "tools/resolved_graph_scene_bridge_v1.py"
+      - "tools/sample_newsletter_move_producer.py"
+      - "tools/scene_v1.py"
+      - "tools/validate_export_preview.py"
+      - "tools/verify_editable_export_geometry.py"
+      - "services/editor-api/**"
+      - "apps/web/**"
+      - "apps/chaptera-server/**"
+      - "packages/protocol/revision/v1/**"
+      - "packages/product/local-portable/**"
+      - "vendor/producer-a/**"
+      - "deploy/config/chaptera.prod.example.toml"
+      - ".github/workflows/chaptera-local-portable-windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_EMBED_URL: https://www.python.org/ftp/python/3.13.7/python-3.13.7-embeddable-amd64.zip
+  PYTHON_EMBED_SHA256: e201b2da753a88c1af29d87f9f48af4d64a0fc8522a204ae672bd2c382496701
+  # Portable Rust binaries must not rely on a machine-installed MSVC runtime.
+  RUSTFLAGS: -C target-feature=+crt-static
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check package scripts
+        run: |
+          python -m py_compile tools/run_local_full_stack.py
+          python -m py_compile tools/run_local_real_editor.py
+          python -m py_compile tools/package_local_portable.py
+
+      - name: Build Chaptera release binary
+        run: cargo build -p chaptera-server --release
+
+      - name: Build Producer A release binary
+        run: cargo build --manifest-path vendor/producer-a/Cargo.toml -p chaptera-producer-a --release
+
+      - name: Stage pinned embedded Python
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "python-embed.zip"
+          $runtime = Join-Path $env:RUNNER_TEMP "python-embed"
+          Invoke-WebRequest -Uri $env:PYTHON_EMBED_URL -OutFile $zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:PYTHON_EMBED_SHA256) { throw "embedded Python SHA-256 mismatch: $actual" }
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $runtime
+          "CHAPTERA_EMBEDDED_PYTHON=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Vendor pinned Python dependency closure
+        shell: pwsh
+        run: |
+          $packages = Join-Path $env:RUNNER_TEMP "python-packages"
+          New-Item -ItemType Directory -Force -Path $packages | Out-Null
+          python -m pip install --disable-pip-version-check --no-input --only-binary=:all: --target $packages -r packages/product/local-portable/v1/requirements.txt
+          python -m pip freeze --path $packages | Sort-Object | Set-Content -Encoding ascii "$packages\FROZEN.txt"
+          "CHAPTERA_PYTHON_PACKAGES=$packages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build deterministic portable ZIP
+        shell: pwsh
+        run: python tools/package_local_portable.py --chaptera-exe target/release/chaptera.exe --producer-exe vendor/producer-a/target/release/chaptera-producer-a.exe --python-runtime "$env:CHAPTERA_EMBEDDED_PYTHON" --python-packages "$env:CHAPTERA_PYTHON_PACKAGES" --output-zip dist/Chaptera-Local-Windows-x86_64.zip --manifest dist/Chaptera-Local.package.json --source-commit "${{ github.sha }}" --workflow-run "${{ github.run_id }}"
+
+      - name: Inspect packaged executable imports
+        shell: pwsh
+        run: |
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found" }
+          & $dumpbin /dependents target/release/chaptera.exe | Set-Content -Encoding ascii dist/chaptera.dependents.txt
+          & $dumpbin /dependents vendor/producer-a/target/release/chaptera-producer-a.exe | Set-Content -Encoding ascii dist/producer-a.dependents.txt
+          foreach ($receipt in @("dist/chaptera.dependents.txt","dist/producer-a.dependents.txt")) {
+            $dynamicMsvc = Select-String -Path $receipt -Pattern "VCRUNTIME[0-9_]*[.]dll|MSVCP[0-9_]*[.]dll"
+            if ($dynamicMsvc) {
+              throw "portable Rust binary still depends on machine MSVC runtime: $($dynamicMsvc.Line -join ', ')"
+            }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-local-windows-x86_64-build
+          path: |
+            dist/Chaptera-Local-Windows-x86_64.zip
+            dist/Chaptera-Local.package.json
+            dist/chaptera.dependents.txt
+            dist/producer-a.dependents.txt
+          if-no-files-found: error
+
+  clean-extracted-smoke:
+    needs: build-portable
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chaptera-local-windows-x86_64-build
+          path: ${{ runner.temp }}/chaptera-local-artifact
+
+      - name: Extract package and snapshot immutable tree
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:RUNNER_TEMP "chaptera-local-artifact"
+          $clean = Join-Path $env:RUNNER_TEMP "chaptera-local-clean"
+          Expand-Archive -Path (Join-Path $artifact "Chaptera-Local-Windows-x86_64.zip") -DestinationPath $clean
+          $hashes = Get-ChildItem -File -Recurse $clean | ForEach-Object {
+            $relative = $_.FullName.Substring($clean.Length + 1).Replace("\","/")
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $relative"
+          }
+          $hashes | Sort-Object | Set-Content -Encoding ascii (Join-Path $artifact "before.sha256")
+          "CHAPTERA_CLEAN_ROOT=$clean" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_TEST_STATE=$(Join-Path $env:RUNNER_TEMP 'chaptera-user-state')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prove no-checkout zero-install startup
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = $env:CHAPTERA_TEST_STATE
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          if (Get-Command python -ErrorAction SilentlyContinue) { throw "system python unexpectedly visible" }
+          if (Get-Command py -ErrorAction SilentlyContinue) { throw "py launcher unexpectedly visible" }
+          if (Get-Command cargo -ErrorAction SilentlyContinue) { throw "cargo unexpectedly visible" }
+          if (Get-Command rustc -ErrorAction SilentlyContinue) { throw "rustc unexpectedly visible" }
+          $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
+          $launcher = Join-Path $env:CHAPTERA_CLEAN_ROOT "Start-Chaptera-Local.cmd"
+          $quoted = [char]34 + $launcher + [char]34
+          $arguments = "/d /c call $quoted --no-browser --smoke"
+          $process = Start-Process -FilePath $cmd -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "portable full-stack smoke failed: $($process.ExitCode)" }
+
+      - name: Prove packaged MoveNode Scene Undo path
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = $env:CHAPTERA_TEST_STATE
+          $env:CHAPTERA_LOCAL_RUNTIME_ROOT = $env:CHAPTERA_CLEAN_ROOT
+          $env:CHAPTERA_LOCAL_STATE_ROOT = Join-Path $env:CHAPTERA_TEST_STATE "Chaptera\Local"
+          $env:CHAPTERA_LOCAL_PACKAGED = "1"
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          $python = Join-Path $env:CHAPTERA_CLEAN_ROOT "runtime\python\python.exe"
+          $script = Join-Path $env:CHAPTERA_CLEAN_ROOT "launcher\run_local_real_editor.py"
+          $process = Start-Process -FilePath $python -ArgumentList @($script,"--smoke") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "packaged interactive editor smoke failed: $($process.ExitCode)" }
+
+      - name: Verify state isolation and package immutability
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:RUNNER_TEMP "chaptera-local-artifact"
+          $clean = $env:CHAPTERA_CLEAN_ROOT
+          $after = Get-ChildItem -File -Recurse $clean | ForEach-Object {
+            $relative = $_.FullName.Substring($clean.Length + 1).Replace("\","/")
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $relative"
+          }
+          $after = $after | Sort-Object
+          $before = Get-Content (Join-Path $artifact "before.sha256")
+          if (Compare-Object $before $after) { throw "portable install tree changed during smoke" }
+          $state = Join-Path $env:CHAPTERA_TEST_STATE "Chaptera\Local"
+          foreach ($required in @("chaptera.sqlite","logs\server.log","logs\worker.log","logs\editor-service.log")) {
+            if (-not (Test-Path (Join-Path $state $required))) { throw "expected runtime state missing: $required" }
+          }
+          if (Test-Path (Join-Path $clean ".chaptera-local")) { throw "runtime state leaked into portable install tree" }
+          @{
+            schema_version = "chaptera.local-portable-clean-smoke.v1"
+            no_checkout = $true
+            system_python_hidden = $true
+            cargo_hidden = $true
+            package_tree_unchanged = $true
+            external_state_root = $true
+            full_stack_ready = $true
+            interactive_move_scene_undo = $true
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $artifact "clean-smoke.json")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-local-windows-x86_64-portable
+          path: |
+            ${{ runner.temp }}/chaptera-local-artifact/Chaptera-Local-Windows-x86_64.zip
+            ${{ runner.temp }}/chaptera-local-artifact/Chaptera-Local.package.json
+            ${{ runner.temp }}/chaptera-local-artifact/chaptera.dependents.txt
+            ${{ runner.temp }}/chaptera-local-artifact/producer-a.dependents.txt
+            ${{ runner.temp }}/chaptera-local-artifact/clean-smoke.json
+          if-no-files-found: error

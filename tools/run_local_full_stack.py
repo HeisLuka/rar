@@ -23,8 +23,17 @@ import webbrowser
 
 from run_cloud_config_receipt import OidcFixture
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-STATE = ROOT / ".chaptera-local"
+DEV_ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(os.environ.get("CHAPTERA_LOCAL_RUNTIME_ROOT", DEV_ROOT)).resolve()
+PACKAGED = os.environ.get("CHAPTERA_LOCAL_PACKAGED") == "1" or (
+    (ROOT / "BUILD.json").is_file() and (ROOT / "bin" / "chaptera.exe").is_file()
+)
+if os.environ.get("CHAPTERA_LOCAL_STATE_ROOT"):
+    STATE = pathlib.Path(os.environ["CHAPTERA_LOCAL_STATE_ROOT"]).resolve()
+elif PACKAGED and os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+    STATE = pathlib.Path(os.environ["LOCALAPPDATA"]) / "Chaptera" / "Local"
+else:
+    STATE = ROOT / ".chaptera-local"
 LOGS = STATE / "logs"
 CONFIG = STATE / "chaptera.local.toml"
 DATABASE = STATE / "chaptera.sqlite"
@@ -69,7 +78,7 @@ def open_failure_page(message: str) -> None:
 <h2>server.log</h2><pre>{html.escape(tail(SERVER_LOG))}</pre>
 <h2>worker.log</h2><pre>{html.escape(tail(WORKER_LOG))}</pre>
 <h2>editor-service.log</h2><pre>{html.escape(tail(EDITOR_LOG))}</pre>
-<p>Файлы логов: <code>.chaptera-local/logs/</code></p>"""
+<p>Файлы логов: <code>{html.escape(str(LOGS))}</code></p>"""
     page.write_text(body, encoding="utf-8")
     webbrowser.open(page.resolve().as_uri())
 
@@ -117,6 +126,9 @@ def main() -> int:
             "AWS_SECRET_ACCESS_KEY": "chaptera-local",
             "AWS_REGION": "us-east-1",
             "AWS_EC2_METADATA_DISABLED": "true",
+            "CHAPTERA_LOCAL_RUNTIME_ROOT": str(ROOT),
+            "CHAPTERA_LOCAL_STATE_ROOT": str(STATE),
+            "CHAPTERA_LOCAL_PACKAGED": "1" if PACKAGED else "0",
         }
     )
 
@@ -128,11 +140,14 @@ def main() -> int:
     editor_handle = None
 
     try:
-        if not args.skip_build:
+        if not args.skip_build and not PACKAGED:
             run_checked(["cargo", "build", "-p", "chaptera-server"], env)
-        binary = ROOT / "target/debug/chaptera"
-        if os.name == "nt":
-            binary = binary.with_suffix(".exe")
+        if PACKAGED:
+            binary = ROOT / "bin" / ("chaptera.exe" if os.name == "nt" else "chaptera")
+        else:
+            binary = ROOT / "target/debug/chaptera"
+            if os.name == "nt":
+                binary = binary.with_suffix(".exe")
         if not binary.exists():
             raise RuntimeError(f"Chaptera binary not found: {binary}")
 
@@ -174,8 +189,13 @@ def main() -> int:
                 raise RuntimeError(f"runtime did not reach /ready=200 (last status: {ready})")
 
             editor_handle = EDITOR_LOG.open("w", encoding="utf-8")
+            editor_launcher = (
+                ROOT / "launcher/run_local_real_editor.py"
+                if PACKAGED
+                else ROOT / "tools/run_local_real_editor.py"
+            )
             editor = subprocess.Popen(
-                [sys.executable, "tools/run_local_real_editor.py"],
+                [sys.executable, str(editor_launcher)],
                 cwd=ROOT,
                 env=env,
                 stdout=editor_handle,
