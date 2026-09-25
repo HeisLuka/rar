@@ -706,10 +706,7 @@ fn map_admission_error(error: UploadAdmissionError) -> SourceIngressHttpError {
         "upload_admission_principal_missing" | "upload_admission_principal_disabled" => {
             SourceIngressHttpError::api(StatusCode::FORBIDDEN, error.code)
         }
-        "upload_admission_principal_concurrency"
-        | "upload_admission_tenant_concurrency"
-        | "upload_admission_principal_bytes"
-        | "upload_admission_tenant_bytes" => {
+        "upload_principal_capacity" | "upload_tenant_capacity" => {
             SourceIngressHttpError::rate_limited(error.code, error.retry_at_ms)
         }
         "upload_admission_idempotency_conflict"
