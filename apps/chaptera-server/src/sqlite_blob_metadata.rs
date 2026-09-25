@@ -267,7 +267,7 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
     ) -> Result<ResourceBinding, BlobStoreError> {
         require_binding_matches_physical(&binding, &physical)?;
         let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
-        let mut tx = (&mut *connection)
+        let mut tx = (*connection)
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(sqlite_error)?;
@@ -310,7 +310,7 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
         binding: ResourceBinding,
     ) -> Result<ResourceBinding, BlobStoreError> {
         let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
-        let mut tx = (&mut *connection)
+        let mut tx = (*connection)
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(sqlite_error)?;
