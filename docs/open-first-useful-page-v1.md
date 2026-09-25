@@ -17,3 +17,11 @@ Every phase also records available bytes/materialization and page/story/resource
 Final canonical document, Scene and search projection equivalence with the complete path is mandatory.
 
 The checked-in fixture is explicitly synthetic and has `architecture_decision_allowed=false`. A lazy/current-page-first parser/model/layout architecture may be justified only by a sanitized `real_pub_source_free` receipt from the authorized Reader/Viewer runtime.
+
+## Evidence classes
+
+- `synthetic_contract_fixture` validates only the receipt shape and orchestration mechanics; it is not a real PUB runtime.
+- `hosted_public_fixture` runs the real Reader/Viewer pipeline on a hash-pinned public PUB, but hosted timing remains regression/mechanics evidence and MUST keep `architecture_decision_allowed=false`.
+- `real_pub_source_free` is reserved for the authorized representative local/native measurement used by the parent task; only that class may set `architecture_decision_allowed=true`.
+
+This distinction prevents a public CI fixture from being mislabeled either as synthetic input or as representative product-latency evidence.
