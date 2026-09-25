@@ -91,18 +91,23 @@ test("exact adapter passes only explicit source-exact createImageBitmap options"
 
 test("readiness generation rejects stale completion and closes bitmap", async () => {
   let resolveDecode;
+  let markDecodeStarted;
+  const decodeStarted = new Promise((resolve) => { markDecodeStarted = resolve; });
   const image = fakeBitmap();
   const ready = runtime();
   const coordinator = new BrowserImageDecodeCoordinatorV1({
     readiness: ready,
-    createImageBitmapFn: () => new Promise((resolve) => { resolveDecode = () => resolve(image); }),
+    createImageBitmapFn: () => {
+      markDecodeStarted();
+      return new Promise((resolve) => { resolveDecode = () => resolve(image); });
+    },
   });
   const pending = coordinator.decodeExact({
     identity: IDENTITY,
     blob: new Blob([BYTES], { type: "image/png" }),
     reference_receipt: reference(),
   });
-  await Promise.resolve();
+  await decodeStarted;
   ready.beginRequest(IDENTITY);
   resolveDecode();
   const result = await pending;
@@ -114,18 +119,23 @@ test("readiness generation rejects stale completion and closes bitmap", async ()
 
 test("policy generation rejects old decode and releases bitmap", async () => {
   let resolveDecode;
+  let markDecodeStarted;
+  const decodeStarted = new Promise((resolve) => { markDecodeStarted = resolve; });
   const image = fakeBitmap();
   const ready = runtime();
   const coordinator = new BrowserImageDecodeCoordinatorV1({
     readiness: ready,
-    createImageBitmapFn: () => new Promise((resolve) => { resolveDecode = () => resolve(image); }),
+    createImageBitmapFn: () => {
+      markDecodeStarted();
+      return new Promise((resolve) => { resolveDecode = () => resolve(image); });
+    },
   });
   const pending = coordinator.decodeExact({
     identity: IDENTITY,
     blob: new Blob([BYTES], { type: "image/png" }),
     reference_receipt: reference(),
   });
-  await Promise.resolve();
+  await decodeStarted;
   coordinator.bumpPolicyGeneration();
   resolveDecode();
   const result = await pending;
