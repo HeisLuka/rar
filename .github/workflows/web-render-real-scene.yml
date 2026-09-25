@@ -26,8 +26,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Scene validator
-        run: python -m pip install "jsonschema==4.23.0"
+      - name: Install Scene and screenshot validators
+        run: python -m pip install "jsonschema==4.23.0" "pillow==11.3.0"
 
       - name: Materialize pinned real SampleNewsletter Scene V1
         shell: bash
@@ -91,7 +91,7 @@ jobs:
           browser = "${{ matrix.browser }}"
           path = Path("target/web-render") / f"{browser}-receipt.json"
           receipt = json.loads(path.read_text())
-          assert receipt["receipt_kind"] == "chaptera.real-pub-renderer-benchmark.v1"
+          assert receipt["receipt_kind"] == "chaptera.real-pub-renderer-benchmark.v2"
           assert receipt["real_pub"] is True
           assert receipt["representative_corpus"] is True
           assert receipt["technology_decision_allowed"] is False
@@ -102,6 +102,10 @@ jobs:
           assert case["real_pub"] is True
           assert case["representative_corpus"] is True
           assert case["technology_decision_allowed"] is False
+          assert case["viewport_focus"]["mode"] == "first_populated_page"
+          assert case["viewport_focus"]["page_order"] == 1
+          assert case["viewport_focus"]["page_id"] == "804583a0-a0fe-5dc0-a121-b5232db7e91e"
+          assert case["viewport_focus"]["pan_y_css_px"] < -1000
           assert case["payload_bytes"] > 0
           assert case["pages"] > 0
           assert case["nodes"] > 0
@@ -116,6 +120,43 @@ jobs:
               "nodes": case["nodes"],
               "renderers": renderers,
           }, indent=2))
+          PY
+
+      - name: Prove screenshot contains document pixels
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          browser = "${{ matrix.browser }}"
+          root = Path("target/web-render")
+          checked = {}
+          for renderer in ["svg", "canvas2d", "webgl2-hybrid"]:
+              path = root / f"{browser}-real-sample-newsletter-{renderer}.png"
+              if not path.exists():
+                  checked[renderer] = {"available": False}
+                  continue
+
+              image = Image.open(path).convert("RGB")
+              dark_pixels = sum(
+                  1
+                  for pixel in image.getdata()
+                  if min(pixel) < 180
+              )
+              checked[renderer] = {
+                  "available": True,
+                  "dark_document_pixels": dark_pixels,
+              }
+              assert dark_pixels >= 25, (
+                  renderer,
+                  "focused real-PUB screenshot contains no visible document content",
+                  dark_pixels,
+              )
+
+          assert checked["svg"]["available"] is True
+          assert checked["canvas2d"]["available"] is True
+          print(checked)
           PY
 
       - uses: actions/upload-artifact@v4
