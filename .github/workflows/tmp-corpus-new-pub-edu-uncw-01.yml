@@ -1,0 +1,107 @@
+name: TEMP UNCW Publisher template archive recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-edu-uncw-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Discover exact archived captures
+        run: |
+          set -euo pipefail
+          mkdir -p out/discovery
+          python tools/corpus/wayback_pub_seed.py \
+            --url 'https://uncw4.sharepoint.com/Shared%20Documents/Web/printing/student-business-cards-blue-photo.pub' \
+            --url 'https://uncw4.sharepoint.com/Shared%20Documents/Web/printing/student-business-cards-teal-photo.pub' \
+            --url 'https://uncw4.sharepoint.com/Shared%20Documents/Web/printing/student-business-cards-teal.pub' \
+            --url 'https://uncw4.sharepoint.com/Shared%20Documents/Web/printing/student-business-cards-navy.pub' \
+            --url 'https://uncw4.sharepoint.com/Shared%20Documents/Web/printing/student-business-card-blank.pub' \
+            --max-domains 0 \
+            --exact-limit 50 \
+            --delay 0.5 \
+            --timeout 60 \
+            --retries 2 \
+            --out out/discovery/wayback_seed.csv \
+            --summary out/discovery/wayback_seed.summary.json
+          cat out/discovery/wayback_seed.summary.json
+
+      - name: Recover archived bytes
+        run: |
+          set -euo pipefail
+          rows="$(python - <<'PY'
+          import csv
+          with open('out/discovery/wayback_seed.csv',encoding='utf-8') as f:
+              print(sum(1 for _ in csv.DictReader(f)))
+          PY
+          )"
+          echo "locator_rows=$rows"
+          if [ "$rows" -gt 0 ]; then
+            python tools/corpus/harvest_pub.py \
+              --seed out/discovery/wayback_seed.csv \
+              --out out/harvest \
+              --max-files -1 \
+              --timeout 30 \
+              --max-bytes 104857600 \
+              --per-host-delay 0.2
+          else
+            mkdir -p out/harvest
+            printf '[]\n' > out/harvest/manifest.json
+            printf 'source_page,direct_url,candidate_filename,fetch_status,classification,sha256\n' > out/harvest/manifest.csv
+          fi
+
+      - name: Summarize and strip raw payloads
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          from collections import Counter
+          rows=json.loads(pathlib.Path('out/harvest/manifest.json').read_text(encoding='utf-8'))
+          complete=[r for r in rows if r.get('classification')=='cfb_publisher_hint']
+          summary={
+              'schema':'chaptera.corpus-edu-uncw-exact-archive.v1',
+              'source_safe':True,
+              'raw_pub_retained':False,
+              'source_page':'https://www.uncw.edu/myuncw/seahawk-life/services/campus-support/printing/services/business-cards',
+              'exact_original_urls':5,
+              'manifest_rows':len(rows),
+              'unique_sha256':len({r.get('sha256') for r in rows if r.get('sha256')}),
+              'complete_publisher_sha256':len({r.get('sha256') for r in complete if r.get('sha256')}),
+              'classification':dict(Counter(r.get('classification','') for r in rows)),
+              'fetch_status':dict(Counter(r.get('fetch_status','') for r in rows)),
+              'complete_files':[{
+                  'filename':r.get('candidate_filename'),
+                  'sha256':r.get('sha256'),
+                  'size':r.get('size'),
+                  'wayback_original_url':r.get('wayback_original_url'),
+                  'wayback_timestamp':r.get('wayback_timestamp')
+              } for r in complete],
+              'guardrail':'Current SharePoint paths require Microsoft sign-in; only archived public captures are admissible here.'
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+          print(json.dumps(summary,indent=2))
+          PY
+          find out/harvest -type f ! -name 'manifest.json' ! -name 'manifest.csv' -delete
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into artifact' >&2
+            exit 1
+          fi
+          sha256sum out/discovery/* out/harvest/* out/summary.json | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-edu-uncw-exact-archive-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
