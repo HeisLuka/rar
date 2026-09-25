@@ -18,6 +18,7 @@ from story_edit_transaction_v1 import (
     story_edit_core_state_id_v1,
     story_edit_core_state_to_dict,
 )
+from create_textbox_v1 import authoring_text_preset_id_v1
 from text_format_overlay_v1 import (
     BaseCharacterFormatV1,
     BaseFormatRunV1,
@@ -29,7 +30,10 @@ from text_format_overlay_v1 import (
 
 DOCUMENT_ID = "doc:story-tx"
 SOURCE_HASH = "a" * 64
-STORY_ID = "story:1"
+STORY_ID = "01900000-0000-7000-8000-000000000010"
+FRAME_ID = "01900000-0000-7000-8000-000000000011"
+SECOND_FRAME_ID = "01900000-0000-7000-8000-000000000012"
+PAGE_ID = "page:1"
 P1 = "paragraph:1"
 P2 = "paragraph:2"
 P3 = "paragraph:3"
@@ -112,15 +116,70 @@ def make_core_state(
     )
 
 
+def authored_preset():
+    return {
+        "preset_version": "chaptera.authoring-text-preset.v1",
+        "font_fingerprint": "b" * 64,
+        "face_index": 0,
+        "font_size_emu": 12000,
+        "paragraph_defaults": {
+            "alignment": "left",
+            "space_before_emu": 0,
+            "space_after_emu": 0,
+        },
+        "character_defaults": {"bold": False, "italic": False},
+    }
+
+
 def make_project(core):
     text = core.paragraph_state.story_text
-    return {
+    project = {
         "schema_version": "pub-editor-v0.6",
         "source_hash": SOURCE_HASH,
         "operations": [],
         "stories": {STORY_ID: text},
         "story_models": {STORY_ID: story_edit_core_state_to_dict(core)},
     }
+    if core.provenance != "chaptera_created":
+        return project
+
+    preset = authored_preset()
+    preset_id = authoring_text_preset_id_v1(preset)
+    project.update(
+        {
+            "pages": {
+                PAGE_ID: {
+                    "authoring_enabled": True,
+                    "children": [FRAME_ID],
+                }
+            },
+            "text_frames": {
+                FRAME_ID: {
+                    "node_id": FRAME_ID,
+                    "kind": "text_frame",
+                    "page_id": PAGE_ID,
+                    "parent_id": PAGE_ID,
+                    "story_id": STORY_ID,
+                    "bounds": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1000000,
+                        "height": 500000,
+                    },
+                    "transform": {"kind": "identity"},
+                    "text_preset_id": preset_id,
+                    "provenance": {"kind": "author_created"},
+                }
+            },
+            "text_presets": {
+                preset_id: {
+                    "preset_id": preset_id,
+                    "preset": preset,
+                }
+            },
+        }
+    )
+    return project
 
 
 def effective(core, prop, scalar):
@@ -137,14 +196,16 @@ class StoryEditTransactionV1Tests(unittest.TestCase):
     def setUp(self):
         self.kernel = RevisionKernel()
 
-    def register(self, core):
-        project = make_project(core)
+    def register_project(self, project):
         baseline = self.kernel.register_baseline(
             document_id=DOCUMENT_ID,
             source_hash=SOURCE_HASH,
             project=project,
         )
         return project, baseline
+
+    def register(self, core):
+        return self.register_project(make_project(core))
 
     def request(
         self,
@@ -209,6 +270,101 @@ class StoryEditTransactionV1Tests(unittest.TestCase):
         self.assertTrue(effective(self.current_core(), "bold", 1))
         self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).parent_revision_id)
         self.assertEqual(1, len(self.kernel.current_revision(DOCUMENT_ID).project["operations"]))
+
+    def test_forged_chaptera_created_provenance_without_graph_rejects(self):
+        core = make_core_state("ABC")
+        project = make_project(core)
+        project.pop("text_frames")
+        project.pop("pages")
+        project.pop("text_presets")
+        _, baseline = self.register_project(project)
+        result = self.kernel.commit_story_edit_transaction(
+            self.request(
+                baseline,
+                op_id="story-tx-authored-guard-0001",
+                start=1,
+                end=2,
+                expected="B",
+                replacement="X",
+            )
+        )
+        self.assertEqual("author_created_story_unproven", result["code"])
+        self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_author_created_story_requires_exactly_one_textframe_owner(self):
+        core = make_core_state("ABC")
+        project = make_project(core)
+        duplicate = copy.deepcopy(project["text_frames"][FRAME_ID])
+        duplicate["node_id"] = SECOND_FRAME_ID
+        project["text_frames"][SECOND_FRAME_ID] = duplicate
+        project["pages"][PAGE_ID]["children"].append(SECOND_FRAME_ID)
+        _, baseline = self.register_project(project)
+        result = self.kernel.commit_story_edit_transaction(
+            self.request(
+                baseline,
+                op_id="story-tx-authored-guard-0002",
+                start=1,
+                end=2,
+                expected="B",
+                replacement="X",
+            )
+        )
+        self.assertEqual("author_created_story_unproven", result["code"])
+        self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_author_created_story_requires_matching_preset_record(self):
+        core = make_core_state("ABC")
+        project = make_project(core)
+        project["text_presets"] = {}
+        _, baseline = self.register_project(project)
+        result = self.kernel.commit_story_edit_transaction(
+            self.request(
+                baseline,
+                op_id="story-tx-authored-guard-0003",
+                start=1,
+                end=2,
+                expected="B",
+                replacement="X",
+            )
+        )
+        self.assertEqual("author_created_story_unproven", result["code"])
+        self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_author_created_story_requires_page_child_membership(self):
+        core = make_core_state("ABC")
+        project = make_project(core)
+        project["pages"][PAGE_ID]["children"] = []
+        _, baseline = self.register_project(project)
+        result = self.kernel.commit_story_edit_transaction(
+            self.request(
+                baseline,
+                op_id="story-tx-authored-guard-0004",
+                start=1,
+                end=2,
+                expected="B",
+                replacement="X",
+            )
+        )
+        self.assertEqual("author_created_story_unproven", result["code"])
+        self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_author_created_story_requires_exact_story_text_mirror(self):
+        core = make_core_state("ABC")
+        project = make_project(core)
+        project["stories"][STORY_ID] = "forged"
+        _, baseline = self.register_project(project)
+        result = self.kernel.commit_story_edit_transaction(
+            self.request(
+                baseline,
+                op_id="story-tx-authored-guard-0005",
+                start=1,
+                end=2,
+                expected="B",
+                replacement="X",
+            )
+        )
+        self.assertEqual("author_created_story_unproven", result["code"])
+        self.assertEqual(baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
 
     def test_delete_crossing_format_span_rebases_without_stale_extent(self):
         core = make_core_state(
