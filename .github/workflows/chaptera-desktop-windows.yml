@@ -148,6 +148,9 @@ jobs:
             target/release/Chaptera-Editor.package.json
             target/release/editor-live-trial-package.real.json
             target/release/editor-agent-control.real.json
+            target/release/chaptera-editor-ux-1280x820.png
+            target/release/chaptera-editor-ux-900x600.png
+            target/release/editor-desktop-ux-snapshots.real.json
           if-no-files-found: error
 
   validate-portable-editor:
