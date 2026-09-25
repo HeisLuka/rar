@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::break_core::{LineBreakProbeV1, probe_line_break_v1};
 use crate::prepared_paragraph::{PreparedParagraphBindingV1, PreparedStoryIndexV1};
 use crate::runtime::{IntervalPolicyV1, LineRegionV1};
 use crate::{FingerprintV1, fingerprint_v1};
@@ -400,35 +401,17 @@ fn resolve_one_frame_v1(
                 })?;
 
             let capacity = interval.x1_emu - interval.x0_emu;
-            let mut width = 0_i64;
-            let mut probe = start_index;
-            let mut last_break = None;
-
-            while probe < paragraph.prepared.metrics.len() {
-                let metric = &paragraph.prepared.metrics[probe];
-                let next = width.saturating_add(metric.advance_emu);
-                if next > capacity {
-                    break;
-                }
-                width = next;
-                probe += 1;
-                if metric.break_after {
-                    last_break = Some(probe);
-                }
-            }
-
-            let reaches_paragraph_end = probe == paragraph.prepared.metrics.len();
-            let end_index = if reaches_paragraph_end {
-                probe
-            } else if let Some(last_break) = last_break {
-                last_break
-            } else {
-                continue;
+            let decision = match probe_line_break_v1(
+                &paragraph.prepared.metrics,
+                start_index,
+                capacity,
+                |metric| metric.advance_emu,
+                |metric| metric.break_after,
+            ) {
+                LineBreakProbeV1::Selected(decision) => decision,
+                LineBreakProbeV1::Unbreakable => continue,
             };
-
-            if end_index <= start_index {
-                continue;
-            }
+            let end_index = decision.end_index;
 
             let selected = &paragraph.prepared.metrics[start_index..end_index];
             let scalar_end = paragraph.scalar_base
@@ -436,9 +419,9 @@ fn resolve_one_frame_v1(
                     .last()
                     .expect("non-empty selected metrics")
                     .local_scalar_end;
-            let measured_width_emu = selected.iter().map(|metric| metric.advance_emu).sum();
-            let mandatory_break = end_index == paragraph.prepared.metrics.len()
-                && paragraph.terminator_scalar.is_some();
+            let measured_width_emu = decision.measured_width_emu;
+            let mandatory_break =
+                decision.reaches_metric_end && paragraph.terminator_scalar.is_some();
             let consumed_scalar_end = if mandatory_break {
                 paragraph
                     .terminator_scalar
