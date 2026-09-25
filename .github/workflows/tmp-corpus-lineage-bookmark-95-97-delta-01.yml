@@ -289,7 +289,7 @@ jobs:
           for r in residual:
             key=f'{r["classification"]}|marker0x{r["marker"]:02X}|growth{r["growth"]}'
             cluster_counts[key]=cluster_counts.get(key,0)+1
-          summary["residual_chunk_analysis"]={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts}
+          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts}
 
           # strip raw before retention
           for side in parsed.values():
@@ -297,7 +297,7 @@ jobs:
             for ch in side["dir"]["chunks"].values():ch.pop("raw",None)
             side["dir"].pop("by_id",None)
 
-          summary={"schema":"chaptera.bookmark-95-97-delta-summary.v1","all_exact_members_verified":True,"common_id_count":len(common),"removed_ids":removed,"added_ids":added,"raw_changed_common_ids":raw_changed,"relocation_normalized_equal_ids":norm_equal,"residual_changed_common_ids":norm_changed,"parent256":parent256,"new_nodes":new_nodes,"style_comparison":style_cmp,"classification":classification,"source_safe":True}
+          summary={"schema":"chaptera.bookmark-95-97-delta-summary.v1","all_exact_members_verified":True,"common_id_count":len(common),"removed_ids":removed,"added_ids":added,"raw_changed_common_ids":raw_changed,"relocation_normalized_equal_ids":norm_equal,"residual_changed_common_ids":norm_changed,"parent256":parent256,"new_nodes":new_nodes,"style_comparison":style_cmp,"classification":classification,"residual_chunk_analysis":residual_analysis,"source_safe":True}
           receipt={"schema":"chaptera.bookmark-95-97-delta.v1","files":{s:{"sha256":SPECS[s]["sha256"],"source_page":SPECS[s]["source_page"],"delivery_url":deliveries[s]} for s in SPECS},"chunk_comparison":chunk_cmp,"summary":summary,"raw_pub_retained":False,"source_safe":True}
           out=Path("out");out.mkdir(exist_ok=True)
           (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
