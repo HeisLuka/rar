@@ -1,249 +1,364 @@
 #!/usr/bin/env python3
 import copy
+import json
 import unittest
 
-from revision_store import RevisionKernel, hash_id
+from create_shape_container_v2 import apply_create_shape_v2
+from delete_node_v1 import DeleteNodeV1Error, execute_delete_node_v1
+from revision_store import RevisionKernel, canonical_json, hash_id, project_hash
 
-DOCUMENT_ID = "10000000-0000-4000-8000-000000000001"
+
+DOCUMENT_ID = "doc:delete-node-current"
 SOURCE_HASH = "a" * 64
+SOURCE_BLOB_SHA256 = "b" * 64
 PAGE_ID = "page:1"
-NODE_ID = "node:authored:1"
-OTHER_NODE_ID = "node:authored:2"
+NODE_ID = "01890f47-0c00-7abc-8def-0123456789ab"
+SECOND_NODE_ID = "01890f47-0c01-7abc-8def-0123456789ab"
+GROUP_ID = "group:1"
+PAINT = {
+    "fill": {"visible": True, "color": {"r": 10, "g": 20, "b": 30}},
+    "stroke": {
+        "visible": True,
+        "color": {"r": 40, "g": 50, "b": 60},
+        "width_emu": 12700,
+    },
+}
 
 
-class FakeDeleteNodeExecutor:
-    def __init__(self):
-        self.calls = 0
+def baseline_project():
+    return {
+        "schema_version": "pub-editor-v0.6",
+        "source_hash": SOURCE_HASH,
+        "immutable_source_blob_sha256": SOURCE_BLOB_SHA256,
+        "operations": [],
+        "pages": {
+            PAGE_ID: {
+                "authoring_enabled": True,
+                "children": ["source:existing"],
+            }
+        },
+        "shapes": {},
+        "text_frames": {},
+        "picture_frames": {},
+        "groups": {
+            GROUP_ID: {
+                "node_id": GROUP_ID,
+                "kind": "group",
+                "page_id": PAGE_ID,
+                "parent_id": PAGE_ID,
+                "children": [],
+                "provenance": {"kind": "author_created"},
+            }
+        },
+        "authored_stacks": {PAGE_ID: [GROUP_ID]},
+    }
 
-    def __call__(self, base_project, command):
-        self.calls += 1
-        node_id = command["node_id"]
-        node = base_project["nodes"].get(node_id)
-        if node is None:
-            raise ValueError("already_deleted_or_missing")
-        if not node.get("author_created") or node.get("node_class") != "ordinary_leaf":
-            raise ValueError("unsupported_delete_node_class")
-        if node.get("dependencies"):
-            raise ValueError("delete_node_has_dependencies")
 
-        parent_id = node["parent_id"]
-        children = base_project["pages"][parent_id]["children"]
-        try:
-            child_index = children.index(node_id)
-        except ValueError as exc:
-            raise ValueError("delete_node_parent_order_mismatch") from exc
-
-        before_entity = copy.deepcopy(node)
-        before_state_id = hash_id(before_entity)
-        if before_state_id != command["expected_state_id"]:
-            raise ValueError("stale_delete_node_state")
-        if parent_id != command["expected_parent_id"]:
-            raise ValueError("stale_delete_node_parent")
-        if child_index != command["expected_child_index"]:
-            raise ValueError("stale_delete_node_order")
-
-        operation = {
-            "kind": "delete_node",
+def create_page_shape_request(base_revision_id, *, node_id=NODE_ID, op_id="create-for-delete"):
+    return {
+        "protocol_version": "chaptera.create-shape-intent.v2",
+        "document_id": DOCUMENT_ID,
+        "source_hash": SOURCE_HASH,
+        "base_revision_id": base_revision_id,
+        "client_operation_id": op_id,
+        "command": {
+            "kind": "create_shape_v2",
             "node_id": node_id,
-            "before_entity": before_entity,
-            "before_state_id": before_state_id,
-            "parent_id": parent_id,
-            "child_index": child_index,
-        }
+            "page_id": PAGE_ID,
+            "destination": {"kind": "page", "id": PAGE_ID},
+            "placement": {
+                "status": "contained",
+                "desired_effective_page_rect": {
+                    "x": 100,
+                    "y": 200,
+                    "width": 300,
+                    "height": 400,
+                },
+                "destination_local_rect": {
+                    "x": 100,
+                    "y": 200,
+                    "width": 300,
+                    "height": 400,
+                },
+            },
+            "paint": copy.deepcopy(PAINT),
+            "expected_order_lane": [GROUP_ID],
+            "insertion_policy": "append_authored_front",
+        },
+    }
 
-        project = copy.deepcopy(base_project)
-        project["operations"] = list(project["operations"]) + [copy.deepcopy(operation)]
-        project["nodes"] = copy.deepcopy(project["nodes"])
-        del project["nodes"][node_id]
-        project["pages"] = copy.deepcopy(project["pages"])
-        del project["pages"][parent_id]["children"][child_index]
 
-        return operation, project, [
-            {"key": "node.delete", "state": "supported", "note": "intentional_effective_deletion"},
-            {"key": "layout.scene", "state": "invalidated", "note": None},
-        ]
-
-
-class DeleteNodeCommitTests(unittest.TestCase):
-    def setUp(self):
-        self.node = {
+def create_group_shape_request(base_revision_id, *, op_id="create-group-owned"):
+    return {
+        "protocol_version": "chaptera.create-shape-intent.v2",
+        "document_id": DOCUMENT_ID,
+        "source_hash": SOURCE_HASH,
+        "base_revision_id": base_revision_id,
+        "client_operation_id": op_id,
+        "command": {
+            "kind": "create_shape_v2",
             "node_id": NODE_ID,
-            "parent_id": PAGE_ID,
-            "node_class": "ordinary_leaf",
-            "author_created": True,
-            "bounds": {"x": 10, "y": 20, "width": 300, "height": 200},
-            "paint": {"fill": "solid"},
-            "dependencies": [],
-        }
-        self.other_node = {
-            "node_id": OTHER_NODE_ID,
-            "parent_id": PAGE_ID,
-            "node_class": "ordinary_leaf",
-            "author_created": True,
-            "bounds": {"x": 400, "y": 20, "width": 100, "height": 100},
-            "paint": {"fill": "none"},
-            "dependencies": [],
-        }
-        self.project = {
-            "schema_version": "pub-editor-v0.4",
-            "source_hash": SOURCE_HASH,
-            "operations": [],
-            "pages": {
-                PAGE_ID: {"children": [OTHER_NODE_ID, NODE_ID]},
+            "page_id": PAGE_ID,
+            "destination": {"kind": "group", "id": GROUP_ID},
+            "placement": {
+                "status": "contained",
+                "desired_effective_page_rect": {
+                    "x": 100,
+                    "y": 200,
+                    "width": 300,
+                    "height": 400,
+                },
+                "destination_local_rect": {
+                    "x": 10,
+                    "y": 20,
+                    "width": 300,
+                    "height": 400,
+                },
             },
-            "nodes": {
-                OTHER_NODE_ID: copy.deepcopy(self.other_node),
-                NODE_ID: copy.deepcopy(self.node),
-            },
-            "resources": {"resource:keep": {"kind": "image"}},
-        }
+            "paint": copy.deepcopy(PAINT),
+            "expected_order_lane": [],
+            "insertion_policy": "append_block_at_front",
+        },
+    }
+
+
+def delete_request(project, base_revision_id, *, op_id="delete-node-current"):
+    entity = copy.deepcopy(project["shapes"][NODE_ID])
+    lane = project["authored_stacks"][PAGE_ID]
+    return {
+        "protocol_version": "chaptera.delete-node-intent.v1",
+        "document_id": DOCUMENT_ID,
+        "source_hash": SOURCE_HASH,
+        "base_revision_id": base_revision_id,
+        "client_operation_id": op_id,
+        "command": {
+            "kind": "delete_node",
+            "node_id": NODE_ID,
+            "expected_state_id": hash_id(entity),
+            "expected_parent_id": PAGE_ID,
+            "expected_child_index": lane.index(NODE_ID),
+        },
+    }
+
+
+class DeleteNodeCurrentV1Tests(unittest.TestCase):
+    def setUp(self):
+        self.base = baseline_project()
         self.kernel = RevisionKernel()
         self.baseline = self.kernel.register_baseline(
             document_id=DOCUMENT_ID,
             source_hash=SOURCE_HASH,
-            project=self.project,
+            project=self.base,
         )
-        self.executor = FakeDeleteNodeExecutor()
-
-    def request(self, op_id, *, state_id=None, parent_id=PAGE_ID, child_index=1, base=None):
-        return {
-            "protocol_version": "chaptera.delete-node-intent.v1",
-            "document_id": DOCUMENT_ID,
-            "source_hash": SOURCE_HASH,
-            "base_revision_id": base or self.baseline.revision_id,
-            "client_operation_id": op_id,
-            "command": {
-                "kind": "delete_node",
-                "node_id": NODE_ID,
-                "expected_state_id": state_id or hash_id(self.node),
-                "expected_parent_id": parent_id,
-                "expected_child_index": child_index,
-            },
-        }
-
-    def test_delete_removes_only_target_and_preserves_source_and_resources(self):
-        result = self.kernel.commit_delete_node(
-            self.request("delete-op-00000001"),
-            self.executor,
+        self.created = self.kernel.commit_create_shape_v2(
+            create_page_shape_request(self.baseline.revision_id),
+            apply_create_shape_v2,
         )
-        current = self.kernel.current_revision(DOCUMENT_ID).project
-        self.assertNotIn(NODE_ID, current["nodes"])
-        self.assertEqual([OTHER_NODE_ID], current["pages"][PAGE_ID]["children"])
-        self.assertEqual(self.other_node, current["nodes"][OTHER_NODE_ID])
-        self.assertEqual(self.project["resources"], current["resources"])
-        self.assertEqual(SOURCE_HASH, current["source_hash"])
-        operation = result["canonical_operation"]
-        self.assertEqual(self.node, operation["before_entity"])
-        self.assertEqual(hash_id(self.node), operation["before_state_id"])
+        self.created_project = copy.deepcopy(
+            self.kernel.current_revision(DOCUMENT_ID).project
+        )
+
+    def test_delete_current_page_owned_shape_removes_shape_and_authored_lane_only(self):
+        request = delete_request(
+            self.created_project,
+            self.created["revision_id"],
+        )
+        accepted = self.kernel.commit_delete_node(request)
+
+        self.assertEqual("chaptera.commit-accepted.v1", accepted["protocol_version"])
+        operation = accepted["canonical_operation"]
+        self.assertEqual("delete_node", operation["kind"])
+        self.assertEqual(NODE_ID, operation["node_id"])
         self.assertEqual(PAGE_ID, operation["parent_id"])
         self.assertEqual(1, operation["child_index"])
-        self.assertEqual("intentional_effective_deletion", result["consequences"][0]["note"])
+        self.assertEqual([GROUP_ID, NODE_ID], operation["authored_lane_before"])
+        self.assertEqual([GROUP_ID], operation["authored_lane_after"])
+        self.assertEqual(
+            self.created_project["shapes"][NODE_ID],
+            operation["before_entity"],
+        )
+        self.assertEqual(
+            hash_id(self.created_project["shapes"][NODE_ID]),
+            operation["before_state_id"],
+        )
+
+        current = self.kernel.current_revision(DOCUMENT_ID).project
+        self.assertNotIn(NODE_ID, current["shapes"])
+        self.assertEqual([GROUP_ID], current["authored_stacks"][PAGE_ID])
+        self.assertEqual(
+            ["source:existing"],
+            current["pages"][PAGE_ID]["children"],
+            "DeleteNode must not reinterpret imported Page.children as authored order",
+        )
+        self.assertEqual(self.base["groups"], current["groups"])
+        self.assertEqual(SOURCE_HASH, current["source_hash"])
+        self.assertEqual(
+            SOURCE_BLOB_SHA256,
+            current["immutable_source_blob_sha256"],
+        )
+        self.assertEqual(
+            "intentional_effective_deletion",
+            accepted["consequences"][0]["note"],
+        )
 
     def test_exact_retry_is_idempotent_and_does_not_delete_twice(self):
-        req = self.request("delete-op-00000002")
-        first = self.kernel.commit_delete_node(copy.deepcopy(req), self.executor)
-        second = self.kernel.commit_delete_node(copy.deepcopy(req), self.executor)
-        self.assertEqual(first, second)
-        self.assertEqual(1, self.executor.calls)
-
-    def test_revision_stale_base_rejected_before_executor(self):
-        first = self.kernel.commit_delete_node(
-            self.request("delete-op-00000003"),
-            self.executor,
+        request = delete_request(
+            self.created_project,
+            self.created["revision_id"],
+            op_id="delete-retry",
         )
-        calls = self.executor.calls
+        first = self.kernel.commit_delete_node(copy.deepcopy(request))
+        second = self.kernel.commit_delete_node(copy.deepcopy(request))
+        self.assertEqual(first, second)
+        current = self.kernel.current_revision(DOCUMENT_ID).project
+        self.assertNotIn(NODE_ID, current["shapes"])
+        self.assertEqual(2, len(current["operations"]))
+
+    def test_stale_revision_rejected_before_second_delete(self):
+        first = self.kernel.commit_delete_node(
+            delete_request(
+                self.created_project,
+                self.created["revision_id"],
+                op_id="delete-first",
+            )
+        )
         stale = self.kernel.commit_delete_node(
-            self.request("delete-op-00000004"),
-            self.executor,
+            delete_request(
+                self.created_project,
+                self.created["revision_id"],
+                op_id="delete-stale",
+            )
         )
         self.assertEqual("stale_revision", stale["code"])
         self.assertEqual(first["revision_id"], stale["current_revision_id"])
-        self.assertEqual(calls, self.executor.calls)
 
-    def test_entity_parent_and_order_preconditions_fail_closed(self):
-        cases = [
-            ("state", self.request("delete-op-00000005", state_id="sha256:" + "b" * 64), "stale_delete_node_state"),
-            ("parent", self.request("delete-op-00000006", parent_id="page:other"), "stale_delete_node_parent"),
-            ("order", self.request("delete-op-00000007", child_index=0), "stale_delete_node_order"),
-        ]
-        for _label, req, message in cases:
-            kernel = RevisionKernel()
-            kernel.register_baseline(document_id=DOCUMENT_ID, source_hash=SOURCE_HASH, project=self.project)
-            executor = FakeDeleteNodeExecutor()
-            with self.subTest(message=message):
-                with self.assertRaisesRegex(ValueError, message):
-                    kernel.commit_delete_node(req, executor)
+    def test_stale_entity_and_authored_lane_order_fail_closed(self):
+        bad_state = delete_request(
+            self.created_project,
+            self.created["revision_id"],
+            op_id="delete-bad-state",
+        )
+        bad_state["command"]["expected_state_id"] = "sha256:" + "f" * 64
+        with self.assertRaisesRegex(DeleteNodeV1Error, "stale_delete_node_state"):
+            self.kernel.commit_delete_node(bad_state)
 
-    def test_capability_gate_rejects_source_backed_or_dependent_node(self):
-        for mutation in (
-            {"author_created": False},
-            {"dependencies": ["connector:1"]},
-            {"node_class": "text_frame"},
-        ):
-            project = copy.deepcopy(self.project)
-            project["nodes"][NODE_ID].update(mutation)
-            kernel = RevisionKernel()
-            baseline = kernel.register_baseline(
-                document_id=DOCUMENT_ID,
-                source_hash=SOURCE_HASH,
-                project=project,
-            )
-            req = self.request("delete-capability-" + str(len(str(mutation))), base=baseline.revision_id)
-            req["command"]["expected_state_id"] = hash_id(project["nodes"][NODE_ID])
-            with self.subTest(mutation=mutation):
-                with self.assertRaises(ValueError):
-                    kernel.commit_delete_node(req, FakeDeleteNodeExecutor())
+        kernel = RevisionKernel()
+        altered = copy.deepcopy(self.created_project)
+        altered["authored_stacks"][PAGE_ID] = [NODE_ID, GROUP_ID]
+        base = kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=altered,
+        )
+        bad_order = delete_request(
+            altered,
+            base.revision_id,
+            op_id="delete-bad-order",
+        )
+        bad_order["command"]["expected_child_index"] = 1
+        with self.assertRaisesRegex(DeleteNodeV1Error, "stale_delete_node_order"):
+            kernel.commit_delete_node(bad_order)
 
-    def test_browser_cannot_supply_before_entity_or_cascade_policy(self):
+    def test_source_backed_and_group_owned_shapes_are_not_admitted(self):
+        source_backed = copy.deepcopy(self.created_project)
+        source_backed["shapes"][NODE_ID]["provenance"] = {"kind": "source_backed"}
+        kernel = RevisionKernel()
+        base = kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=source_backed,
+        )
+        req = delete_request(source_backed, base.revision_id, op_id="delete-source")
+        with self.assertRaisesRegex(DeleteNodeV1Error, "unsupported_delete_node_class"):
+            kernel.commit_delete_node(req)
+
+        group_kernel = RevisionKernel()
+        group_base = group_kernel.register_baseline(
+            document_id=DOCUMENT_ID,
+            source_hash=SOURCE_HASH,
+            project=baseline_project(),
+        )
+        group_created = group_kernel.commit_create_shape_v2(
+            create_group_shape_request(group_base.revision_id),
+            apply_create_shape_v2,
+        )
+        group_project = group_kernel.current_revision(DOCUMENT_ID).project
+        group_req = {
+            "protocol_version": "chaptera.delete-node-intent.v1",
+            "document_id": DOCUMENT_ID,
+            "source_hash": SOURCE_HASH,
+            "base_revision_id": group_created["revision_id"],
+            "client_operation_id": "delete-group-owned",
+            "command": {
+                "kind": "delete_node",
+                "node_id": NODE_ID,
+                "expected_state_id": hash_id(group_project["shapes"][NODE_ID]),
+                "expected_parent_id": GROUP_ID,
+                "expected_child_index": 0,
+            },
+        }
+        with self.assertRaises(DeleteNodeV1Error):
+            group_kernel.commit_delete_node(group_req)
+
+    def test_browser_cannot_supply_entity_or_authored_lane_authority(self):
         for field, value in (
-            ("before_entity", copy.deepcopy(self.node)),
+            ("before_entity", copy.deepcopy(self.created_project["shapes"][NODE_ID])),
+            ("authored_lane_before", [GROUP_ID, NODE_ID]),
             ("cascade", True),
             ("delete_story", True),
         ):
-            req = self.request("delete-extra-" + field)
-            req["command"][field] = value
+            request = delete_request(
+                self.created_project,
+                self.created["revision_id"],
+                op_id=f"delete-extra-{field}",
+            )
+            request["command"][field] = value
             with self.subTest(field=field):
-                with self.assertRaisesRegex(ValueError, "non-intent"):
-                    self.kernel.commit_delete_node(req, self.executor)
+                with self.assertRaisesRegex(
+                    DeleteNodeV1Error,
+                    "non-intent/authoritative",
+                ):
+                    self.kernel.commit_delete_node(request)
 
-    def test_executor_cannot_forge_entity_parent_or_order(self):
-        mutations = [
-            lambda op: op["before_entity"].update({"paint": {"fill": "forged"}}),
-            lambda op: op.update({"parent_id": "page:other"}),
-            lambda op: op.update({"child_index": 0}),
-        ]
-        for i, mutate in enumerate(mutations):
-            kernel = RevisionKernel()
-            kernel.register_baseline(document_id=DOCUMENT_ID, source_hash=SOURCE_HASH, project=self.project)
-            executor = FakeDeleteNodeExecutor()
-
-            def bad_executor(base_project, command, mutate=mutate, executor=executor):
-                op, project, consequences = executor(base_project, command)
-                mutate(op)
-                return op, project, consequences
-
-            with self.subTest(i=i):
-                with self.assertRaises(ValueError):
-                    kernel.commit_delete_node(self.request(f"delete-forge-{i:08d}"), bad_executor)
-                self.assertEqual(self.baseline.state_id, kernel.current_revision(DOCUMENT_ID).state_id)
-
-    def test_undo_redo_restore_exact_node_and_child_order(self):
-        accepted = self.kernel.commit_delete_node(
-            self.request("delete-op-00000008"),
-            self.executor,
+    def test_forged_executor_cannot_change_entity_or_authored_lane(self):
+        request = delete_request(
+            self.created_project,
+            self.created["revision_id"],
+            op_id="delete-forged",
         )
-        deleted_project = copy.deepcopy(self.kernel.current_revision(DOCUMENT_ID).project)
 
-        def history_executor(_base, kind):
+        def forged(base_project, command):
+            operation, project, consequences = execute_delete_node_v1(
+                base_project,
+                command,
+            )
+            operation["authored_lane_after"] = [GROUP_ID, NODE_ID]
+            return operation, project, consequences
+
+        with self.assertRaises(ValueError):
+            self.kernel.commit_delete_node(request, forged)
+        self.assertEqual(
+            self.created["revision_id"],
+            self.kernel.current_revision(DOCUMENT_ID).revision_id,
+        )
+
+    def test_undo_redo_restore_exact_shape_and_authored_order(self):
+        accepted = self.kernel.commit_delete_node(
+            delete_request(
+                self.created_project,
+                self.created["revision_id"],
+                op_id="delete-history",
+            )
+        )
+        deleted = copy.deepcopy(self.kernel.current_revision(DOCUMENT_ID).project)
+        created = copy.deepcopy(self.created_project)
+
+        def history(_base, kind):
             if kind == "undo":
-                return copy.deepcopy(self.project), [
-                    {"key": "history.undo", "state": "supported", "note": None}
-                ]
+                return copy.deepcopy(created), []
             if kind == "redo":
-                return copy.deepcopy(deleted_project), [
-                    {"key": "history.redo", "state": "supported", "note": None}
-                ]
-            raise ValueError("unsupported history transition")
+                return copy.deepcopy(deleted), []
+            raise ValueError(kind)
 
         undo = self.kernel.commit_history_transition(
             {
@@ -251,14 +366,20 @@ class DeleteNodeCommitTests(unittest.TestCase):
                 "document_id": DOCUMENT_ID,
                 "source_hash": SOURCE_HASH,
                 "base_revision_id": accepted["revision_id"],
-                "client_operation_id": "delete-history-undo-0001",
+                "client_operation_id": "delete-current-undo",
                 "command": {"kind": "undo"},
             },
-            history_executor,
+            history,
         )
         restored = self.kernel.current_revision(DOCUMENT_ID).project
-        self.assertEqual(self.node, restored["nodes"][NODE_ID])
-        self.assertEqual([OTHER_NODE_ID, NODE_ID], restored["pages"][PAGE_ID]["children"])
+        self.assertEqual(
+            created["shapes"][NODE_ID],
+            restored["shapes"][NODE_ID],
+        )
+        self.assertEqual(
+            [GROUP_ID, NODE_ID],
+            restored["authored_stacks"][PAGE_ID],
+        )
 
         self.kernel.commit_history_transition(
             {
@@ -266,14 +387,40 @@ class DeleteNodeCommitTests(unittest.TestCase):
                 "document_id": DOCUMENT_ID,
                 "source_hash": SOURCE_HASH,
                 "base_revision_id": undo["revision_id"],
-                "client_operation_id": "delete-history-redo-0001",
+                "client_operation_id": "delete-current-redo",
                 "command": {"kind": "redo"},
             },
-            history_executor,
+            history,
         )
-        redone = self.kernel.current_revision(DOCUMENT_ID).project
-        self.assertNotIn(NODE_ID, redone["nodes"])
-        self.assertEqual([OTHER_NODE_ID], redone["pages"][PAGE_ID]["children"])
+        self.assertEqual(
+            deleted,
+            self.kernel.current_revision(DOCUMENT_ID).project,
+        )
+
+    def test_save_reopen_preserves_intentional_absence_and_project_hash(self):
+        self.kernel.commit_delete_node(
+            delete_request(
+                self.created_project,
+                self.created["revision_id"],
+                op_id="delete-save-reopen",
+            )
+        )
+        deleted = copy.deepcopy(self.kernel.current_revision(DOCUMENT_ID).project)
+        saved = json.loads(canonical_json(deleted).decode("utf-8"))
+
+        reopened = RevisionKernel()
+        reopened_base = reopened.register_baseline(
+            document_id="doc:delete-node-reopened",
+            source_hash=SOURCE_HASH,
+            project=saved,
+        )
+        self.assertEqual(project_hash(deleted), reopened_base.project_hash)
+        self.assertNotIn(NODE_ID, reopened_base.project["shapes"])
+        self.assertEqual([GROUP_ID], reopened_base.project["authored_stacks"][PAGE_ID])
+        self.assertEqual(
+            SOURCE_BLOB_SHA256,
+            reopened_base.project["immutable_source_blob_sha256"],
+        )
 
 
 if __name__ == "__main__":
