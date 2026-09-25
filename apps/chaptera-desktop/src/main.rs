@@ -3316,7 +3316,7 @@ mod tests {
                 .build_eframe(move |cc| {
                     ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
                 });
-            harness.run_ok();
+            harness.step();
 
             let image = harness
                 .render()
@@ -3485,7 +3485,7 @@ mod tests {
             modifiers: egui::Modifiers::default(),
         });
         harness.step();
-        harness.run_ok();
+        harness.step();
 
         let (moved_node_id, before_move, after_move) = {
             let editor = harness.state().editor.as_ref().expect("editor present");
