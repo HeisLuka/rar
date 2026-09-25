@@ -43,8 +43,7 @@ source_hash = os.environ["CHAPTERA_SOURCE_HASH"]
 rar_commit = os.environ["CHAPTERA_RAR_COMMIT"]
 binding = os.environ["CHAPTERA_REPLACEMENT_BINDING_ID"]
 auth_wrap_sha = os.environ["CHAPTERA_AUTH_WRAP_RECEIPT_SHA256"]
-editor_binary_sha = os.environ["CHAPTERA_EDITOR_BINARY_SHA256"]
-story_witness = os.environ["CHAPTERA_TRIAL_STORY_WITNESS"]
+ story_witness = os.environ["CHAPTERA_TRIAL_STORY_WITNESS"]
 replacement = replacement_path.read_bytes()
 replacement_sha = hashlib.sha256(replacement).hexdigest()
 
@@ -119,8 +118,7 @@ observation = {
     "rar_commit": rar_commit,
     "replacement_binding_id": binding,
     "auth_wrap_receipt_sha256": auth_wrap_sha,
-    "editor_binary_sha256": editor_binary_sha,
-    "saved_project_sha256": project_sha,
+     "saved_project_sha256": project_sha,
     "reopened_project_sha256": project_sha,
     "user_path": {
         "launch_without_dev_toolchain": True,
