@@ -6,13 +6,13 @@ pub type WorkerRuntimeFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send + 'a>>;
 
 pub trait WorkerRuntime: Send + Sync {
-    fn run<'a>(&'a self) -> WorkerRuntimeFuture<'a>;
+    fn run(&self) -> WorkerRuntimeFuture<'_>;
 }
 
 pub struct UnconfiguredWorkerRuntime;
 
 impl WorkerRuntime for UnconfiguredWorkerRuntime {
-    fn run<'a>(&'a self) -> WorkerRuntimeFuture<'a> {
+    fn run(&self) -> WorkerRuntimeFuture<'_> {
         Box::pin(async {
             Err(RuntimeError::new(
                 "worker_runtime_not_configured",
