@@ -1,4 +1,4 @@
-name: Chaptera Desktop Windows V0
+name: Chaptera Editor Desktop Windows V0
 
 on:
   pull_request:
@@ -13,6 +13,8 @@ on:
       - "tools/validate_editor_live_trial_package_receipt.py"
       - "tools/run_editor_live_trial_package_smoke.py"
       - ".github/workflows/chaptera-desktop-windows.yml"
+      - "packages/product/desktop-suite/**"
+      - "tools/validate_chaptera_desktop_suite_manifest.py"
   workflow_dispatch:
 
 permissions:
@@ -36,6 +38,9 @@ jobs:
       - name: Install acceptance validator
         run: python -m pip install "jsonschema==4.23.0"
 
+      - name: Validate suite product identity
+        run: python tools/validate_chaptera_desktop_suite_manifest.py packages/product/desktop-suite/v1/product-manifest.json --editor-cargo apps/chaptera-desktop/Cargo.toml
+
       - name: Check desktop package
         run: cargo check -p chaptera-desktop --all-targets
 
@@ -54,20 +59,21 @@ jobs:
       - name: Verify executable
         shell: pwsh
         run: |
-          $exe = "target/release/chaptera.exe"
+          $exe = "target/release/chaptera-editor.exe"
           if (-not (Test-Path $exe)) {
             throw "Chaptera desktop executable was not produced"
           }
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $bytes = (Get-Item $exe).Length
           @{
-            schema_version = "chaptera.desktop-build.v1"
+            schema_version = "chaptera.editor-desktop-build.v1"
+            product_id = "chaptera.editor"
             target = "x86_64-pc-windows-msvc"
-            executable = "chaptera.exe"
+            executable = "chaptera-editor.exe"
             sha256 = $hash
             byte_len = $bytes
             source_commit = "${{ github.sha }}"
-          } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera.desktop-build.json
+          } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-editor.desktop-build.json
 
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: pwsh
@@ -93,14 +99,14 @@ jobs:
           $project = Join-Path $out "desktop-v0.project.json"
           $export = Join-Path $out "desktop-v0.edited.idml"
           $receipt = Join-Path $out "editor-desktop-vertical.real.json"
-          python tools/run_local_editor_desktop_vertical.py --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --project-output "$project" --export-output "$export" --receipt-output "$receipt" -- target/release/chaptera.exe --desktop-acceptance-v1 "{fixture}" "{project}" "{export}"
+          python tools/run_local_editor_desktop_vertical.py --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --project-output "$project" --export-output "$export" --receipt-output "$receipt" -- target/release/chaptera-editor.exe --desktop-acceptance-v1 "{fixture}" "{project}" "{export}"
           python tools/validate_editor_desktop_vertical_receipt.py "$receipt"
           Copy-Item "$receipt" "target/release/editor-desktop-vertical.real.json"
 
       - name: Build portable Chaptera Editor ZIP
         shell: pwsh
         run: |
-          python tools/package_editor_live_trial.py --editor-exe target/release/chaptera.exe --output-zip target/release/Chaptera-Editor-Windows-x86_64.zip --binary-entry Chaptera.exe --manifest target/release/Chaptera-Editor.package.json
+          python tools/package_editor_live_trial.py --editor-exe target/release/chaptera-editor.exe --output-zip target/release/Chaptera-Editor-Windows-x86_64.zip --binary-entry Chaptera.exe --manifest target/release/Chaptera-Editor.package.json
 
       - name: Run real packaged-product smoke and receipt
         shell: pwsh
@@ -113,14 +119,14 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP "chaptera-agent-v1"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          python tools/test_chaptera_agent_v1.py --exe target/release/chaptera.exe --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --work-dir "$out" --receipt target/release/editor-agent-control.real.json
+          python tools/test_chaptera_agent_v1.py --exe target/release/chaptera-editor.exe --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --work-dir "$out" --receipt target/release/editor-agent-control.real.json
 
       - uses: actions/upload-artifact@v4
         with:
           name: chaptera-editor-windows-x86_64
           path: |
-            target/release/chaptera.exe
-            target/release/chaptera.desktop-build.json
+            target/release/chaptera-editor.exe
+            target/release/chaptera-editor.desktop-build.json
             target/release/editor-desktop-vertical.real.json
             target/release/Chaptera-Editor-Windows-x86_64.zip
             target/release/Chaptera-Editor.package.json
