@@ -95,11 +95,11 @@ jobs:
           $packet = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.packet.json"
           $receipt = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.acceptance.json"
           $before = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
-          & (Join-Path $bin "chaptera-reader.exe") --handoff-create-v1 chaptera.editor $source $packet
-          if ($LASTEXITCODE -ne 0) { throw "Reader failed to create Editor handoff" }
+          $reader = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.editor", $source, $packet) -Wait -PassThru
+          if ($reader.ExitCode -ne 0) { throw "Reader failed to create Editor handoff: exit $($reader.ExitCode)" }
           python tools/validate_chaptera_suite_handoff.py packet $packet
-          & (Join-Path $bin "chaptera-editor.exe") --handoff-accept-v1 $packet $receipt
-          if ($LASTEXITCODE -ne 0) { throw "Editor failed to accept Reader handoff" }
+          $editor = Start-Process -FilePath (Join-Path $bin "chaptera-editor.exe") -ArgumentList @("--handoff-accept-v1", $packet, $receipt) -Wait -PassThru
+          if ($editor.ExitCode -ne 0) { throw "Editor failed to accept Reader handoff: exit $($editor.ExitCode)" }
           python tools/validate_chaptera_suite_handoff.py acceptance $receipt
           $after = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($before -ne $after) { throw "Reader->Editor handoff mutated source" }
@@ -110,8 +110,8 @@ jobs:
           $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
           $source = Join-Path $env:SUITE_HANDOFF_ROOT "unknown-unsupported.pub"
           $packet = Join-Path $env:SUITE_HANDOFF_ROOT "unsupported-to-rescue.packet.json"
-          & (Join-Path $bin "chaptera-reader.exe") --handoff-create-v1 chaptera.rescue $source $packet
-          if ($LASTEXITCODE -eq 0) { throw "Reader promoted non-recovery PubPossible input to Rescue" }
+          $reader = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.rescue", $source, $packet) -Wait -PassThru
+          if ($reader.ExitCode -eq 0) { throw "Reader promoted non-recovery PubPossible input to Rescue" }
           if (Test-Path $packet) { throw "Rejected Rescue handoff unexpectedly wrote a packet" }
 
       - name: Reader to Rescue real-binary handoff
@@ -122,11 +122,11 @@ jobs:
           $packet = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-rescue.packet.json"
           $receipt = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-rescue.acceptance.json"
           $before = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
-          & (Join-Path $bin "chaptera-reader.exe") --handoff-create-v1 chaptera.rescue $source $packet
-          if ($LASTEXITCODE -ne 0) { throw "Reader failed to create Rescue handoff" }
+          $reader = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.rescue", $source, $packet) -Wait -PassThru
+          if ($reader.ExitCode -ne 0) { throw "Reader failed to create Rescue handoff: exit $($reader.ExitCode)" }
           python tools/validate_chaptera_suite_handoff.py packet $packet
-          & (Join-Path $bin "chaptera-rescue.exe") --handoff-accept-v1 $packet $receipt
-          if ($LASTEXITCODE -ne 0) { throw "Rescue failed to accept Reader handoff" }
+          $rescue = Start-Process -FilePath (Join-Path $bin "chaptera-rescue.exe") -ArgumentList @("--handoff-accept-v1", $packet, $receipt) -Wait -PassThru
+          if ($rescue.ExitCode -ne 0) { throw "Rescue failed to accept Reader handoff: exit $($rescue.ExitCode)" }
           python tools/validate_chaptera_suite_handoff.py acceptance $receipt
           $after = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($before -ne $after) { throw "Reader->Rescue handoff mutated source" }
@@ -137,17 +137,17 @@ jobs:
           $bin = Join-Path $env:RUNNER_TEMP "suite-bins"
           $editorPacket = Join-Path $env:SUITE_HANDOFF_ROOT "reader-to-editor.packet.json"
           $badReceipt = Join-Path $env:SUITE_HANDOFF_ROOT "wrong-receiver.acceptance.json"
-          & (Join-Path $bin "chaptera-rescue.exe") --handoff-accept-v1 $editorPacket $badReceipt
-          if ($LASTEXITCODE -eq 0) { throw "Rescue accepted an Editor-targeted handoff" }
+          $wrongReceiver = Start-Process -FilePath (Join-Path $bin "chaptera-rescue.exe") -ArgumentList @("--handoff-accept-v1", $editorPacket, $badReceipt) -Wait -PassThru
+          if ($wrongReceiver.ExitCode -eq 0) { throw "Rescue accepted an Editor-targeted handoff" }
 
           $tamper = Join-Path $env:SUITE_HANDOFF_ROOT "tamper.pub"
           Copy-Item (Join-Path $env:SUITE_HANDOFF_ROOT "SampleNewsletter.pub") $tamper
           $tamperPacket = Join-Path $env:SUITE_HANDOFF_ROOT "tamper.packet.json"
-          & (Join-Path $bin "chaptera-reader.exe") --handoff-create-v1 chaptera.editor $tamper $tamperPacket
-          if ($LASTEXITCODE -ne 0) { throw "Reader failed to create tamper control packet" }
+          $tamperSender = Start-Process -FilePath (Join-Path $bin "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1", "chaptera.editor", $tamper, $tamperPacket) -Wait -PassThru
+          if ($tamperSender.ExitCode -ne 0) { throw "Reader failed to create tamper control packet: exit $($tamperSender.ExitCode)" }
           [IO.File]::AppendAllText($tamper, "tampered after sender admission")
-          & (Join-Path $bin "chaptera-editor.exe") --handoff-accept-v1 $tamperPacket (Join-Path $env:SUITE_HANDOFF_ROOT "tamper.acceptance.json")
-          if ($LASTEXITCODE -eq 0) { throw "Editor accepted source bytes changed after sender admission" }
+          $tamperReceiver = Start-Process -FilePath (Join-Path $bin "chaptera-editor.exe") -ArgumentList @("--handoff-accept-v1", $tamperPacket, (Join-Path $env:SUITE_HANDOFF_ROOT "tamper.acceptance.json")) -Wait -PassThru
+          if ($tamperReceiver.ExitCode -eq 0) { throw "Editor accepted source bytes changed after sender admission" }
 
       - name: Stage source-free acceptance receipts
         shell: pwsh
