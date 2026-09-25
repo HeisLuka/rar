@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
@@ -222,6 +222,7 @@ impl SqliteJobQueue {
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(false)
+            .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
             .busy_timeout(busy_timeout);
