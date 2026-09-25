@@ -1,0 +1,38 @@
+name: Render Memory Governor V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/render_memory_governor_v1.py"
+      - "tools/test_render_memory_governor_v1.py"
+      - "tools/run_render_memory_governor_receipt.py"
+      - "tools/buffer_residency_v1.py"
+      - "tools/texture_residency_v1.py"
+      - ".github/workflows/render-memory-governor-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test cross-cache governor
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_memory_governor_v1.py
+      - name: Re-run BufferResidency regressions
+        run: PYTHONPATH=tools python -m unittest -v tools/test_buffer_residency_v1.py
+      - name: Re-run TextureResidency regressions
+        run: PYTHONPATH=tools python -m unittest -v tools/test_texture_residency_v1.py
+      - name: Emit synthetic pressure receipt
+        run: mkdir -p target/render-memory-governor && PYTHONPATH=tools python tools/run_render_memory_governor_receipt.py | tee target/render-memory-governor/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-memory-governor-${{ github.run_id }}
+          path: target/render-memory-governor/receipt.json
+          if-no-files-found: error
