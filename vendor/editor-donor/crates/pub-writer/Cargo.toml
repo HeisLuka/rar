@@ -1,0 +1,16 @@
+[package]
+name = "pub-writer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-cfb = { path = "../../../producer-a/crates/pub-cfb" }
+pub-core = { path = "../../../producer-a/crates/pub-core" }
+pub-model = { path = "../../../producer-a/crates/pub-model" }
+pub-quill = { path = "../../../producer-a/crates/pub-quill" }
+pub-reader = { path = "../../../producer-a/crates/pub-reader" }
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
