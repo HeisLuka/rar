@@ -83,6 +83,45 @@ class ResearchResetReceiptVerifierTests(unittest.TestCase):
             second["environment_fingerprint_sha256"],
         )
 
+    def test_two_independent_cold_restores_pass(self):
+        first = self.validate(receipt())
+        second = self.validate(
+            receipt(
+                restore_started_at_utc="2026-09-25T15:01:00.000Z",
+                restore_completed_at_utc="2026-09-25T15:01:03.000Z",
+            )
+        )
+        self.verifier.validate_cold_restore_comparison(first, second)
+
+    def test_same_restore_interval_cannot_be_reused_as_pair(self):
+        first = self.validate(receipt())
+        second = self.validate(receipt())
+        with self.assertRaises(SystemExit):
+            self.verifier.validate_cold_restore_comparison(first, second)
+
+    def test_overlapping_restore_intervals_fail_closed(self):
+        first = self.validate(receipt())
+        second = self.validate(
+            receipt(
+                restore_started_at_utc="2026-09-25T15:00:02.000Z",
+                restore_completed_at_utc="2026-09-25T15:00:05.000Z",
+            )
+        )
+        with self.assertRaises(SystemExit):
+            self.verifier.validate_cold_restore_comparison(first, second)
+
+    def test_provider_version_drift_fails_closed(self):
+        first = self.validate(receipt())
+        second = self.validate(
+            receipt(
+                provider_version="2.0",
+                restore_started_at_utc="2026-09-25T15:01:00.000Z",
+                restore_completed_at_utc="2026-09-25T15:01:03.000Z",
+            )
+        )
+        with self.assertRaises(SystemExit):
+            self.verifier.validate_cold_restore_comparison(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()
