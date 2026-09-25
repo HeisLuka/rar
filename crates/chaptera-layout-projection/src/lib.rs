@@ -1,3 +1,10 @@
+//! Source-neutral Story -> paragraph/shaping projection for
+//! LAYOUT-PARAGRAPH-PROJECTION-01.
+//!
+//! This crate intentionally does not read PUB/Quill/BTE carriers and does not
+//! shape text. It projects canonical Story Unicode-scalar semantics plus already
+//! resolved shaping-run fingerprints into a deterministic layout-facing view.
+
 mod cmo_slot_flow;
 
 pub use cmo_slot_flow::{
@@ -5,13 +12,6 @@ pub use cmo_slot_flow::{
     CmoSlotFlowOutputV1, CmoSlotOversetV1, CmoStorySlotFlowInputV1, ResolvedTextLineV1,
     VisibleCmoSlotV1, resolve_cmo_slot_flow_v1,
 };
-
-//! Source-neutral Story -> paragraph/shaping projection for
-//! LAYOUT-PARAGRAPH-PROJECTION-01.
-//!
-//! This crate intentionally does not read PUB/Quill/BTE carriers and does not
-//! shape text. It projects canonical Story Unicode-scalar semantics plus already
-//! resolved shaping-run fingerprints into a deterministic layout-facing view.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
