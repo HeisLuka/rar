@@ -19,6 +19,12 @@ use crate::{
 };
 
 pub type JobFuture<'a> = Pin<Box<dyn Future<Output = Result<JobSuccess, JobFailure>> + Send + 'a>>;
+pub type AdmissionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<AdmissionDecision, RuntimeError>> + Send + 'a>>;
+pub type PermitFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<AdmissionPermit, RuntimeError>> + Send + 'a>>;
+pub type PermitReleaseFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send + 'a>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSuccess {
@@ -35,15 +41,63 @@ pub trait JobExecutor: Send + Sync {
     fn execute<'a>(&'a self, job: &'a JobRecord, cancellation: CancellationFlag) -> JobFuture<'a>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionPermit {
+    pub reservation_id: String,
+    pub lease_generation: i64,
+}
+
+impl AdmissionPermit {
+    fn validate(&self) -> Result<(), RuntimeError> {
+        if self.reservation_id.is_empty()
+            || self.reservation_id.len() > 160
+            || !self
+                .reservation_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+        {
+            return Err(RuntimeError::new(
+                "invalid_admission_reservation",
+                "admission reservation_id must be a bounded opaque identifier",
+            ));
+        }
+        if self.lease_generation <= 0 {
+            return Err(RuntimeError::new(
+                "invalid_admission_lease_generation",
+                "admission lease generation must be positive",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdmissionDecision {
-    Admit,
+    Admit { permit: AdmissionPermit },
     RetryLater { code: &'static str },
     Reject { code: &'static str },
 }
 
+/// Reservation lifecycle boundary consumed by the durable worker.
+///
+/// Policy and capacity accounting remain owned by CLOUD-QUOTA-01. The worker
+/// only owns lifecycle coupling: acquire before execution, renew after a live
+/// job heartbeat, and release exactly once after a terminal queue transition.
+/// If the job lease is lost or drain deadline is abandoned, the worker must not
+/// forge quota release; the reservation lease is left for provider-side expiry
+/// and reconciliation.
 pub trait JobAdmission: Send + Sync {
-    fn admit(&self, job: &JobRecord) -> Result<AdmissionDecision, RuntimeError>;
+    fn admit<'a>(&'a self, job: &'a JobRecord) -> AdmissionFuture<'a>;
+    fn renew<'a>(
+        &'a self,
+        job: &'a JobRecord,
+        permit: &'a AdmissionPermit,
+    ) -> PermitFuture<'a>;
+    fn release<'a>(
+        &'a self,
+        job: &'a JobRecord,
+        permit: AdmissionPermit,
+    ) -> PermitReleaseFuture<'a>;
 }
 
 #[derive(Clone, Default)]
@@ -230,9 +284,11 @@ impl WorkerLoop {
 
             receipt.claimed += 1;
 
-            match self.admission.admit(&lease.job)? {
-                AdmissionDecision::Admit => {
+            let permit = match self.admission.admit(&lease.job).await? {
+                AdmissionDecision::Admit { permit } => {
+                    permit.validate()?;
                     receipt.admitted += 1;
+                    permit
                 }
                 AdmissionDecision::RetryLater { code } => {
                     match self
@@ -260,9 +316,9 @@ impl WorkerLoop {
                     }
                     continue;
                 }
-            }
+            };
 
-            match self.execute_lease(&lease).await? {
+            match self.execute_lease(&lease, permit).await? {
                 ExecutionCompletion::Succeeded {
                     already_published: false,
                 } => receipt.succeeded += 1,
@@ -283,7 +339,11 @@ impl WorkerLoop {
         Ok(receipt)
     }
 
-    async fn execute_lease(&self, lease: &Lease) -> Result<ExecutionCompletion, RuntimeError> {
+    async fn execute_lease(
+        &self,
+        lease: &Lease,
+        mut permit: AdmissionPermit,
+    ) -> Result<ExecutionCompletion, RuntimeError> {
         let cancellation = CancellationFlag::default();
         let execution = self.executor.execute(&lease.job, cancellation.clone());
         tokio::pin!(execution);
@@ -300,7 +360,13 @@ impl WorkerLoop {
         loop {
             tokio::select! {
                 result = &mut execution => {
-                    return self.finish_execution(lease, result).await;
+                    let completion = self.finish_execution(lease, result).await?;
+                    if completion.releases_admission_permit() {
+                        self.admission
+                            .release(&lease.job, permit)
+                            .await?;
+                    }
+                    return Ok(completion);
                 }
                 _ = heartbeat.tick() => {
                     let now_ms = unix_now_ms()?;
@@ -315,6 +381,21 @@ impl WorkerLoop {
                             if job.cancel_requested_at_ms.is_some() {
                                 cancellation.cancel();
                             }
+                            let renewed = self
+                                .admission
+                                .renew(&lease.job, &permit)
+                                .await?;
+                            renewed.validate()?;
+                            if renewed.reservation_id != permit.reservation_id
+                                || renewed.lease_generation <= permit.lease_generation
+                            {
+                                cancellation.cancel();
+                                return Err(RuntimeError::new(
+                                    "invalid_admission_renewal",
+                                    "admission renewal must preserve reservation identity and advance lease generation",
+                                ));
+                            }
+                            permit = renewed;
                         }
                         Err(error) if error.code == "stale_lease" => {
                             cancellation.cancel();
@@ -394,6 +475,15 @@ enum ExecutionCompletion {
     Cancelled,
     LeaseLost,
     DrainDeadline,
+}
+
+impl ExecutionCompletion {
+    fn releases_admission_permit(&self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded { .. } | Self::Requeued | Self::Failed | Self::Cancelled
+        )
+    }
 }
 
 fn duration_ms(duration: Duration, label: &str) -> Result<i64, RuntimeError> {
