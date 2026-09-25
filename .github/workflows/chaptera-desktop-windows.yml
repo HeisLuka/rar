@@ -12,6 +12,7 @@ on:
       - "tools/build_editor_live_trial_package_receipt.py"
       - "tools/validate_editor_live_trial_package_receipt.py"
       - "tools/run_editor_live_trial_package_smoke.py"
+      - "tools/validate_editor_desktop_ux_snapshots.py"
       - ".github/workflows/chaptera-desktop-windows.yml"
   workflow_dispatch:
 
@@ -85,6 +86,21 @@ jobs:
           }
           "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Capture real Chaptera UX snapshots
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          $default = "target/release/chaptera-editor-ux-1280x820.png"
+          $minimum = "target/release/chaptera-editor-ux-900x600.png"
+
+          $p = Start-Process -FilePath "target/release/chaptera.exe" -ArgumentList @("--ux-snapshot-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $default, "1280", "820") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "1280x820 UX snapshot failed with exit code $($p.ExitCode)" }
+
+          $p = Start-Process -FilePath "target/release/chaptera.exe" -ArgumentList @("--ux-snapshot-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $minimum, "900", "600") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "900x600 UX snapshot failed with exit code $($p.ExitCode)" }
+
+          python tools/validate_editor_desktop_ux_snapshots.py --default $default --minimum $minimum --output target/release/editor-desktop-ux-snapshots.real.json
+
       - name: Run real Desktop V0 continuity receipt
         shell: pwsh
         run: |
@@ -126,6 +142,9 @@ jobs:
             target/release/Chaptera-Editor.package.json
             target/release/editor-live-trial-package.real.json
             target/release/editor-agent-control.real.json
+            target/release/chaptera-editor-ux-1280x820.png
+            target/release/chaptera-editor-ux-900x600.png
+            target/release/editor-desktop-ux-snapshots.real.json
           if-no-files-found: error
 
   validate-portable-editor:
