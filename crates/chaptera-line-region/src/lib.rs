@@ -224,7 +224,8 @@ pub fn resolve_columns_v1(
     let mut x = interior.x;
 
     for index in 0..columns.count {
-        let width = base_width + i64::from(index < u32::try_from(remainder).expect("remainder < count"));
+        let extra = if index < u32::try_from(remainder).expect("remainder < count") { 1 } else { 0 };
+        let width = base_width + extra;
         let rect = RectEmuV1 {
             x,
             y: interior.y,
