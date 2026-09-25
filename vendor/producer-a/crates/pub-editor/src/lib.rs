@@ -687,7 +687,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, or {EDITOR_PROJECT_VERSION_V0_4:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, or {EDITOR_PROJECT_VERSION_V0_5:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -1041,7 +1041,9 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesImageOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_4 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+        {
             if let Some(index) = project
                 .operations
                 .iter()
