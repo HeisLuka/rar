@@ -95,6 +95,7 @@ def diff_render_scenes(base, target, metrics=None):
         "upsert_nodes":upserts,
         "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
         "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "clip_deltas": _diff_table_by_id(base["tables"].get("clips", []), target["tables"].get("clips", []), "clip_id"),
         "path_deltas": None if base["tables"].get("paths",[])==target["tables"].get("paths",[]) else copy.deepcopy(target["tables"].get("paths",[])),
         "effect_deltas": {
             "effects": _diff_table_by_id(
@@ -182,6 +183,8 @@ def _apply_patch_mutating(out, patch, metrics=None):
         out["pages"]=copy.deepcopy(patch["page_deltas"])
     if patch["resource_deltas"]:
         out["tables"]["resources"]=copy.deepcopy(patch["resource_deltas"])
+    if patch.get("clip_deltas") is not None:
+        out["tables"]["clips"]=_apply_table_delta(out["tables"].get("clips", []), patch["clip_deltas"], "clip_id")
     if patch.get("path_deltas") is not None:
         out["tables"]["paths"]=copy.deepcopy(patch["path_deltas"])
     effect_deltas = patch.get("effect_deltas")
