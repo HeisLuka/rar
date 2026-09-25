@@ -11,9 +11,7 @@ pub struct JobExecutorRegistry {
 }
 
 impl JobExecutorRegistry {
-    pub fn new(
-        entries: Vec<(JobKind, Arc<dyn JobExecutor>)>,
-    ) -> Result<Self, RuntimeError> {
+    pub fn new(entries: Vec<(JobKind, Arc<dyn JobExecutor>)>) -> Result<Self, RuntimeError> {
         for (index, (kind, _)) in entries.iter().enumerate() {
             if entries[..index]
                 .iter()
@@ -21,7 +19,10 @@ impl JobExecutorRegistry {
             {
                 return Err(RuntimeError::new(
                     "duplicate_job_executor",
-                    format!("job executor for {} is registered more than once", kind_name(*kind)),
+                    format!(
+                        "job executor for {} is registered more than once",
+                        kind_name(*kind)
+                    ),
                 ));
             }
         }
@@ -33,7 +34,10 @@ impl JobExecutorRegistry {
             if self.executor_for(*kind).is_none() {
                 return Err(RuntimeError::new(
                     "job_executor_not_configured",
-                    format!("no concrete executor is registered for {}", kind_name(*kind)),
+                    format!(
+                        "no concrete executor is registered for {}",
+                        kind_name(*kind)
+                    ),
                 ));
             }
         }
@@ -49,11 +53,7 @@ impl JobExecutorRegistry {
 }
 
 impl JobExecutor for JobExecutorRegistry {
-    fn execute<'a>(
-        &'a self,
-        job: &'a JobRecord,
-        cancellation: CancellationFlag,
-    ) -> JobFuture<'a> {
+    fn execute<'a>(&'a self, job: &'a JobRecord, cancellation: CancellationFlag) -> JobFuture<'a> {
         match self.executor_for(job.job_kind) {
             Some(executor) => executor.execute(job, cancellation),
             None => Box::pin(async {
@@ -79,7 +79,7 @@ fn kind_name(kind: JobKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::job_worker::{JobSuccess, JobFuture};
+    use crate::job_worker::{JobFuture, JobSuccess};
 
     struct NamedExecutor(&'static str);
 
@@ -130,11 +130,9 @@ mod tests {
 
     #[test]
     fn required_kind_must_have_concrete_executor() {
-        let registry = JobExecutorRegistry::new(vec![(
-            JobKind::Export,
-            Arc::new(NamedExecutor("export")),
-        )])
-        .unwrap();
+        let registry =
+            JobExecutorRegistry::new(vec![(JobKind::Export, Arc::new(NamedExecutor("export")))])
+                .unwrap();
 
         registry.require_kinds(&[JobKind::Export]).unwrap();
         let error = registry
