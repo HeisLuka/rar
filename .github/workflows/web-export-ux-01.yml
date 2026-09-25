@@ -1,0 +1,24 @@
+name: Web Export UX V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/export-ux-v1.mjs"
+      - "apps/web/export-ux-v1.test.mjs"
+      - ".github/workflows/web-export-ux-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-ux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test export UX controller
+        run: node --test apps/web/export-ux-v1.test.mjs
