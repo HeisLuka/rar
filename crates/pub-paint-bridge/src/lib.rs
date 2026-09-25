@@ -63,7 +63,6 @@ pub struct EditableExportShapePaintV1 {
     pub stroke: Option<SolidStrokeV1>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SceneTableCellBordersV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,7 +200,6 @@ pub fn project_editable_export_shape_paint_v1(paint: &ShapePaintV1) -> EditableE
         stroke: paint.stroke.clone(),
     }
 }
-
 
 pub fn project_scene_table_cell_paint_v1(
     paint: &TableCellPaintV1,
@@ -583,11 +581,8 @@ mod tests {
 
     #[test]
     fn table_cell_paint_projects_by_cell_identity_without_shape_aliasing() {
-        use pub_model::{
-            TABLE_CELL_PAINT_SCHEMA_V1, TableCellClassV1, TableCellPaintV1,
-        };
-        let cell_id =
-            TableCellId::parse("00112233-4455-6677-8899-aabbccddeeff").expect("cell id");
+        use pub_model::{TABLE_CELL_PAINT_SCHEMA_V1, TableCellClassV1, TableCellPaintV1};
+        let cell_id = TableCellId::parse("00112233-4455-6677-8899-aabbccddeeff").expect("cell id");
         let paint = TableCellPaintV1 {
             schema_version: TABLE_CELL_PAINT_SCHEMA_V1.to_owned(),
             cell_id: cell_id.clone(),
@@ -627,13 +622,10 @@ mod tests {
 
     #[test]
     fn table_cell_export_is_supported_or_reports_explicit_loss() {
-        use pub_model::{
-            TABLE_CELL_PAINT_SCHEMA_V1, TableCellClassV1, TableCellPaintV1,
-        };
+        use pub_model::{TABLE_CELL_PAINT_SCHEMA_V1, TableCellClassV1, TableCellPaintV1};
         let paint = TableCellPaintV1 {
             schema_version: TABLE_CELL_PAINT_SCHEMA_V1.to_owned(),
-            cell_id: TableCellId::parse("11111111-2222-3333-4444-555555555555")
-                .expect("cell id"),
+            cell_id: TableCellId::parse("11111111-2222-3333-4444-555555555555").expect("cell id"),
             table_class: TableCellClassV1::SimpleUnmergedRectangular,
             fill: Some(SolidFillV1 {
                 visible: true,
