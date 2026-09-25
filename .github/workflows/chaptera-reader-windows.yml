@@ -1,0 +1,204 @@
+name: Chaptera Reader Windows V0
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/**"
+      - "vendor/producer-a/**"
+      - "packages/product/reader-portable/**"
+      - "packages/product/desktop-suite/**"
+      - "tools/package_reader_portable.py"
+      - "tools/test_package_reader_portable.py"
+      - ".github/workflows/chaptera-reader-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-reader:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test Reader portable packager
+        run: python -m unittest tools/test_package_reader_portable.py -v
+
+      - name: Check compile-time Reader surface
+        run: cargo check -p chaptera-desktop --features reader-only --all-targets
+
+      - name: Build Reader-only desktop source
+        run: cargo build -p chaptera-desktop --release --features reader-only
+
+      - name: Stage canonical Reader executable
+        shell: pwsh
+        run: |
+          $built = "target/release/chaptera-editor.exe"
+          $reader = "target/release/chaptera-reader.exe"
+          if (-not (Test-Path $built)) {
+            throw "reader-only desktop build did not produce the current shared desktop binary"
+          }
+          Copy-Item $built $reader -Force
+          $hash = (Get-FileHash $reader -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $reader).Length
+          @{
+            schema_version = "chaptera.reader-desktop-build.v1"
+            product_id = "chaptera.reader"
+            source_package = "chaptera-desktop"
+            compile_feature = "reader-only"
+            target = "x86_64-pc-windows-msvc"
+            executable = "chaptera-reader.exe"
+            sha256 = $hash
+            byte_len = $bytes
+            source_commit = "${{ github.sha }}"
+          } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-reader.desktop-build.json
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
+          Invoke-WebRequest -Uri $url -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $fixture).Length
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          }
+          if ($bytes -ne 291840) {
+            throw "SampleNewsletter byte length mismatch: $bytes"
+          }
+          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run real Viewer smoke through Reader executable
+        shell: pwsh
+        run: |
+          $exe = "target/release/chaptera-reader.exe"
+          $before = (Get-FileHash "$env:CHAPTERA_SAMPLE_NEWSLETTER" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $process = Start-Process -FilePath $exe -ArgumentList @("--smoke-check", "$env:CHAPTERA_SAMPLE_NEWSLETTER") -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Reader real-PUB smoke failed with exit code $($process.ExitCode)"
+          }
+          $after = (Get-FileHash "$env:CHAPTERA_SAMPLE_NEWSLETTER" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($before -ne $after) {
+            throw "Reader smoke mutated the source PUB"
+          }
+          @{
+            schema_version = "chaptera.reader-real-pub-smoke.v1"
+            product_id = "chaptera.reader"
+            fixture_sha256 = $before
+            source_unchanged = $true
+            viewer_opened = $true
+          } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-reader.real-pub-smoke.json
+
+      - name: Run product identity smoke
+        shell: pwsh
+        run: |
+          $exe = "target/release/chaptera-reader.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $exe).Length
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $hash
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$bytes
+          $receipt = "target/release/chaptera-reader.product-smoke.json"
+          $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $receipt) -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Reader product smoke failed with exit code $($process.ExitCode)"
+          }
+          $smoke = Get-Content -Raw $receipt | ConvertFrom-Json
+          if ($smoke.protocol_version -ne "chaptera.desktop-source-free-smoke.v1") { throw "Reader smoke protocol mismatch" }
+          if ($smoke.product -ne "Chaptera PUB Reader") { throw "reader-only build did not identify the Reader product" }
+          if ($smoke.reader_only -ne $true) { throw "Reader binary is not reader-only" }
+          if ($smoke.editor_controls_enabled -ne $false) { throw "Reader binary exposes Editor controls" }
+          if ($smoke.native_save_pub_claimed -ne $false) { throw "Reader widened native Save PUB claims" }
+          foreach ($field in @("checkout_required", "cargo_required", "vendor_path_required", "external_runtime_assets_required")) {
+            if ($smoke.runtime.$field -ne $false) { throw "Reader runtime dependency detected: $field" }
+          }
+          if ($smoke.binary_sha256 -ne $hash) { throw "Reader product smoke executable hash mismatch" }
+          if ([int64]$smoke.binary_byte_len -ne $bytes) { throw "Reader product smoke executable size mismatch" }
+
+      - name: Build portable Chaptera Reader ZIP
+        run: |
+          python tools/package_reader_portable.py --reader-exe target/release/chaptera-reader.exe --output-zip target/release/Chaptera-Reader-Windows-x86_64.zip --manifest target/release/Chaptera-Reader.package.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-reader-windows-x86_64
+          path: |
+            target/release/chaptera-reader.exe
+            target/release/chaptera-reader.desktop-build.json
+            target/release/chaptera-reader.real-pub-smoke.json
+            target/release/chaptera-reader.product-smoke.json
+            target/release/Chaptera-Reader-Windows-x86_64.zip
+            target/release/Chaptera-Reader.package.json
+          if-no-files-found: error
+
+  validate-portable-reader:
+    needs: build-reader
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chaptera-reader-windows-x86_64
+          path: ${{ runner.temp }}/chaptera-reader-artifact
+
+      - name: Validate clean extracted Reader
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:RUNNER_TEMP "chaptera-reader-artifact"
+          $zip = Join-Path $artifact "Chaptera-Reader-Windows-x86_64.zip"
+          $manifestPath = Join-Path $artifact "Chaptera-Reader.package.json"
+          if (-not (Test-Path $zip)) { throw "portable Reader ZIP is missing" }
+          if (-not (Test-Path $manifestPath)) { throw "Reader package manifest is missing" }
+
+          $clean = Join-Path $env:RUNNER_TEMP "chaptera-reader-clean"
+          if (Test-Path $clean) { Remove-Item -Recurse -Force $clean }
+          New-Item -ItemType Directory -Force -Path $clean | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $clean
+
+          $exe = Join-Path $clean "Chaptera-Reader.exe"
+          if (-not (Test-Path $exe)) { throw "Reader ZIP did not contain Chaptera-Reader.exe" }
+          if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "Reader ZIP leaked a Cargo checkout" }
+
+          $entries = Get-ChildItem -File $clean | Select-Object -ExpandProperty Name
+          $expected = @("Chaptera-Reader.exe", "README.md")
+          if ((Compare-Object ($entries | Sort-Object) ($expected | Sort-Object)).Count -ne 0) {
+            throw "Reader ZIP contains unexpected entries: $($entries -join ', ')"
+          }
+
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $exe).Length
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $hash
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$bytes
+          $receipt = Join-Path $artifact "chaptera-reader.clean-smoke.json"
+          $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $receipt) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "clean Reader product smoke failed: $($process.ExitCode)" }
+
+          $smoke = Get-Content -Raw $receipt | ConvertFrom-Json
+          if ($smoke.product -ne "Chaptera PUB Reader" -or $smoke.reader_only -ne $true -or $smoke.editor_controls_enabled -ne $false) {
+            throw "clean portable binary is not the compile-time Reader product"
+          }
+
+          $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          if ($manifest.product_id -ne "chaptera.reader") { throw "Reader package product_id mismatch" }
+          if ($manifest.binary_entry -ne "Chaptera-Reader.exe") { throw "Reader package entry mismatch" }
+          if ($manifest.binary_sha256 -ne $hash) { throw "Reader package executable hash mismatch" }
+          if ($manifest.zip_sha256 -ne (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()) {
+            throw "Reader package ZIP hash mismatch"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-reader-portable-windows-x86_64
+          path: |
+            ${{ runner.temp }}/chaptera-reader-artifact/Chaptera-Reader-Windows-x86_64.zip
+            ${{ runner.temp }}/chaptera-reader-artifact/Chaptera-Reader.package.json
+            ${{ runner.temp }}/chaptera-reader-artifact/chaptera-reader.clean-smoke.json
+          if-no-files-found: error
