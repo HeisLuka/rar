@@ -108,7 +108,7 @@ try {
     $expected = @(73.0, 91.0, 181.0, 103.0)
     for ($i = 0; $i -lt $geometry.Count; $i++) {
         if ([Math]::Abs($geometry[$i] - $expected[$i]) -gt 0.001) {
-            throw "Fixture geometry drift at index $i: $($geometry[$i]) != $($expected[$i])"
+            throw "Fixture geometry drift at index ${i}: $($geometry[$i]) != $($expected[$i])"
         }
     }
 } finally {
