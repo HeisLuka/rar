@@ -195,7 +195,11 @@ fn parent_and_next_issue_reopen_diverge_and_export_independently() {
     assert_eq!(fork.state_id_v1(), parent_state);
     assert_ne!(
         fork.identity.as_ref().expect("fork identity").project_id,
-        parent.identity.as_ref().expect("parent identity").project_id
+        parent
+            .identity
+            .as_ref()
+            .expect("parent identity")
+            .project_id
     );
 
     let mut next_issue = EditorSession::new(base.clone()).expect("next issue session");
@@ -216,7 +220,9 @@ fn parent_and_next_issue_reopen_diverge_and_export_independently() {
     );
 
     let mut reopened_parent = EditorSession::new(base.clone()).expect("reopen parent");
-    reopened_parent.apply_project(&parent).expect("apply parent");
+    reopened_parent
+        .apply_project(&parent)
+        .expect("apply parent");
     assert_eq!(
         serde_json::to_vec(&reopened_parent.project()).expect("serialize reopened parent"),
         parent_bytes_before,
