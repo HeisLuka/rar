@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   RENDERER_KINDS,
+  RENDERER_POLICY_V1,
   assertSceneSourceNeutral,
   buildOverlayPlan,
   buildRenderPlan
@@ -34,6 +35,15 @@ function deepFreeze(value) {
 
 test("preflight exposes all required renderer candidates", () => {
   assert.deepEqual(RENDERER_KINDS, ["svg", "canvas2d", "webgl2-hybrid"]);
+});
+
+test("V1 renderer policy keeps SVG primary without an invented auto-switch threshold", () => {
+  assert.deepEqual(RENDERER_POLICY_V1, {
+    primary: "svg",
+    retained_scale_lane: "canvas2d",
+    optional_accelerators: ["webgl2-hybrid"],
+    automatic_switch_threshold: null
+  });
 });
 
 test("render plan is deterministic and does not mutate a frozen scene", () => {
