@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
-    EDITOR_PROJECT_VERSION_V0_10, EditOperation, EditorError, EditorProject, EditorProjectError,
+    EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorError, EditorProject, EditorProjectError,
     EditorSession, LengthEmu, MoveNodeBatchEntry, RectEmu,
 };
 use pub_model::{
@@ -148,7 +148,7 @@ fn entries(base: &PubResolvedGraph) -> Vec<MoveNodeBatchEntry> {
 
 #[test]
 fn canonical_batch_is_one_history_and_project_replay_unit() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10);
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_11);
     let base = graph();
     let (page_id, node_a, node_b) = ids();
     let mut batch = entries(&base);
@@ -160,6 +160,7 @@ fn canonical_batch_is_one_history_and_project_replay_unit() {
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_8.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![operation.clone()],
@@ -234,6 +235,7 @@ fn stale_later_member_rejects_whole_batch_without_partial_mutation() {
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_8.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::MoveNodes {
@@ -297,6 +299,7 @@ fn duplicate_resize_and_wrong_page_fail_closed() {
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_8.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::MoveNodes {
@@ -324,6 +327,7 @@ fn v0_7_project_cannot_smuggle_movenodes_history_shape() {
     let project = EditorProject {
         schema_version: "pub-editor-v0.7".to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::MoveNodes {
