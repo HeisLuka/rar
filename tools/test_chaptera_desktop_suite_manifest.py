@@ -17,6 +17,9 @@ class ChapteraDesktopSuiteManifestTests(unittest.TestCase):
         summary = validate_manifest(self.load())
         self.assertEqual(summary["product_ids"], ["chaptera.editor", "chaptera.migration", "chaptera.reader", "chaptera.rescue"])
         self.assertEqual(summary["legacy_chaptera_exe_owner"], "chaptera.editor")
+        self.assertEqual(summary["implementation_state"]["chaptera.reader"], "current_rar_target")
+        self.assertEqual(summary["implementation_state"]["chaptera.rescue"], "current_rar_target")
+        self.assertEqual(summary["implementation_state"]["chaptera.migration"], "separate_target_pending")
 
     def test_generic_binary_cannot_be_canonical(self):
         value = self.load()
@@ -34,6 +37,13 @@ class ChapteraDesktopSuiteManifestTests(unittest.TestCase):
         value = self.load()
         value["products"].pop()
         with self.assertRaisesRegex(AssertionError, "exactly Reader, Rescue, Editor and Migration"):
+            validate_manifest(value)
+
+    def test_stale_reader_implementation_state_is_rejected(self):
+        value = self.load()
+        reader = next(item for item in value["products"] if item["product_id"] == "chaptera.reader")
+        reader["implementation_state"] = "separate_target_pending"
+        with self.assertRaisesRegex(AssertionError, "stale implementation_state"):
             validate_manifest(value)
 
     def test_legacy_generic_alias_must_belong_to_editor(self):
