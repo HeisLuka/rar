@@ -371,14 +371,16 @@ fn validate_fragment_set_v1(
         if !source_ids.insert(source.source_node_id.clone()) {
             return Err(AuthoringFragmentError::FragmentSetDuplicateSourceIdentity);
         }
-        expected_origin_x = Some(expected_origin_x.map_or(
-            member.fragment.rectangle.bounds.x,
-            |value| value.min(member.fragment.rectangle.bounds.x),
-        ));
-        expected_origin_y = Some(expected_origin_y.map_or(
-            member.fragment.rectangle.bounds.y,
-            |value| value.min(member.fragment.rectangle.bounds.y),
-        ));
+        expected_origin_x = Some(
+            expected_origin_x.map_or(member.fragment.rectangle.bounds.x, |value| {
+                value.min(member.fragment.rectangle.bounds.x)
+            }),
+        );
+        expected_origin_y = Some(
+            expected_origin_y.map_or(member.fragment.rectangle.bounds.y, |value| {
+                value.min(member.fragment.rectangle.bounds.y)
+            }),
+        );
     }
 
     if fragment_set.origin
@@ -587,11 +589,7 @@ mod tests {
         );
     }
 
-    fn source_shape_with(
-        node_id: &str,
-        x: i64,
-        y: i64,
-    ) -> AuthoredShapeV1 {
+    fn source_shape_with(node_id: &str, x: i64, y: i64) -> AuthoredShapeV1 {
         let mut shape = source_shape();
         shape.node_id = node_id.to_owned();
         shape.bounds.x = x;
