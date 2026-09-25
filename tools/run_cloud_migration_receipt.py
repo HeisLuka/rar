@@ -49,13 +49,13 @@ def main() -> int:
 
         assert before["state"] == "pending"
         assert before["current_version"] == 0
-        expected_versions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-        assert before["target_version"] == 11
+        expected_versions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        assert before["target_version"] == 12
         assert before["pending_versions"] == expected_versions
 
         assert up["state"] == "current"
-        assert up["target_version"] == 11
-        assert up["current_version"] == 11
+        assert up["target_version"] == 12
+        assert up["current_version"] == 12
         assert up["applied_versions"] == expected_versions
         assert current == up
 
@@ -80,6 +80,16 @@ def main() -> int:
             }:
                 if required not in tables:
                     raise SystemExit(f"migration chain did not materialize {required}")
+
+            physical_blob_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(physical_blobs)")
+            }
+            for required_column in {"gc_delete_fence", "gc_fenced_at_ms"}:
+                if required_column not in physical_blob_columns:
+                    raise SystemExit(
+                        f"migration chain did not materialize physical_blobs.{required_column}"
+                    )
 
             connection.execute(
                 "UPDATE chaptera_schema_migrations "
