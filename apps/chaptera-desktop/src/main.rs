@@ -15,7 +15,10 @@ use chaptera_scene_instance::{
     direct_page_local_instance_v1, geometry_sync_policy_v1,
 };
 use eframe::egui;
-use pub_interaction::{MoveTransaction, ScreenPoint, ViewTransform};
+use pub_interaction::{
+    MoveTransaction, ResizeCommit, ResizeHandle, ResizePointerDown, ResizeTransaction, ResizeUpdate,
+    ScreenPoint, ScreenRect, ViewTransform, classify_resize_pointer_down, resize_handle_center,
+};
 use pub_viewer::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, ViewerDiagnosticSeverity, ViewerFidelityStatus,
@@ -427,6 +430,7 @@ struct ViewerApp {
     selected_page: usize,
     canvas_selection: SceneSelectionState,
     canvas_drag: Option<MoveTransaction>,
+    canvas_resize: Option<ResizeTransaction>,
     zoom: f32,
     load_error: Option<ViewerLoadFailure>,
     search_query: String,
@@ -467,6 +471,7 @@ impl ViewerApp {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: None,
             search_query: String::new(),
@@ -530,6 +535,7 @@ impl ViewerApp {
         self.selected_page = 0;
         self.canvas_selection.clear();
         self.canvas_drag = None;
+        self.canvas_resize = None;
         self.zoom = 1.0;
         self.load_error = None;
         self.search_query.clear();
@@ -983,6 +989,7 @@ impl ViewerApp {
             if self.selected_page != index {
                 self.canvas_selection.clear();
                 self.canvas_drag = None;
+        self.canvas_resize = None;
                 self.supporter_value
                     .observe(supporter::ValueEvent::PageNavigated { page_index: index });
             }
@@ -1616,6 +1623,7 @@ impl ViewerApp {
 
     fn finish_authoring_change(&mut self, status: &str) {
         self.canvas_drag = None;
+        self.canvas_resize = None;
         self.sync_visual_stories_from_editor();
         self.sync_visual_geometry_from_editor();
         self.refresh_search();
@@ -2016,6 +2024,7 @@ impl ViewerApp {
 
     fn commit_canvas_drag(&mut self, drag: MoveTransaction) {
         self.canvas_drag = None;
+        self.canvas_resize = None;
         if !drag.has_moved() {
             return;
         }
@@ -2033,6 +2042,29 @@ impl ViewerApp {
         match outcome {
             Ok(_) => self.finish_authoring_change(
                 "Moved canvas object in the authoring session. One MoveNode operation was committed.",
+            ),
+            Err(error) => {
+                self.edit_status = Some(error);
+                self.sync_visual_geometry_from_editor();
+            }
+        }
+    }
+
+    fn commit_canvas_resize(&mut self, resize: ResizeCommit) {
+        self.canvas_resize = None;
+        self.canvas_drag = None;
+        let outcome = self
+            .editor
+            .as_mut()
+            .ok_or_else(|| "Editor session is unavailable.".to_owned())
+            .and_then(|editor| {
+                editor
+                    .resize_node_to(resize.node_id, resize.after)
+                    .map_err(|error| format!("Resize rejected: {} ({})", error, error.code()))
+            });
+        match outcome {
+            Ok(_) => self.finish_authoring_change(
+                "Resized canvas object in the authoring session. One ResizeNode operation was committed.",
             ),
             Err(error) => {
                 self.edit_status = Some(error);
@@ -2189,8 +2221,11 @@ impl ViewerApp {
         let mut canvas_clicked = false;
         let mut canvas_hit: Option<String> = None;
         let mut next_canvas_drag = self.canvas_drag;
+        let mut next_canvas_resize = self.canvas_resize;
         let mut drag_commit = None;
         let mut drag_error = None;
+        let mut resize_commit = None;
+        let mut resize_error = None;
         let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
         let page_nodes = visual
@@ -2251,6 +2286,34 @@ impl ViewerApp {
             })
             .unwrap_or_default();
 
+        let resizable_nodes = self
+            .editor
+            .as_ref()
+            .map(|editor| {
+                hit_index
+                    .entries
+                    .iter()
+                    .filter_map(|hit| {
+                        let instance = direct_scene_instance(editor, &page_id_text, hit.node_id)?;
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
+                        let origin_node_id = hit.node_id.as_canonical().to_string();
+                        if !admission.admitted
+                            || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
+                        {
+                            return None;
+                        }
+                        let authored_node = editor.graph().nodes.get(&hit.node_id)?;
+                        let bounds = authored_node.header.bounds;
+                        editor
+                            .can_resize_node(hit.node_id)
+                            .ok()
+                            .map(|_| (hit.instance_id.clone(), (hit.node_id, bounds)))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -2278,36 +2341,110 @@ impl ViewerApp {
                 let pointer_document = response
                     .interact_pointer_pos()
                     .and_then(|pointer| canvas_document_point(page_rect, scene_scale, pointer));
-                let press_document = ui
-                    .ctx()
-                    .input(|input| input.pointer.press_origin())
+                let press_screen = ui.ctx().input(|input| input.pointer.press_origin());
+                let press_document = press_screen
                     .and_then(|pointer| canvas_document_point(page_rect, scene_scale, pointer));
 
                 if !reader_only_mode()
                     && response.drag_started_by(egui::PointerButton::Primary)
                     && let (Some(pointer_start), Some(pointer_current)) =
                         (press_document, pointer_document)
-                    && let Some(hit) = hit_index.topmost_at(pointer_start)
                 {
-                    canvas_hit = Some(hit.instance_id.clone());
-                    if let Some((node_id, before)) = movable_nodes.get(&hit.instance_id).copied() {
-                        match MoveTransaction::begin(node_id, before, pointer_start).and_then(
-                            |mut drag| {
-                                drag.update(pointer_current)?;
-                                Ok(drag)
-                            },
-                        ) {
-                            Ok(drag) => next_canvas_drag = Some(drag),
-                            Err(error) => {
-                                next_canvas_drag = None;
-                                drag_error = Some(format!("Object move cancelled: {error}"));
+                    let mut resize_started = false;
+                    if let (Some(selected_instance), Some(pointer_start_screen)) =
+                        (selected_canvas_instance.as_deref(), press_screen)
+                        && let Some((node_id, before)) =
+                            resizable_nodes.get(selected_instance).copied()
+                    {
+                        let selected_screen_bounds = ScreenRect::new(
+                            f64::from(
+                                page_rect.left() + before.x.get() as f32 * scene_scale,
+                            ),
+                            f64::from(
+                                page_rect.top() + before.y.get() as f32 * scene_scale,
+                            ),
+                            f64::from(before.width.get() as f32 * scene_scale),
+                            f64::from(before.height.get() as f32 * scene_scale),
+                        );
+                        if let Ok(selected_screen_bounds) = selected_screen_bounds
+                            && let Ok(ResizePointerDown::Handle(handle)) =
+                                classify_resize_pointer_down(
+                                    selected_screen_bounds,
+                                    ScreenPoint::new(
+                                        f64::from(pointer_start_screen.x),
+                                        f64::from(pointer_start_screen.y),
+                                    ),
+                                    6.0,
+                                )
+                        {
+                            resize_started = true;
+                            canvas_hit = Some(selected_instance.to_owned());
+                            next_canvas_drag = None;
+                            match ResizeTransaction::begin(node_id, before, handle, pointer_start) {
+                                Ok(mut resize) => match resize.update(pointer_current) {
+                                    Ok(ResizeUpdate::Preview(_))
+                                    | Ok(ResizeUpdate::Invalid { .. }) => {
+                                        next_canvas_resize = Some(resize);
+                                    }
+                                    Err(error) => {
+                                        next_canvas_resize = None;
+                                        resize_error =
+                                            Some(format!("Object resize cancelled: {error}"));
+                                    }
+                                },
+                                Err(error) => {
+                                    next_canvas_resize = None;
+                                    resize_error =
+                                        Some(format!("Object resize cancelled: {error}"));
+                                }
+                            }
+                        }
+                    }
+
+                    if !resize_started
+                        && let Some(hit) = hit_index.topmost_at(pointer_start)
+                    {
+                        canvas_hit = Some(hit.instance_id.clone());
+                        next_canvas_resize = None;
+                        if let Some((node_id, before)) =
+                            movable_nodes.get(&hit.instance_id).copied()
+                        {
+                            match MoveTransaction::begin(node_id, before, pointer_start).and_then(
+                                |mut drag| {
+                                    drag.update(pointer_current)?;
+                                    Ok(drag)
+                                },
+                            ) {
+                                Ok(drag) => next_canvas_drag = Some(drag),
+                                Err(error) => {
+                                    next_canvas_drag = None;
+                                    drag_error = Some(format!("Object move cancelled: {error}"));
+                                }
                             }
                         }
                     }
                 } else if !reader_only_mode()
                     && response.drag_stopped_by(egui::PointerButton::Primary)
                 {
-                    if let (Some(mut drag), Some(point)) = (next_canvas_drag, pointer_document) {
+                    if let (Some(mut resize), Some(point)) =
+                        (next_canvas_resize.take(), pointer_document)
+                    {
+                        match resize.update(point) {
+                            Ok(ResizeUpdate::Preview(_))
+                            | Ok(ResizeUpdate::Invalid { .. }) => match resize.commit() {
+                                Ok(commit) => resize_commit = Some(commit),
+                                Err(error) => {
+                                    resize_error =
+                                        Some(format!("Object resize cancelled: {error}"));
+                                }
+                            },
+                            Err(error) => {
+                                resize_error = Some(format!("Object resize cancelled: {error}"));
+                            }
+                        }
+                    } else if let (Some(mut drag), Some(point)) =
+                        (next_canvas_drag, pointer_document)
+                    {
                         match drag.update(point) {
                             Ok(_) => drag_commit = Some(drag),
                             Err(error) => {
@@ -2317,16 +2454,31 @@ impl ViewerApp {
                         }
                     } else {
                         next_canvas_drag = None;
+                        next_canvas_resize = None;
                     }
                 } else if !reader_only_mode()
                     && response.dragged_by(egui::PointerButton::Primary)
-                    && let (Some(mut drag), Some(point)) = (next_canvas_drag, pointer_document)
+                    && let Some(point) = pointer_document
                 {
-                    match drag.update(point) {
-                        Ok(_) => next_canvas_drag = Some(drag),
-                        Err(error) => {
-                            next_canvas_drag = None;
-                            drag_error = Some(format!("Object move cancelled: {error}"));
+                    if let Some(mut resize) = next_canvas_resize {
+                        match resize.update(point) {
+                            Ok(ResizeUpdate::Preview(_))
+                            | Ok(ResizeUpdate::Invalid { .. }) => {
+                                next_canvas_resize = Some(resize);
+                            }
+                            Err(error) => {
+                                next_canvas_resize = None;
+                                resize_error =
+                                    Some(format!("Object resize cancelled: {error}"));
+                            }
+                        }
+                    } else if let Some(mut drag) = next_canvas_drag {
+                        match drag.update(point) {
+                            Ok(_) => next_canvas_drag = Some(drag),
+                            Err(error) => {
+                                next_canvas_drag = None;
+                                drag_error = Some(format!("Object move cancelled: {error}"));
+                            }
                         }
                     }
                 }
@@ -2350,9 +2502,14 @@ impl ViewerApp {
                 );
 
                 for node in page_nodes.iter().copied() {
-                    let node_bounds = next_canvas_drag
-                        .filter(|drag| drag.node_id() == node.origin)
-                        .map(|drag| drag.preview_bounds())
+                    let node_bounds = next_canvas_resize
+                        .filter(|resize| resize.node_id() == node.origin)
+                        .and_then(|resize| resize.preview_bounds())
+                        .or_else(|| {
+                            next_canvas_drag
+                                .filter(|drag| drag.node_id() == node.origin)
+                                .map(|drag| drag.preview_bounds())
+                        })
                         .unwrap_or(node.bounds);
                     let width = node_bounds.width.get();
                     let height = node_bounds.height.get();
@@ -2379,6 +2536,22 @@ impl ViewerApp {
                                 egui::WidgetType::Other,
                                 true,
                                 "Movable canvas object",
+                            )
+                        });
+                    }
+                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+                        && resizable_nodes.contains_key(instance_id)
+                    {
+                        let a11y = ui.interact(
+                            node_rect,
+                            ui.id().with(("resizable-canvas-object", instance_id)),
+                            egui::Sense::hover(),
+                        );
+                        a11y.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Other,
+                                true,
+                                "Resizable canvas object",
                             )
                         });
                     }
@@ -2508,9 +2681,14 @@ impl ViewerApp {
                     && node.bounds.width.get() > 0
                     && node.bounds.height.get() > 0
                 {
-                    let selected_bounds = next_canvas_drag
-                        .filter(|drag| drag.node_id() == node.origin)
-                        .map(|drag| drag.preview_bounds())
+                    let selected_bounds = next_canvas_resize
+                        .filter(|resize| resize.node_id() == node.origin)
+                        .and_then(|resize| resize.preview_bounds())
+                        .or_else(|| {
+                            next_canvas_drag
+                                .filter(|drag| drag.node_id() == node.origin)
+                                .map(|drag| drag.preview_bounds())
+                        })
                         .unwrap_or(node.bounds);
                     let min = egui::pos2(
                         page_rect.left() + selected_bounds.x.get() as f32 * scene_scale,
@@ -2520,7 +2698,45 @@ impl ViewerApp {
                         selected_bounds.width.get() as f32 * scene_scale,
                         selected_bounds.height.get() as f32 * scene_scale,
                     );
-                    paint_selection_overlay(&painter, egui::Rect::from_min_size(min, size));
+                    let selected_rect = egui::Rect::from_min_size(min, size);
+                    let resize_enabled = resizable_nodes.contains_key(selected_instance_id);
+                    paint_selection_overlay(&painter, selected_rect, resize_enabled);
+                    if resize_enabled {
+                        let screen_bounds = ScreenRect::new(
+                            f64::from(selected_rect.left()),
+                            f64::from(selected_rect.top()),
+                            f64::from(selected_rect.width()),
+                            f64::from(selected_rect.height()),
+                        )
+                        .ok();
+                        if let Some(screen_bounds) = screen_bounds {
+                            for handle in ResizeHandle::ALL {
+                                if let Ok(center) = resize_handle_center(screen_bounds, handle) {
+                                    let center = egui::pos2(center.x as f32, center.y as f32);
+                                    let handle_rect = egui::Rect::from_center_size(
+                                        center,
+                                        egui::vec2(12.0_f32, 12.0_f32),
+                                    );
+                                    let a11y = ui.interact(
+                                        handle_rect,
+                                        ui.id().with((
+                                            "resize-handle",
+                                            selected_instance_id,
+                                            resize_handle_label(handle),
+                                        )),
+                                        egui::Sense::hover(),
+                                    );
+                                    a11y.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Other,
+                                            true,
+                                            format!("Resize {} handle", resize_handle_label(handle)),
+                                        )
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             });
 
@@ -2529,21 +2745,48 @@ impl ViewerApp {
                 .instance_for_node(drag.node_id())
                 .map(str::to_owned)
         });
-        if canvas_clicked || drag_commit.is_some() || next_canvas_drag.is_some() {
-            if let Some(instance_id) = canvas_hit.or(drag_instance) {
+        let resize_instance = next_canvas_resize.and_then(|resize| {
+            hit_index
+                .instance_for_node(resize.node_id())
+                .map(str::to_owned)
+        });
+        let resize_commit_instance = resize_commit.and_then(|resize| {
+            hit_index
+                .instance_for_node(resize.node_id)
+                .map(str::to_owned)
+        });
+        if canvas_clicked
+            || drag_commit.is_some()
+            || next_canvas_drag.is_some()
+            || resize_commit.is_some()
+            || next_canvas_resize.is_some()
+        {
+            if let Some(instance_id) = canvas_hit
+                .or(resize_instance)
+                .or(resize_commit_instance)
+                .or(drag_instance)
+            {
                 self.canvas_selection.select_only(instance_id);
             } else if canvas_clicked {
                 self.canvas_selection.clear();
             }
         }
 
-        if let Some(error) = drag_error {
+        if let Some(error) = resize_error {
             self.canvas_drag = None;
+            self.canvas_resize = None;
+            self.edit_status = Some(error);
+        } else if let Some(resize) = resize_commit {
+            self.commit_canvas_resize(resize);
+        } else if let Some(error) = drag_error {
+            self.canvas_drag = None;
+            self.canvas_resize = None;
             self.edit_status = Some(error);
         } else if let Some(drag) = drag_commit {
             self.commit_canvas_drag(drag);
         } else {
             self.canvas_drag = next_canvas_drag;
+            self.canvas_resize = next_canvas_resize;
         }
 
         self.preview_clipped_frames = preview_clipped_frames;
@@ -2622,7 +2865,7 @@ fn canvas_document_point(
         .ok()
 }
 
-fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect) {
+fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect, show_handles: bool) {
     let accent = egui::Color32::from_rgb(232, 126, 36);
     painter.rect_stroke(
         rect.expand(2.0),
@@ -2631,27 +2874,43 @@ fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect) {
         egui::StrokeKind::Inside,
     );
 
-    let center = rect.center();
-    let handles = [
-        rect.left_top(),
-        egui::pos2(center.x, rect.top()),
-        rect.right_top(),
-        egui::pos2(rect.left(), center.y),
-        egui::pos2(rect.right(), center.y),
-        rect.left_bottom(),
-        egui::pos2(center.x, rect.bottom()),
-        rect.right_bottom(),
-    ];
+    if show_handles {
+        let center = rect.center();
+        let handles = [
+            rect.left_top(),
+            egui::pos2(center.x, rect.top()),
+            rect.right_top(),
+            egui::pos2(rect.left(), center.y),
+            egui::pos2(rect.right(), center.y),
+            rect.left_bottom(),
+            egui::pos2(center.x, rect.bottom()),
+            rect.right_bottom(),
+        ];
 
-    for handle in handles {
-        let handle_rect = egui::Rect::from_center_size(handle, egui::vec2(7.0_f32, 7.0_f32));
-        painter.rect_filled(handle_rect, 0, egui::Color32::WHITE);
-        painter.rect_stroke(
-            handle_rect,
-            0,
-            egui::Stroke::new(1.5_f32, accent),
-            egui::StrokeKind::Inside,
-        );
+        for handle in handles {
+            let handle_rect =
+                egui::Rect::from_center_size(handle, egui::vec2(7.0_f32, 7.0_f32));
+            painter.rect_filled(handle_rect, 0, egui::Color32::WHITE);
+            painter.rect_stroke(
+                handle_rect,
+                0,
+                egui::Stroke::new(1.5_f32, accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
+fn resize_handle_label(handle: ResizeHandle) -> &'static str {
+    match handle {
+        ResizeHandle::TopLeft => "top-left",
+        ResizeHandle::Top => "top",
+        ResizeHandle::TopRight => "top-right",
+        ResizeHandle::Left => "left",
+        ResizeHandle::Right => "right",
+        ResizeHandle::BottomLeft => "bottom-left",
+        ResizeHandle::Bottom => "bottom",
+        ResizeHandle::BottomRight => "bottom-right",
     }
 }
 
@@ -2858,6 +3117,8 @@ fn fitted_scale(page_width_emu: i64, page_height_emu: i64, viewport: egui::Vec2)
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(feature = "embedded-fixture-tests", not(feature = "reader-only")))]
+    use egui_kittest::kittest::Queryable;
 
     #[test]
     fn canvas_pointer_maps_through_interaction_transform() {
@@ -3023,6 +3284,7 @@ mod tests {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::Unsupported,
@@ -3066,6 +3328,7 @@ mod tests {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::FileAccess,
@@ -3311,6 +3574,7 @@ mod tests {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: None,
             search_query: String::new(),
@@ -4024,6 +4288,261 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
+    #[ignore = "runtime GUI evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER"]
+    fn gui_resize_handle_commits_one_resize_node() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let original = fs::read(&fixture).expect("read pinned SampleNewsletter fixture");
+
+        let fixture_for_app = fixture.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(24)
+            .build_eframe(move |cc| {
+                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+            });
+        harness.step();
+
+        let (page_label, target_document_point) = {
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let editor = app.editor.as_ref().expect("editor loaded");
+            visual
+                .document
+                .pages
+                .iter()
+                .find_map(|page| {
+                    let page_origin = page.id.into_canonical();
+                    let page_id_text = page.id.as_canonical().to_string();
+                    let page_nodes = visual
+                        .scene
+                        .nodes
+                        .iter()
+                        .filter(|node| node.parent_origin == page_origin)
+                        .collect::<Vec<_>>();
+                    let hit_index = SceneHitTestIndex::new(
+                        page_nodes
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(paint_order, node)| {
+                                let instance =
+                                    direct_scene_instance(editor, &page_id_text, node.origin)?;
+                                Some(SceneHitEntry {
+                                    instance_id: instance.instance_id,
+                                    node_id: node.origin,
+                                    bounds: node.bounds,
+                                    z_order: 0,
+                                    paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+                                })
+                            })
+                            .collect(),
+                    );
+
+                    hit_index.entries.iter().rev().find_map(|hit| {
+                        let instance =
+                            direct_scene_instance(editor, &page_id_text, hit.node_id)?;
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
+                        if !admission.admitted
+                            || admission.origin_node_id.as_deref()
+                                != Some(hit.node_id.as_canonical().to_string().as_str())
+                            || editor.can_resize_node(hit.node_id).is_err()
+                        {
+                            return None;
+                        }
+                        let point = pub_interaction::DocumentPoint::new(
+                            pub_editor::LengthEmu::new(
+                                hit.bounds.x.get() + hit.bounds.width.get() / 2,
+                            ),
+                            pub_editor::LengthEmu::new(
+                                hit.bounds.y.get() + hit.bounds.height.get() / 2,
+                            ),
+                        );
+                        hit_index
+                            .topmost_at(point)
+                            .filter(|top| top.instance_id == hit.instance_id)
+                            .map(|_| (format!("Page {}", page.index), point))
+                    })
+                })
+                .expect("real fixture exposes a topmost ResizeNode-admitted object")
+        };
+
+        harness.get_by_label(&page_label).click();
+        harness.step();
+
+        let object_center = {
+            let canvas = harness
+                .get_by_label("Document canvas")
+                .raw_bounds()
+                .expect("document canvas has screen bounds");
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let page = visual
+                .document
+                .pages
+                .get(app.selected_page)
+                .expect("selected resize page remains available");
+            let surface = visual
+                .scene
+                .surfaces
+                .iter()
+                .find(|surface| surface.origin == page.id)
+                .expect("selected resize page has a scene surface");
+            let viewport = egui::vec2(
+                (canvas.x1 - canvas.x0) as f32,
+                (canvas.y1 - canvas.y0) as f32,
+            );
+            let fit_scale = fitted_scale(
+                surface.size.width.get(),
+                surface.size.height.get(),
+                viewport,
+            )
+            .expect("selected resize page has valid fit scale");
+            let scene_scale = fit_scale * app.zoom;
+            let page_width = surface.size.width.get() as f32 * scene_scale;
+            let page_height = surface.size.height.get() as f32 * scene_scale;
+            let page_left = ((canvas.x0 + canvas.x1) as f32 - page_width) / 2.0;
+            let page_top = ((canvas.y0 + canvas.y1) as f32 - page_height) / 2.0;
+            egui::pos2(
+                page_left + target_document_point.x.get() as f32 * scene_scale,
+                page_top + target_document_point.y.get() as f32 * scene_scale,
+            )
+        };
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(object_center),
+            egui::Event::PointerButton {
+                pos: object_center,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+            egui::Event::PointerButton {
+                pos: object_center,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        harness.step();
+
+        let handle_bounds = harness
+            .get_by_label("Resize bottom-right handle")
+            .raw_bounds()
+            .expect("selected resizable object exposes bottom-right handle");
+        let start = egui::pos2(
+            ((handle_bounds.x0 + handle_bounds.x1) / 2.0) as f32,
+            ((handle_bounds.y0 + handle_bounds.y1) / 2.0) as f32,
+        );
+        let end = start + egui::vec2(18.0, 12.0);
+
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .operations()
+                .len(),
+            0,
+            "resize pointer-down/preview must not emit an Editor operation"
+        );
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(end));
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .operations()
+                .len(),
+            0,
+            "resize pointer motion must remain transient"
+        );
+
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.step();
+        harness.step();
+
+        let (node_id, before, after) = {
+            let editor = harness.state().editor.as_ref().expect("editor");
+            assert_eq!(
+                editor.operations().len(),
+                1,
+                "handle release must emit exactly one ResizeNode"
+            );
+            match editor.operations().last().expect("resize operation") {
+                pub_editor::EditOperation::ResizeNode {
+                    node_id,
+                    before,
+                    after,
+                } => (*node_id, *before, *after),
+                other => panic!("resize handle emitted unexpected operation: {other:?}"),
+            }
+        };
+        assert_ne!(before.width, after.width);
+        assert_ne!(before.height, after.height);
+
+        harness
+            .get_all_by_label("Undo")
+            .next()
+            .expect("Undo command")
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
+                .header
+                .bounds,
+            before,
+            "GUI Undo restores exact pre-resize bounds"
+        );
+
+        harness
+            .get_all_by_label("Redo")
+            .next()
+            .expect("Redo command")
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
+                .header
+                .bounds,
+            after,
+            "GUI Redo restores exact resized bounds"
+        );
+        assert_eq!(
+            fs::read(&fixture).expect("read immutable source after resize"),
+            original,
+            "GUI resize must not mutate source PUB bytes"
+        );
     }
 
     #[test]
