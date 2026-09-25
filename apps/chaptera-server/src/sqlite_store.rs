@@ -644,9 +644,10 @@ mod tests {
     #[tokio::test]
     async fn open_requires_operator_migration_and_preserves_profile() {
         let path = temp_db("profile");
-        let error = SqliteRevisionStore::open(&path, 4, Duration::from_secs(2))
-            .await
-            .unwrap_err();
+        let error = match SqliteRevisionStore::open(&path, 4, Duration::from_secs(2)).await {
+            Ok(_) => panic!("RevisionStream opened without operator migration"),
+            Err(error) => error,
+        };
         assert_eq!(error.code, "sqlite_database_missing");
         assert!(!path.exists());
 
