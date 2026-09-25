@@ -22,7 +22,7 @@ let parseState = (state, blockedReason) =>
   | "accepted" => Accepted
   | "blocked" => Blocked(blockedReason)
   | "reresolution_required" => ReresolutionRequired(blockedReason)
-  | _ => raise(Failure("unsupported pending state"))
+  | _ => throw(Failure("unsupported pending state"))
   }
 
 let parseOutcome = (status, revisionId, code) =>
@@ -30,7 +30,7 @@ let parseOutcome = (status, revisionId, code) =>
   | "accepted" => AcceptedOutcome(revisionId)
   | "rejected" => RejectedOutcome(code)
   | "conflict" => ConflictOutcome(code)
-  | _ => raise(Failure("unsupported outcome status"))
+  | _ => throw(Failure("unsupported outcome status"))
   }
 
 let stateName = state =>
