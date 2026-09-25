@@ -18,6 +18,7 @@ pub mod oidc_authn;
 pub mod quota_admission;
 pub mod quota_store;
 pub mod revision_materializer;
+pub mod revision_identity;
 pub mod runtime_error;
 pub mod runtime_readiness;
 pub mod s3_blob_provider;
