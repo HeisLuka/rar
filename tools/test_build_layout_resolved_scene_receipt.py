@@ -30,6 +30,14 @@ move_snap = "sha256:" + "c" * 64
 surface_hash = "sha256:" + "d" * 64
 origin_hash = "sha256:" + "e" * 64
 geometry_hash = "sha256:" + "f" * 64
+context_hash = "sha256:" + "1" * 64
+projection_context_state = {
+    "projection_context_hash": context_hash,
+    "master_relation_count": 0,
+    "cmo_relation_count": 0,
+    "carried_outside_editor_project": True,
+    "cmo_layout_consumed": False,
+}
 
 def scene(snapshot, bounds):
     return {
@@ -77,12 +85,15 @@ if action == "baseline":
             "viewer_origin_mapping_hash": origin_hash,
             "adapter_origin_mapping_hash": origin_hash,
         },
+        "projection_context_state": projection_context_state,
         "adapter_invariants": {
             "viewer_private_mapping_used": False,
             "browser_layout_authoritative": False,
             "second_geometry_model_created": False,
             "context_extension_seam_present": True,
             "graph_only_wrapper_is_empty_context": True,
+            "projection_context_carried_outside_editor_project": True,
+            "unsupported_cmo_layout_deferred": True,
         },
     }, sys.stdout)
     raise SystemExit(0)
@@ -98,6 +109,7 @@ if action == "commit":
         "scene_state": scene(move_snap, after),
         "source_hash_after": source_hash,
         "source_reparse_after_edit_count": 0,
+        "projection_context_state": projection_context_state,
     }, sys.stdout)
     raise SystemExit(0)
 
@@ -116,6 +128,7 @@ if action == "history":
         "consequences": [{"key": "history." + payload["kind"], "state": "supported", "note": None}],
         "source_hash_after": source_hash,
         "source_reparse_after_edit_count": 0,
+        "projection_context_state": projection_context_state,
     }, sys.stdout)
     raise SystemExit(0)
 
@@ -125,6 +138,7 @@ if action == "replay":
         "scene_state": scene(move_snap, after),
         "source_hash_after": source_hash,
         "source_reparse_after_edit_count": 0,
+        "projection_context_state": projection_context_state,
     }, sys.stdout)
     raise SystemExit(0)
 
