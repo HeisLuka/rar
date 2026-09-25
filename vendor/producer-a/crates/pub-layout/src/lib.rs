@@ -743,7 +743,17 @@ mod tests {
         );
 
         let projection = project_bounded(input);
-        assert_eq!(projection.node_geometry, original_nodes);
+        assert_eq!(projection.node_geometry.len(), original_nodes.len());
+        for authored in &original_nodes {
+            let projected = projection
+                .node_geometry
+                .iter()
+                .find(|node| node.origin == authored.node_id)
+                .expect("projected node geometry");
+            assert_eq!(projected.parent_origin, authored.parent_origin);
+            assert_eq!(projected.bounds, authored.bounds);
+            assert_eq!(projected.transform, authored.transform);
+        }
 
         let scene = resolve_bounded_geometry(
             &projection,
@@ -768,7 +778,13 @@ mod tests {
             )
         );
         assert_eq!(scene.nodes.len(), original_nodes.len());
-        for (resolved, authored) in scene.nodes.iter().zip(original_nodes.iter()) {
+        for authored in &original_nodes {
+            let resolved = scene
+                .nodes
+                .iter()
+                .find(|node| node.origin == authored.node_id)
+                .expect("resolved node geometry");
+            assert_eq!(resolved.parent_origin, authored.parent_origin);
             assert_eq!(resolved.bounds, authored.bounds);
             assert_eq!(resolved.transform, authored.transform);
         }
