@@ -1150,6 +1150,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expired_grant_denies_export_and_records_bounded_audit() {
+        let (path, authority, publications) = stores("expiry").await;
+
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                DocumentRole::Editor,
+                Some(25),
+                "grant-expiring-editor",
+                10,
+            )
+            .await
+            .unwrap();
+
+        authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "export-before-expiry",
+                24,
+            )
+            .await
+            .unwrap();
+
+        let denied = authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "export-after-expiry",
+                25,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "grant_expired");
+
+        let audit: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT action, result, error_code
+            FROM authz_audit_events
+            WHERE operation_id=?
+            "#,
+        )
+        .bind(b"export-after-expiry".as_slice())
+        .fetch_all(&authority.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            audit,
+            vec![(
+                "authorize".to_owned(),
+                "denied".to_owned(),
+                Some("grant_expired".to_owned())
+            )]
+        );
+
+        publications.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
     async fn revoke_and_publication_share_one_sqlite_barrier() {
         let (path, authority, publications) = stores("barrier").await;
         authority
