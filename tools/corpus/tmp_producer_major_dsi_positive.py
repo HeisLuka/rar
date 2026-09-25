@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 import sys
 sys.path.insert(0, str(HERE))
 import structural_novelty as novelty  # type: ignore
+import pub_container_extract as containers  # type: ignore
 
 DSI_PATH = "/\x05DocumentSummaryInformation"
 DSI_OLE_NAME = "\x05DocumentSummaryInformation"
@@ -72,8 +73,13 @@ def decode_piddsi_stream(raw: bytes) -> dict:
             raise ValueError("section descriptor table truncated")
 
         hits = []
+        matched_sections = 0
         for si in range(section_count):
             desc = 28 + si * 20
+            fmtid = raw[desc:desc + 16]
+            if fmtid != FMTID_DOCSUMMARY:
+                continue
+            matched_sections += 1
             sec_off = u32(raw, desc + 16)
             if sec_off + 8 > len(raw):
                 raise ValueError(f"section {si} header out of bounds")
@@ -124,6 +130,18 @@ def decode_piddsi_stream(raw: bytes) -> dict:
                     "producer_build_or_minor": value & 0xFFFF,
                 })
 
+        if matched_sections == 0:
+            return {
+                **base,
+                "state": "malformed_value",
+                "error": "FMTID_DocSummaryInformation section missing",
+            }
+        if matched_sections > 1:
+            return {
+                **base,
+                "state": "malformed_value",
+                "error": f"duplicate FMTID_DocSummaryInformation sections: {matched_sections}",
+            }
         if not hits:
             return {**base, "state": "property_absent"}
         valid = [h for h in hits if h["state"] == "valid_vt_i4"]
@@ -523,11 +541,39 @@ def recover_candidate(
         root_sha = str(row.get("root_sha256") or "")
         if not url or not member or not root_sha:
             raise ValueError("container row lacks exact coordinates")
-        reader = iso_cache.get(url)
-        if reader is None:
-            reader = RangeISO(url)
-            iso_cache[url] = reader
-        data = reader.member_bytes(member)
+        with tempfile.TemporaryDirectory(prefix="rar-t694-container-") as td_raw:
+            td = Path(td_raw)
+            archive = td / "root.iso"
+            meta = containers.fetch(
+                url, archive, timeout=90.0, max_bytes=350 * 1024 * 1024
+            )
+            if meta["sha256"] != root_sha:
+                raise ValueError(
+                    f"container root SHA mismatch {meta['sha256']} != {root_sha}"
+                )
+            target_norm = member.replace("\\\\", "/").casefold()
+            matches = []
+            for entry in containers.list_7z(archive, timeout=180):
+                name = str(entry.get("Path") or "")
+                if name.replace("\\\\", "/").casefold() == target_norm:
+                    matches.append(entry)
+            if len(matches) != 1:
+                raise ValueError(
+                    f"7z member match count {len(matches)} for {member!r}"
+                )
+            declared = int(matches[0].get("Size", "0") or 0)
+            if expected_len and declared != expected_len:
+                raise ValueError(
+                    f"container declared byte length mismatch {declared} != {expected_len}"
+                )
+            out_path = td / "member.pub"
+            actual_len = containers.extract_member(
+                archive, str(matches[0]["Path"]), out_path,
+                timeout=180, max_bytes=100 * 1024 * 1024,
+            )
+            data = out_path.read_bytes()
+            if actual_len != len(data):
+                raise ValueError("container extracted length accounting mismatch")
         if expected_len and len(data) != expected_len:
             raise ValueError(f"container byte length mismatch {len(data)} != {expected_len}")
         actual = sha256(data)
