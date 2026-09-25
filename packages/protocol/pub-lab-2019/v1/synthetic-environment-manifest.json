@@ -1,0 +1,27 @@
+{
+  "schema_version": "chaptera.publisher2019-environment-manifest.v1",
+  "vm_name": "PUB-LAB-2019",
+  "restore_nonce": "0123456789abcdef0123456789abcdef",
+  "captured_at_utc": "2026-09-25T15:00:02Z",
+  "os_build": "19045.0000",
+  "system_locale": "en-US",
+  "user_locale": "en-US",
+  "code_page": 1252,
+  "time_zone": "UTC",
+  "default_printer": "Chaptera Lab Printer",
+  "font_set_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "publisher": {
+    "version": "16.0",
+    "build": "16.0.12527.22145",
+    "bitness": "x64",
+    "process_count": 0,
+    "modules": {
+      "mspub_exe": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "oart_dll": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "wwlib_dll": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "gfx_dll": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "mspub_tlb": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  },
+  "environment_fingerprint": "ac470ff16c69eeec6607e7ef1d358502c3232456421a76be4b9103cb251d1c21"
+}

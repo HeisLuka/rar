@@ -1,0 +1,38 @@
+{
+  "schema_version": "chaptera.pub-lab-2019-vmware-evidence.v1",
+  "baseline_id": "publisher-2019-build12527-golden-v1",
+  "vm_identity": {
+    "name": "PUB-LAB-2019",
+    "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "snapshot_identity": {
+    "name": "MODERN-2019-12527-GOLDEN-v1",
+    "generation": 1
+  },
+  "vmx_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "environment_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "environment_fingerprint": "ac470ff16c69eeec6607e7ef1d358502c3232456421a76be4b9103cb251d1c21",
+  "vmware": {
+    "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "vmware_vmx_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "vdiskmanager_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "restore": {
+    "challenge_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "started_at_utc": "2026-09-25T15:00:00Z",
+    "completed_at_utc": "2026-09-25T15:00:03Z",
+    "pre_restore_state_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "post_restore_state_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "revert_succeeded": true,
+    "cold_start_succeeded": true,
+    "post_boot_capture_bound": true,
+    "environment_match": true,
+    "restore_verified": true
+  },
+  "privacy": {
+    "local_paths_serialized": false,
+    "credentials_serialized": false,
+    "licensed_media_serialized": false,
+    "restore_nonce_serialized": false
+  }
+}
