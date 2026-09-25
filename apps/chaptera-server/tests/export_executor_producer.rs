@@ -21,10 +21,13 @@ use chaptera_server::{
     derived_artifacts::{DerivedArtifactFenceV1, SqliteDerivedArtifactStore},
     export_executor::{
         EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExactRevisionEditableExporter, ExactRevisionStateProvider,
-        ExportExecutorError, ExportJobPayloadV1, ExportPublishAuthFuture, ExportPublishAuthorizer,
+        ExportExecutorError, ExportJobPayloadV1, ExportPublicationCommitFuture,
+        ExportPublicationCommitter, ExportPublishAuthFuture, ExportPublishAuthorizer,
         IDML_BOUNDED_EDITABLE_PROFILE, PublishedExportJobExecutor,
     },
-    export_publication::SqliteExportPublicationStore,
+    export_publication::{
+        ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1, SqliteExportPublicationStore,
+    },
     job_executor_registry::JobExecutorRegistry,
     job_queue::{EnqueueRequest, JobKind, JobRecord, JobStatus, SqliteJobQueue},
     job_worker::{JobExecutor, WorkerControl, WorkerLoop, WorkerLoopConfig},
@@ -262,6 +265,53 @@ impl ExportPublishAuthorizer for CountingAuthorizer {
     }
 }
 
+struct TestPublicationCommitter {
+    store: SqliteExportPublicationStore,
+    calls: AtomicUsize,
+}
+
+impl TestPublicationCommitter {
+    fn new(store: SqliteExportPublicationStore) -> Self {
+        Self {
+            store,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl ExportPublicationCommitter for TestPublicationCommitter {
+    fn commit_authorized<'a>(
+        &'a self,
+        _job: &'a JobRecord,
+        payload: &'a ExportJobPayloadV1,
+        input: ExportPublicationInputV1,
+        created_at_ms: i64,
+    ) -> ExportPublicationCommitFuture<'a> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let store = self.store.clone();
+        Box::pin(async move {
+            if payload.requesting_principal_id != "principal:fixture" {
+                return Err(ExportExecutorError::new(
+                    "export_publish_unauthorized",
+                    "test publication barrier lost requesting principal identity",
+                ));
+            }
+            let prepared = store
+                .prepare(input, created_at_ms)
+                .await
+                .map_err(|error| ExportExecutorError::new(error.code, error.message))?;
+            Ok(match prepared {
+                ExportPublicationPrepareOutcomeV1::Prepared(record)
+                | ExportPublicationPrepareOutcomeV1::AlreadyPrepared(record) => record.effect_key,
+            })
+        })
+    }
+}
+
 fn fixture_path() -> PathBuf {
     std::env::var_os("CHAPTERA_EXPORT_FIXTURE")
         .map(PathBuf::from)
@@ -457,11 +507,12 @@ async fn registered_export_executor_runs_real_worker_vertical_to_terminal_public
         FixtureStateProvider { state },
     )));
     let authorizer = Arc::new(CountingAuthorizer::default());
+    let publication_committer = Arc::new(TestPublicationCommitter::new(publications.clone()));
     let export_executor: Arc<dyn JobExecutor> = Arc::new(PublishedExportJobExecutor::new(
         producer,
         blob_store,
         artifacts.clone(),
-        publications.clone(),
+        publication_committer.clone(),
         authorizer.clone(),
     ));
     let registry =
@@ -548,8 +599,13 @@ async fn registered_export_executor_runs_real_worker_vertical_to_terminal_public
     assert_eq!(receipt.lease_lost, 0);
     assert_eq!(
         authorizer.calls(),
-        2,
-        "authorization must run at execution and immediately before publication"
+        1,
+        "early authorization preflight must run once"
+    );
+    assert_eq!(
+        publication_committer.calls(),
+        1,
+        "final logical publication must pass through the publication authority seam"
     );
 
     let visible = publications
