@@ -2277,7 +2277,7 @@ mod tests {
         let fixture = deep_receipt(source_hash);
         let path = write_deep_receipt(&fixture, "allowlist");
         let summary =
-            deep_diagnostics_summary(&path, source_hash).expect("valid deep receipt");
+            deep_diagnostics_summary(&path, None, source_hash).expect("valid deep receipt");
         let encoded = serde_json::to_string(&summary).expect("serialize summary");
         assert_eq!(summary["available"], true);
         assert_eq!(summary["source_hash"], source_hash);
@@ -2299,7 +2299,7 @@ mod tests {
             "9999999999999999999999999999999999999999999999999999999999999999";
         let fixture = deep_receipt(receipt_hash);
         let path = write_deep_receipt(&fixture, "mismatch");
-        let error = deep_diagnostics_summary(&path, current_hash)
+        let error = deep_diagnostics_summary(&path, None, current_hash)
             .expect_err("different source must fail");
         assert_eq!(error.0, "deep_diagnostics_source_mismatch");
         let _ = fs::remove_file(path);
@@ -2312,9 +2312,127 @@ mod tests {
         let mut fixture = deep_receipt(source_hash);
         fixture["invariants"]["native_pub_writer_capability_granted"] = Value::Bool(true);
         let path = write_deep_receipt(&fixture, "writer-escalation");
-        let error = deep_diagnostics_summary(&path, source_hash)
+        let error = deep_diagnostics_summary(&path, None, source_hash)
             .expect_err("writer capability escalation must fail");
         assert_eq!(error.0, "deep_diagnostics_invalid_receipt");
         let _ = fs::remove_file(path);
+    }
+
+    fn joined_receipt(source_hash: &str, blast: &Value, blast_bytes: &[u8]) -> Value {
+        let source_sha = blast["artifacts"]["source"]["sha256"]
+            .as_str()
+            .expect("source sha");
+        let control_sha = blast["artifacts"]["control"]["sha256"]
+            .as_str()
+            .expect("control sha");
+        let mutation_sha = blast["artifacts"]["mutation"]["sha256"]
+            .as_str()
+            .expect("mutation sha");
+        json!({
+            "receipt_version":"chaptera.movenode-diagnostic-receipt.v1",
+            "source_sha256":source_hash,
+            "chaptera":{
+                "operation_kind":"MoveNode",
+                "node_id":"node-1",
+                "scene_instance_id":"scene-instance-1",
+                "admission":"direct_page_local",
+                "base_revision_id":"sha256:before",
+                "result_revision_id":"sha256:after",
+                "before":{"x":100000,"y":200000,"width":300000,"height":400000},
+                "after":{"x":112700,"y":200000,"width":300000,"height":400000}
+            },
+            "native_experiment":{
+                "publisher_version":"16.0",
+                "publisher_build":"12527.22145",
+                "shape_identity":"pageid:1|tag:PUB_ORACLE_ID=SHAPE_A",
+                "axis":"x",
+                "emu_per_point":12700,
+                "tolerance_emu":0,
+                "control":{
+                    "baseline_source_sha256":source_sha,
+                    "first_save_sha256":control_sha,
+                    "second_save_sha256":null,
+                    "before":{"left":"10","top":"20","width":"30","height":"40"},
+                    "after":{"left":"10","top":"20","width":"30","height":"40"},
+                    "parser_accepted":true,
+                    "publisher_reopen_accepted":true
+                },
+                "mutation":{
+                    "baseline_source_sha256":source_sha,
+                    "first_save_sha256":mutation_sha,
+                    "second_save_sha256":null,
+                    "before":{"left":"10","top":"20","width":"30","height":"40"},
+                    "after":{"left":"11","top":"20","width":"30","height":"40"},
+                    "parser_accepted":true,
+                    "publisher_reopen_accepted":true
+                }
+            },
+            "blast_radius":{
+                "receipt_sha256":sha256_hex(blast_bytes),
+                "schema_version":"chaptera.operation-blast-radius.v1",
+                "source_sha256":source_sha,
+                "control_sha256":control_sha,
+                "mutation_sha256":mutation_sha
+            },
+            "invariants":{
+                "exactly_one_durable_movenode":true,
+                "native_pub_writer_capability_granted":false
+            }
+        })
+    }
+
+    #[test]
+    fn deep_diagnostics_join_is_hash_bound_and_source_free() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let blast = deep_receipt(source_hash);
+        let blast_bytes = serde_json::to_vec(&blast).expect("serialize blast");
+        let blast_path = write_deep_receipt(&blast, "join-blast");
+        let joined = joined_receipt(source_hash, &blast, &blast_bytes);
+        let joined_path = write_deep_receipt(&joined, "join-receipt");
+
+        let summary = deep_diagnostics_summary(
+            &blast_path,
+            Some(&joined_path),
+            source_hash,
+        )
+        .expect("valid joined diagnostics");
+        assert_eq!(summary["native_join"]["available"], true);
+        assert_eq!(summary["native_join"]["binding_verified"], true);
+        assert_eq!(
+            summary["native_join"]["invariants"]["cross_layer_geometry_verified"],
+            true
+        );
+        let encoded = serde_json::to_string(&summary).expect("serialize joined summary");
+        assert!(!encoded.contains(blast_path.to_string_lossy().as_ref()));
+        assert!(!encoded.contains(joined_path.to_string_lossy().as_ref()));
+        assert_eq!(summary["native_join"]["invariants"]["native_pub_write"], false);
+
+        let _ = fs::remove_file(blast_path);
+        let _ = fs::remove_file(joined_path);
+    }
+
+    #[test]
+    fn deep_diagnostics_join_rejects_changed_blast_bytes() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let blast = deep_receipt(source_hash);
+        let original_bytes = serde_json::to_vec(&blast).expect("serialize blast");
+        let joined = joined_receipt(source_hash, &blast, &original_bytes);
+        let joined_path = write_deep_receipt(&joined, "tampered-join");
+
+        let mut changed_blast = blast.clone();
+        changed_blast["classification_counts"]["unexplained_collateral"] = Value::from(9);
+        let blast_path = write_deep_receipt(&changed_blast, "tampered-blast");
+        let error = deep_diagnostics_summary(
+            &blast_path,
+            Some(&joined_path),
+            source_hash,
+        )
+        .expect_err("changed blast bytes must break joined binding");
+        assert_eq!(error.0, "deep_diagnostics_join_blast_hash_mismatch");
+
+        let _ = fs::remove_file(blast_path);
+        let _ = fs::remove_file(joined_path);
     }
 }
