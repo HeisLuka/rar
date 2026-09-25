@@ -28,6 +28,8 @@ const QUOTA_RESERVATIONS_SQL: &str = include_str!("../migrations/0008_quota_rese
 const REVISION_IDENTITY_BINDINGS_SQL: &str =
     include_str!("../migrations/0009_revision_identity_bindings.sql");
 const EXPORT_PUBLICATIONS_SQL: &str = include_str!("../migrations/0010_export_publications.sql");
+const AUTHZ_PRINCIPAL_GRANTS_SQL: &str =
+    include_str!("../migrations/0011_authz_principal_grants.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -87,9 +89,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "export_publications",
         sql: EXPORT_PUBLICATIONS_SQL,
     },
+    MigrationSpec {
+        version: 11,
+        name: "authz_principal_grants",
+        sql: AUTHZ_PRINCIPAL_GRANTS_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -506,7 +513,10 @@ async fn known_schema_tables_present(
             'derived_artifacts',
             'quota_reservations',
             'revision_identity_bindings',
-            'export_publications'
+            'export_publications',
+            'authz_documents',
+            'authz_principal_grants',
+            'authz_audit_events'
           )
         "#,
     )
@@ -593,7 +603,7 @@ mod tests {
         assert_eq!(report.state, "pending");
         assert_eq!(report.current_version, 0);
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         assert!(!path.exists());
     }
 
@@ -604,7 +614,7 @@ mod tests {
 
         let first = runtime.migrate_up().await.unwrap();
         assert_eq!(first.state, "current");
-        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
         let second = runtime.migrate_up().await.unwrap();
         assert_eq!(second, first);
@@ -699,7 +709,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 final_report.applied_versions,
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
             );
 
             cleanup(&path);
