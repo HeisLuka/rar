@@ -7,6 +7,7 @@
   "restore_requested_at_utc": "2026-09-25T15:00:00Z",
   "cold_start_succeeded_at_utc": "2026-09-25T15:00:01Z",
   "expected_environment_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "pre_restore_state_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
   "vmware": {
     "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "vmware_vmx_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
