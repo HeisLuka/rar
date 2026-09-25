@@ -219,6 +219,8 @@ pub struct ExactRevisionMaterializationReceipt {
     pub baseline_revision_id: String,
     pub baseline_cursor: i64,
     pub requested_revision_id: String,
+    pub canonical_revision_schema_version: String,
+    pub canonical_authoring_revision_id: String,
     pub replayed_edges: usize,
     pub project_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -308,6 +310,11 @@ impl ExactRevisionMaterializer {
         }
 
         let project_sha256 = project_sha256(&current_project)?;
+        let identity = self
+            .revision_store
+            .require_revision_identity(document_id, requested_revision_id)
+            .await
+            .map_err(|error| RevisionMaterializerError::new(error.code, error.message))?;
         let receipt = ExactRevisionMaterializationReceipt {
             schema_version: MATERIALIZATION_RECEIPT_SCHEMA_V1.to_owned(),
             tenant_id: tenant_id.to_owned(),
@@ -317,6 +324,8 @@ impl ExactRevisionMaterializer {
             baseline_revision_id: source.baseline_revision_id,
             baseline_cursor: source.baseline_cursor,
             requested_revision_id: requested_revision_id.to_owned(),
+            canonical_revision_schema_version: identity.canonical_schema_version,
+            canonical_authoring_revision_id: identity.canonical_revision_id,
             replayed_edges: edges.len(),
             project_sha256,
             authoring_root_hash,

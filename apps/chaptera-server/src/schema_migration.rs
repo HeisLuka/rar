@@ -25,6 +25,8 @@ const REVISION_STREAM_SQL: &str = include_str!("../migrations/0005_revision_stre
 const AUTHN_SQL: &str = include_str!("../migrations/0006_authn.sql");
 const DERIVED_ARTIFACTS_SQL: &str = include_str!("../migrations/0007_derived_artifacts.sql");
 const QUOTA_RESERVATIONS_SQL: &str = include_str!("../migrations/0008_quota_reservations.sql");
+const REVISION_IDENTITY_BINDINGS_SQL: &str =
+    include_str!("../migrations/0009_revision_identity_bindings.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -74,9 +76,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "quota_reservations",
         sql: QUOTA_RESERVATIONS_SQL,
     },
+    MigrationSpec {
+        version: 9,
+        name: "revision_identity_bindings",
+        sql: REVISION_IDENTITY_BINDINGS_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -491,7 +498,8 @@ async fn known_schema_tables_present(
             'principal_identities',
             'sessions',
             'derived_artifacts',
-            'quota_reservations'
+            'quota_reservations',
+            'revision_identity_bindings'
           )
         "#,
     )
@@ -578,7 +586,7 @@ mod tests {
         assert_eq!(report.state, "pending");
         assert_eq!(report.current_version, 0);
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
         assert!(!path.exists());
     }
 
@@ -589,7 +597,7 @@ mod tests {
 
         let first = runtime.migrate_up().await.unwrap();
         assert_eq!(first.state, "current");
-        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
         let second = runtime.migrate_up().await.unwrap();
         assert_eq!(second, first);
@@ -682,7 +690,10 @@ mod tests {
                 .status_report()
                 .await
                 .unwrap();
-            assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+            assert_eq!(
+                final_report.applied_versions,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+            );
 
             cleanup(&path);
         }

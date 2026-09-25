@@ -18,7 +18,10 @@ use chaptera_server::{
         RevisionMaterializerError, encode_editor_revision_event_v1, project_sha256,
     },
     schema_migration::SqliteMigrationRuntime,
-    sqlite_store::{RevisionEdge, SqliteRevisionStore, encode_canonical_event},
+    sqlite_store::{
+        AUTHORING_REVISION_SCHEMA_V1, RevisionEdge, RevisionIdentityBinding, SqliteRevisionStore,
+        encode_canonical_event,
+    },
 };
 use pub_editor::{
     EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_4, EditOperation, EditorProject,
@@ -192,6 +195,25 @@ fn hash_char(ch: char) -> String {
     std::iter::repeat_n(ch, 64).collect()
 }
 
+async fn bind_identity(
+    store: &SqliteRevisionStore,
+    document_id: &str,
+    service_revision_id: &str,
+    canonical: char,
+    bound_at_ms: i64,
+) {
+    store
+        .bind_revision_identity(RevisionIdentityBinding {
+            document_id: document_id.into(),
+            service_revision_id: service_revision_id.into(),
+            canonical_schema_version: AUTHORING_REVISION_SCHEMA_V1.into(),
+            canonical_revision_id: hash_char(canonical),
+            bound_at_ms,
+        })
+        .await
+        .unwrap();
+}
+
 fn rect(x: i64, y: i64, width: i64, height: i64) -> RectEmu {
     RectEmu::new(
         LengthEmu::new(x),
@@ -346,6 +368,10 @@ async fn exact_prefix_materializes_r0_r1_r2_and_ignores_corrupt_future_tail_for_
         .await
         .unwrap();
 
+    bind_identity(&store, "doc-a", "r0", '1', 10).await;
+    bind_identity(&store, "doc-a", "r1", '2', 11).await;
+    bind_identity(&store, "doc-a", "r2", '3', 12).await;
+
     let m = materializer(
         authority(&bytes, "doc-a", &source_sha256),
         bytes.clone(),
@@ -356,15 +382,22 @@ async fn exact_prefix_materializes_r0_r1_r2_and_ignores_corrupt_future_tail_for_
     let r0 = m.materialize("tenant-a", "doc-a", "r0").await.unwrap();
     assert_eq!(r0.replayed_edges, 0);
     assert_eq!(r0.project, baseline);
+    assert_eq!(
+        r0.canonical_revision_schema_version,
+        AUTHORING_REVISION_SCHEMA_V1
+    );
+    assert_eq!(r0.canonical_authoring_revision_id, hash_char('1'));
 
     let r1 = m.materialize("tenant-a", "doc-a", "r1").await.unwrap();
     assert_eq!(r1.replayed_edges, 1);
     assert_eq!(r1.project, p1);
     assert_eq!(r1.authoring_root_hash, Some(hash_char('a')));
+    assert_eq!(r1.canonical_authoring_revision_id, hash_char('2'));
 
     let r2 = m.materialize("tenant-a", "doc-a", "r2").await.unwrap();
     assert_eq!(r2.replayed_edges, 2);
     assert_eq!(r2.project, p2);
+    assert_eq!(r2.canonical_authoring_revision_id, hash_char('3'));
 
     let r1_again = m.materialize("tenant-a", "doc-a", "r1").await.unwrap();
     assert_eq!(
@@ -395,6 +428,26 @@ async fn exact_prefix_materializes_r0_r1_r2_and_ignores_corrupt_future_tail_for_
 
     let error = m.materialize("tenant-a", "doc-a", "r2").await.unwrap_err();
     assert_eq!(error.code, "canonical_event_corrupt");
+
+    cleanup_store(&store, &path).await;
+}
+
+#[tokio::test]
+async fn missing_canonical_revision_mapping_fails_closed_after_valid_materialization() {
+    let bytes = b"synthetic-pub-source".to_vec();
+    let source_sha256 = sha256_hex(&bytes);
+    let (store, path) = open_store("missing-revision-identity").await;
+    let m = materializer(
+        authority(&bytes, "doc-a", &source_sha256),
+        bytes,
+        store.clone(),
+        Arc::new(FakeEditor {
+            initial_rect: rect(0, 0, 100, 50),
+        }),
+    );
+
+    let error = m.materialize("tenant-a", "doc-a", "r0").await.unwrap_err();
+    assert_eq!(error.code, "canonical_revision_unbound");
 
     cleanup_store(&store, &path).await;
 }
@@ -735,6 +788,10 @@ async fn real_sample_newsletter_materializes_exact_historical_revision() {
         .await
         .unwrap();
 
+    bind_identity(&store, "sample-newsletter", "r0", '4', 20).await;
+    bind_identity(&store, "sample-newsletter", "r1", '5', 21).await;
+    bind_identity(&store, "sample-newsletter", "r2", '6', 22).await;
+
     let m = materializer(
         authority(&bytes, "sample-newsletter", SAMPLE_SOURCE_SHA256),
         bytes.clone(),
@@ -758,6 +815,9 @@ async fn real_sample_newsletter_materializes_exact_historical_revision() {
     assert_eq!(r2.project, p2);
     assert_eq!(r1.replayed_edges, 1);
     assert_eq!(r2.replayed_edges, 2);
+    assert_eq!(r0.canonical_authoring_revision_id, hash_char('4'));
+    assert_eq!(r1.canonical_authoring_revision_id, hash_char('5'));
+    assert_eq!(r2.canonical_authoring_revision_id, hash_char('6'));
 
     let repeat = m
         .materialize("tenant-a", "sample-newsletter", "r1")
