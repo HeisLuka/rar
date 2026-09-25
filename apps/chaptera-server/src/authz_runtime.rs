@@ -188,6 +188,8 @@ impl SqliteAuthzAuthority {
         self.pool.close().await;
     }
 
+    // This mutation boundary keeps the complete durable authorization identity explicit.
+    #[allow(clippy::too_many_arguments)]
     pub async fn set_role(
         &self,
         tenant_id: &str,
