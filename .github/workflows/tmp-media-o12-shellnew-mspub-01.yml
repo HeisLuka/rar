@@ -1,0 +1,381 @@
+name: TEMP MEDIA Office12 ShellNew MSPUB proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-media-o12-shellnew-mspub-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full msitools cabextract
+      - name: Recover exact Office 2007 media
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/o12/media /tmp/o12/msi /tmp/o12/cab
+          python - <<'PY'
+          import json, urllib.request, urllib.parse, pathlib
+          ident = "microsoft-office-professional-plus-2007"
+          req = urllib.request.Request(
+              f"https://archive.org/metadata/{ident}",
+              headers={"User-Agent":"rar-t705-office12-shellnew/1.0"},
+          )
+          with urllib.request.urlopen(req, timeout=60) as r:
+              m = json.load(r)
+          cand = []
+          for f in m.get("files", []):
+              if str(f.get("source") or "") != "original":
+                  continue
+              name = str(f.get("name") or "")
+              if name.lower().endswith((".iso", ".img")):
+                  cand.append((int(f.get("size") or 0), name, f.get("md5"), f.get("sha1")))
+          if not cand:
+              raise SystemExit("no original ISO/IMG candidates")
+          cand.sort(reverse=True)
+          size, name, md5, sha1 = cand[0]
+          url = f"https://archive.org/download/{ident}/" + urllib.parse.quote(name, safe="/")
+          pathlib.Path("/tmp/o12/url").write_text(url)
+          pathlib.Path("out/source-metadata.json").write_text(json.dumps({
+              "item": ident,
+              "selected_name": name,
+              "reported_size": size,
+              "reported_md5": md5,
+              "reported_sha1": sha1,
+              "candidate_count": len(cand),
+              "source_page": f"https://archive.org/details/{ident}",
+          }, indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/o12/media/office12.img "$(cat /tmp/o12/url)"
+          python - <<'PY'
+          import hashlib, json, pathlib
+          p = pathlib.Path("/tmp/o12/media/office12.img")
+          h256=hashlib.sha256(); h1=hashlib.sha1(); md5=hashlib.md5()
+          with p.open("rb") as f:
+              while True:
+                  b=f.read(1024*1024)
+                  if not b: break
+                  h256.update(b); h1.update(b); md5.update(b)
+          meta=json.loads(pathlib.Path("out/source-metadata.json").read_text())
+          meta.update({
+              "actual_size":p.stat().st_size,
+              "sha256":h256.hexdigest(),
+              "sha1":h1.hexdigest(),
+              "md5":md5.hexdigest(),
+          })
+          if meta["actual_size"] != 517816320:
+              raise SystemExit(f"unexpected Office12 media size: {meta['actual_size']}")
+          if meta["sha256"] != "8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3":
+              raise SystemExit(f"unexpected Office12 media SHA256: {meta['sha256']}")
+          if meta.get("reported_size") and meta["actual_size"] != meta["reported_size"]:
+              raise SystemExit("IA size mismatch")
+          if meta.get("reported_sha1") and meta["sha1"].lower() != str(meta["reported_sha1"]).lower():
+              raise SystemExit("IA sha1 mismatch")
+          if meta.get("reported_md5") and meta["md5"].lower() != str(meta["reported_md5"]).lower():
+              raise SystemExit("IA md5 mismatch")
+          pathlib.Path("out/source-metadata.json").write_text(json.dumps(meta,indent=2))
+          PY
+      - name: Locate MSPUB.PUB in MSI tables
+        run: |
+          set -euo pipefail
+          7z l -slt /tmp/o12/media/office12.img > /tmp/o12/iso.slt
+          7z x -y -o/tmp/o12/msi /tmp/o12/media/office12.img -r '*.msi' '*.MSI' >/dev/null || true
+          python - <<'PY'
+          import json, pathlib, subprocess
+          root=pathlib.Path("/tmp/o12/msi")
+          msis=[p for p in root.rglob("*") if p.is_file() and p.suffix.lower()==".msi"]
+          TARGET="MSPUB.PUB"
+
+          def export(msi, table):
+              r=subprocess.run(
+                  ["msiinfo","export",str(msi),table],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+              )
+              return r.stdout if r.returncode==0 else ""
+
+          def parse_idt(txt):
+              lines=txt.splitlines()
+              if len(lines)<3: return []
+              cols=lines[0].split("\t")
+              out=[]
+              for line in lines[3:]:
+                  vals=line.split("\t")
+                  vals += [""]*(len(cols)-len(vals))
+                  out.append(dict(zip(cols, vals)))
+              return out
+
+          def target_name(file_name):
+              parts=file_name.split("|")
+              return parts[-1].upper() if parts else file_name.upper()
+
+          def clean_default(v):
+              # MSI Directory.DefaultDir can be short|long and source:target.
+              target=v.split(":",1)[-1] if ":" in v else v
+              return target.split("|")[-1]
+
+          matches=[]
+          scanned=[]
+          for msi in msis:
+              frows=parse_idt(export(msi,"File"))
+              crows=parse_idt(export(msi,"Component"))
+              drows=parse_idt(export(msi,"Directory"))
+              mrows=parse_idt(export(msi,"Media"))
+              scanned.append({
+                  "msi":str(msi.relative_to(root)),
+                  "file_rows":len(frows),
+                  "component_rows":len(crows),
+                  "directory_rows":len(drows),
+                  "media_rows":len(mrows),
+              })
+              comp_by_key={r.get("Component"):r for r in crows if r.get("Component")}
+              dir_by_key={r.get("Directory"):r for r in drows if r.get("Directory")}
+              media=[]
+              for r in mrows:
+                  try: last=int(r.get("LastSequence") or 0)
+                  except: last=0
+                  media.append((last,r))
+              media.sort(key=lambda x:x[0])
+
+              for r in frows:
+                  fn=r.get("FileName") or ""
+                  if target_name(fn) != TARGET:
+                      continue
+                  try: seq=int(r.get("Sequence") or 0)
+                  except: seq=0
+                  owner=None
+                  prev=0
+                  for last,mr in media:
+                      if prev < seq <= last:
+                          owner=mr
+                          break
+                      prev=last
+                  comp=comp_by_key.get(r.get("Component_") or "", {})
+                  directory_key=comp.get("Directory_") or ""
+                  chain=[]
+                  seen=set()
+                  cur=directory_key
+                  while cur and cur not in seen and len(chain)<64:
+                      seen.add(cur)
+                      dr=dir_by_key.get(cur)
+                      if dr is None:
+                          chain.append({"key":cur,"missing":True})
+                          break
+                      chain.append({
+                          "key":cur,
+                          "default_dir":dr.get("DefaultDir"),
+                          "target_name":clean_default(dr.get("DefaultDir") or ""),
+                          "parent":dr.get("Directory_Parent"),
+                      })
+                      cur=dr.get("Directory_Parent") or ""
+                  matches.append({
+                      "msi":str(msi.relative_to(root)),
+                      "file_key":r.get("File"),
+                      "file_name":fn,
+                      "file_size":int(r.get("FileSize") or 0),
+                      "version":r.get("Version"),
+                      "language":r.get("Language"),
+                      "attributes":r.get("Attributes"),
+                      "sequence":seq,
+                      "component":r.get("Component_"),
+                      "component_directory_key":directory_key,
+                      "directory_chain":chain,
+                      "media":owner,
+                  })
+
+          iso_txt=pathlib.Path("/tmp/o12/iso.slt").read_text(errors="replace")
+          direct_hits=[]
+          for line in iso_txt.splitlines():
+              if line.startswith("Path = "):
+                  p=line.split(" = ",1)[1]
+                  if p.upper().endswith("MSPUB.PUB"):
+                      direct_hits.append(p)
+
+          payload={
+              "schema":"chaptera.media-o12-shellnew-mspub.v1",
+              "source_safe":True,
+              "msi_count":len(msis),
+              "match_count":len(matches),
+              "matches":matches,
+              "direct_iso_hits":direct_hits,
+              "scanned_msi":scanned,
+          }
+          pathlib.Path("out/msi-lookup.json").write_text(json.dumps(payload,indent=2))
+          print(json.dumps({
+              "msi_count":len(msis),
+              "match_count":len(matches),
+              "matches":matches,
+              "direct_iso_hits":direct_hits,
+          }, indent=2))
+          PY
+      - name: Extract matched MSPUB.PUB member and hash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          p=json.loads(pathlib.Path("out/msi-lookup.json").read_text())
+          pathlib.Path("/tmp/o12/extract-plan.json").write_text(json.dumps({
+              "matches":p["matches"]
+          }))
+          PY
+          python - <<'PY'
+          import json, pathlib, subprocess, hashlib, os, re
+          plan=json.loads(pathlib.Path("/tmp/o12/extract-plan.json").read_text())
+          results=[]
+          raw_paths=[]
+          iso="/tmp/o12/media/office12.img"
+
+          def digest(path):
+              h256=hashlib.sha256(); h1=hashlib.sha1(); md5=hashlib.md5()
+              with open(path,"rb") as f:
+                  while True:
+                      b=f.read(1024*1024)
+                      if not b: break
+                      h256.update(b);h1.update(b);md5.update(b)
+              return {
+                  "size":os.path.getsize(path),
+                  "sha256":h256.hexdigest(),
+                  "sha1":h1.hexdigest(),
+                  "md5":md5.hexdigest(),
+              }
+
+          for i,m in enumerate(plan["matches"]):
+              media=m.get("media") or {}
+              cabinet=str(media.get("Cabinet") or "")
+              row={
+                  "match_index":i,
+                  "msi":m["msi"],
+                  "file_key":m.get("file_key"),
+                  "file_name":m.get("file_name"),
+                  "file_size":m.get("file_size"),
+                  "cabinet":cabinet,
+                  "extraction_state":"not_attempted",
+              }
+              if not cabinet:
+                  row["extraction_state"]="no_media_cabinet"
+                  results.append(row)
+                  continue
+              if cabinet.startswith("#"):
+                  row["extraction_state"]="embedded_cabinet_not_handled"
+                  results.append(row)
+                  continue
+
+              cabroot=pathlib.Path(f"/tmp/o12/cab/{i}")
+              cabroot.mkdir(parents=True, exist_ok=True)
+              # Extract only paths whose basename is the exact Media.Cabinet.
+              r=subprocess.run(
+                  ["7z","x","-y",f"-o{cabroot}",iso,f"-r!*{cabinet}"],
+                  stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+              )
+              cabs=[p for p in cabroot.rglob("*") if p.is_file() and p.name.lower()==cabinet.lower()]
+              if not cabs:
+                  row["extraction_state"]="cabinet_not_found_in_iso"
+                  row["7z_returncode"]=r.returncode
+                  results.append(row)
+                  continue
+              cab=cabs[0]
+              row["cabinet_iso_path"]=str(cab.relative_to(cabroot))
+
+              target=pathlib.Path(f"/tmp/o12/target-{i}.pub")
+              candidates=[]
+              for x in (m.get("file_key"), (m.get("file_name") or "").split("|")[-1], (m.get("file_name") or "").split("|")[0]):
+                  if x and x not in candidates:
+                      candidates.append(x)
+              success=False
+              attempts=[]
+              for cand in candidates:
+                  cmd=["cabextract","-p","-F",cand,str(cab)]
+                  rr=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  attempts.append({"candidate":cand,"returncode":rr.returncode,"bytes":len(rr.stdout)})
+                  if rr.returncode==0 and rr.stdout:
+                      target.write_bytes(rr.stdout)
+                      raw_paths.append(target)
+                      success=True
+                      row["cab_member_selector"]=cand
+                      break
+              row["cabextract_attempts"]=attempts
+              if success:
+                  row["extraction_state"]="extracted"
+                  row["digest"]=digest(target)
+                  row["exact_t704_match"]=row["digest"]["sha256"]=="e050ea777d910137fff7c160992ec026ab4f76832b6c96701b114e379abf4ca3"
+              else:
+                  row["extraction_state"]="member_not_found"
+              results.append(row)
+
+          out={
+              "schema":"chaptera.media-o12-shellnew-mspub-extract.v1",
+              "source_safe":True,
+              "target_t704_sha256":"e050ea777d910137fff7c160992ec026ab4f76832b6c96701b114e379abf4ca3",
+              "results":results,
+          }
+          pathlib.Path("out/extraction.json").write_text(json.dumps(out,indent=2))
+          for p in raw_paths:
+              try:p.unlink()
+              except FileNotFoundError:pass
+          if any(pathlib.Path("/tmp/o12").glob("target-*.pub")):
+              raise SystemExit("raw PUB cleanup failed")
+          print(json.dumps(out,indent=2))
+          PY
+      - name: Build classification and enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          lookup=json.loads(pathlib.Path("out/msi-lookup.json").read_text())
+          extraction=json.loads(pathlib.Path("out/extraction.json").read_text())
+          exact=[r for r in extraction["results"] if r.get("exact_t704_match") is True]
+          shellnew=[]
+          for m in lookup["matches"]:
+              text=" / ".join(
+                  [str(x.get("key") or "")+":"+str(x.get("target_name") or "") for x in m.get("directory_chain",[])]
+              ).upper()
+              if "SHELLNEW" in text:
+                  shellnew.append(m)
+          summary={
+              "schema":"chaptera.media-o12-shellnew-mspub-summary.v1",
+              "source_safe":True,
+              "raw_payload_retained":False,
+              "office12_iso_sha256":"8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3",
+              "msi_match_count":lookup["match_count"],
+              "shellnew_directory_match_count":len(shellnew),
+              "exact_t704_hash_match_count":len(exact),
+              "exact_t704_matches":exact,
+              "classification":(
+                  "exact_office2007_media_shellnew_match"
+                  if exact and shellnew
+                  else "exact_office2007_media_match_directory_unresolved"
+                  if exact
+                  else "office2007_media_no_exact_t704_match"
+              ),
+              "causality_boundary":"distribution/install-media provenance does not prove which Publisher save operation originally authored the template bytes",
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          if find out -type f \( -iname '*.pub' -o -iname '*.msi' -o -iname '*.cab' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo "raw payload leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          s=json.load(open("out/summary.json"))
+          assert s["source_safe"] is True
+          assert s["raw_payload_retained"] is False
+          assert s["office12_iso_sha256"]=="8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3"
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-o12-shellnew-mspub-01-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
