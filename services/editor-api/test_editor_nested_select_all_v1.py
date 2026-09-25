@@ -54,7 +54,7 @@ def snapshot(children,path=("group:root",)):
 class EditorNestedSelectAllV1Tests(unittest.TestCase):
     def test_nested_select_all_replaces_with_direct_children_only(self):
         scope=nested_scope(selected=("old",))
-        snap=snapshot(("child:b","child:a","child:group"))
+        snap=snapshot(("old","child:b","child:a","child:group"))
         result=route_editor_nested_select_all_v1(
             routing_state=routing(),
             current_page_id="page:1",
@@ -93,7 +93,7 @@ class EditorNestedSelectAllV1Tests(unittest.TestCase):
 
     def test_single_direct_child_becomes_primary_and_zero_clears(self):
         scope=nested_scope(selected=("old",))
-        snap=snapshot(("only",))
+        snap=snapshot(("old","only"))
         one=route_editor_nested_select_all_v1(
             routing_state=routing(),
             current_page_id="page:1",
