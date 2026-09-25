@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_8, EditOperation, EditorError,
-    EditorProject, EditorProjectError, EditorSession, LengthEmu, MoveNodeBatchEntry, RectEmu,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
+    EditOperation, EditorError, EditorProject, EditorProjectError, EditorSession, LengthEmu,
+    MoveNodeBatchEntry, RectEmu,
 };
 use pub_model::{
     Affine2D, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
@@ -147,7 +148,7 @@ fn entries(base: &PubResolvedGraph) -> Vec<MoveNodeBatchEntry> {
 
 #[test]
 fn canonical_batch_is_one_history_and_project_replay_unit() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_8);
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9);
     let base = graph();
     let (page_id, node_a, node_b) = ids();
     let mut batch = entries(&base);
@@ -206,6 +207,15 @@ fn canonical_batch_is_one_history_and_project_replay_unit() {
     assert_eq!(reopened.project(), project);
     assert_eq!(reopened.graph().nodes[&node_a].header.bounds, after_a);
     assert_eq!(reopened.graph().nodes[&node_b].header.bounds, after_b);
+
+    let mut v0_9_project = project.clone();
+    v0_9_project.schema_version = EDITOR_PROJECT_VERSION_V0_9.into();
+    let mut v0_9_reopened = EditorSession::new(graph()).expect("fresh v0.9 replay");
+    v0_9_reopened
+        .apply_project(&v0_9_project)
+        .expect("v0.9 must inherit v0.8 MoveNodes replay");
+    assert_eq!(v0_9_reopened.graph().nodes[&node_a].header.bounds, after_a);
+    assert_eq!(v0_9_reopened.graph().nodes[&node_b].header.bounds, after_b);
 }
 
 #[test]
