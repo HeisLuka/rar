@@ -16,7 +16,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def canonical_digest(shas) -> str:
-    payload = ("\\n".join(sorted(shas)) + "\\n").encode("ascii")
+    payload = ("\n".join(sorted(shas)) + "\n").encode("ascii")
     return hashlib.sha256(payload).hexdigest()
 
 
