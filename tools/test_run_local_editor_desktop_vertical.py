@@ -247,8 +247,9 @@ class DesktopVerticalRunnerTests(unittest.TestCase):
 
     def test_export_must_be_real_package(self):
         broken = FAKE_ENGINE.replace(
-            'with zipfile.ZipFile(export_path, "w") as archive:\n    archive.writestr("designmap.xml", "<Document/>")\n    archive.writestr("Stories/Story_u1.xml", "<Story/>")',
-            'export_path.write_bytes(b"not-a-zip")',
+            'with zipfile.ZipFile(export_path, "w") as archive:',
+            'export_path.write_bytes(b"not-a-zip")\nif False:\n    with zipfile.ZipFile(export_path, "w") as archive:',
+            1,
         )
         with tempfile.TemporaryDirectory() as tmp:
             fixture, project, export, receipt_path, command = self.make_files(tmp, broken)
