@@ -4422,6 +4422,25 @@ mod image_crop_runtime_tests {
         session.redo().expect("crop redo");
         assert_eq!(session.image_crop_for(node_id), Some(after));
 
+        let project = session.project();
+        let (replay_graph, replay_node_id) = crop_graph();
+        assert_eq!(replay_node_id, node_id);
+        let mut replay = EditorSession::new(replay_graph).expect("replay session");
+        install_png_authority(&mut replay, node_id);
+        replay.apply_project(&project).expect("v0.11 crop replay");
+        assert_eq!(replay.image_crop_for(node_id), Some(after));
+        assert_eq!(replay.project(), project);
+
+        for target in [EditorEditableTarget::Idml, EditorEditableTarget::Odg] {
+            let preview = session
+                .preview_editable_export(target, "crop-test")
+                .expect("crop export preview");
+            assert!(
+                !preview.report.can_serialize,
+                "crop override must fail closed until {target} preserves content transform"
+            );
+        }
+
         let replacement = session
             .import_replacement_asset("image/png", b"\x89PNG\r\n\x1a\nfixture".to_vec())
             .expect("replacement asset");
