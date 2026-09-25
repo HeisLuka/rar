@@ -140,7 +140,7 @@ def build(
         groups[logical].append(row)
 
     logical_rows = []
-    cells: dict[tuple[str, str, str], dict] = {}
+    cells: dict[tuple[str, str, str, str], dict] = {}
     source_logical_counts = Counter()
     version_label_counts = Counter()
     distribution_media_version_counts = Counter()
