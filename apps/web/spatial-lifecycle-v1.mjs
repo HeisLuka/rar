@@ -24,10 +24,10 @@ function checkedString(value, label) {
   return value;
 }
 
-function checkedStringList(values, label) {
+function checkedStringList(values, label, { unique = false } = {}) {
   if (!Array.isArray(values)) throw new TypeError(label + " must be an array");
   const out = values.map((value, index) => checkedString(value, label + "[" + index + "]"));
-  if (new Set(out).size !== out.length) throw new TypeError(label + " must be unique");
+  if (unique && new Set(out).size !== out.length) throw new TypeError(label + " must be unique");
   return Object.freeze([...out]);
 }
 
@@ -37,7 +37,7 @@ export function normalizeSpatialIdentity(identity) {
   if (!Number.isSafeInteger(windowGeneration) || windowGeneration < 0) {
     throw new TypeError("window_generation must be a non-negative safe integer");
   }
-  const pageIds = checkedStringList(identity.page_ids ?? [], "page_ids");
+  const pageIds = checkedStringList(identity.page_ids ?? [], "page_ids", { unique: true });
   const shardFingerprints = checkedStringList(identity.shard_fingerprints ?? [], "shard_fingerprints");
   if (pageIds.length !== shardFingerprints.length) {
     throw new TypeError("page_ids and shard_fingerprints must have the same length");
