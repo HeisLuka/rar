@@ -51,10 +51,7 @@ impl BlobStoreRuntime {
             None,
         )
         .map_err(|error| {
-            BlobStoreError::new(
-                "blob_provider_config_invalid",
-                bounded_message(&error.code),
-            )
+            BlobStoreError::new("blob_provider_config_invalid", bounded_message(&error.code))
         })?;
 
         let service = BlobStoreService::new(
