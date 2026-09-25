@@ -727,4 +727,67 @@ mod tests {
         assert!(!json.contains("byte_range"));
         assert!(!json.contains("private_state_ref"));
     }
+
+    #[test]
+    fn edited_page_extent_flows_to_resolved_surface_without_moving_objects() {
+        let mut input = fixture(false);
+        let original_nodes = input.node_geometry.clone();
+        let target = input
+            .pages
+            .iter_mut()
+            .find(|page| page.id == page_id(1))
+            .expect("page 1");
+        target.size = Size2D::new(
+            LengthEmu::new(111 * EMU_PER_MILLIMETER),
+            LengthEmu::new(222 * EMU_PER_MILLIMETER),
+        );
+
+        let projection = project_bounded(input);
+        assert_eq!(projection.node_geometry.len(), original_nodes.len());
+        for authored in &original_nodes {
+            let projected = projection
+                .node_geometry
+                .iter()
+                .find(|node| node.origin == authored.node_id)
+                .expect("projected node geometry");
+            assert_eq!(projected.parent_origin, authored.parent_origin);
+            assert_eq!(projected.bounds, authored.bounds);
+            assert_eq!(projected.transform, authored.transform);
+        }
+
+        let scene = resolve_bounded_geometry(
+            &projection,
+            BoundedLayoutEnvironment {
+                engine_revision: "page-extent-v1".into(),
+                font_set_fingerprint: "fonts:none".into(),
+                resource_fingerprint: "resources:none".into(),
+            },
+        )
+        .expect("edited page extent should resolve");
+
+        let surface = scene
+            .surfaces
+            .iter()
+            .find(|surface| surface.origin == page_id(1))
+            .expect("resolved page surface");
+        assert_eq!(
+            surface.size,
+            Size2D::new(
+                LengthEmu::new(111 * EMU_PER_MILLIMETER),
+                LengthEmu::new(222 * EMU_PER_MILLIMETER),
+            )
+        );
+        assert_eq!(scene.nodes.len(), original_nodes.len());
+        for authored in &original_nodes {
+            let resolved = scene
+                .nodes
+                .iter()
+                .find(|node| node.origin == authored.node_id)
+                .expect("resolved node geometry");
+            assert_eq!(resolved.parent_origin, authored.parent_origin);
+            assert_eq!(resolved.bounds, authored.bounds);
+            assert_eq!(resolved.transform, authored.transform);
+        }
+    }
+
 }
