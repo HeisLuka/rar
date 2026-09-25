@@ -1,0 +1,139 @@
+name: TEMP Publisher Rescue provenance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-publisher-rescue-prov-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full file binutils osslsigncode libplist-utils
+      - name: Fetch official preview endpoint and inspect
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/pr
+          python - <<'PY'
+          import json, pathlib
+          json.dump({
+            "schema":"chaptera.publisher-rescue-provenance.v1",
+            "official_product":"https://highcaliberapplications.com/publisher-rescue/",
+            "official_preview_endpoint":"https://highcaliberapplications.com/get/publisher-rescue",
+            "raw_packages_retained":False,
+            "source_safe":True
+          }, open("out/source.json","w"), indent=2)
+          PY
+
+          fetch_one () {
+            label="$1"
+            ua="$2"
+            out="/tmp/pr/$label.bin"
+            headers="/tmp/pr/$label.headers"
+            meta="/tmp/pr/$label.meta"
+            set +e
+            curl -fL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 \
+              -A "$ua" -D "$headers" -o "$out" \
+              -w 'http_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nsize_download=%{size_download}\n' \
+              'https://highcaliberapplications.com/get/publisher-rescue' > "$meta"
+            rc=$?
+            set -e
+            echo "curl_rc=$rc" >> "$meta"
+            if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
+              return 0
+            fi
+            sha256sum "$out" > "/tmp/pr/$label.sha256"
+            file -b "$out" > "/tmp/pr/$label.file"
+            7z l -slt "$out" > "/tmp/pr/$label.7zlist" 2>&1 || true
+            strings -a -n 5 "$out" | grep -Eai 'Publisher Rescue|High Caliber|libmspub|librevenge|writerperfect|LibreOffice|OpenOffice|Lemon Squeezy|version|copyright|license|third.party|Qt|Electron|Tauri|Rust|Python|7-Zip|Inno Setup|NSIS' | head -n 400 > "/tmp/pr/$label.markers" || true
+            osslsigncode verify -in "$out" > "/tmp/pr/$label.signature" 2>&1 || true
+          }
+
+          fetch_one windows 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36'
+          fetch_one mac 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15'
+
+          python - <<'PY'
+          import json, pathlib, re, hashlib, os
+          root=pathlib.Path("/tmp/pr")
+          known=["libmspub","librevenge","writerperfect","libwpd","libreoffice","openoffice"]
+          def read(p): return p.read_text(errors="replace") if p.exists() else ""
+          arms={}
+          for label in ("windows","mac"):
+              pkg=root/f"{label}.bin"
+              meta={}
+              for line in read(root/f"{label}.meta").splitlines():
+                  if "=" in line:
+                      k,v=line.split("=",1); meta[k]=v
+              headers=read(root/f"{label}.headers")
+              h={}
+              for line in headers.splitlines():
+                  if ":" in line:
+                      k,v=line.split(":",1)
+                      if k.lower() in {"content-disposition","content-type","content-length","location","server","last-modified","etag"}:
+                          h.setdefault(k.lower(),[]).append(v.strip())
+              markers=read(root/f"{label}.markers")
+              listing=read(root/f"{label}.7zlist")
+              sig=read(root/f"{label}.signature")
+              arm={"fetch":meta,"headers":h,"downloaded":pkg.exists() and pkg.stat().st_size>0}
+              if arm["downloaded"]:
+                  b=pkg.read_bytes()
+                  arm.update({
+                    "size":len(b),
+                    "sha256":hashlib.sha256(b).hexdigest(),
+                    "file_type":read(root/f"{label}.file").strip(),
+                    "archive_listing_excerpt":listing[:20000],
+                    "marker_excerpt":markers[:20000],
+                    "known_engine_marker_counts":{k:len(re.findall(re.escape(k), (listing+"\n"+markers).lower())) for k in known},
+                    "signature_excerpt":sig[:12000]
+                  })
+              arms[label]=arm
+          report={
+            "schema":"chaptera.publisher-rescue-provenance.v1",
+            "source_safe":True,
+            "raw_packages_retained":False,
+            "endpoint":"https://highcaliberapplications.com/get/publisher-rescue",
+            "arms":arms,
+            "guardrail":"No parser genealogy conclusion from missing markers alone."
+          }
+          pathlib.Path("out/report.json").write_text(json.dumps(report,indent=2))
+          summary={
+            "schema":"chaptera.publisher-rescue-provenance-summary.v1",
+            "arms":{k:{
+              "downloaded":v.get("downloaded"),
+              "fetch":v.get("fetch"),
+              "headers":v.get("headers"),
+              "size":v.get("size"),
+              "sha256":v.get("sha256"),
+              "file_type":v.get("file_type"),
+              "known_engine_marker_counts":v.get("known_engine_marker_counts"),
+              "signature_excerpt":v.get("signature_excerpt","")[:3000]
+            } for k,v in arms.items()},
+            "guardrail":report["guardrail"]
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.exe' -o -iname '*.dmg' -o -iname '*.zip' -o -iname '*.bin' \) | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          r=json.load(open("out/report.json"))
+          assert r["source_safe"] is True
+          assert r["raw_packages_retained"] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher-rescue-provenance-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
