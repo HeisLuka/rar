@@ -977,9 +977,10 @@ mod tests {
     async fn store_requires_operator_migration() {
         let path = temp_db("missing-schema");
         fs::write(&path, []).unwrap();
-        let error = SqliteAuthnStore::open(&path, 1, Duration::from_secs(1))
-            .await
-            .unwrap_err();
+        let error = match SqliteAuthnStore::open(&path, 1, Duration::from_secs(1)).await {
+            Ok(_) => panic!("authn store opened without operator migration"),
+            Err(error) => error,
+        };
         assert_eq!(error.code, "authn_schema_missing");
         cleanup(&path);
     }
