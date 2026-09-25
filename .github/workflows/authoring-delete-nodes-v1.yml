@@ -8,10 +8,6 @@ on:
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_delete_nodes.py"
       - ".github/workflows/authoring-delete-nodes-v1.yml"
-  push:
-    branches:
-      - feat/authoring-delete-nodes-v1-impl
-
 permissions:
   contents: read
 
