@@ -8,7 +8,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{
-    Row, SqlitePool,
+    Row, Sqlite, SqlitePool,
+    pool::PoolConnection,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
@@ -260,6 +261,133 @@ impl SqliteExportPublicationStore {
                 let existing = self
                     .get_by_job(&input.tenant_id, &input.job_id)
                     .await?
+                    .ok_or_else(|| {
+                        ExportPublicationError::new(
+                            "export_publication_conflict",
+                            "logical publication conflicted without a readable row",
+                        )
+                    })?;
+
+                if equivalent_retry(&existing.input, &input)
+                    && existing.effect_key == effect_key
+                    && existing.publication_id == publication_id
+                {
+                    Ok(ExportPublicationPrepareOutcomeV1::AlreadyPrepared(existing))
+                } else {
+                    Err(ExportPublicationError::new(
+                        "export_publication_conflict",
+                        "same tenant/job publication identity already maps to different revision, fence, artifact, or loss evidence",
+                    ))
+                }
+            }
+            Err(error) => Err(sqlite_error(error)),
+        }
+    }
+
+    /// Prepare one logical export publication inside a transaction owned by
+    /// the caller. This exists so a production AuthZ adapter can verify the
+    /// current access generation and write the publication under the same
+    /// SQLite write barrier.
+    pub async fn prepare_in_transaction(
+        &self,
+        conn: &mut PoolConnection<Sqlite>,
+        input: ExportPublicationInputV1,
+        created_at_ms: i64,
+    ) -> Result<ExportPublicationPrepareOutcomeV1, ExportPublicationError> {
+        input.validate()?;
+        if created_at_ms < 0 {
+            return Err(ExportPublicationError::new(
+                "invalid_created_at",
+                "created_at_ms must be non-negative",
+            ));
+        }
+        let publication_id = input.publication_id()?;
+        let effect_key = input.effect_key()?;
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO export_publications (
+                publication_id,
+                effect_key,
+                tenant_id,
+                job_id,
+                document_id,
+                exact_revision_id,
+                canonical_revision_id,
+                target_profile,
+                layout_environment_id,
+                fence_id,
+                artifact_binding_id,
+                artifact_content_hash,
+                loss_binding_id,
+                loss_report_hash,
+                created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&publication_id)
+        .bind(effect_key.as_bytes())
+        .bind(input.tenant_id.as_bytes())
+        .bind(input.job_id.as_bytes())
+        .bind(input.document_id.as_bytes())
+        .bind(input.exact_revision_id.as_bytes())
+        .bind(&input.canonical_revision_id)
+        .bind(&input.target_profile)
+        .bind(&input.layout_environment_id)
+        .bind(&input.fence_id)
+        .bind(input.artifact_binding_id.as_bytes())
+        .bind(&input.artifact_content_hash)
+        .bind(input.loss_binding_id.as_bytes())
+        .bind(&input.loss_report_hash)
+        .bind(created_at_ms)
+        .execute(&mut **conn)
+        .await;
+
+        match result {
+            Ok(done) if done.rows_affected() == 1 => Ok(
+                ExportPublicationPrepareOutcomeV1::Prepared(ExportPublicationRecordV1 {
+                    publication_id,
+                    effect_key,
+                    input,
+                    created_at_ms,
+                }),
+            ),
+            Ok(_) => Err(ExportPublicationError::new(
+                "export_publication_no_effect",
+                "export publication insert did not create one row",
+            )),
+            Err(error) if is_constraint(&error) => {
+                let row = sqlx::query(
+                    r#"
+                    SELECT
+                        publication_id,
+                        effect_key,
+                        tenant_id,
+                        job_id,
+                        document_id,
+                        exact_revision_id,
+                        canonical_revision_id,
+                        target_profile,
+                        layout_environment_id,
+                        fence_id,
+                        artifact_binding_id,
+                        artifact_content_hash,
+                        loss_binding_id,
+                        loss_report_hash,
+                        created_at_ms
+                    FROM export_publications
+                    WHERE tenant_id=? AND job_id=?
+                    "#,
+                )
+                .bind(input.tenant_id.as_bytes())
+                .bind(input.job_id.as_bytes())
+                .fetch_optional(&mut **conn)
+                .await
+                .map_err(sqlite_error)?;
+
+                let existing = row
+                    .map(decode_record)
+                    .transpose()?
                     .ok_or_else(|| {
                         ExportPublicationError::new(
                             "export_publication_conflict",
