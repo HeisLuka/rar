@@ -15,8 +15,7 @@ use crate::{
 };
 
 pub const EDITOR_REVISION_EVENT_SCHEMA_V1: &str = "chaptera.editor-revision-event.v1";
-pub const MATERIALIZATION_RECEIPT_SCHEMA_V1: &str =
-    "chaptera.exact-revision-materialization.v1";
+pub const MATERIALIZATION_RECEIPT_SCHEMA_V1: &str = "chaptera.exact-revision-materialization.v1";
 pub const EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,12 +303,7 @@ impl ExactRevisionMaterializer {
 
         let mut authoring_root_hash = None;
         for edge in &edges {
-            current_project = self.replay_edge(
-                &source_bytes,
-                &source,
-                current_project,
-                edge,
-            )?;
+            current_project = self.replay_edge(&source_bytes, &source, current_project, edge)?;
             authoring_root_hash = edge.authoring_root_hash.clone();
         }
 
@@ -383,9 +377,9 @@ impl ExactRevisionMaterializer {
         }
 
         let candidate = append_event_operation(current_project, event.operation)?;
-        let replayed = self
-            .editor
-            .replay_project(source_bytes, &source.source_sha256, &candidate)?;
+        let replayed =
+            self.editor
+                .replay_project(source_bytes, &source.source_sha256, &candidate)?;
         if replayed != candidate {
             return Err(RevisionMaterializerError::new(
                 "editor_replay_mismatch",
@@ -492,14 +486,14 @@ fn validate_event_fields(event: &EditorRevisionEventV1) -> Result<(), RevisionMa
     if event.schema_version != EDITOR_REVISION_EVENT_SCHEMA_V1 {
         return Err(RevisionMaterializerError::new(
             "unsupported_event_schema",
-            format!("unsupported editor revision event schema {:?}", event.schema_version),
+            format!(
+                "unsupported editor revision event schema {:?}",
+                event.schema_version
+            ),
         ));
     }
     require_sha256(&event.source_sha256, "event.source_sha256")?;
-    require_sha256(
-        &event.before_project_sha256,
-        "event.before_project_sha256",
-    )?;
+    require_sha256(&event.before_project_sha256, "event.before_project_sha256")?;
     require_sha256(&event.after_project_sha256, "event.after_project_sha256")?;
     if let Some(root) = &event.authoring_root_hash {
         require_sha256(root, "event.authoring_root_hash")?;
