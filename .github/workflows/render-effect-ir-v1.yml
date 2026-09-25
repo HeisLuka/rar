@@ -1,0 +1,33 @@
+name: Render Effect IR V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/render_effect_ir_v1.py"
+      - "tools/test_render_effect_ir_v1.py"
+      - "tools/render_scene_v1.py"
+      - "tools/scene_patch_v1.py"
+      - "tools/test_render_scene_v1.py"
+      - "tools/test_scene_patch_v1.py"
+      - "docs/render-effect-ir-v1.md"
+      - ".github/workflows/render-effect-ir-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test RenderEffect IR contract
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_effect_ir_v1.py
+      - name: Re-run RenderScene compiler regressions
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_scene_v1.py
+      - name: Re-run ScenePatch equivalence regressions
+        run: PYTHONPATH=tools python -m unittest -v tools/test_scene_patch_v1.py
