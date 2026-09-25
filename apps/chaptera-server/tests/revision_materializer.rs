@@ -11,6 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use chaptera_server::{
+    revision_identity::SqliteRevisionIdentityStore,
     revision_materializer::{
         AuthorizedDocumentSource, DocumentSourceAuthority, EDITOR_REVISION_EVENT_SCHEMA_V1,
         EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorReplayEngine, EditorRevisionEventV1,
@@ -298,6 +299,183 @@ fn project_hash_matches_existing_rar_revision_kernel_law() {
         project_sha256(&project).unwrap(),
         "575fbcb664f2a6b672a05861a4d2aff6aca339204a50e3401d04e1920d946348"
     );
+}
+
+#[tokio::test]
+async fn mapped_materializer_exposes_canonical_identity_without_substitution() {
+    let bytes = b"synthetic-pub-source".to_vec();
+    let source_sha256 = sha256_hex(&bytes);
+    let initial = rect(0, 0, 100, 50);
+    let editor: Arc<dyn EditorReplayEngine> = Arc::new(FakeEditor {
+        initial_rect: initial,
+    });
+    let baseline = editor.baseline_project(&bytes, &source_sha256).unwrap();
+    let op1 = move_operation(initial, rect(10, 20, 100, 50));
+    let p1 = append_project_operation(baseline.clone(), op1.clone());
+    let op2 = move_operation(rect(10, 20, 100, 50), rect(30, 40, 100, 50));
+    let p2 = append_project_operation(p1.clone(), op2.clone());
+
+    let (store, path) = open_store("identity-mapped").await;
+    let identity = SqliteRevisionIdentityStore::open(&path, 2, Duration::from_secs(1))
+        .await
+        .unwrap();
+
+    let canonical_r0 = hash_char('1');
+    let canonical_r1 = hash_char('2');
+    let canonical_r2 = hash_char('3');
+
+    identity
+        .bind_baseline("doc-a", "r0", &canonical_r0, 1)
+        .await
+        .unwrap();
+
+    store
+        .append_edge(edge_for(
+            "doc-a",
+            "r0",
+            "r1",
+            0,
+            "op-1",
+            &source_sha256,
+            &baseline,
+            &p1,
+            op1,
+            &hash_char('a'),
+        ))
+        .await
+        .unwrap();
+    identity
+        .bind_child(
+            "doc-a",
+            "r0",
+            "r1",
+            &canonical_r0,
+            &canonical_r1,
+            2,
+        )
+        .await
+        .unwrap();
+
+    store
+        .append_edge(edge_for(
+            "doc-a",
+            "r1",
+            "r2",
+            1,
+            "op-2",
+            &source_sha256,
+            &p1,
+            &p2,
+            op2,
+            &hash_char('b'),
+        ))
+        .await
+        .unwrap();
+    identity
+        .bind_child(
+            "doc-a",
+            "r1",
+            "r2",
+            &canonical_r1,
+            &canonical_r2,
+            3,
+        )
+        .await
+        .unwrap();
+
+    let m = materializer(
+        authority(&bytes, "doc-a", &source_sha256),
+        bytes.clone(),
+        store.clone(),
+        editor,
+    )
+    .with_revision_identity_store(identity.clone());
+
+    let r1 = m.materialize("tenant-a", "doc-a", "r1").await.unwrap();
+    assert_eq!(
+        r1.canonical_authoring_revision_id.as_deref(),
+        Some(canonical_r1.as_str())
+    );
+    assert_eq!(
+        r1.require_canonical_authoring_revision_id().unwrap(),
+        canonical_r1
+    );
+    assert_ne!(r1.requested_revision_id, canonical_r1);
+    assert_ne!(r1.project_sha256, canonical_r1);
+    assert_ne!(
+        r1.authoring_root_hash.as_deref(),
+        Some(canonical_r1.as_str())
+    );
+
+    let r2 = m.materialize("tenant-a", "doc-a", "r2").await.unwrap();
+    assert_eq!(
+        r2.canonical_authoring_revision_id.as_deref(),
+        Some(canonical_r2.as_str())
+    );
+
+    let historical_r1 = m.materialize("tenant-a", "doc-a", "r1").await.unwrap();
+    assert_eq!(
+        historical_r1.canonical_authoring_revision_id.as_deref(),
+        Some(canonical_r1.as_str())
+    );
+
+    identity.close().await;
+    cleanup_store(&store, &path).await;
+}
+
+#[tokio::test]
+async fn mapped_materializer_fails_closed_when_canonical_binding_is_missing() {
+    let bytes = b"synthetic-pub-source".to_vec();
+    let source_sha256 = sha256_hex(&bytes);
+    let initial = rect(0, 0, 100, 50);
+    let editor: Arc<dyn EditorReplayEngine> = Arc::new(FakeEditor {
+        initial_rect: initial,
+    });
+    let baseline = editor.baseline_project(&bytes, &source_sha256).unwrap();
+    let op1 = move_operation(initial, rect(10, 20, 100, 50));
+    let p1 = append_project_operation(baseline.clone(), op1.clone());
+
+    let (store, path) = open_store("identity-missing").await;
+    let identity = SqliteRevisionIdentityStore::open(&path, 2, Duration::from_secs(1))
+        .await
+        .unwrap();
+    identity
+        .bind_baseline("doc-a", "r0", &hash_char('1'), 1)
+        .await
+        .unwrap();
+
+    store
+        .append_edge(edge_for(
+            "doc-a",
+            "r0",
+            "r1",
+            0,
+            "op-1",
+            &source_sha256,
+            &baseline,
+            &p1,
+            op1,
+            &hash_char('a'),
+        ))
+        .await
+        .unwrap();
+
+    let m = materializer(
+        authority(&bytes, "doc-a", &source_sha256),
+        bytes,
+        store.clone(),
+        editor,
+    )
+    .with_revision_identity_store(identity.clone());
+
+    let error = m
+        .materialize("tenant-a", "doc-a", "r1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "canonical_revision_unbound");
+
+    identity.close().await;
+    cleanup_store(&store, &path).await;
 }
 
 #[tokio::test]
