@@ -51,20 +51,20 @@ impl AuthRuntime {
             AuthRuntimeError::new("auth_config_missing", "auth configuration is missing")
         })?;
         let public_origin = config.public_origin.as_deref().ok_or_else(|| {
-            AuthRuntimeError::new("public_origin_missing", "public_origin is required for AuthN")
+            AuthRuntimeError::new(
+                "public_origin_missing",
+                "public_origin is required for AuthN",
+            )
         })?;
 
         require_canonical_callback_path(&auth.oidc.redirect_path)?;
 
-        let client_secret = secrets
-            .oidc_client_secret
-            .as_ref()
-            .ok_or_else(|| {
-                AuthRuntimeError::new(
-                    "oidc_client_secret_missing",
-                    "resolved OIDC client secret is missing",
-                )
-            })?;
+        let client_secret = secrets.oidc_client_secret.as_ref().ok_or_else(|| {
+            AuthRuntimeError::new(
+                "oidc_client_secret_missing",
+                "resolved OIDC client secret is missing",
+            )
+        })?;
         let client_secret = Zeroizing::new(
             String::from_utf8(client_secret.expose().to_vec()).map_err(|_| {
                 AuthRuntimeError::new(
