@@ -37,6 +37,7 @@ pub mod source_ingress;
 pub mod source_ingress_async;
 pub mod source_ingress_security;
 pub mod source_ingress_sqlite;
+pub mod source_validation_job;
 pub mod sqlite_blob_metadata;
 pub mod sqlite_store;
 pub mod state;
