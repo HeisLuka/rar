@@ -21,9 +21,40 @@ use chaptera_server::{
 };
 use clap::Parser;
 
-#[tokio::main]
-async fn main() -> ExitCode {
-    match run(Cli::parse()).await {
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+
+    if let Command::SourceBaseline {
+        document_id,
+        expected_sha256,
+        expected_byte_len,
+    } = &cli.command
+    {
+        return match source_baseline::run_source_baseline_worker(
+            document_id,
+            expected_sha256,
+            *expected_byte_len,
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("chaptera: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("chaptera: failed to initialize runtime: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match runtime.block_on(run(cli)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("chaptera: {error}");
@@ -141,17 +172,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             }
             doctor::run(&AppState::new(RuntimePorts::unconfigured()))?;
         }
-        Command::SourceBaseline {
-            document_id,
-            expected_sha256,
-            expected_byte_len,
-        } => {
-            source_baseline::run_source_baseline_worker(
-                &document_id,
-                &expected_sha256,
-                expected_byte_len,
-            )?;
-        }
+        Command::SourceBaseline { .. } => unreachable!(
+            "source-baseline is dispatched synchronously before Tokio runtime creation"
+        ),
     }
 
     Ok(())
