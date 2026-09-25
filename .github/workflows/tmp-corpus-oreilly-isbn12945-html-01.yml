@@ -1,0 +1,66 @@
+name: TEMP OReilly ISBN 9780735612945 archived HTML inspect
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-oreilly-isbn12945-html-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch exact archived index and enumerate links
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re
+          from html.parser import HTMLParser
+          from urllib.parse import urljoin
+          from urllib.request import Request,urlopen
+          from pathlib import Path
+
+          archived='https://web.archive.org/web/20101018185557id_/http://examples.oreilly.com:80/9780735612945/'
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__(); self.links=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag.lower()=='a':
+                      d=dict(attrs)
+                      if d.get('href'): self.links.append(d['href'])
+
+          req=Request(archived,headers={'User-Agent':'rar-pub-training-oreilly-html/1.0'})
+          try:
+              with urlopen(req,timeout=60) as r:
+                  raw=r.read(2*1024*1024+1)
+                  status=getattr(r,'status',None); final=r.geturl(); ctype=r.headers.get('Content-Type')
+              if len(raw)>2*1024*1024: raise RuntimeError('archived HTML exceeded cap')
+              html=raw.decode('utf-8','replace')
+              p=P(); p.feed(html)
+              links=[{'href':h,'absolute':urljoin('http://examples.oreilly.com/9780735612945/',h)} for h in p.links]
+              carrier_re=re.compile(r'(?:\.pub|\.zip|\.cab|\.exe|\.msi|\.iso|\.img|\.7z|\.rar)(?:$|[?#])',re.I)
+              carriers=[x for x in links if carrier_re.search(x['absolute'])]
+              receipt={'schema':'chaptera.oreilly-isbn12945-html-inspect.v1','source_safe':True,'raw_html_retained':False,'archived_url':archived,'status':status,'final_url':final,'content_type':ctype,'html_len':len(raw),'links':links,'carrier_links':carriers}
+          except Exception as e:
+              receipt={'schema':'chaptera.oreilly-isbn12945-html-inspect.v1','source_safe':True,'raw_html_retained':False,'archived_url':archived,'error':f'{type(e).__name__}: {e}'}
+          Path('out/summary.json').write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(receipt,indent=2,ensure_ascii=False))
+          PY
+      - name: Guard metadata-only artifact
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' \) | grep -q .; then exit 1; fi
+          sha256sum out/* > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-oreilly-isbn12945-html-inspect
+          path: out/**
+          retention-days: 30
