@@ -1,13 +1,23 @@
+import importlib.util
 import json
 import pathlib
 import unittest
 
 from tools.build_pub_research_reset_receipt import build_provider_receipt
-from tools.research_runner_verify_reset_receipt_compat import verify_compat
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "packages" / "protocol" / "pub-lab-2019" / "v1" / "synthetic-vmware-restore-evidence.json"
+VERIFIER_PATH = ROOT / "tools" / "research-runner" / "verify_reset_receipt.py"
 PACKET = "5" * 64
+
+
+def load_donor_verifier():
+    spec = importlib.util.spec_from_file_location("pub_research_reset_verifier", VERIFIER_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load donor reset verifier")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class PubResearchResetReceiptBuildTests(unittest.TestCase):
@@ -28,13 +38,16 @@ class PubResearchResetReceiptBuildTests(unittest.TestCase):
         self.assertEqual(receipt["schema"], "pub-research-reset-receipt.v1")
         self.assertEqual(receipt["provider_id"], "vmware-workstation-pub-lab-2019")
         self.assertTrue(receipt["restore_verified"])
-        verify_compat(
+
+        verifier = load_donor_verifier()
+        summary = verifier.validate_receipt(
             receipt,
             expected_baseline="publisher-2019-build12527-golden-v1",
             expected_snapshot="MODERN-2019-12527-GOLDEN-v1",
             expected_experiment="PUB-LAB-CI-01",
             expected_packet_sha256=PACKET,
         )
+        self.assertEqual(summary["provider_id"], "vmware-workstation-pub-lab-2019")
 
     def test_wrong_baseline_cannot_be_relabelled(self):
         with self.assertRaises(AssertionError):
