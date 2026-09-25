@@ -29,7 +29,7 @@ use pub_idml::{
 };
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
-    ResourceId, SourceDerivedIdInput, StoryFrame, TableColumnId, TableRowId,
+    ResourceId, SourceDerivedIdInput, Story, StoryFrame, TableColumnId, TableRowId,
     derive_source_canonical_id, validate_story_frames,
 };
 pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
@@ -53,7 +53,8 @@ pub const EDITOR_PROJECT_VERSION_V0_3: &str = "pub-editor-v0.3";
 pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
 pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_6;
+pub const EDITOR_PROJECT_VERSION_V0_7: &str = "pub-editor-v0.7";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_7;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -126,6 +127,14 @@ pub enum EditOperation {
         before: String,
         after: String,
     },
+    BreakTextFrameForwardLink {
+        story_id: StoryId,
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+        new_story_id: StoryId,
+        before_frames: Vec<StoryFrame<StoryId, NodeId>>,
+        after_frames: Vec<StoryFrame<StoryId, NodeId>>,
+    },
     ReplaceTableCellText {
         node_id: NodeId,
         story_id: StoryId,
@@ -163,6 +172,22 @@ impl PersistenceRequirements for EditOperation {
                     property_path: Some("story.text".into()),
                 }]
             }
+            Self::BreakTextFrameForwardLink {
+                story_id,
+                new_story_id,
+                ..
+            } => vec![
+                PersistenceRequirement {
+                    feature: "story.linked_frames".into(),
+                    origin: Some(story_id.into_canonical()),
+                    property_path: Some("story.frames".into()),
+                },
+                PersistenceRequirement {
+                    feature: "story.created_identity".into(),
+                    origin: Some(new_story_id.into_canonical()),
+                    property_path: Some("story".into()),
+                },
+            ],
             Self::ReplaceTableCellText {
                 story_id, cell_id, ..
             } => vec![
@@ -357,6 +382,19 @@ pub enum EditorError {
         story_id: StoryId,
         errors: usize,
     },
+    BreakLinkUnsupported {
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+    },
+    NewStoryIdInvalid {
+        story_id: StoryId,
+    },
+    NewStoryIdConflict {
+        story_id: StoryId,
+    },
+    StaleFrameTopology {
+        story_id: StoryId,
+    },
     TableEditUnsupported {
         node_id: NodeId,
     },
@@ -450,6 +488,30 @@ impl fmt::Display for EditorError {
             Self::FrameTopologyUnsupported { story_id, errors } => write!(
                 formatter,
                 "story {} has unsupported or inconsistent multi-frame topology ({errors} validation errors)",
+                story_id.as_canonical()
+            ),
+            Self::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            } => write!(
+                formatter,
+                "text-frame edge {} -> {} is not an admitted explicit Story chain edge",
+                upstream_frame_id.as_canonical(),
+                downstream_frame_id.as_canonical()
+            ),
+            Self::NewStoryIdInvalid { story_id } => write!(
+                formatter,
+                "new Story identity {} is not an editor-created UUIDv7",
+                story_id.as_canonical()
+            ),
+            Self::NewStoryIdConflict { story_id } => write!(
+                formatter,
+                "new Story identity {} already exists",
+                story_id.as_canonical()
+            ),
+            Self::StaleFrameTopology { story_id } => write!(
+                formatter,
+                "story {} frame topology changed since the persisted operation",
                 story_id.as_canonical()
             ),
             Self::TableEditUnsupported { node_id } => write!(
@@ -563,6 +625,10 @@ impl EditorError {
             Self::TableStoryUnsupported { .. } => "table_story_unsupported",
             Self::FrameCountUnsupported { .. } => "frame_count_unsupported",
             Self::FrameTopologyUnsupported { .. } => "frame_topology_unsupported",
+            Self::BreakLinkUnsupported { .. } => "break_link_unsupported",
+            Self::NewStoryIdInvalid { .. } => "new_story_id_invalid",
+            Self::NewStoryIdConflict { .. } => "new_story_id_conflict",
+            Self::StaleFrameTopology { .. } => "stale_frame_topology",
             Self::TableEditUnsupported { .. } => "table_edit_unsupported",
             Self::MissingTableCell { .. } => "missing_table_cell",
             Self::TableCellNoChange { .. } => "table_cell_no_change",
@@ -635,6 +701,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesResizeOperation {
         index: usize,
     },
+    LegacyProjectCarriesBreakLinkOperation {
+        index: usize,
+    },
     LegacyProjectCarriesTableGrids,
     TableGridMismatch,
     MissingAssetBytes {
@@ -674,7 +743,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, or {EDITOR_PROJECT_VERSION_V0_6:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, or {EDITOR_PROJECT_VERSION_V0_7:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -697,6 +766,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesResizeOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses ResizeNode but the project schema predates pub-editor-v0.5"
+            ),
+            Self::LegacyProjectCarriesBreakLinkOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses BreakTextFrameForwardLink but the project schema predates pub-editor-v0.7"
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
@@ -957,7 +1030,13 @@ impl EditorSession {
 
     pub fn project(&self) -> EditorProject {
         let table_grids = effective_table_grids(&self.graph);
-        let schema_version = if !table_grids.is_empty() {
+        let schema_version = if self
+            .undo
+            .iter()
+            .any(|operation| matches!(operation, EditOperation::BreakTextFrameForwardLink { .. }))
+        {
+            EDITOR_PROJECT_VERSION_V0_7
+        } else if !table_grids.is_empty() {
             EDITOR_PROJECT_VERSION_V0_6
         } else if self
             .undo
@@ -1037,6 +1116,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1059,6 +1139,7 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
         {
             if let Some(index) = project
                 .operations
@@ -1070,6 +1151,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_5
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
         {
             if let Some(index) = project
                 .operations
@@ -1079,9 +1161,20 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6 && !project.table_grids.is_empty()
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
+            && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_7 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::BreakTextFrameForwardLink { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesBreakLinkOperation { index });
+            }
         }
         if project.source_hash != self.source_hash {
             return Err(EditorProjectError::SourceHashMismatch {
@@ -1845,6 +1938,115 @@ impl EditorSession {
         Ok(operation)
     }
 
+    pub fn can_break_text_frame_forward_link(
+        &self,
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+        new_story_id: StoryId,
+    ) -> Result<(), EditorError> {
+        self.validate_source_identity()?;
+
+        if !is_editor_created_uuid_v7_story_id(new_story_id) {
+            return Err(EditorError::NewStoryIdInvalid {
+                story_id: new_story_id,
+            });
+        }
+        if self.graph.stories.contains_key(&new_story_id) {
+            return Err(EditorError::NewStoryIdConflict {
+                story_id: new_story_id,
+            });
+        }
+
+        let chain = explicit_story_chain_for_break(
+            &self.graph,
+            upstream_frame_id,
+            downstream_frame_id,
+        )?;
+        let source_story_id = chain
+            .first()
+            .expect("explicit chain must be non-empty")
+            .story_id;
+        if source_story_id == new_story_id {
+            return Err(EditorError::NewStoryIdConflict {
+                story_id: new_story_id,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn break_text_frame_forward_link(
+        &mut self,
+        upstream_frame_id: NodeId,
+        downstream_frame_id: NodeId,
+        new_story_id: StoryId,
+    ) -> Result<EditOperation, EditorError> {
+        self.can_break_text_frame_forward_link(
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+        )?;
+
+        let before_frames = explicit_story_chain_for_break(
+            &self.graph,
+            upstream_frame_id,
+            downstream_frame_id,
+        )?;
+        let story_id = before_frames
+            .first()
+            .expect("capability check verified non-empty chain")
+            .story_id;
+        let break_index = before_frames
+            .iter()
+            .position(|frame| {
+                frame.frame_id == upstream_frame_id
+                    && frame.next == Some(downstream_frame_id)
+            })
+            .expect("capability check verified explicit break edge");
+
+        let mut after_frames = before_frames.clone();
+        after_frames[break_index].next = None;
+        for (index, frame) in after_frames.iter_mut().enumerate().skip(break_index + 1) {
+            frame.story_id = new_story_id;
+            if index == break_index + 1 {
+                frame.previous = None;
+            }
+        }
+
+        let upstream_after = after_frames
+            .iter()
+            .filter(|frame| frame.story_id == story_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let downstream_after = after_frames
+            .iter()
+            .filter(|frame| frame.story_id == new_story_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !validate_story_frames(&upstream_after).is_empty()
+            || !validate_story_frames(&downstream_after).is_empty()
+            || downstream_after.is_empty()
+        {
+            return Err(EditorError::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            });
+        }
+
+        let operation = EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+            before_frames,
+            after_frames,
+        };
+        apply_forward(&mut self.graph, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
     pub fn replace_story_range(
         &mut self,
         story_id: StoryId,
@@ -2022,6 +2224,18 @@ fn replay_canonical_operation(
         } => session
             .replace_story_text(*story_id, after.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::BreakTextFrameForwardLink {
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+            ..
+        } => session
+            .break_text_frame_forward_link(
+                *upstream_frame_id,
+                *downstream_frame_id,
+                *new_story_id,
+            )
+            .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ReplaceTableCellText {
             node_id,
             story_id,
@@ -2074,6 +2288,172 @@ fn replay_canonical_operation(
             .map_err(|error| EditorProjectError::Operation { index, error }),
     }
 }
+
+fn is_editor_created_uuid_v7_story_id(story_id: StoryId) -> bool {
+    let bytes = story_id.as_canonical().as_bytes();
+    (bytes[6] & 0xf0) == 0x70 && (bytes[8] & 0xc0) == 0x80
+}
+
+fn frame_snapshot(
+    graph: &PubResolvedGraph,
+    node_id: NodeId,
+) -> Option<StoryFrame<StoryId, NodeId>> {
+    let node = graph.nodes.get(&node_id)?;
+    frame_from_payload(node_id, &node.payload)
+}
+
+fn explicit_story_chain_for_break(
+    graph: &PubResolvedGraph,
+    upstream_frame_id: NodeId,
+    downstream_frame_id: NodeId,
+) -> Result<Vec<StoryFrame<StoryId, NodeId>>, EditorError> {
+    let upstream = frame_snapshot(graph, upstream_frame_id).ok_or(
+        EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        },
+    )?;
+    let downstream = frame_snapshot(graph, downstream_frame_id).ok_or(
+        EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        },
+    )?;
+
+    if upstream.story_id != downstream.story_id
+        || upstream.next != Some(downstream_frame_id)
+        || downstream.previous != Some(upstream_frame_id)
+        || !graph.stories.contains_key(&upstream.story_id)
+        || graph.nodes.values().any(|node| {
+            node.payload
+                .table_story
+                .as_ref()
+                .is_some_and(|owner| owner.story_id == Some(upstream.story_id))
+                || node
+                    .payload
+                    .table
+                    .as_ref()
+                    .is_some_and(|table| table.story_id == Some(upstream.story_id))
+        })
+    {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    let frames = graph
+        .nodes
+        .iter()
+        .filter_map(|(node_id, node)| {
+            let frame = frame_from_payload(*node_id, &node.payload)?;
+            (frame.story_id == upstream.story_id).then_some(frame)
+        })
+        .collect::<Vec<_>>();
+    if frames.len() < 2 || !validate_story_frames(&frames).is_empty() {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    let heads = frames
+        .iter()
+        .filter(|frame| frame.previous.is_none())
+        .map(|frame| frame.frame_id)
+        .collect::<Vec<_>>();
+    if heads.len() != 1 {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    let by_id = frames
+        .iter()
+        .map(|frame| (frame.frame_id, frame.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered = Vec::with_capacity(frames.len());
+    let mut seen = BTreeSet::new();
+    let mut cursor = Some(heads[0]);
+
+    while let Some(frame_id) = cursor {
+        if !seen.insert(frame_id) {
+            return Err(EditorError::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            });
+        }
+        let frame = by_id.get(&frame_id).ok_or(
+            EditorError::BreakLinkUnsupported {
+                upstream_frame_id,
+                downstream_frame_id,
+            },
+        )?;
+        ordered.push(frame.clone());
+        cursor = frame.next;
+    }
+
+    if ordered.len() != frames.len()
+        || !ordered.iter().any(|frame| {
+            frame.frame_id == upstream_frame_id
+                && frame.next == Some(downstream_frame_id)
+        })
+    {
+        return Err(EditorError::BreakLinkUnsupported {
+            upstream_frame_id,
+            downstream_frame_id,
+        });
+    }
+
+    Ok(ordered)
+}
+
+fn set_story_frame_snapshot(
+    graph: &mut PubResolvedGraph,
+    snapshot: &StoryFrame<StoryId, NodeId>,
+) -> Result<(), EditorError> {
+    let node = graph
+        .nodes
+        .get_mut(&snapshot.frame_id)
+        .ok_or(EditorError::StaleFrameTopology {
+            story_id: snapshot.story_id,
+        })?;
+    let frame = node
+        .payload
+        .story_frame
+        .as_mut()
+        .ok_or(EditorError::StaleFrameTopology {
+            story_id: snapshot.story_id,
+        })?;
+    frame.story_id = Some(snapshot.story_id);
+    frame.ordinal = snapshot.ordinal;
+    frame.previous_frame = snapshot.previous;
+    frame.next_frame = snapshot.next;
+    Ok(())
+}
+
+fn frames_match_snapshots(
+    graph: &PubResolvedGraph,
+    snapshots: &[StoryFrame<StoryId, NodeId>],
+) -> bool {
+    snapshots.iter().all(|expected| {
+        frame_snapshot(graph, expected.frame_id).as_ref() == Some(expected)
+    })
+}
+
+fn empty_editor_story(story_id: StoryId) -> Story {
+    Story {
+        id: story_id,
+        text: String::new(),
+        paragraphs: Vec::new(),
+        runs: Vec::new(),
+        fields: Vec::new(),
+        hyperlinks: Vec::new(),
+        source_refs: Vec::new(),
+    }
+}
+
 
 fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> {
     let mut grids = Vec::new();
@@ -2423,6 +2803,47 @@ fn apply_forward(
             }
             story.text.clone_from(after);
         }
+        EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            new_story_id,
+            before_frames,
+            after_frames,
+            ..
+        } => {
+            if !graph.stories.contains_key(story_id)
+                || graph.stories.contains_key(new_story_id)
+                || !frames_match_snapshots(graph, before_frames)
+            {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            let current_source_frames = graph
+                .nodes
+                .iter()
+                .filter_map(|(node_id, node)| {
+                    let frame = frame_from_payload(*node_id, &node.payload)?;
+                    (frame.story_id == *story_id).then_some(frame.frame_id)
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_source_frames = before_frames
+                .iter()
+                .map(|frame| frame.frame_id)
+                .collect::<BTreeSet<_>>();
+            if current_source_frames != expected_source_frames {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            graph
+                .stories
+                .insert(*new_story_id, empty_editor_story(*new_story_id));
+            for frame in after_frames {
+                set_story_frame_snapshot(graph, frame)?;
+            }
+        }
         EditOperation::ReplaceTableCellText {
             node_id,
             story_id,
@@ -2547,6 +2968,62 @@ fn apply_inverse(
                 });
             }
             story.text.clone_from(before);
+        }
+        EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            new_story_id,
+            before_frames,
+            after_frames,
+            ..
+        } => {
+            let expected_empty = empty_editor_story(*new_story_id);
+            if !graph.stories.contains_key(story_id)
+                || graph.stories.get(new_story_id) != Some(&expected_empty)
+                || !frames_match_snapshots(graph, after_frames)
+            {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            let current_new_story_frames = graph
+                .nodes
+                .iter()
+                .filter_map(|(node_id, node)| {
+                    let frame = frame_from_payload(*node_id, &node.payload)?;
+                    (frame.story_id == *new_story_id).then_some(frame.frame_id)
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_new_story_frames = after_frames
+                .iter()
+                .filter(|frame| frame.story_id == *new_story_id)
+                .map(|frame| frame.frame_id)
+                .collect::<BTreeSet<_>>();
+            let current_source_story_frames = graph
+                .nodes
+                .iter()
+                .filter_map(|(node_id, node)| {
+                    let frame = frame_from_payload(*node_id, &node.payload)?;
+                    (frame.story_id == *story_id).then_some(frame.frame_id)
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_source_story_frames = after_frames
+                .iter()
+                .filter(|frame| frame.story_id == *story_id)
+                .map(|frame| frame.frame_id)
+                .collect::<BTreeSet<_>>();
+            if current_new_story_frames != expected_new_story_frames
+                || current_source_story_frames != expected_source_story_frames
+            {
+                return Err(EditorError::StaleFrameTopology {
+                    story_id: *story_id,
+                });
+            }
+
+            graph.stories.remove(new_story_id);
+            for frame in before_frames {
+                set_story_frame_snapshot(graph, frame)?;
+            }
         }
         EditOperation::ReplaceTableCellText {
             node_id,
