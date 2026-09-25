@@ -1,0 +1,18 @@
+[package]
+name = "chaptera-resize-producer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chaptera-resize-producer"
+path = "src/main.rs"
+
+[dependencies]
+chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
+pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+serde_json.workspace = true
+sha2.workspace = true
+zip.workspace = true
