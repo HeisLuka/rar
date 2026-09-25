@@ -1,8 +1,7 @@
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
     EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
-    EDITOR_PROJECT_VERSION_V0_10,
-    EditOperation, EditorError, LengthEmu, NodeId, RectEmu,
+    EDITOR_PROJECT_VERSION_V0_10, EditOperation, EditorError, LengthEmu, NodeId, RectEmu,
 };
 
 fn node_id() -> NodeId {
