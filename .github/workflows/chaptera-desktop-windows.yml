@@ -104,10 +104,18 @@ jobs:
           $exe = (Resolve-Path "target/release/chaptera-editor.exe").Path
 
           $p = Start-Process -FilePath $exe -ArgumentList @("--ux-snapshot-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $default, "1280", "820") -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "1280x820 UX snapshot failed with exit code $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) {
+            $errorFile = [System.IO.Path]::ChangeExtension($default, "error.txt")
+            if (Test-Path $errorFile) { Get-Content $errorFile | Write-Host }
+            throw "1280x820 UX snapshot failed with exit code $($p.ExitCode)"
+          }
 
           $p = Start-Process -FilePath $exe -ArgumentList @("--ux-snapshot-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $minimum, "900", "600") -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "900x600 UX snapshot failed with exit code $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) {
+            $errorFile = [System.IO.Path]::ChangeExtension($minimum, "error.txt")
+            if (Test-Path $errorFile) { Get-Content $errorFile | Write-Host }
+            throw "900x600 UX snapshot failed with exit code $($p.ExitCode)"
+          }
 
           python tools/validate_editor_desktop_ux_snapshots.py --default $default --minimum $minimum --output target/release/editor-desktop-ux-snapshots.real.json
 
