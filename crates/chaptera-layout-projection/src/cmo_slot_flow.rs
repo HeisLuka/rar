@@ -441,7 +441,7 @@ pub fn resolve_cmo_slot_flow_v1(
                     target_story_id: input.target_story_id.clone(),
                     target_frame_node_id: input.target_frame_node_id.clone(),
                     preceding_text_height_emu: pending_text_height_emu,
-                    used_height_before_emu,
+                    used_height_before_emu: used_height_emu,
                     used_height_after_emu: next,
                     resolved_x_emu: 0,
                     resolved_y_emu: used_height_emu,
