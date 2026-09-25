@@ -1836,6 +1836,89 @@ impl EditorSession {
         Ok(placements)
     }
 
+    fn idml_authored_rectangle_placements(
+        &self,
+    ) -> Result<Vec<IdmlAuthoredRectanglePlacement>, EditorExportError> {
+        let target = EditorEditableTarget::Idml;
+        let mut placements = Vec::with_capacity(self.authored_shapes.len());
+
+        for shape in self.authored_shapes.values() {
+            let page = self.graph.pages.get(&shape.page_id).ok_or_else(|| {
+                EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "authored rectangle {} references missing page {}",
+                        shape.node_id.as_canonical(),
+                        shape.page_id.as_canonical()
+                    ),
+                }
+            })?;
+
+            placements.push(IdmlAuthoredRectanglePlacement {
+                node_id: shape.node_id,
+                page_id: shape.page_id,
+                page_size: page.size,
+                bounds: shape.bounds,
+                fill_visible: shape.paint.fill.visible,
+                fill_color: IdmlRgb8 {
+                    r: shape.paint.fill.color.r,
+                    g: shape.paint.fill.color.g,
+                    b: shape.paint.fill.color.b,
+                },
+                stroke_visible: shape.paint.stroke.visible,
+                stroke_color: IdmlRgb8 {
+                    r: shape.paint.stroke.color.r,
+                    g: shape.paint.stroke.color.g,
+                    b: shape.paint.stroke.color.b,
+                },
+                stroke_width_emu: shape.paint.stroke.width_emu,
+            });
+        }
+
+        Ok(placements)
+    }
+
+    fn odg_authored_rectangle_placements(
+        &self,
+    ) -> Result<Vec<OdgAuthoredRectanglePlacement>, EditorExportError> {
+        let target = EditorEditableTarget::Odg;
+        let mut placements = Vec::with_capacity(self.authored_shapes.len());
+
+        for shape in self.authored_shapes.values() {
+            if !self.graph.pages.contains_key(&shape.page_id) {
+                return Err(EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "authored rectangle {} references missing page {}",
+                        shape.node_id.as_canonical(),
+                        shape.page_id.as_canonical()
+                    ),
+                });
+            }
+
+            placements.push(OdgAuthoredRectanglePlacement {
+                node_id: shape.node_id,
+                page_id: shape.page_id,
+                bounds: shape.bounds,
+                fill_visible: shape.paint.fill.visible,
+                fill_color: OdgRgb8 {
+                    r: shape.paint.fill.color.r,
+                    g: shape.paint.fill.color.g,
+                    b: shape.paint.fill.color.b,
+                },
+                stroke_visible: shape.paint.stroke.visible,
+                stroke_color: OdgRgb8 {
+                    r: shape.paint.stroke.color.r,
+                    g: shape.paint.stroke.color.g,
+                    b: shape.paint.stroke.color.b,
+                },
+                stroke_width_emu: shape.paint.stroke.width_emu,
+            });
+        }
+
+        Ok(placements)
+    }
+
     pub fn can_replace_story_text(&self, story_id: StoryId) -> Result<(), EditorError> {
         self.validate_source_identity()?;
 
