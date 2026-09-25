@@ -7,7 +7,6 @@ on:
       - "apps/chaptera-server/src/schema_migration.rs"
       - "apps/chaptera-server/migrations/0008_quota_reservations.sql"
       - "apps/chaptera-server/tests/quota_crash_boundary.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - ".github/workflows/cloud-quota-sqlite-v1.yml"
   workflow_dispatch:
 

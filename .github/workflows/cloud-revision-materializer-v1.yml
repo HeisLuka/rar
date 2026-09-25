@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/Cargo.toml"
-      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/src/sqlite_store.rs"
       - "apps/chaptera-server/src/revision_materializer.rs"
       - "apps/chaptera-server/tests/revision_materializer.rs"
