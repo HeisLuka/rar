@@ -8,7 +8,6 @@ on:
       - "services/editor-api/document_text_find_v1.py"
       - "services/editor-api/story_find_replace_v1.py"
       - "services/editor-api/multi_story_text_transaction_v1.py"
-      - "services/editor-api/revision_store.py"
       - ".github/workflows/document-text-replace-all-v1.yml"
   workflow_dispatch:
 
