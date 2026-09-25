@@ -1625,6 +1625,13 @@ impl EditorSession {
                         message: error.to_string(),
                     }
                 })?;
+                let authored = self.idml_authored_rectangle_placements()?;
+                add_authored_rectangles_to_idml(&plan, &mut package, &authored).map_err(
+                    |error| EditorExportError::Projection {
+                        target,
+                        message: error.to_string(),
+                    },
+                )?;
                 write_idml_ucf(&package).map_err(|error| EditorExportError::Write {
                     target,
                     message: error.to_string(),
@@ -1645,6 +1652,13 @@ impl EditorSession {
                         message: error.to_string(),
                     }
                 })?;
+                let authored = self.odg_authored_rectangle_placements()?;
+                add_authored_rectangles_to_odg(&plan, &mut package, &authored).map_err(
+                    |error| EditorExportError::Projection {
+                        target,
+                        message: error.to_string(),
+                    },
+                )?;
                 write_odg(&package).map_err(|error| EditorExportError::Write {
                     target,
                     message: error.to_string(),
@@ -1667,7 +1681,12 @@ impl EditorSession {
     ) -> Result<(ExportReport, String, ExportPlan), EditorExportError> {
         self.validate_source_identity()
             .map_err(EditorExportError::Session)?;
-        let plan = editable_export_plan(target, &self.graph, &self.image_replacements);
+        let plan = editable_export_plan(
+            target,
+            &self.graph,
+            &self.image_replacements,
+            &self.authored_shapes,
+        );
         let report = build_export_report(
             &plan,
             ExportReportSource {
