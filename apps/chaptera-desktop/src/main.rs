@@ -3613,7 +3613,7 @@ mod tests {
         harness.step();
         {
             let preview_idml = harness.get_by_label("Preview IDML");
-            preview_idml.click();
+            preview_idml.simulate_click();
         }
         harness.step();
         assert!(
@@ -3635,7 +3635,7 @@ mod tests {
         harness.step();
         {
             let export_idml = harness.get_by_label("Export edited IDML copy");
-            export_idml.click();
+            export_idml.simulate_click();
         }
         harness.step();
 
