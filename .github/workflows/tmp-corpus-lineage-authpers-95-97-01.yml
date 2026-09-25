@@ -196,7 +196,8 @@ jobs:
             pubs[side]=pub;deliveries[side]=iso.delivery
             streams[side],storages[side]=cfb(pub)
             parsed[side]=parse(streams[side]["/Contents"])
-          whole_file_delta=len(pubs["pub97"])-len(pubs["pub95"])\n          if whole_file_delta!=512:raise ValueError(f"expected +512 whole-file delta, got {whole_file_delta}")
+          whole_file_delta=len(pubs["pub97"])-len(pubs["pub95"])
+          if whole_file_delta!=512:raise ValueError(f"expected +512 whole-file delta, got {whole_file_delta}")
 
           if sorted(streams["pub95"])!=sorted(streams["pub97"]):raise ValueError("CFB path drift")
           changed=[p for p in sorted(streams["pub95"]) if streams["pub95"][p]!=streams["pub97"][p]]
