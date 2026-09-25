@@ -92,7 +92,7 @@ fn decode_visible_resources(visual: &ViewerGeometryDocument) -> Result<(), Strin
             "image/jpeg" => image::ImageFormat::Jpeg,
             _ => continue,
         };
-        image::load_from_memory_with_format(&embedded.bytes, format)
+        let _decoded = image::load_from_memory_with_format(&embedded.bytes, format)
             .map_err(|error| format!("decode visible resource: {error}"))?
             .to_rgba8();
     }
@@ -167,13 +167,20 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
         .iter()
         .find(|surface| surface.origin == first_page.id);
     let page_origin = first_page.id.into_canonical();
-    let page_nodes = visual
-        .scene
-        .nodes
-        .iter()
-        .filter(|node| node.parent_origin == page_origin)
-        .map(|node| node.origin)
-        .collect::<BTreeSet<_>>();
+    let mut owned_origins = BTreeSet::from([page_origin]);
+    let mut page_nodes = BTreeSet::new();
+    loop {
+        let mut changed = false;
+        for node in &visual.scene.nodes {
+            if owned_origins.contains(&node.parent_origin) && page_nodes.insert(node.origin) {
+                owned_origins.insert(node.origin.into_canonical());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     let first_page_story_frames = visual
         .story_frames
         .iter()
