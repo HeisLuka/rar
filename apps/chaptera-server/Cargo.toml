@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+chaptera-cdm-model = { package = "pub-model", path = "../../crates/pub-model" }
 chaptera-untrusted-pub-scan = { path = "../../crates/chaptera-untrusted-pub-scan" }
 aws-config = "=1.12.0"
 aws-sdk-s3 = "=1.149.0"
