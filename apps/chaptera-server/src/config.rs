@@ -505,11 +505,7 @@ fn validate_auth(mode: EnvironmentMode, auth: &AuthConfig) -> Result<(), ConfigE
     validate_oidc(mode, &auth.oidc)
 }
 
-fn validate_positive_ttl(
-    field: &str,
-    seconds: u64,
-    code: &'static str,
-) -> Result<(), ConfigError> {
+fn validate_positive_ttl(field: &str, seconds: u64, code: &'static str) -> Result<(), ConfigError> {
     if seconds == 0 {
         return Err(ConfigError::new(code, format!("{field} must be positive")));
     }
@@ -985,10 +981,8 @@ client_secret = {secret_source}
 
     #[test]
     fn auth_ttls_are_explicit_positive_and_ordered() {
-        let mut config: ChapteraConfig = toml::from_str(&prod_toml(
-            r#"{ source = "env", name = "OIDC_SECRET" }"#,
-        ))
-        .unwrap();
+        let mut config: ChapteraConfig =
+            toml::from_str(&prod_toml(r#"{ source = "env", name = "OIDC_SECRET" }"#)).unwrap();
 
         let auth = config.auth.as_mut().unwrap();
         auth.login_flow_ttl_seconds = 0;
