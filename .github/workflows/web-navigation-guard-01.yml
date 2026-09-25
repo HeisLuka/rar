@@ -1,0 +1,24 @@
+name: Web Navigation Guard V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/navigation-guard-v1.mjs"
+      - "apps/web/navigation-guard-v1.test.mjs"
+      - ".github/workflows/web-navigation-guard-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  navigation-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test navigation safety guard
+        run: node --test apps/web/navigation-guard-v1.test.mjs
