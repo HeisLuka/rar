@@ -220,8 +220,18 @@ mod tests {
         assert_eq!(issued.session_token.len(), 64);
         assert_eq!(issued.csrf_token.len(), 64);
         assert_ne!(issued.session_token, issued.csrf_token);
-        assert!(issued.session_token.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert!(issued.csrf_token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(
+            issued
+                .session_token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert!(
+            issued
+                .csrf_token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
         assert_eq!(issued.return_path, "/projects/demo");
 
         let debug = format!("{issued:?}");
