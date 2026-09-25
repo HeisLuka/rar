@@ -6,8 +6,15 @@
 //! resolved authoring graph. Native PUB materialization remains a separate
 //! writer gate.
 
+mod create_shape_runtime_v1;
 mod writer_assessment;
 
+pub use create_shape_runtime_v1::{
+    AuthoredEntityProvenanceV1, AuthoredShapeKindV1, AuthoredShapePaintV1,
+    AuthoredShapeRuntimeV1, AuthoredShapeTransformV1, AuthoredSolidFillV1,
+    AuthoredSolidStrokeV1, CreateShapeRuntimeValidationError, Srgb8V1,
+    validate_authored_shape_runtime_v1,
+};
 pub use writer_assessment::{
     EDITOR_PUB_WRITER_ASSESSMENT_SCHEMA_V0_1, EditorPubPersistenceAssessment,
     EditorPubWriterAssessment, EditorPubWriterAssessmentError, EditorStoryWriterProbeResult,
@@ -56,7 +63,8 @@ pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
 pub const EDITOR_PROJECT_VERSION_V0_7: &str = "pub-editor-v0.7";
 pub const EDITOR_PROJECT_VERSION_V0_8: &str = "pub-editor-v0.8";
 pub const EDITOR_PROJECT_VERSION_V0_9: &str = "pub-editor-v0.9";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_9;
+pub const EDITOR_PROJECT_VERSION_V0_10: &str = "pub-editor-v0.10";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_10;
 pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
@@ -186,6 +194,16 @@ pub enum EditOperation {
         page_id: PageId,
         entries: Vec<ResizeNodeBatchEntry>,
     },
+    CreateShape {
+        node_id: NodeId,
+        page_id: PageId,
+        parent_id: PageId,
+        shape_kind: AuthoredShapeKindV1,
+        bounds: RectEmu,
+        transform: AuthoredShapeTransformV1,
+        paint: AuthoredShapePaintV1,
+        provenance: AuthoredEntityProvenanceV1,
+    },
 }
 
 impl PersistenceRequirements for EditOperation {
@@ -259,6 +277,23 @@ impl PersistenceRequirements for EditOperation {
                     property_path: Some("node.bounds".into()),
                 })
                 .collect(),
+            Self::CreateShape { node_id, .. } => vec![
+                PersistenceRequirement {
+                    feature: "node.created_identity".into(),
+                    origin: Some(node_id.into_canonical()),
+                    property_path: Some("node".into()),
+                },
+                PersistenceRequirement {
+                    feature: "node.geometry.bounds".into(),
+                    origin: Some(node_id.into_canonical()),
+                    property_path: Some("node.bounds".into()),
+                },
+                PersistenceRequirement {
+                    feature: "shape.paint".into(),
+                    origin: Some(node_id.into_canonical()),
+                    property_path: Some("node.paint".into()),
+                },
+            ],
         }
     }
 }
@@ -385,6 +420,11 @@ pub fn mature_0x2c_pub_format_manifest() -> FormatCompatibilityManifest {
         "node.geometry.bounds".into(),
         FormatRepresentability::Lossless,
     );
+    features.insert(
+        "node.created_identity".into(),
+        FormatRepresentability::Lossless,
+    );
+    features.insert("shape.paint".into(), FormatRepresentability::Lossless);
 
     FormatCompatibilityManifest {
         target: mature_0x2c_pub_persistence_target(),
@@ -459,6 +499,27 @@ pub enum EditorError {
         sha256: Sha256Digest,
     },
     StaleImageOperation {
+        node_id: NodeId,
+    },
+    CreateShapeInvalidNodeId {
+        node_id: NodeId,
+    },
+    CreateShapePageMissing {
+        page_id: PageId,
+    },
+    CreateShapeIdCollision {
+        node_id: NodeId,
+    },
+    CreateShapeInvalidBounds {
+        node_id: NodeId,
+    },
+    CreateShapeInvalidPaint {
+        node_id: NodeId,
+    },
+    CreateShapeInvalidProvenance {
+        node_id: NodeId,
+    },
+    CreateShapeMalformed {
         node_id: NodeId,
     },
     NodeMoveUnsupported {
@@ -620,6 +681,41 @@ impl fmt::Display for EditorError {
                 "image node {} no longer matches the replacement operation precondition",
                 node_id.as_canonical()
             ),
+            Self::CreateShapeInvalidNodeId { node_id } => write!(
+                formatter,
+                "CreateShape node {} is not an editor-created UUIDv7",
+                node_id.as_canonical()
+            ),
+            Self::CreateShapePageMissing { page_id } => write!(
+                formatter,
+                "CreateShape page {} is not present in the opened document",
+                page_id.as_canonical()
+            ),
+            Self::CreateShapeIdCollision { node_id } => write!(
+                formatter,
+                "CreateShape node {} collides with an existing visual node",
+                node_id.as_canonical()
+            ),
+            Self::CreateShapeInvalidBounds { node_id } => write!(
+                formatter,
+                "CreateShape node {} has invalid or unsafe bounds",
+                node_id.as_canonical()
+            ),
+            Self::CreateShapeInvalidPaint { node_id } => write!(
+                formatter,
+                "CreateShape node {} has invalid explicit fill/stroke paint",
+                node_id.as_canonical()
+            ),
+            Self::CreateShapeInvalidProvenance { node_id } => write!(
+                formatter,
+                "CreateShape node {} is not explicitly author-created",
+                node_id.as_canonical()
+            ),
+            Self::CreateShapeMalformed { node_id } => write!(
+                formatter,
+                "CreateShape node {} violates the bounded rectangle/identity/page contract",
+                node_id.as_canonical()
+            ),
             Self::NodeMoveUnsupported { node_id } => write!(
                 formatter,
                 "node {} is outside the bounded directly-page-owned move slice",
@@ -749,6 +845,13 @@ impl EditorError {
             Self::MissingReplacementAsset { .. } => "missing_replacement_asset",
             Self::ImageReplacementNoChange { .. } => "image_replacement_no_change",
             Self::StaleImageOperation { .. } => "stale_image_operation",
+            Self::CreateShapeInvalidNodeId { .. } => "create_shape_invalid_node_id",
+            Self::CreateShapePageMissing { .. } => "create_shape_page_missing",
+            Self::CreateShapeIdCollision { .. } => "create_shape_id_collision",
+            Self::CreateShapeInvalidBounds { .. } => "create_shape_invalid_bounds",
+            Self::CreateShapeInvalidPaint { .. } => "create_shape_invalid_paint",
+            Self::CreateShapeInvalidProvenance { .. } => "create_shape_invalid_provenance",
+            Self::CreateShapeMalformed { .. } => "create_shape_malformed",
             Self::NodeMoveUnsupported { .. } => "node_move_unsupported",
             Self::NodeMoveNoChange { .. } => "node_move_no_change",
             Self::NodeMoveOverflow { .. } => "node_move_overflow",
@@ -833,6 +936,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesResizeNodesOperation {
         index: usize,
     },
+    LegacyProjectCarriesCreateShapeOperation {
+        index: usize,
+    },
     LegacyProjectCarriesTableGrids,
     TableGridMismatch,
     MissingAssetBytes {
@@ -872,7 +978,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, or {EDITOR_PROJECT_VERSION_V0_9:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, or {EDITOR_PROJECT_VERSION_V0_10:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -907,6 +1013,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesResizeNodesOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses ResizeNodes but the project schema predates pub-editor-v0.9"
+            ),
+            Self::LegacyProjectCarriesCreateShapeOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses CreateShape but the project schema predates pub-editor-v0.10"
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
@@ -1098,6 +1208,7 @@ pub struct EditorSession {
     graph: PubResolvedGraph,
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
+    authored_shapes: BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
     undo: Vec<EditOperation>,
     redo: Vec<EditOperation>,
 }
@@ -1114,6 +1225,7 @@ impl EditorSession {
             graph,
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
+            authored_shapes: BTreeMap::new(),
             undo: Vec::new(),
             redo: Vec::new(),
         })
@@ -1129,6 +1241,16 @@ impl EditorSession {
 
     pub fn operations(&self) -> &[EditOperation] {
         &self.undo
+    }
+
+    pub fn authored_shapes(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &AuthoredShapeRuntimeV1> + DoubleEndedIterator {
+        self.authored_shapes.values()
+    }
+
+    pub fn authored_shape(&self, node_id: NodeId) -> Option<&AuthoredShapeRuntimeV1> {
+        self.authored_shapes.get(&node_id)
     }
 
     pub fn replacement_assets(
@@ -1169,6 +1291,12 @@ impl EditorSession {
         let table_grids = effective_table_grids(&self.graph);
         let schema_version =
             if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::CreateShape { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_10
+            } else if self
                 .undo
                 .iter()
                 .any(|operation| matches!(operation, EditOperation::ResizeNodes { .. }))
@@ -1267,6 +1395,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1292,6 +1421,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
         {
             if let Some(index) = project
                 .operations
@@ -1306,6 +1436,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
         {
             if let Some(index) = project
                 .operations
@@ -1319,6 +1450,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
@@ -1326,6 +1458,7 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
         {
             if let Some(index) = project.operations.iter().position(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
@@ -1335,6 +1468,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
         {
             if let Some(index) = project
                 .operations
@@ -1344,13 +1478,24 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesMoveNodesOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_9 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+        {
             if let Some(index) = project
                 .operations
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::ResizeNodes { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeNodesOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_10 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::CreateShape { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesCreateShapeOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
@@ -1363,6 +1508,7 @@ impl EditorSession {
             || !self.redo.is_empty()
             || !self.replacement_assets.is_empty()
             || !self.image_replacements.is_empty()
+            || !self.authored_shapes.is_empty()
         {
             return Err(EditorProjectError::SessionNotEmpty);
         }
@@ -1413,6 +1559,7 @@ impl EditorSession {
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_7
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_8
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_9
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_10
         {
             let actual_grids = effective_table_grids(&candidate.graph);
             if actual_grids != project.table_grids {
@@ -1968,6 +2115,90 @@ impl EditorSession {
         Ok(operation)
     }
 
+    pub fn create_shape(
+        &mut self,
+        node_id: NodeId,
+        page_id: PageId,
+        bounds: RectEmu,
+        paint: AuthoredShapePaintV1,
+    ) -> Result<EditOperation, EditorError> {
+        let operation = EditOperation::CreateShape {
+            node_id,
+            page_id,
+            parent_id: page_id,
+            shape_kind: AuthoredShapeKindV1::Rectangle,
+            bounds,
+            transform: AuthoredShapeTransformV1::Identity,
+            paint,
+            provenance: AuthoredEntityProvenanceV1::AuthorCreated,
+        };
+        self.consume_canonical_create_shape(operation)
+    }
+
+    fn consume_canonical_create_shape(
+        &mut self,
+        operation: EditOperation,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+        let shape = authored_shape_from_operation(&operation)
+            .expect("consume_canonical_create_shape receives CreateShape");
+        self.validate_create_shape_candidate(&shape)?;
+        self.authored_shapes.insert(shape.node_id, shape);
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
+    fn validate_create_shape_candidate(
+        &self,
+        shape: &AuthoredShapeRuntimeV1,
+    ) -> Result<(), EditorError> {
+        if !self.graph.pages.contains_key(&shape.page_id) {
+            return Err(EditorError::CreateShapePageMissing {
+                page_id: shape.page_id,
+            });
+        }
+        if self.graph.nodes.contains_key(&shape.node_id)
+            || self.authored_shapes.contains_key(&shape.node_id)
+        {
+            return Err(EditorError::CreateShapeIdCollision {
+                node_id: shape.node_id,
+            });
+        }
+        match validate_authored_shape_runtime_v1(shape) {
+            Ok(()) => Ok(()),
+            Err(CreateShapeRuntimeValidationError::NodeIdNotUuidV7) => {
+                Err(EditorError::CreateShapeInvalidNodeId {
+                    node_id: shape.node_id,
+                })
+            }
+            Err(CreateShapeRuntimeValidationError::InvalidBounds) => {
+                Err(EditorError::CreateShapeInvalidBounds {
+                    node_id: shape.node_id,
+                })
+            }
+            Err(CreateShapeRuntimeValidationError::InvalidPaint) => {
+                Err(EditorError::CreateShapeInvalidPaint {
+                    node_id: shape.node_id,
+                })
+            }
+            Err(
+                CreateShapeRuntimeValidationError::NonAuthorCreatedProvenance
+                | CreateShapeRuntimeValidationError::NonAuthorCreatedPaintProvenance,
+            ) => Err(EditorError::CreateShapeInvalidProvenance {
+                node_id: shape.node_id,
+            }),
+            Err(
+                CreateShapeRuntimeValidationError::ParentPageMismatch
+                | CreateShapeRuntimeValidationError::UnsupportedShapeKind
+                | CreateShapeRuntimeValidationError::UnsupportedTransform,
+            ) => Err(EditorError::CreateShapeMalformed {
+                node_id: shape.node_id,
+            }),
+        }
+    }
+
     pub fn can_move_node_to(
         &self,
         node_id: NodeId,
@@ -2390,6 +2621,8 @@ impl EditorSession {
         let operation = self.undo.pop().ok_or(EditorError::NothingToUndo)?;
         if matches!(operation, EditOperation::ReplaceImage { .. }) {
             apply_image_inverse(&mut self.image_replacements, &operation)?;
+        } else if matches!(operation, EditOperation::CreateShape { .. }) {
+            apply_authored_shape_inverse(&mut self.authored_shapes, &operation)?;
         } else {
             apply_inverse(&mut self.graph, &operation)?;
         }
@@ -2402,6 +2635,11 @@ impl EditorSession {
         let operation = self.redo.pop().ok_or(EditorError::NothingToRedo)?;
         if matches!(operation, EditOperation::ReplaceImage { .. }) {
             apply_image_forward(&mut self.image_replacements, &operation)?;
+        } else if matches!(operation, EditOperation::CreateShape { .. }) {
+            let shape = authored_shape_from_operation(&operation)
+                .expect("CreateShape operation reconstructs authored shape");
+            self.validate_create_shape_candidate(&shape)?;
+            self.authored_shapes.insert(shape.node_id, shape);
         } else {
             apply_forward(&mut self.graph, &operation)?;
         }
@@ -2558,6 +2796,9 @@ fn replay_canonical_operation(
             .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ResizeNodes { page_id, entries } => session
             .consume_canonical_resize_nodes(*page_id, entries.clone())
+            .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::CreateShape { .. } => session
+            .consume_canonical_create_shape(expected.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
     }
 }
@@ -3334,6 +3575,9 @@ fn apply_forward(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::CreateShape { .. } => {
+            unreachable!("CreateShape is applied to the authored overlay state")
+        }
     }
     Ok(())
 }
@@ -3537,7 +3781,50 @@ fn apply_inverse(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::CreateShape { .. } => {
+            unreachable!("CreateShape is reverted in the authored overlay state")
+        }
     }
+    Ok(())
+}
+
+fn authored_shape_from_operation(operation: &EditOperation) -> Option<AuthoredShapeRuntimeV1> {
+    match operation {
+        EditOperation::CreateShape {
+            node_id,
+            page_id,
+            parent_id,
+            shape_kind,
+            bounds,
+            transform,
+            paint,
+            provenance,
+        } => Some(AuthoredShapeRuntimeV1 {
+            node_id: *node_id,
+            page_id: *page_id,
+            parent_id: *parent_id,
+            shape_kind: *shape_kind,
+            bounds: *bounds,
+            transform: *transform,
+            paint: paint.clone(),
+            provenance: *provenance,
+        }),
+        _ => None,
+    }
+}
+
+fn apply_authored_shape_inverse(
+    authored_shapes: &mut BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    let shape = authored_shape_from_operation(operation)
+        .expect("CreateShape inverse receives CreateShape operation");
+    if authored_shapes.get(&shape.node_id) != Some(&shape) {
+        return Err(EditorError::CreateShapeIdCollision {
+            node_id: shape.node_id,
+        });
+    }
+    authored_shapes.remove(&shape.node_id);
     Ok(())
 }
 
