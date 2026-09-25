@@ -451,10 +451,7 @@ impl SqliteRevisionStore {
             )),
             Err(write_error) => {
                 if let Some(existing) = self
-                    .read_revision_identity(
-                        &binding.document_id,
-                        &binding.service_revision_id,
-                    )
+                    .read_revision_identity(&binding.document_id, &binding.service_revision_id)
                     .await?
                 {
                     if same_revision_identity(&existing, &binding) {
@@ -707,10 +704,7 @@ fn validate_revision_identity_binding(
             ),
         ));
     }
-    require_sha256(
-        &binding.canonical_revision_id,
-        "canonical_revision_id",
-    )?;
+    require_sha256(&binding.canonical_revision_id, "canonical_revision_id")?;
     if binding.bound_at_ms < 0 {
         return Err(SqliteStoreError::new(
             "revision_identity_invalid",
@@ -1211,10 +1205,7 @@ mod tests {
 
         for binding in [&doc_a_r1, &doc_a_r2, &doc_b_r1] {
             assert!(matches!(
-                store
-                    .bind_revision_identity(binding.clone())
-                    .await
-                    .unwrap(),
+                store.bind_revision_identity(binding.clone()).await.unwrap(),
                 RevisionIdentityBindOutcome::Bound(_)
             ));
         }
