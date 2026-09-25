@@ -1075,8 +1075,10 @@ mod tests {
     #[tokio::test]
     async fn open_requires_operator_migration() {
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
-        let path =
-            std::env::temp_dir().join(format!("chaptera-job-unmigrated-{}-{n}.sqlite", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-job-unmigrated-{}-{n}.sqlite",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
 
         let error = match SqliteJobQueue::open(&path, 4, Duration::from_secs(2)).await {
