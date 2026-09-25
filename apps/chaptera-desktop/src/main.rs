@@ -3450,11 +3450,56 @@ mod tests {
             "Story edit must be admitted through the real GUI button"
         );
 
+        let movable_page_label = {
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let editor = app.editor.as_ref().expect("editor loaded");
+            visual
+                .document
+                .pages
+                .iter()
+                .find_map(|page| {
+                    let page_origin = page.id.into_canonical();
+                    let page_id_text = page.id.as_canonical().to_string();
+                    let has_movable = visual
+                        .scene
+                        .nodes
+                        .iter()
+                        .filter(|node| node.parent_origin == page_origin)
+                        .any(|node| {
+                            let Some(instance) =
+                                direct_scene_instance(editor, &page_id_text, node.origin)
+                            else {
+                                return false;
+                            };
+                            let admission =
+                                admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                            if !admission.admitted
+                                || admission.origin_node_id.as_deref()
+                                    != Some(node.origin.as_canonical().to_string().as_str())
+                            {
+                                return false;
+                            }
+                            let Some(authored) = editor.graph().nodes.get(&node.origin) else {
+                                return false;
+                            };
+                            let bounds = authored.header.bounds;
+                            editor
+                                .can_move_node_to(node.origin, bounds.x, bounds.y)
+                                .is_ok()
+                        });
+                    has_movable.then(|| format!("Page {}", page.index))
+                })
+                .expect("real fixture exposes a page with a movable direct page-local object")
+        };
+        harness.get_by_label(&movable_page_label).click();
+        harness.step();
+
         let (start, end) = {
             let object = harness
                 .get_all_by_label("Movable canvas object")
                 .last()
-                .expect("real canvas exposes at least one movable object");
+                .expect("selected movable page exposes at least one movable object");
             let bounds = object.raw_bounds().expect("movable object has screen bounds");
             let start = egui::pos2(
                 ((bounds.x0 + bounds.x1) / 2.0) as f32,
