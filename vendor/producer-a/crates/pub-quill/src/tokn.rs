@@ -1,4 +1,4 @@
-use crate::{QuillChunkDescriptor, QuillStoryReadError};
+use crate::story::{QuillChunkDescriptor, QuillStoryReadError};
 use pub_core::{Decoded, QuillSyid, RawSpan, StreamPath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -630,5 +630,289 @@ fn span(stream: StreamPath, start: usize, len: usize) -> RawSpan {
         stream,
         offset: start as u64,
         len: len as u64,
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn w16(bytes: &mut Vec<u8>, value: u16) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn w32(bytes: &mut Vec<u8>, value: u32) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn property_block(properties: &[(u16, u32)]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        w32(
+            &mut bytes,
+            u32::try_from(4 + properties.len() * 6).unwrap(),
+        );
+        for (tag, value) in properties {
+            w16(&mut bytes, *tag);
+            w32(&mut bytes, *value);
+        }
+        bytes
+    }
+
+    fn type12_prefix(
+        count: u32,
+        service: u32,
+        boundaries: &[u32],
+    ) -> Vec<u8> {
+        assert_eq!(boundaries.len(), usize::try_from(count).unwrap() + 1);
+        let mut bytes = Vec::new();
+        w32(&mut bytes, count);
+        w32(&mut bytes, TOKN_PLC_TYPE);
+        w32(&mut bytes, service);
+        for boundary in boundaries {
+            w32(&mut bytes, *boundary);
+        }
+        bytes
+    }
+
+    fn descriptor(len: usize, ordinal: u16) -> QuillChunkDescriptor {
+        fn decoded_u16(value: u16, offset: u64) -> Decoded<u16> {
+            Decoded {
+                value,
+                source: RawSpan {
+                    stream: StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                    offset,
+                    len: 2,
+                },
+                raw: value.to_le_bytes().to_vec(),
+            }
+        }
+        fn decoded_u32(value: u32, offset: u64) -> Decoded<u32> {
+            Decoded {
+                value,
+                source: RawSpan {
+                    stream: StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                    offset,
+                    len: 4,
+                },
+                raw: value.to_le_bytes().to_vec(),
+            }
+        }
+        fn decoded_name(value: [u8; 4], offset: u64) -> Decoded<[u8; 4]> {
+            Decoded {
+                value,
+                source: RawSpan {
+                    stream: StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                    offset,
+                    len: 4,
+                },
+                raw: value.to_vec(),
+            }
+        }
+
+        QuillChunkDescriptor {
+            source: RawSpan {
+                stream: StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                offset: 0x40,
+                len: 24,
+            },
+            presence_marker: decoded_u16(0x18, 0x40),
+            name: decoded_name(*b"TOKN", 0x42),
+            option_a: decoded_u16(ordinal, 0x46),
+            option_b: decoded_u16(0, 0x48),
+            option_c: decoded_u16(0, 0x4a),
+            bit_type: decoded_name(*b"PLC ", 0x4c),
+            data_offset: decoded_u32(0, 0x50),
+            data_length: decoded_u32(u32::try_from(len).unwrap(), 0x54),
+        }
+    }
+
+    fn syid(value: u32) -> Decoded<QuillSyid> {
+        Decoded {
+            value: QuillSyid(value),
+            source: RawSpan {
+                stream: StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                offset: 0x100,
+                len: 4,
+            },
+            raw: value.to_le_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn compact_n3_60685_shape_parses_as_generic_two_phase_tokn() {
+        let mut bytes = type12_prefix(3, 0x0001_ffff, &[262, 273, 1870, 1882]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_STATE, 0x0600),
+            (TOKN_PROPERTY_TEXT_LENGTH, 9),
+            (TOKN_PROPERTY_KIND, 7),
+        ]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_TEXT_LENGTH, 15)]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_TEXT_LENGTH, 10)]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_STATE, u32::MAX)]));
+        bytes.extend(property_block(&[]));
+        bytes.extend(property_block(&[]));
+        assert_eq!(bytes.len(), 88);
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(11)],
+        )
+        .unwrap();
+
+        assert_eq!(parsed.len(), 1);
+        let tokn = &parsed[0];
+        assert_eq!(tokn.story_ordinal.value, 0);
+        assert_eq!(tokn.story_syid.value, QuillSyid(11));
+        assert_eq!(tokn.first_phase.len(), 3);
+        assert_eq!(tokn.second_phase.len(), 3);
+        assert!(tokn.target_section.is_none());
+        assert!(tokn.opaque_tail.is_empty());
+        assert_eq!(
+            tokn.effective_tokens
+                .iter()
+                .map(|token| (
+                    token.start_utf16.value,
+                    token.text_length_utf16,
+                    token.kind_i32(),
+                    token.attached_target_index,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (262, Some(9), Some(7), Some(-1)),
+                (273, Some(15), Some(7), None),
+                (1870, Some(10), Some(7), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn controlled_url_shape_uses_same_tokn_grammar_and_utf16_target_record() {
+        let url = "http://poi.apache.org/";
+        let url_utf16 = url.encode_utf16().collect::<Vec<_>>();
+
+        let mut bytes = type12_prefix(1, 0x0001_ffff, &[10, 14]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_STATE, 0x08c0),
+            (TOKN_PROPERTY_TEXT_LENGTH, 4),
+            (TOKN_PROPERTY_KIND, 1),
+        ]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_STATE, 0)]));
+
+        let record_len = 2 + url_utf16.len() * 2;
+        let remaining = 4 + record_len;
+        w32(&mut bytes, u32::try_from(remaining).unwrap());
+        w32(&mut bytes, 1);
+        w32(&mut bytes, 0x1234_5678);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 4);
+        w16(&mut bytes, u16::try_from(url_utf16.len()).unwrap());
+        for word in &url_utf16 {
+            w16(&mut bytes, *word);
+        }
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(22)],
+        )
+        .unwrap();
+        let tokn = &parsed[0];
+        let target = tokn.target_section.as_ref().expect("target section");
+        assert_eq!(target.header.count.value, 1);
+        assert_eq!(target.header.service_like.value, 0x1234_5678);
+        assert_eq!(tokn.effective_tokens[0].kind_i32(), Some(1));
+        assert_eq!(tokn.effective_tokens[0].attached_target_index, Some(0));
+        assert!(matches!(
+            &target.records[0],
+            QuillToknTargetRecord::Utf16String { text, .. } if text == url
+        ));
+        assert!(tokn.opaque_tail.is_empty());
+    }
+
+    #[test]
+    fn kind3_internal_page_target_preserves_payload_units_and_physical_seqnum() {
+        let mut bytes = type12_prefix(1, 0x0001_ffff, &[20, 21]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_STATE, 0x08c0),
+            (TOKN_PROPERTY_TEXT_LENGTH, 1),
+            (TOKN_PROPERTY_KIND, 3),
+        ]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_STATE, 0)]));
+
+        // offset table (4) + compact record: u16 units + [u16 marker=1,u16 pageSeq=266]
+        w32(&mut bytes, 10);
+        w32(&mut bytes, 1);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 4);
+        w16(&mut bytes, 2);
+        w16(&mut bytes, 1);
+        w16(&mut bytes, 266);
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(33)],
+        )
+        .unwrap();
+        let target = parsed[0].target_section.as_ref().unwrap();
+        assert!(matches!(
+            &target.records[0],
+            QuillToknTargetRecord::CompactPayload {
+                payload_units,
+                payload,
+                physical_target_value: Some(266),
+                ..
+            } if payload_units.value == 2 && payload == &vec![1, 0, 10, 1]
+        ));
+    }
+
+    #[test]
+    fn malformed_property_block_body_is_preserved_opaque_not_guessed() {
+        let mut bytes = type12_prefix(1, 0, &[0, 1]);
+        w32(&mut bytes, 5);
+        bytes.push(0xaa);
+        bytes.extend(property_block(&[]));
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(44)],
+        )
+        .unwrap();
+        assert!(matches!(
+            parsed[0].first_phase[0],
+            QuillToknPropertyBlock::Opaque { .. }
+        ));
+    }
+
+    #[test]
+    fn descriptor_ordinal_joins_exact_parallel_syid() {
+        let mut bytes = type12_prefix(1, 0, &[0, 1]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_TEXT_LENGTH, 1),
+            (TOKN_PROPERTY_KIND, 7),
+        ]));
+        bytes.extend(property_block(&[]));
+
+        let descriptor = descriptor(bytes.len(), 1);
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor],
+            &[syid(11), syid(22)],
+        )
+        .unwrap();
+
+        assert_eq!(parsed[0].story_ordinal.value, 1);
+        assert_eq!(parsed[0].story_syid.value, QuillSyid(22));
     }
 }
