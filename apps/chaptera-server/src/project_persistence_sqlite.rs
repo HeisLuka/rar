@@ -12,7 +12,7 @@ use sqlx::{
 };
 
 use crate::{
-    source_ingress::{ConsumeUploadRequest, IngressError, ProjectCreateResult, UploadState},
+    source_ingress::{ConsumeUploadRequest, IngressError, ProjectCreateResult},
     sqlite_store::AUTHORING_REVISION_SCHEMA_V1,
 };
 
@@ -570,14 +570,14 @@ fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, In
     .map_err(|error| IngressError::new("request_hash_failed", error.to_string()))?;
 
     let digest = Sha256::digest(bytes);
-    Ok(hex_lower(&digest))
+    Ok(hex_lower(digest))
 }
 
 fn stable_id(prefix: &str, tenant_id: &str, request_id: &str) -> Result<String, IngressError> {
     let bytes = serde_json::to_vec(&(tenant_id, request_id))
         .map_err(|error| IngressError::new("identity_generation_failed", error.to_string()))?;
     let digest = Sha256::digest(bytes);
-    Ok(format!("{prefix}:{}", &hex_lower(&digest)[..24]))
+    Ok(format!("{prefix}:{}", &hex_lower(digest)[..24]))
 }
 
 fn hex_lower(bytes: impl AsRef<[u8]>) -> String {
@@ -681,6 +681,7 @@ mod tests {
 
     use crate::{
         schema_migration::SqliteMigrationRuntime, source_authority::SqliteDocumentSourceAuthority,
+        source_ingress::UploadState,
     };
 
     use super::*;
