@@ -128,13 +128,14 @@ export class BrowserImageDecodeAdapterV1 {
     }
 
     const expected = reference.decoded_dimensions;
-    if (bitmap.width !== expected[0] || bitmap.height !== expected[1]) {
+    const browserDimensions = [bitmap.width, bitmap.height];
+    if (browserDimensions[0] !== expected[0] || browserDimensions[1] !== expected[1]) {
       if (typeof bitmap.close === "function") bitmap.close();
       return {
         accepted: false,
         reason: "decoded_dimensions_mismatch",
         expected_dimensions: [...expected],
-        browser_dimensions: [bitmap.width, bitmap.height],
+        browser_dimensions: browserDimensions,
         released: true,
       };
     }
