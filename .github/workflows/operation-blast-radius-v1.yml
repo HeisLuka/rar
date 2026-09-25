@@ -1,0 +1,30 @@
+name: Operation blast radius V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/operation_blast_radius_v1.py"
+      - "tools/test_operation_blast_radius_v1.py"
+      - "tools/corpus/cfb_physical_diff.py"
+      - "packages/protocol/operation-blast-radius/**"
+      - ".github/workflows/operation-blast-radius-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile diagnostic comparator
+        run: python -m py_compile tools/operation_blast_radius_v1.py tools/test_operation_blast_radius_v1.py
+      - name: Run OperationBlastRadiusV1 regressions
+        run: python tools/test_operation_blast_radius_v1.py -v
+      - name: Validate schema syntax
+        run: python -m json.tool packages/protocol/operation-blast-radius/v1.schema.json > /dev/null
