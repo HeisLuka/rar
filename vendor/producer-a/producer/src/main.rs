@@ -1,3 +1,5 @@
+mod overset;
+
 use anyhow::{Context, Result};
 use pub_editor::{EditorEditableTarget, EditorProject};
 use pub_model::{Sha256Digest, to_cdm_debug_json_v0_1};
@@ -92,6 +94,12 @@ fn emit_editable_export(
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     let first = args.next().context("fixture path or mode argument missing")?;
+    if first == "authoring-overset" {
+        if args.next().is_some() {
+            anyhow::bail!("unexpected extra arguments");
+        }
+        return overset::run();
+    }
     if first == "resolved-graph" {
         let path = args.next().context("fixture path argument missing")?;
         if args.next().is_some() {
