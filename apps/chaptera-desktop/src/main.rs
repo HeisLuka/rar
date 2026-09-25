@@ -7,6 +7,8 @@
 mod acceptance;
 mod agent;
 mod product_smoke;
+#[cfg(not(feature = "reader-only"))]
+mod resize_producer;
 #[allow(dead_code)]
 mod supporter;
 
@@ -227,6 +229,30 @@ fn main() -> eframe::Result<()> {
         }
     }
 
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--resize-producer-v1")) {
+        #[cfg(feature = "reader-only")]
+        {
+            eprintln!("ResizeNode producer mode is unavailable in the read-only Reader product");
+            std::process::exit(2);
+        }
+        #[cfg(not(feature = "reader-only"))]
+        {
+            let Some(fixture) = args.next().map(PathBuf::from) else {
+                eprintln!("usage: chaptera-editor --resize-producer-v1 FIXTURE.pub");
+                std::process::exit(2);
+            };
+            if args.next().is_some() {
+                eprintln!("ResizeNode producer mode accepts exactly one fixture path");
+                std::process::exit(2);
+            }
+            if let Err(error) = resize_producer::run_stdio(&fixture) {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+            return Ok(());
+        }
+    }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--handoff-create-v1")) {
         if !reader_only_mode() {
