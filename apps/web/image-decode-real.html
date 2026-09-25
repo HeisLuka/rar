@@ -1,0 +1,259 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Real Browser Image Decode Probe</title>
+<canvas id="surface" width="4" height="4" hidden></canvas>
+<script type="module">
+  import {
+    EXACT_CREATE_IMAGE_BITMAP_OPTIONS,
+    decodeBrowserBitmapExactV1,
+    normalizedBrowserDecodeReceiptV1,
+  } from "./image-decode-v1.mjs";
+
+  function bytesFromBase64(value) {
+    const raw = atob(value);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  }
+
+  function sameJson(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function webglReadbackRgba(bitmap) {
+    const canvas = document.getElementById("surface");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const gl = canvas.getContext("webgl", {
+      alpha: true,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: true,
+    });
+    if (!gl) throw new Error("WebGL unavailable for alpha oracle");
+
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      bitmap,
+    );
+    const error = gl.getError();
+    if (error !== gl.NO_ERROR) {
+      throw new Error("WebGL ImageBitmap upload failed with error " + error);
+    }
+
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER,
+      gl.COLOR_ATTACHMENT0,
+      gl.TEXTURE_2D,
+      texture,
+      0,
+    );
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error("WebGL alpha oracle framebuffer incomplete");
+    }
+
+    const pixels = new Uint8Array(bitmap.width * bitmap.height * 4);
+    gl.readPixels(
+      0, 0, bitmap.width, bitmap.height,
+      gl.RGBA, gl.UNSIGNED_BYTE, pixels,
+    );
+    gl.deleteFramebuffer(framebuffer);
+    gl.deleteTexture(texture);
+    return [...pixels];
+  }
+
+  async function decodeInWorker(fixture, identity, referenceReceipt, backendId) {
+    const worker = new Worker("./image-decode-worker-v1.mjs", { type: "module" });
+    const bytes = bytesFromBase64(fixture.base64);
+    const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    try {
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("worker decode timed out")),
+          10000,
+        );
+        worker.onmessage = (event) => {
+          const message = event.data ?? {};
+          if (message.request_id !== "real-worker") return;
+          clearTimeout(timer);
+          if (message.kind === "decode_error") {
+            reject(new Error(
+              "worker decode failed: " + message.error_code + ": " + message.detail,
+            ));
+            return;
+          }
+          resolve({ receipt: message.receipt, bitmap: message.bitmap });
+        };
+        worker.onerror = (event) => {
+          clearTimeout(timer);
+          reject(new Error("worker runtime error: " + event.message));
+        };
+        worker.postMessage({
+          kind: "decode",
+          request_id: "real-worker",
+          bytes: arrayBuffer,
+          mime_type: fixture.mime_type,
+          identity,
+          reference_receipt: referenceReceipt,
+          request_generation: 1,
+          backend_generation: 1,
+          policy_generation: 1,
+          backend_id: backendId,
+        }, [arrayBuffer]);
+      });
+    } finally {
+      worker.terminate();
+    }
+  }
+
+  async function exactCase(name, fixture, probe, { alphaOracle = false, orientationOracle = false } = {}) {
+    const bytes = bytesFromBase64(fixture.base64);
+    const blob = new Blob([bytes], { type: fixture.mime_type });
+    const reference = probe.receipt;
+    const identity = {
+      resource_id: "fixture:" + name,
+      content_hash: reference.resource_sha256,
+      derivative_id: "original",
+    };
+
+    const main = await decodeBrowserBitmapExactV1({
+      blob,
+      identity,
+      reference_receipt: reference,
+      request_generation: 1,
+      backend_generation: 1,
+      policy_generation: 1,
+      placement: "main-thread",
+      backend_id: "real-main",
+    });
+
+    const worker = await decodeInWorker(
+      fixture,
+      identity,
+      reference,
+      "real-worker",
+    );
+
+    const mainNormalized = normalizedBrowserDecodeReceiptV1(main.receipt);
+    const workerNormalized = normalizedBrowserDecodeReceiptV1(worker.receipt);
+    if (!sameJson(mainNormalized, workerNormalized)) {
+      main.bitmap.close();
+      worker.bitmap.close();
+      throw new Error(name + " main/worker normalized receipts differ");
+    }
+
+    if (!sameJson(main.receipt.effective_options, EXACT_CREATE_IMAGE_BITMAP_OPTIONS)) {
+      main.bitmap.close();
+      worker.bitmap.close();
+      throw new Error(name + " exact options changed");
+    }
+    if (main.receipt.resize_policy !== "none") {
+      main.bitmap.close();
+      worker.bitmap.close();
+      throw new Error(name + " exact path performed decode-time resize");
+    }
+
+    let alphaReadback = null;
+    if (alphaOracle) {
+      alphaReadback = webglReadbackRgba(main.bitmap);
+      if (!sameJson(alphaReadback, probe.samples)) {
+        main.bitmap.close();
+        worker.bitmap.close();
+        throw new Error(
+          "alpha source-exact readback differs from reference samples: " +
+          JSON.stringify({ alphaReadback, reference: probe.samples }),
+        );
+      }
+    }
+
+    let defaultDimensions = null;
+    if (orientationOracle) {
+      const defaultBitmap = await createImageBitmap(blob);
+      defaultDimensions = [defaultBitmap.width, defaultBitmap.height];
+      defaultBitmap.close();
+    }
+
+    const result = {
+      fixture: name,
+      mime_type: fixture.mime_type,
+      source_sha256: reference.resource_sha256,
+      reference_decoded_dimensions: reference.decoded_dimensions,
+      exact_decoded_dimensions: main.receipt.decoded_dimensions,
+      exact_options: structuredClone(main.receipt.effective_options),
+      orientation_policy: main.receipt.orientation_policy,
+      alpha_association: main.receipt.alpha_association,
+      color_conversion_policy: main.receipt.color_conversion_policy,
+      resize_policy: main.receipt.resize_policy,
+      main_worker_receipt_equal: true,
+      browser_is_semantic_authority: false,
+      canvas_readback_is_semantic_authority: false,
+      default_decode_trusted_as_exact: false,
+      default_decoded_dimensions: defaultDimensions,
+      default_orientation_dimension_difference:
+        defaultDimensions === null
+          ? null
+          : !sameJson(defaultDimensions, reference.decoded_dimensions),
+      alpha_webgl_readback_rgba: alphaReadback,
+      alpha_reference_samples: alphaOracle ? probe.samples : null,
+      alpha_reference_match: alphaOracle ? sameJson(alphaReadback, probe.samples) : null,
+      reference_cache_identity_sha256: reference.cache_identity_sha256,
+      reference_sample_digest_sha256: reference.sample_digest_sha256,
+    };
+
+    main.bitmap.close();
+    worker.bitmap.close();
+    return result;
+  }
+
+  window.runRealBrowserImageDecodeProbe = async function(input) {
+    if (typeof createImageBitmap !== "function") {
+      throw new Error("createImageBitmap unavailable");
+    }
+    const alpha = await exactCase(
+      "alpha.png",
+      input.fixtures["alpha.png"],
+      input.references["alpha.png"],
+      { alphaOracle: true },
+    );
+    const orientation = await exactCase(
+      "orientation6.jpg",
+      input.fixtures["orientation6.jpg"],
+      input.references["orientation6.jpg"],
+      { orientationOracle: true },
+    );
+
+    if (!sameJson(orientation.reference_decoded_dimensions, [3, 2])) {
+      throw new Error("reference EXIF fixture dimensions changed");
+    }
+
+    return {
+      receipt_kind: "chaptera.web-image-decode-real-browser.v1",
+      real_browser: true,
+      policy_version: "chaptera.browser-image-decode-policy.v1",
+      exact_api: "createImageBitmap",
+      exact_options: structuredClone(EXACT_CREATE_IMAGE_BITMAP_OPTIONS),
+      no_decode_time_resize: true,
+      reference_contract: "chaptera.image-decode-contract.v1",
+      reference_decoder_id: input.references["alpha.png"].receipt.decoder_id,
+      browser_is_semantic_authority: false,
+      browser_default_decode_trusted_as_exact: false,
+      actual_worker_path_exercised: true,
+      alpha_exact_reference_match: alpha.alpha_reference_match,
+      cases: [alpha, orientation],
+    };
+  };
+</script>
