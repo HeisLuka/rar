@@ -2949,9 +2949,9 @@ mod tests {
     #[ignore = "requires CHAPTERA_SAMPLE_NEWSLETTER and a WGPU-capable hosted runner"]
     fn reader_open_phase_wgpu_first_paint_uses_current_viewer_app() {
         use egui_kittest::Harness;
-        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+        let fixture = std::env::var_os("CHAPTERA_OPEN_PHASE_FIXTURE")
             .map(PathBuf::from)
-            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned public PUB fixture");
+            .expect("CHAPTERA_OPEN_PHASE_FIXTURE must point to the qualified pinned public PUB fixture");
         let original = fs::read(&fixture).expect("read first-paint fixture");
 
         let started = std::time::Instant::now();
