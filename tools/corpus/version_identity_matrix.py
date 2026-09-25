@@ -14,7 +14,12 @@ from pathlib import Path
 
 import structural_novelty as novelty
 
-SCHEMA = "chaptera.corpus-version-identity-matrix.v2"
+SCHEMA = "chaptera.corpus-version-identity-matrix.v3"
+DSI_PATH = "/\x05DocumentSummaryInformation"
+KNOWN_PRODUCER_MAJOR_BY_DSI = {
+    "ac4f8d12127c45f757b9681ca0af31bc12e74d1bf1cf7677e2e82bdeebad8ec1": 12,
+    "c1e61d45dd70af3fb76a32acd3f52f8d20777d725c513e1928be2e61763db021": 14,
+}
 
 
 def load_rows(root: Path) -> list[dict]:
@@ -111,6 +116,50 @@ def load_family_overrides(path: Path | None) -> dict[str, dict]:
     return out
 
 
+def load_producer_dsi_map(path: Path | None) -> dict[str, dict]:
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw_map = payload.get("map") if isinstance(payload, dict) else None
+    if not isinstance(raw_map, dict):
+        raise ValueError("producer DSI map must be an object with a map field")
+    out: dict[str, dict] = {}
+    for sha, value in raw_map.items():
+        key = str(sha).lower()
+        if len(key) != 64:
+            raise ValueError(f"invalid DSI SHA-256 key: {sha}")
+        if value is None:
+            out[key] = {
+                "producer_evidence_state": "dsi_stream_empty",
+                "piddsi_value_u32": None,
+                "producer_major": None,
+                "producer_build_or_minor": None,
+            }
+            continue
+        if (
+            not isinstance(value, list)
+            or len(value) != 3
+            or not all(isinstance(v, int) for v in value)
+        ):
+            raise ValueError(f"invalid producer DSI mapping for {sha}")
+        raw, major, low = value
+        if raw != ((major & 0xFFFF) << 16) | (low & 0xFFFF):
+            raise ValueError(f"PIDDSI value/high-low disagreement for {sha}")
+        out[key] = {
+            "producer_evidence_state": "valid_pid_dsi_vt_i4",
+            "piddsi_value_u32": raw,
+            "producer_major": major,
+            "producer_build_or_minor": low,
+        }
+    for sha, expected_major in KNOWN_PRODUCER_MAJOR_BY_DSI.items():
+        row = out.get(sha)
+        if row is None or row.get("producer_major") != expected_major:
+            raise ValueError(
+                f"known producer-major anchor {sha} != {expected_major}: {row}"
+            )
+    return out
+
+
 def one_value(values: set, *, field: str, logical_identity: str):
     clean = {v for v in values if v not in {"", None}}
     if len(clean) > 1:
@@ -125,10 +174,12 @@ def build(
     provenance: dict[str, dict] | None = None,
     media_roots: dict[str, dict] | None = None,
     family_overrides: dict[str, dict] | None = None,
+    producer_dsi_map: dict[str, dict] | None = None,
 ) -> dict:
     provenance = provenance or {}
     media_roots = media_roots or {}
     family_overrides = family_overrides or {}
+    producer_dsi_map = producer_dsi_map or {}
     status = Counter(str(row.get("status") or "") for row in rows)
     ok = [row for row in rows if row.get("status") == "ok"]
 
@@ -146,6 +197,9 @@ def build(
     distribution_media_version_counts = Counter()
     family_counts = Counter()
     revision_counts = Counter()
+    producer_evidence_state_counts = Counter()
+    producer_major_counts = Counter()
+    producer_dsi_spans: dict[str, set[tuple[str, str]]] = defaultdict(set)
 
     for logical, members in sorted(groups.items()):
         families = set()
@@ -179,6 +233,48 @@ def build(
             revisions, field="contents_serialization_revision", logical_identity=logical
         )
         revision = "unknown" if revision_value is None else str(revision_value)
+
+        dsi_signatures = set()
+        for row in members:
+            descriptor = next(
+                (stream for stream in (row.get("streams") or []) if stream.get("path") == DSI_PATH),
+                None,
+            )
+            if descriptor is not None:
+                dsi_signatures.add(
+                    (int(descriptor.get("len") or 0), str(descriptor.get("sha256") or "").lower())
+                )
+        if len(dsi_signatures) > 1:
+            raise ValueError(
+                f"logical identity {logical} disagrees on DocumentSummaryInformation stream identity"
+            )
+
+        producer_dsi_sha256 = None
+        piddsi_value_u32 = None
+        producer_major = None
+        producer_build_or_minor = None
+        if not dsi_signatures:
+            producer_evidence_state = "dsi_stream_absent"
+        else:
+            dsi_len, producer_dsi_sha256 = next(iter(dsi_signatures))
+            if not producer_dsi_sha256:
+                raise ValueError(f"logical identity {logical} has DSI without SHA-256")
+            mapped = producer_dsi_map.get(producer_dsi_sha256)
+            if mapped is None:
+                raise ValueError(
+                    f"logical identity {logical} has unmapped DSI SHA-256 {producer_dsi_sha256}"
+                )
+            producer_evidence_state = mapped["producer_evidence_state"]
+            piddsi_value_u32 = mapped["piddsi_value_u32"]
+            producer_major = mapped["producer_major"]
+            producer_build_or_minor = mapped["producer_build_or_minor"]
+            if producer_evidence_state == "dsi_stream_empty" and dsi_len != 0:
+                raise ValueError(
+                    f"empty-stream producer mapping has nonzero DSI length {dsi_len}: {logical}"
+                )
+            if producer_evidence_state == "valid_pid_dsi_vt_i4" and dsi_len == 0:
+                raise ValueError(f"valid PIDDSI mapping has empty stream: {logical}")
+            producer_dsi_spans[producer_dsi_sha256].add((family, revision))
 
         shas = sorted(str(row.get("sha256") or row.get("source_sha256") or "") for row in members)
         sources = sorted({src for row in members for src in (row.get("sources") or [])})
@@ -215,6 +311,11 @@ def build(
             "source_media_provenance": sorted(source_media_provenance),
             "creator_version": "unknown",
             "writer_version": "unknown",
+            "producer_evidence_state": producer_evidence_state,
+            "producer_dsi_sha256": producer_dsi_sha256,
+            "piddsi_value_u32": piddsi_value_u32,
+            "producer_major": producer_major,
+            "producer_build_or_minor": producer_build_or_minor,
             "family_classification_notes": sorted(classification_notes),
         }
         logical_rows.append(logical_row)
@@ -223,10 +324,21 @@ def build(
         revision_counts[f"{family}:{revision}"] += 1
         version_label_counts[version_label] += 1
         distribution_media_version_counts[distribution_media_version] += 1
+        producer_evidence_state_counts[producer_evidence_state] += 1
+        if producer_major is not None:
+            producer_major_counts[str(producer_major)] += 1
         for source in sources:
             source_logical_counts[source] += 1
 
-        key = (family, revision, version_label, distribution_media_version)
+        producer_major_key = "unknown" if producer_major is None else str(producer_major)
+        key = (
+            family,
+            revision,
+            version_label,
+            distribution_media_version,
+            producer_evidence_state,
+            producer_major_key,
+        )
         cell = cells.setdefault(
             key,
             {
@@ -234,6 +346,8 @@ def build(
                 "contents_serialization_revision": revision_value,
                 "version_label": version_label,
                 "distribution_media_version": distribution_media_version,
+                "producer_evidence_state": producer_evidence_state,
+                "producer_major": producer_major,
                 "logical_identity_count": 0,
                 "physical_sha_count": 0,
                 "sources": set(),
@@ -309,6 +423,14 @@ def build(
             logical_count - distribution_media_version_counts.get("unknown", 0)
         ),
         "source_logical_membership_counts_nonexclusive": dict(sorted(source_logical_counts.items())),
+        "producer_evidence_state_logical_counts": dict(sorted(producer_evidence_state_counts.items())),
+        "producer_major_logical_counts": dict(
+            sorted(producer_major_counts.items(), key=lambda item: int(item[0]))
+        ),
+        "valid_producer_major_logical_count": sum(producer_major_counts.values()),
+        "producer_cross_revision_dsi_hash_count": sum(
+            len(spans) > 1 for spans in producer_dsi_spans.values()
+        ),
         "matrix_cell_count": len(matrix),
         "weighting_law": "one evidence vote per exact logical stream-set identity; physical SHA remains provenance authority",
     }
@@ -448,6 +570,7 @@ def main() -> int:
     build_cmd.add_argument("--provenance", type=Path)
     build_cmd.add_argument("--media-roots", type=Path)
     build_cmd.add_argument("--family-overrides", type=Path)
+    build_cmd.add_argument("--producer-dsi-map", type=Path)
 
     sub.add_parser("self-test")
     args = ap.parse_args()
@@ -461,6 +584,7 @@ def main() -> int:
         load_provenance(args.provenance),
         load_media_roots(args.media_roots),
         load_family_overrides(args.family_overrides),
+        load_producer_dsi_map(args.producer_dsi_map),
     )
     write_outputs(result, args.out)
     print(json.dumps(result["summary"], indent=2, ensure_ascii=False, sort_keys=True))
