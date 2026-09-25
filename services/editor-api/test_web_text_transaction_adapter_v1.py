@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import unittest
 
+from author_created_story_test_fixture import bind_author_created_story_graph_v1
 from paragraph_lifecycle_v1 import (
     ParagraphPropertiesV1,
     ParagraphV1,
@@ -27,7 +28,9 @@ from web_text_transaction_adapter_v1 import (
 
 DOCUMENT_ID = "doc:web-text"
 SOURCE_HASH = "a" * 64
-STORY_ID = "story:1"
+STORY_ID = "01900000-0000-7000-8000-000000000101"
+FRAME_ID = "01900000-0000-7000-8000-000000000102"
+PAGE_ID = "page:web-text"
 REV_OP = "browser-text-op-00000001"
 NEW_P1 = "01900000-0000-7000-8000-000000000001"
 
@@ -74,13 +77,19 @@ def core_state(text="ABC", *, unsupported=()):
 
 
 def project_for(core):
-    return {
+    project = {
         "schema_version": "pub-editor-v0.6",
         "source_hash": SOURCE_HASH,
         "operations": [],
         "stories": {STORY_ID: core.paragraph_state.story_text},
         "story_models": {STORY_ID: story_edit_core_state_to_dict(core)},
     }
+    return bind_author_created_story_graph_v1(
+        project,
+        story_id=STORY_ID,
+        frame_id=FRAME_ID,
+        page_id=PAGE_ID,
+    )
 
 
 def browser_request(base_revision_id, *, start, end, replacement, command_extra=None):
