@@ -48,7 +48,8 @@ pub const EDITOR_PROJECT_VERSION_V0_1: &str = "pub-editor-v0.1";
 pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
 pub const EDITOR_PROJECT_VERSION_V0_3: &str = "pub-editor-v0.3";
 pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_4;
+pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_5;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -141,6 +142,11 @@ pub enum EditOperation {
         before: RectEmu,
         after: RectEmu,
     },
+    ResizeNode {
+        node_id: NodeId,
+        before: RectEmu,
+        after: RectEmu,
+    },
 }
 
 impl PersistenceRequirements for EditOperation {
@@ -176,6 +182,11 @@ impl PersistenceRequirements for EditOperation {
                 feature: "node.geometry.position".into(),
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("node.bounds.position".into()),
+            }],
+            Self::ResizeNode { node_id, .. } => vec![PersistenceRequirement {
+                feature: "node.geometry.bounds".into(),
+                origin: Some(node_id.into_canonical()),
+                property_path: Some("node.bounds".into()),
             }],
         }
     }
@@ -297,6 +308,10 @@ pub fn mature_0x2c_pub_format_manifest() -> FormatCompatibilityManifest {
         "node.geometry.position".into(),
         FormatRepresentability::Lossless,
     );
+    features.insert(
+        "node.geometry.bounds".into(),
+        FormatRepresentability::Lossless,
+    );
 
     FormatCompatibilityManifest {
         target: mature_0x2c_pub_persistence_target(),
@@ -370,6 +385,24 @@ pub enum EditorError {
         node_id: NodeId,
     },
     StaleNodeMove {
+        node_id: NodeId,
+    },
+    NodeResizeUnsupported {
+        node_id: NodeId,
+    },
+    NodeResizeNoChange {
+        node_id: NodeId,
+    },
+    NodeResizeNoSizeChange {
+        node_id: NodeId,
+    },
+    NodeResizeNonPositive {
+        node_id: NodeId,
+    },
+    NodeResizeOverflow {
+        node_id: NodeId,
+    },
+    StaleNodeResize {
         node_id: NodeId,
     },
     NoChange {
@@ -469,6 +502,36 @@ impl fmt::Display for EditorError {
                 "node {} no longer matches the move operation precondition",
                 node_id.as_canonical()
             ),
+            Self::NodeResizeUnsupported { node_id } => write!(
+                formatter,
+                "node {} is outside the bounded directly-page-owned resize slice",
+                node_id.as_canonical()
+            ),
+            Self::NodeResizeNoChange { node_id } => write!(
+                formatter,
+                "node {} already has the requested authored bounds",
+                node_id.as_canonical()
+            ),
+            Self::NodeResizeNoSizeChange { node_id } => write!(
+                formatter,
+                "node {} ResizeNode request does not change width or height",
+                node_id.as_canonical()
+            ),
+            Self::NodeResizeNonPositive { node_id } => write!(
+                formatter,
+                "node {} resize requires strictly positive width and height",
+                node_id.as_canonical()
+            ),
+            Self::NodeResizeOverflow { node_id } => write!(
+                formatter,
+                "node {} resize would overflow canonical EMU bounds",
+                node_id.as_canonical()
+            ),
+            Self::StaleNodeResize { node_id } => write!(
+                formatter,
+                "node {} no longer matches the resize operation precondition",
+                node_id.as_canonical()
+            ),
             Self::NoChange { story_id } => write!(
                 formatter,
                 "replacement text for story {} is identical to the current text",
@@ -505,6 +568,12 @@ impl EditorError {
             Self::NodeMoveNoChange { .. } => "node_move_no_change",
             Self::NodeMoveOverflow { .. } => "node_move_overflow",
             Self::StaleNodeMove { .. } => "stale_node_move",
+            Self::NodeResizeUnsupported { .. } => "node_resize_unsupported",
+            Self::NodeResizeNoChange { .. } => "node_resize_no_change",
+            Self::NodeResizeNoSizeChange { .. } => "node_resize_no_size_change",
+            Self::NodeResizeNonPositive { .. } => "node_resize_non_positive",
+            Self::NodeResizeOverflow { .. } => "node_resize_overflow",
+            Self::StaleNodeResize { .. } => "stale_node_resize",
             Self::NoChange { .. } => "no_change",
             Self::StaleOperation { .. } => "stale_operation",
             Self::NothingToUndo => "nothing_to_undo",
@@ -557,6 +626,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesGeometryOperation {
         index: usize,
     },
+    LegacyProjectCarriesResizeOperation {
+        index: usize,
+    },
     MissingAssetBytes {
         sha256: Sha256Digest,
     },
@@ -594,7 +666,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, or {EDITOR_PROJECT_VERSION_V0_4:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, or {EDITOR_PROJECT_VERSION_V0_5:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -613,6 +685,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesGeometryOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses MoveNode but the project schema predates pub-editor-v0.4"
+            ),
+            Self::LegacyProjectCarriesResizeOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses ResizeNode but the project schema predates pub-editor-v0.5"
             ),
             Self::MissingAssetBytes { sha256 } => {
                 write!(
@@ -869,6 +945,12 @@ impl EditorSession {
         let schema_version = if self
             .undo
             .iter()
+            .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
+        {
+            EDITOR_PROJECT_VERSION_V0_5
+        } else if self
+            .undo
+            .iter()
             .any(|operation| matches!(operation, EditOperation::MoveNode { .. }))
         {
             EDITOR_PROJECT_VERSION_V0_4
@@ -935,6 +1017,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_2
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_3
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_4
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -954,13 +1037,24 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesImageOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_4 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+        {
             if let Some(index) = project
                 .operations
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::MoveNode { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesGeometryOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
@@ -1544,6 +1638,91 @@ impl EditorSession {
         Ok(operation)
     }
 
+    pub fn can_resize_node(&self, node_id: NodeId) -> Result<(), EditorError> {
+        self.validate_source_identity()?;
+
+        let node = self
+            .graph
+            .nodes
+            .get(&node_id)
+            .ok_or(EditorError::NodeResizeUnsupported { node_id })?;
+        let before = node.header.bounds;
+        if before.width.get() <= 0
+            || before.height.get() <= 0
+            || before.right().is_none()
+            || before.bottom().is_none()
+            || node.header.transform != pub_model::Affine2D::identity()
+        {
+            return Err(EditorError::NodeResizeUnsupported { node_id });
+        }
+        if !self
+            .graph
+            .pages
+            .keys()
+            .any(|page_id| page_id.into_canonical() == node.header.parent_id)
+        {
+            return Err(EditorError::NodeResizeUnsupported { node_id });
+        }
+
+        Ok(())
+    }
+
+    pub fn can_resize_node_to(
+        &self,
+        node_id: NodeId,
+        bounds: RectEmu,
+    ) -> Result<(), EditorError> {
+        self.can_resize_node(node_id)?;
+
+        let before = self
+            .graph
+            .nodes
+            .get(&node_id)
+            .expect("target capability check verified resize node")
+            .header
+            .bounds;
+        if bounds.width.get() <= 0 || bounds.height.get() <= 0 {
+            return Err(EditorError::NodeResizeNonPositive { node_id });
+        }
+        if bounds.right().is_none() || bounds.bottom().is_none() {
+            return Err(EditorError::NodeResizeOverflow { node_id });
+        }
+        if before == bounds {
+            return Err(EditorError::NodeResizeNoChange { node_id });
+        }
+        if before.width == bounds.width && before.height == bounds.height {
+            return Err(EditorError::NodeResizeNoSizeChange { node_id });
+        }
+
+        Ok(())
+    }
+
+    pub fn resize_node_to(
+        &mut self,
+        node_id: NodeId,
+        bounds: RectEmu,
+    ) -> Result<EditOperation, EditorError> {
+        self.can_resize_node_to(node_id, bounds)?;
+
+        let before = self
+            .graph
+            .nodes
+            .get(&node_id)
+            .expect("capability check verified resize node")
+            .header
+            .bounds;
+        let operation = EditOperation::ResizeNode {
+            node_id,
+            before,
+            after: bounds,
+        };
+        apply_forward(&mut self.graph, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
     pub fn replace_story_range(
         &mut self,
         story_id: StoryId,
@@ -1767,6 +1946,9 @@ fn replay_canonical_operation(
             .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::MoveNode { node_id, after, .. } => session
             .move_node_to(*node_id, after.x, after.y)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::ResizeNode { node_id, after, .. } => session
+            .resize_node_to(*node_id, *after)
             .map_err(|error| EditorProjectError::Operation { index, error }),
     }
 }
@@ -2049,6 +2231,20 @@ fn apply_forward(
             }
             node.header.bounds = *after;
         }
+        EditOperation::ResizeNode {
+            node_id,
+            before,
+            after,
+        } => {
+            let node = graph
+                .nodes
+                .get_mut(node_id)
+                .ok_or(EditorError::NodeResizeUnsupported { node_id: *node_id })?;
+            if node.header.bounds != *before {
+                return Err(EditorError::StaleNodeResize { node_id: *node_id });
+            }
+            node.header.bounds = *after;
+        }
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
@@ -2157,6 +2353,20 @@ fn apply_inverse(
                 .ok_or(EditorError::NodeMoveUnsupported { node_id: *node_id })?;
             if node.header.bounds != *after {
                 return Err(EditorError::StaleNodeMove { node_id: *node_id });
+            }
+            node.header.bounds = *before;
+        }
+        EditOperation::ResizeNode {
+            node_id,
+            before,
+            after,
+        } => {
+            let node = graph
+                .nodes
+                .get_mut(node_id)
+                .ok_or(EditorError::NodeResizeUnsupported { node_id: *node_id })?;
+            if node.header.bounds != *after {
+                return Err(EditorError::StaleNodeResize { node_id: *node_id });
             }
             node.header.bounds = *before;
         }

@@ -131,7 +131,9 @@ impl EditorSession {
                 EditOperation::ReplaceTableCellText { story_id, .. } => {
                     table_touched.insert(*story_id);
                 }
-                EditOperation::ReplaceImage { .. } | EditOperation::MoveNode { .. } => {}
+                EditOperation::ReplaceImage { .. }
+                | EditOperation::MoveNode { .. }
+                | EditOperation::ResizeNode { .. } => {}
             }
         }
 
@@ -219,7 +221,8 @@ impl EditorSession {
                 | EditOperation::ReplaceStoryText { .. } => {}
                 EditOperation::ReplaceTableCellText { .. }
                 | EditOperation::ReplaceImage { .. }
-                | EditOperation::MoveNode { .. } => {
+                | EditOperation::MoveNode { .. }
+                | EditOperation::ResizeNode { .. } => {
                     requirements.extend(operation.persistence_requirements());
                 }
             }
