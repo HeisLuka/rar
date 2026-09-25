@@ -1,0 +1,12 @@
+{
+  "name": "chaptera-web-rescript-pilot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rescript",
+    "test": "npm run build && node --test pending-state-differential.test.mjs"
+  },
+  "devDependencies": {
+    "rescript": "12.3.1"
+  }
+}
