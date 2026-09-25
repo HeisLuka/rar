@@ -5,6 +5,7 @@
 
 // The cadence API is intentionally staged one PR before its UI consumer (#227).
 mod acceptance;
+mod agent;
 #[allow(dead_code)]
 mod supporter;
 
@@ -162,6 +163,18 @@ fn direct_scene_instance(
 fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--agent-v1")) {
+        if args.next().is_some() {
+            eprintln!("chaptera --agent-v1 accepts no path arguments; use the open NDJSON command");
+            std::process::exit(2);
+        }
+        if let Err(error) = agent::run_stdio() {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--desktop-acceptance-v1")) {
         let Some(fixture) = args.next().map(PathBuf::from) else {
