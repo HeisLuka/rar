@@ -345,14 +345,7 @@ async fn mapped_materializer_exposes_canonical_identity_without_substitution() {
         .await
         .unwrap();
     identity
-        .bind_child(
-            "doc-a",
-            "r0",
-            "r1",
-            &canonical_r0,
-            &canonical_r1,
-            2,
-        )
+        .bind_child("doc-a", "r0", "r1", &canonical_r0, &canonical_r1, 2)
         .await
         .unwrap();
 
@@ -372,14 +365,7 @@ async fn mapped_materializer_exposes_canonical_identity_without_substitution() {
         .await
         .unwrap();
     identity
-        .bind_child(
-            "doc-a",
-            "r1",
-            "r2",
-            &canonical_r1,
-            &canonical_r2,
-            3,
-        )
+        .bind_child("doc-a", "r1", "r2", &canonical_r1, &canonical_r2, 3)
         .await
         .unwrap();
 
@@ -468,10 +454,7 @@ async fn mapped_materializer_fails_closed_when_canonical_binding_is_missing() {
     )
     .with_revision_identity_store(identity.clone());
 
-    let error = m
-        .materialize("tenant-a", "doc-a", "r1")
-        .await
-        .unwrap_err();
+    let error = m.materialize("tenant-a", "doc-a", "r1").await.unwrap_err();
     assert_eq!(error.code, "canonical_revision_unbound");
 
     identity.close().await;
