@@ -1,0 +1,50 @@
+name: CLOUD-HOT-MEMORY-INSTRUMENT-01
+
+on:
+  pull_request:
+    paths:
+      - "tools/hot_memory_probe_v1.py"
+      - "tools/run_hot_memory_instrument.py"
+      - "tools/test_hot_memory_instrument.py"
+      - "tools/hot_memory_receipt_v1.py"
+      - ".github/workflows/cloud-hot-memory-instrument-v1.yml"
+  push:
+    branches:
+      - cloud-hot-memory-instrument-01
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-residency-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test residency instrumentation
+        run: python tools/test_hot_memory_instrument.py
+      - name: Emit measured hosted receipt
+        run: |
+          python tools/run_hot_memory_instrument.py \
+            --build-sha "$GITHUB_SHA" \
+            --out target/hot-memory-instrument/receipt.json
+      - name: Revalidate receipt contract
+        run: |
+          python - <<'PY'
+          import json, sys
+          sys.path.insert(0, "tools")
+          from hot_memory_receipt_v1 import validate_receipt
+          receipt = json.load(open("target/hot-memory-instrument/receipt.json", encoding="utf-8"))
+          validate_receipt(receipt)
+          assert receipt["measurement_class"] == "synthetic_contract_fixture"
+          assert receipt["evidence_authority"]["capacity_decision_allowed"] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-hot-memory-instrument-v1
+          path: target/hot-memory-instrument/receipt.json
+          if-no-files-found: error
+          retention-days: 90
