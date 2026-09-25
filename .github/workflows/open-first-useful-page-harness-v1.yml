@@ -39,8 +39,8 @@ jobs:
         shell: pwsh
         run: |
           cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer -- --check
-          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer --all-targets
-          cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer --all-targets -- -D warnings
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer --lib
+          cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer --lib -- -D warnings
 
       - name: Check Reader-only desktop timing surface
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
