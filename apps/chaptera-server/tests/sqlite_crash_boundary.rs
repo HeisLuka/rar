@@ -5,8 +5,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use chaptera_server::sqlite_store::{
-    AppendOutcome, RevisionEdge, SqliteRevisionStore, encode_canonical_event,
+use chaptera_server::{
+    schema_migration::SqliteMigrationRuntime,
+    sqlite_store::{AppendOutcome, RevisionEdge, SqliteRevisionStore, encode_canonical_event},
 };
 
 const CHILD_ENV: &str = "CHAPTERA_SQLITE_CRASH_CHILD";
@@ -85,6 +86,19 @@ fn child_commits_then_aborts_before_ack() {
 #[test]
 fn process_crash_after_durable_commit_before_ack_recovers_exact_edge() {
     let path = temp_db("commit-before-ack");
+
+    let migration_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    migration_runtime.block_on(async {
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+    });
+    drop(migration_runtime);
 
     let child = Command::new(env::current_exe().unwrap())
         .args([

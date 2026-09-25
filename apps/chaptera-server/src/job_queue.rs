@@ -212,9 +212,16 @@ impl SqliteJobQueue {
             ));
         }
 
+        if !path.exists() {
+            return Err(JobQueueError::new(
+                "job_queue_database_missing",
+                "job queue database must be created by chaptera migrate up before worker startup",
+            ));
+        }
+
         let options = SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(true)
+            .create_if_missing(false)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
@@ -228,7 +235,8 @@ impl SqliteJobQueue {
             .map_err(sqlite_error)?;
 
         let queue = Self { pool };
-        queue.bootstrap().await?;
+        queue.require_schema().await?;
+        queue.verify_profile().await?;
         Ok(queue)
     }
 
@@ -236,70 +244,80 @@ impl SqliteJobQueue {
         self.pool.close().await;
     }
 
-    async fn bootstrap(&self) -> Result<(), JobQueueError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS jobs (
-              job_id                 BLOB PRIMARY KEY,
-              tenant_id              BLOB NOT NULL,
-              job_kind               TEXT NOT NULL CHECK (
-                job_kind IN ('parse','export','snapshot','projection','blob_gc')
-              ),
-              payload_schema_version INTEGER NOT NULL CHECK (payload_schema_version > 0),
-              payload                BLOB NOT NULL,
-              request_hash           BLOB NOT NULL,
-              status                 TEXT NOT NULL CHECK (
-                status IN ('queued','running','succeeded','failed','cancelled')
-              ),
-              available_at_ms        INTEGER NOT NULL,
-              attempt                INTEGER NOT NULL CHECK (attempt >= 0),
-              max_attempts           INTEGER NOT NULL CHECK (max_attempts > 0),
-              lease_owner            TEXT,
-              lease_generation       INTEGER NOT NULL CHECK (lease_generation >= 0),
-              lease_expires_at_ms    INTEGER,
-              cancel_requested_at_ms INTEGER,
-              idempotency_key        BLOB NOT NULL,
-              created_at_ms          INTEGER NOT NULL,
-              started_at_ms          INTEGER,
-              finished_at_ms         INTEGER,
-              terminal_code          TEXT,
-              UNIQUE (tenant_id, job_kind, idempotency_key)
+    async fn require_schema(&self) -> Result<(), JobQueueError> {
+        for object in ["jobs", "job_effects"] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
             )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(sqlite_error)?;
+            .bind(object)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS jobs_ready              ON jobs(status, available_at_ms, created_at_ms, job_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(sqlite_error)?;
+            if exists != 1 {
+                return Err(JobQueueError::new(
+                    "job_queue_schema_missing",
+                    format!(
+                        "required job queue table {object} is absent; run chaptera migrate up before worker startup"
+                    ),
+                ));
+            }
+        }
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS jobs_expired_lease              ON jobs(status, lease_expires_at_ms)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(sqlite_error)?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS job_effects (
-              job_id            BLOB NOT NULL REFERENCES jobs(job_id),
-              effect_key        BLOB NOT NULL,
-              lease_generation  INTEGER NOT NULL,
-              published_at_ms   INTEGER NOT NULL,
-              PRIMARY KEY (job_id, effect_key)
+        for index in ["jobs_ready", "jobs_expired_lease"] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?",
             )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(sqlite_error)?;
+            .bind(index)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
 
+            if exists != 1 {
+                return Err(JobQueueError::new(
+                    "job_queue_schema_missing",
+                    format!(
+                        "required job queue index {index} is absent; run chaptera migrate up before worker startup"
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn verify_profile(&self) -> Result<(), JobQueueError> {
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        if !journal_mode.eq_ignore_ascii_case("wal") {
+            return Err(JobQueueError::new(
+                "job_queue_profile_mismatch",
+                format!("expected WAL journal mode, got {journal_mode}"),
+            ));
+        }
+
+        let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        if synchronous != 2 {
+            return Err(JobQueueError::new(
+                "job_queue_profile_mismatch",
+                format!("expected synchronous=FULL(2), got {synchronous}"),
+            ));
+        }
+
+        let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        if foreign_keys != 1 {
+            return Err(JobQueueError::new(
+                "job_queue_profile_mismatch",
+                "foreign_keys pragma is not enabled",
+            ));
+        }
         Ok(())
     }
 
@@ -1033,6 +1051,8 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
+    use crate::schema_migration::SqliteMigrationRuntime;
+
     use super::*;
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -1042,10 +1062,32 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("chaptera-job-{}-{n}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
         let queue = SqliteJobQueue::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
         (queue, path)
+    }
+
+    #[tokio::test]
+    async fn open_requires_operator_migration() {
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-job-unmigrated-{}-{n}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let error = match SqliteJobQueue::open(&path, 4, Duration::from_secs(2)).await {
+            Ok(_) => panic!("job queue opened without operator migration"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "job_queue_database_missing");
+        assert!(!path.exists());
     }
 
     fn req(id: &str, idem: &str) -> EnqueueRequest {
