@@ -3664,8 +3664,11 @@ mod tests {
         }
         harness.step();
         {
-            let preview_idml = harness.get_by_label("Preview IDML");
-            preview_idml.simulate_click();
+            let preview_idml = harness
+                .get_all_by_label("Preview IDML")
+                .last()
+                .expect("Export popup exposes Preview IDML");
+            preview_idml.click();
         }
         harness.step();
         let (preview, preview_status) = {
@@ -3698,8 +3701,11 @@ mod tests {
         }
         harness.step();
         {
-            let export_idml = harness.get_by_label("Export edited IDML copy");
-            export_idml.simulate_click();
+            let export_idml = harness
+                .get_all_by_label("Export edited IDML copy")
+                .last()
+                .expect("Export popup exposes edited IDML action");
+            export_idml.click();
         }
         harness.step();
 
