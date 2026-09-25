@@ -53,7 +53,7 @@ impl BlobStoreRuntime {
         .map_err(|error| {
             BlobStoreError::new(
                 "blob_provider_config_invalid",
-                bounded_message(&error.to_string()),
+                bounded_message(&error.code),
             )
         })?;
 
