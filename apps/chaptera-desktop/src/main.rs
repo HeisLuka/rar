@@ -280,7 +280,8 @@ fn main() -> eframe::Result<()> {
                 .with_drag_and_drop(false),
             ..Default::default()
         };
-        return eframe::run_native(
+        let error_output = output.with_extension("error.txt");
+        let result = eframe::run_native(
             APP_TITLE,
             options,
             Box::new(move |cc| {
@@ -290,6 +291,10 @@ fn main() -> eframe::Result<()> {
                 )))
             }),
         );
+        if let Err(error) = &result {
+            let _ = fs::write(&error_output, format!("{error:#}\n"));
+        }
+        return result;
     }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
