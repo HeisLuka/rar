@@ -205,6 +205,44 @@ impl AsyncSourceValidationRuntime {
             .await
     }
 
+    pub async fn reject_terminal(
+        &self,
+        tenant_id: &str,
+        upload_id: &str,
+        code: &'static str,
+        now_ms: u64,
+    ) -> Result<UploadRecord, IngressError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(upload_id, "upload_id")?;
+        require_terminal_code(code)?;
+
+        let upload = self
+            .repo
+            .get(upload_id)
+            .await?
+            .ok_or_else(|| IngressError::new("upload_not_found", "upload does not exist"))?;
+        if upload.tenant_id != tenant_id {
+            return Err(IngressError::new(
+                "tenant_mismatch",
+                "upload is outside authenticated tenant",
+            ));
+        }
+
+        match upload.state {
+            UploadState::ValidatedDurable
+            | UploadState::Consumed
+            | UploadState::Rejected
+            | UploadState::Expired => Ok(upload),
+            UploadState::Issued => Err(IngressError::new(
+                "upload_not_complete",
+                "terminal validation rejection requires completed upload bytes",
+            )),
+            UploadState::StoredUnverified | UploadState::Validating => {
+                self.reject(upload, code, now_ms).await
+            }
+        }
+    }
+
     async fn reject(
         &self,
         upload: UploadRecord,
