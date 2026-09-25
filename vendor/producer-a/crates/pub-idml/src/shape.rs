@@ -122,9 +122,8 @@ impl fmt::Display for IdmlAuthoredShapeError {
             Self::BinaryGraphicResource => {
                 formatter.write_str("IDML Resources/Graphic.xml is binary")
             }
-            Self::InvalidGraphicResourceXml => {
-                formatter.write_str("IDML Resources/Graphic.xml has no closing idPkg:Graphic element")
-            }
+            Self::InvalidGraphicResourceXml => formatter
+                .write_str("IDML Resources/Graphic.xml has no closing idPkg:Graphic element"),
         }
     }
 }
@@ -250,7 +249,11 @@ fn ensure_graphic_resource(
     package: &mut IdmlPackage,
     colors: &BTreeSet<IdmlRgb8>,
 ) -> Result<(), IdmlAuthoredShapeError> {
-    if let Some(graphic) = package.parts.iter_mut().find(|part| part.path == GRAPHIC_PATH) {
+    if let Some(graphic) = package
+        .parts
+        .iter_mut()
+        .find(|part| part.path == GRAPHIC_PATH)
+    {
         let IdmlPartContent::Text(xml) = &mut graphic.content else {
             return Err(IdmlAuthoredShapeError::BinaryGraphicResource);
         };
@@ -315,7 +318,10 @@ fn ensure_designmap_graphic_reference(
     let Some(insert_at) = xml.rfind(marker) else {
         return Err(IdmlAuthoredShapeError::InvalidDesignMapXml);
     };
-    xml.insert_str(insert_at, "  <idPkg:Graphic src=\"Resources/Graphic.xml\"/>\n");
+    xml.insert_str(
+        insert_at,
+        "  <idPkg:Graphic src=\"Resources/Graphic.xml\"/>\n",
+    );
     Ok(())
 }
 
@@ -428,7 +434,10 @@ fn write_path_point(xml: &mut String, x: &str, y: &str) {
 }
 
 fn spread_path(page_id: PageId) -> String {
-    format!("Spreads/Spread_{}.xml", idml_self("usp", page_id.into_canonical()))
+    format!(
+        "Spreads/Spread_{}.xml",
+        idml_self("usp", page_id.into_canonical())
+    )
 }
 
 fn idml_self(prefix: &str, id: CanonicalId) -> String {
@@ -468,7 +477,9 @@ fn format_ratio(numerator: i128, denominator: i128, precision: usize) -> String 
     for _ in 0..precision {
         remainder *= 10;
         let digit = remainder / denominator;
-        result.push(char::from(b'0' + u8::try_from(digit).expect("decimal digit")));
+        result.push(char::from(
+            b'0' + u8::try_from(digit).expect("decimal digit"),
+        ));
         remainder %= denominator;
         if remainder == 0 {
             break;
