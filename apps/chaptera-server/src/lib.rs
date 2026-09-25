@@ -33,6 +33,7 @@ pub mod schema_migration;
 pub mod serve;
 pub mod shutdown;
 pub mod source_authority;
+pub mod source_baseline;
 pub mod source_ingress;
 pub mod source_ingress_async;
 pub mod source_ingress_security;
