@@ -4,9 +4,9 @@ use pub_model::{SimpleRectangularTable, SimpleTableCell, Story, TableCellAddress
 use pub_quill::{QuillMcldChunk, QuillStoryCatalog, bounded_mcld_table_metrics};
 
 pub const RAW_TYPE_TABLE: u16 = 0x10;
-pub const TABLE_NUM_ROWS_ID: u8 = 0x66;
-pub const TABLE_NUM_COLUMNS_ID: u8 = 0x67;
-pub const TABLE_CELLS_SEQ_NUM_ID: u8 = 0x6B;
+pub const TABLE_NUM_ROWS_ID: u16 = 0x66;
+pub const TABLE_NUM_COLUMNS_ID: u16 = 0x67;
+pub const TABLE_CELLS_SEQ_NUM_ID: u16 = 0x6B;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PubTableCellSource {
@@ -595,12 +595,12 @@ fn build_simple_table(
     SimpleRectangularTable::new(rows, columns, simple_cells).ok()
 }
 
-type TableTailScalars = BTreeMap<u8, Vec<(u32, RawSpan)>>;
+type TableTailScalars = BTreeMap<u16, Vec<(u32, RawSpan)>>;
 
 fn unique_table_scalar(
     chunk: &Contents0x2cChunk,
     tail_scalars: &TableTailScalars,
-    id: u8,
+    id: u16,
 ) -> Result<Option<(u32, RawSpan)>> {
     let mut values = Vec::new();
 
@@ -657,20 +657,20 @@ fn scan_table_tail_scalars(
 
     let bytes = context.contents;
     let mut position = start;
-    let mut scalars = BTreeMap::<u8, Vec<(u32, RawSpan)>>::new();
+    let mut scalars = BTreeMap::<u16, Vec<(u32, RawSpan)>>::new();
 
     while position < end {
         if end - position < 2 {
             bail!("truncated TABLE tail block header at {position}");
         }
 
-        let id = bytes[position];
-        let wire_type = bytes[position + 1];
+        let raw_tag = [bytes[position], bytes[position + 1]];
+        let (id, wire_type) = pub_contents::decode_packed_field_tag(raw_tag);
         position += 2;
 
         match wire_type {
-            0x05 | 0x08 | 0x0A | 0x78 => {}
-            0x07 | 0x10 | 0x12 | 0x18 | 0x1A => {
+            0x00 | 0x08 | 0x78 => {}
+            0x10 | 0x18 => {
                 if end - position < 2 {
                     bail!("truncated TABLE tail u16 field 0x{id:02X} at {position}");
                 }
@@ -685,7 +685,7 @@ fn scan_table_tail_scalars(
                 ));
                 position += 2;
             }
-            0x20 | 0x22 | 0x58 | 0x68 | 0x70 | 0xB8 => {
+            0x20 | 0x58 | 0x68 | 0x70 | 0xB8 => {
                 if end - position < 4 {
                     bail!("truncated TABLE tail u32 field 0x{id:02X} at {position}");
                 }
@@ -714,7 +714,7 @@ fn scan_table_tail_scalars(
             0x48 => {
                 position = checked_skip(position, 24, end, id, wire_type)?;
             }
-            0x80 | 0x82 | 0x88 | 0x8A | 0x90 | 0x98 | 0xA0 | 0xC0 => {
+            0x80 | 0x88 | 0x90 | 0x98 | 0xA0 | 0xC0 => {
                 if end - position < 4 {
                     bail!("truncated TABLE tail variable field 0x{id:02X} length at {position}");
                 }
@@ -752,7 +752,7 @@ fn checked_skip(
     position: usize,
     length: usize,
     end: usize,
-    id: u8,
+    id: u16,
     wire_type: u8,
 ) -> Result<usize> {
     position

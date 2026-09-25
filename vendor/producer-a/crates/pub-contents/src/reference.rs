@@ -1,14 +1,15 @@
 use crate::{
     BlockReadError, Contents0x2cDirectory, Contents0x2cDirectorySlot, ContentsCursor,
-    ContentsReadError, RawContentsBlock, RawContentsBlockBody, parse_confirmed_block,
+    ContentsReadError, RawContentsBlock, RawContentsBlockBody, decode_packed_field_tag,
+    parse_confirmed_block,
 };
 use pub_core::RawSpan;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub const CHUNK_REFERENCE_RAW_TYPE_ID: u8 = 0x02;
-pub const CHUNK_REFERENCE_OFFSET_ID: u8 = 0x04;
-pub const CHUNK_REFERENCE_PARENT_SEQ_NUM_ID: u8 = 0x05;
+pub const CHUNK_REFERENCE_RAW_TYPE_ID: u16 = 0x02;
+pub const CHUNK_REFERENCE_OFFSET_ID: u16 = 0x04;
+pub const CHUNK_REFERENCE_PARENT_SEQ_NUM_ID: u16 = 0x05;
 
 pub const CHUNK_REFERENCE_WIRE_EMPTY: u8 = 0x08;
 pub const CHUNK_REFERENCE_WIRE_U16_SERVICE: u8 = 0x10;
@@ -215,8 +216,15 @@ fn parse_confirmed_reference_field(
 
     let mut probe = cursor.clone();
     let start = probe.position();
-    let (id, id_source) = probe.read_u8()?;
-    let (block_type, _) = probe.read_u8()?;
+    let (tag0, tag0_source) = probe.read_u8()?;
+    let (tag1, _) = probe.read_u8()?;
+    let raw_tag = [tag0, tag1];
+    let (id, block_type) = decode_packed_field_tag(raw_tag);
+    let tag_source = RawSpan {
+        stream: tag0_source.stream.clone(),
+        offset: tag0_source.offset,
+        len: 2,
+    };
 
     let body = match block_type {
         CHUNK_REFERENCE_WIRE_EMPTY => RawContentsBlockBody::Empty,
@@ -244,14 +252,16 @@ fn parse_confirmed_reference_field(
 
     let end = probe.position();
     let source = RawSpan {
-        stream: id_source.stream,
-        offset: id_source.offset,
+        stream: tag0_source.stream,
+        offset: tag0_source.offset,
         len: (end - start) as u64,
     };
 
     let block = RawContentsBlock {
         id,
         block_type,
+        raw_tag,
+        tag_source,
         source,
         body,
     };

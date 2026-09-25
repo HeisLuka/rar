@@ -27,7 +27,8 @@ pub use block::{
     BLOCK_TYPE_CONTAINER_88, BLOCK_TYPE_CONTAINER_90, BLOCK_TYPE_CONTAINER_A0, BLOCK_TYPE_DUMMY,
     BLOCK_TYPE_EMPTY, BLOCK_TYPE_FIXED_8, BLOCK_TYPE_FIXED_16, BLOCK_TYPE_HANDLE_U32,
     BLOCK_TYPE_REFERENCE_U32, BLOCK_TYPE_U16, BLOCK_TYPE_U16_SERVICE, BLOCK_TYPE_U32,
-    BlockReadError, RawContentsBlock, RawContentsBlockBody, parse_confirmed_block,
+    CONTENTS_PACKED_FIELD_ID_MAX, BlockReadError, PackedFieldTagError, RawContentsBlock,
+    RawContentsBlockBody, decode_packed_field_tag, encode_packed_field_tag, parse_confirmed_block,
 };
 pub use cells::{
     CELL_END_COLUMN_ID, CELL_END_ROW_ID, CELL_START_COLUMN_ID, CELL_START_ROW_ID,
