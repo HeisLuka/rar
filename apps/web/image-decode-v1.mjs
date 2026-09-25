@@ -16,6 +16,7 @@ const BLOCKING_CODES = new Set([
   "reference_decode_unsupported",
   "non_srgb_exact_unsupported",
   "explicit_decode_options_unsupported",
+  "explicit_orientation_policy_ignored",
   "browser_dimensions_mismatch",
   "decode_policy_generation_stale",
 ]);
@@ -261,10 +262,17 @@ export async function decodeBrowserBitmapExactV1({
     bitmap.width !== expectedWidth ||
     bitmap.height !== expectedHeight
   ) {
+    const observedDimensions = [bitmap?.width ?? null, bitmap?.height ?? null];
     closeQuietly(bitmap);
+    const orientationWasNonNormal =
+      Number.isInteger(reference.exif_orientation) && reference.exif_orientation !== 1;
     throw new BrowserImageDecodeError(
-      "browser_dimensions_mismatch",
-      "browser exact decode dimensions differ from reference non-oriented raster",
+      orientationWasNonNormal
+        ? "explicit_orientation_policy_ignored"
+        : "browser_dimensions_mismatch",
+      "browser exact decode dimensions differ from reference non-oriented raster; " +
+        "expected=" + JSON.stringify(reference.decoded_dimensions) +
+        " observed=" + JSON.stringify(observedDimensions),
     );
   }
 
