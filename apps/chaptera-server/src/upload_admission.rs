@@ -390,6 +390,214 @@ impl SqliteUploadAdmissionAuthority {
             })
     }
 
+    /// Reacquire the exact durable upload reservation after a queue/crash delay.
+    ///
+    /// A live reservation is renewed generation-fenced. An expired reservation
+    /// may be reacquired only with the exact original tenant/principal/byte/hash
+    /// fingerprint and only after principal + tenant capacity is re-admitted
+    /// atomically under BEGIN IMMEDIATE. Released reservations never resurrect.
+    pub async fn reacquire_exact(
+        &self,
+        request: UploadAdmissionRequest,
+        now_ms: i64,
+    ) -> Result<UploadAdmissionReservation, UploadAdmissionError> {
+        validate_request(&request)?;
+        if now_ms < 0 {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_reacquire_invalid",
+                "now_ms must be non-negative",
+            ));
+        }
+        if request.expected_bytes > self.config.max_single_upload_bytes {
+            return Err(UploadAdmissionError::new(
+                "upload_bytes_too_large",
+                "declared upload exceeds configured single-upload byte cap",
+            ));
+        }
+
+        let lease_ms = duration_ms(self.config.lease_duration, "lease_duration")?;
+        let next_expiry = now_ms.checked_add(lease_ms).ok_or_else(|| {
+            UploadAdmissionError::new(
+                "upload_admission_time_overflow",
+                "upload admission lease expiry overflows i64 milliseconds",
+            )
+        })?;
+
+        let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
+        let mut tx = (*connection)
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlite_error)?;
+        cleanup_old_rows(&mut tx, now_ms, self.config.retention).await?;
+
+        let existing = fetch_reservation(&mut tx, &request.reservation_id)
+            .await?
+            .ok_or_else(|| {
+                UploadAdmissionError::new(
+                    "upload_admission_not_found",
+                    "upload reservation does not exist",
+                )
+            })?;
+
+        if existing.tenant_id != request.tenant_id
+            || existing.principal_id != request.principal_id
+            || existing.expected_bytes != request.expected_bytes
+            || existing.request_hash != request.request_hash
+        {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_idempotency_conflict",
+                "upload reservation fingerprint does not match durable job payload",
+            ));
+        }
+        if existing.released_at_ms.is_some() {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_already_released",
+                "released upload reservation cannot be reacquired",
+            ));
+        }
+
+        if existing.lease_expires_at_ms <= now_ms {
+            require_active_principal(&mut tx, &request.principal_id).await?;
+            let tenant_usage =
+                active_usage(&mut *tx, "tenant_id", &request.tenant_id, now_ms).await?;
+            let principal_usage =
+                active_usage(&mut *tx, "principal_id", &request.principal_id, now_ms).await?;
+            enforce_capacity(
+                &principal_usage,
+                request.expected_bytes,
+                self.config.principal_concurrent_cap,
+                self.config.principal_bytes_cap,
+                "upload_principal_capacity",
+            )?;
+            enforce_capacity(
+                &tenant_usage,
+                request.expected_bytes,
+                self.config.tenant_concurrent_cap,
+                self.config.tenant_bytes_cap,
+                "upload_tenant_capacity",
+            )?;
+        }
+
+        let result = sqlx::query(
+            r#"
+            UPDATE upload_admission_reservations
+            SET lease_generation = lease_generation + 1,
+                lease_expires_at_ms = ?,
+                updated_at_ms = ?
+            WHERE reservation_id = ?
+              AND tenant_id = ?
+              AND principal_id = ?
+              AND expected_bytes = ?
+              AND request_hash = ?
+              AND lease_generation = ?
+              AND released_at_ms IS NULL
+            "#,
+        )
+        .bind(next_expiry)
+        .bind(now_ms)
+        .bind(request.reservation_id.as_bytes())
+        .bind(request.tenant_id.as_bytes())
+        .bind(request.principal_id.as_bytes())
+        .bind(request.expected_bytes)
+        .bind(request.request_hash.as_bytes())
+        .bind(existing.lease_generation)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlite_error)?;
+
+        if result.rows_affected() != 1 {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_reacquire_conflict",
+                "upload reservation changed during exact reacquire",
+            ));
+        }
+
+        tx.commit().await.map_err(sqlite_error)?;
+        fetch_reservation_pool(&self.pool, &request.reservation_id)
+            .await?
+            .ok_or_else(|| {
+                UploadAdmissionError::new(
+                    "upload_admission_row_missing",
+                    "reacquired upload reservation disappeared",
+                )
+            })
+    }
+
+    /// Release one exact durable reservation fingerprint without exposing its
+    /// mutable lease generation to durable job payloads.
+    pub async fn release_exact(
+        &self,
+        request: UploadAdmissionRequest,
+        now_ms: i64,
+    ) -> Result<ReleaseUploadOutcome, UploadAdmissionError> {
+        validate_request(&request)?;
+        if now_ms < 0 {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_release_invalid",
+                "now_ms must be non-negative",
+            ));
+        }
+
+        let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
+        let mut tx = (*connection)
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlite_error)?;
+        let existing = fetch_reservation(&mut tx, &request.reservation_id)
+            .await?
+            .ok_or_else(|| {
+                UploadAdmissionError::new(
+                    "upload_admission_not_found",
+                    "upload reservation does not exist",
+                )
+            })?;
+        if existing.tenant_id != request.tenant_id
+            || existing.principal_id != request.principal_id
+            || existing.expected_bytes != request.expected_bytes
+            || existing.request_hash != request.request_hash
+        {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_release_conflict",
+                "upload reservation fingerprint does not match",
+            ));
+        }
+        if existing.released_at_ms.is_some() {
+            tx.commit().await.map_err(sqlite_error)?;
+            return Ok(ReleaseUploadOutcome::AlreadyReleased);
+        }
+
+        let result = sqlx::query(
+            r#"
+            UPDATE upload_admission_reservations
+            SET released_at_ms = ?, updated_at_ms = ?
+            WHERE reservation_id = ?
+              AND tenant_id = ?
+              AND principal_id = ?
+              AND expected_bytes = ?
+              AND request_hash = ?
+              AND released_at_ms IS NULL
+            "#,
+        )
+        .bind(now_ms)
+        .bind(now_ms)
+        .bind(request.reservation_id.as_bytes())
+        .bind(request.tenant_id.as_bytes())
+        .bind(request.principal_id.as_bytes())
+        .bind(request.expected_bytes)
+        .bind(request.request_hash.as_bytes())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlite_error)?;
+        if result.rows_affected() != 1 {
+            return Err(UploadAdmissionError::new(
+                "upload_admission_release_conflict",
+                "upload reservation changed during exact release",
+            ));
+        }
+        tx.commit().await.map_err(sqlite_error)?;
+        Ok(ReleaseUploadOutcome::Released)
+    }
+
     pub async fn release(
         &self,
         tenant_id: &str,
@@ -1031,6 +1239,114 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(old_count, 0);
+
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn expired_exact_reservation_reacquires_with_new_generation() {
+        let (path, authority) = setup("reacquire").await;
+        let original = request("reacquire-a", "principal-a", 500);
+        let reserved = match authority.reserve(original.clone(), 10).await.unwrap() {
+            ReserveUploadOutcome::Reserved(record) => record,
+            other => panic!("unexpected reserve outcome: {other:?}"),
+        };
+
+        let reacquired = authority
+            .reacquire_exact(original.clone(), reserved.lease_expires_at_ms)
+            .await
+            .unwrap();
+        assert_eq!(reacquired.reservation_id, original.reservation_id);
+        assert_eq!(reacquired.lease_generation, reserved.lease_generation + 1);
+        assert!(reacquired.lease_expires_at_ms > reserved.lease_expires_at_ms);
+
+        let replay = authority
+            .reacquire_exact(original.clone(), reacquired.lease_expires_at_ms - 1)
+            .await
+            .unwrap();
+        assert_eq!(replay.lease_generation, reacquired.lease_generation + 1);
+
+        let mut changed = original;
+        changed.request_hash = "f".repeat(64);
+        assert_eq!(
+            authority
+                .reacquire_exact(changed, replay.lease_expires_at_ms)
+                .await
+                .unwrap_err()
+                .code,
+            "upload_admission_idempotency_conflict"
+        );
+
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn expired_reacquire_rechecks_capacity_with_retry_hint() {
+        let (path, initial) = setup("reacquire-capacity").await;
+        initial.close().await;
+
+        let strict = UploadAdmissionConfig {
+            principal_concurrent_cap: 1,
+            tenant_concurrent_cap: 1,
+            principal_bytes_cap: 900,
+            tenant_bytes_cap: 900,
+            max_single_upload_bytes: 900,
+            lease_duration: Duration::from_millis(100),
+            retention: Duration::from_millis(500),
+        };
+        let authority =
+            SqliteUploadAdmissionAuthority::open(&path, 4, Duration::from_secs(2), strict)
+                .await
+                .unwrap();
+
+        let original = request("reacquire-old", "principal-a", 500);
+        let reserved = match authority.reserve(original.clone(), 10).await.unwrap() {
+            ReserveUploadOutcome::Reserved(record) => record,
+            other => panic!("unexpected reserve outcome: {other:?}"),
+        };
+        let expiry = reserved.lease_expires_at_ms;
+
+        let replacement = request("reacquire-new", "principal-a", 400);
+        let live = match authority.reserve(replacement, expiry).await.unwrap() {
+            ReserveUploadOutcome::Reserved(record) => record,
+            other => panic!("unexpected replacement outcome: {other:?}"),
+        };
+
+        let denied = authority
+            .reacquire_exact(original, expiry)
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "upload_principal_capacity");
+        assert_eq!(denied.retry_at_ms, Some(live.lease_expires_at_ms));
+
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn exact_release_is_idempotent_across_reacquire_generation_changes() {
+        let (path, authority) = setup("release-exact").await;
+        let request = request("release-exact", "principal-a", 400);
+        let reserved = match authority.reserve(request.clone(), 10).await.unwrap() {
+            ReserveUploadOutcome::Reserved(record) => record,
+            other => panic!("unexpected reserve outcome: {other:?}"),
+        };
+        let reacquired = authority
+            .reacquire_exact(request.clone(), reserved.lease_expires_at_ms)
+            .await
+            .unwrap();
+        assert!(reacquired.lease_generation > reserved.lease_generation);
+
+        assert_eq!(
+            authority.release_exact(request.clone(), 200).await.unwrap(),
+            ReleaseUploadOutcome::Released
+        );
+        assert_eq!(
+            authority.release_exact(request, 300).await.unwrap(),
+            ReleaseUploadOutcome::AlreadyReleased
+        );
 
         authority.close().await;
         cleanup(&path);
