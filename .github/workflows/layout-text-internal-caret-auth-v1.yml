@@ -1,0 +1,55 @@
+name: Layout Internal Caret Authority V1
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/Cargo.toml"
+      - "vendor/producer-a/Cargo.lock"
+      - "vendor/producer-a/crates/pub-layout/Cargo.toml"
+      - "vendor/producer-a/crates/pub-layout/src/shaping.rs"
+      - "vendor/producer-a/crates/pub-layout/src/internal_caret.rs"
+      - "vendor/producer-a/crates/pub-layout/src/lib.rs"
+      - "vendor/producer-a/crates/pub-layout/examples/internal_caret_receipt.rs"
+      - "services/editor-api/resolved_text_caret_map_v1.py"
+      - "services/editor-api/test_resolved_text_caret_map_v1.py"
+      - "services/editor-api/test_internal_caret_authority_v1.py"
+      - ".github/workflows/layout-text-internal-caret-auth-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check pub-layout formatting only
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-layout -- --check
+      - name: Check pinned shaping + GDEF authority
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-layout --all-targets
+      - name: Lint pinned shaping + GDEF authority
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-layout --all-targets -- -D warnings
+      - name: Test real GSUB/GDEF internal caret authority
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-layout internal_caret -- --nocapture
+      - name: Emit pinned fi authority receipt
+        run: |
+          mkdir -p target/internal-caret
+          cargo run --quiet --manifest-path vendor/producer-a/Cargo.toml -p pub-layout --example internal_caret_receipt             | tee target/internal-caret/receipt.json
+      - name: Verify canonical Python caret-map integration
+        working-directory: services/editor-api
+        env:
+          INTERNAL_CARET_RECEIPT: ../../target/internal-caret/receipt.json
+        run: python -m unittest -v test_internal_caret_authority_v1 test_resolved_text_caret_map_v1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: layout-internal-caret-authority-${{ github.run_id }}
+          path: target/internal-caret/receipt.json
+          if-no-files-found: error
