@@ -24,6 +24,8 @@ pub struct Cli {
 pub enum Command {
     /// Start the private HTTP runtime.
     Serve,
+    /// Start the private HTTP runtime with the local browser diagnostics console.
+    Local,
     /// Start the durable background worker runtime.
     Worker,
     /// Inspect or advance the durable schema.
@@ -54,6 +56,10 @@ mod tests {
         assert!(matches!(
             Cli::try_parse_from(["chaptera", "serve"]).unwrap().command,
             Command::Serve
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["chaptera", "local"]).unwrap().command,
+            Command::Local
         ));
         assert!(matches!(
             Cli::try_parse_from(["chaptera", "worker"]).unwrap().command,
