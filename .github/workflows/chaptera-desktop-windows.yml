@@ -92,6 +92,9 @@ jobs:
           }
           "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Test GUI-only Desktop V0 walkthrough
+        run: cargo test -p chaptera-desktop --features embedded-fixture-tests gui_only_v0_walkthrough_uses_real_widgets -- --nocapture
+
       - name: Capture real Chaptera UX snapshots
         shell: pwsh
         timeout-minutes: 4
