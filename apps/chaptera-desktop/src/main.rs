@@ -3817,6 +3817,120 @@ mod tests {
     }
 
     #[test]
+    fn replacement_image_mime_is_bounded_to_png_and_jpeg() {
+        assert_eq!(replacement_image_mime(Path::new("replacement.png")), Some("image/png"));
+        assert_eq!(replacement_image_mime(Path::new("replacement.JPG")), Some("image/jpeg"));
+        assert_eq!(replacement_image_mime(Path::new("replacement.jpeg")), Some("image/jpeg"));
+        assert_eq!(replacement_image_mime(Path::new("replacement.gif")), None);
+        assert_eq!(replacement_image_mime(Path::new("replacement")), None);
+    }
+
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
+    fn direct_image_replacement_roundtrips_through_project_assets() {
+        let bytes = decode_base64_fixture(include_str!(
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+        ));
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("SampleNewsletter Viewer open");
+        let source_hash = visual.document.source.source_hash;
+        let mut editor =
+            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
+
+        let (node_id, replacement_mime, replacement_bytes) = visual
+            .document
+            .pages
+            .iter()
+            .find_map(|page| {
+                let page_origin = page.id.into_canonical();
+                let page_id_text = page.id.as_canonical().to_string();
+                visual
+                    .scene
+                    .nodes
+                    .iter()
+                    .filter(|node| node.parent_origin == page_origin)
+                    .find_map(|scene_node| {
+                        let instance =
+                            direct_scene_instance(&editor, &page_id_text, scene_node.origin)?;
+                        let admission = admit_object_mutation_v1(
+                            &instance,
+                            ObjectMutationKindV1::ReplaceImage,
+                        );
+                        if !admission.admitted
+                            || admission.origin_node_id.as_deref()
+                                != Some(scene_node.origin.as_canonical().to_string().as_str())
+                        {
+                            return None;
+                        }
+                        let authored = editor.graph().nodes.get(&scene_node.origin)?;
+                        if authored.payload.image_slot.is_none()
+                            || authored.payload.explicit_image_crop.is_some()
+                        {
+                            return None;
+                        }
+                        let embedded = visual
+                            .images
+                            .iter()
+                            .find(|image| image.node_ids.contains(&scene_node.origin))?;
+                        if !matches!(embedded.mime.as_str(), "image/png" | "image/jpeg") {
+                            return None;
+                        }
+                        Some((
+                            scene_node.origin,
+                            embedded.mime.clone(),
+                            embedded.bytes.clone(),
+                        ))
+                    })
+            })
+            .expect("fixture exposes one direct crop-free image target");
+
+        let replacement_asset = editor
+            .import_replacement_asset(replacement_mime, replacement_bytes)
+            .expect("bounded PNG/JPEG replacement import");
+        editor
+            .can_replace_image(node_id, replacement_asset)
+            .expect("direct instance remains ReplaceImage-capable");
+
+        let before_count = editor.operations().len();
+        let operation = editor
+            .replace_image(node_id, replacement_asset)
+            .expect("canonical ReplaceImage");
+        assert!(matches!(
+            operation,
+            pub_editor::EditOperation::ReplaceImage { node_id: actual, after_asset, .. }
+                if actual == node_id && after_asset == replacement_asset
+        ));
+        assert_eq!(editor.operations().len(), before_count + 1);
+        assert_eq!(editor.image_replacement_for(node_id), Some(replacement_asset));
+
+        editor.undo().expect("ReplaceImage undo");
+        assert_eq!(editor.image_replacement_for(node_id), None);
+        editor.redo().expect("ReplaceImage redo");
+        assert_eq!(editor.image_replacement_for(node_id), Some(replacement_asset));
+
+        let project = editor.project();
+        assert_eq!(project.assets.len(), 1);
+        let asset_bytes = editor
+            .replacement_assets()
+            .map(|asset| (asset.sha256, asset.bytes.clone()))
+            .collect::<BTreeMap<_, _>>();
+
+        let mut reopened =
+            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("fresh editor reopen");
+        reopened
+            .apply_project_with_assets(&project, &asset_bytes)
+            .expect("fresh replay with replacement bytes");
+        assert_eq!(
+            reopened.image_replacement_for(node_id),
+            Some(replacement_asset),
+            "fresh EditorProject replay must preserve replacement identity"
+        );
+    }
+
+    #[test]
     fn source_path_argument_is_optional() {
         let path = std::path::Path::new("example.pub");
         assert_eq!(
