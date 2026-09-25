@@ -615,7 +615,7 @@ def run_local_fixed_page_trial(
         env["CHAPTERA_SOURCE_HASH"] = expected_hash
         env["CHAPTERA_FIXED_PAGE_TRIAL_V1"] = "1"
         env["CHAPTERA_TRIAL_STORY_WITNESS"] = STORY_WITNESS
-         env["CHAPTERA_AUTH_WRAP_RECEIPT_SHA256"] = evidence["auth_wrap_sha256"]
+        env["CHAPTERA_AUTH_WRAP_RECEIPT_SHA256"] = evidence["auth_wrap_sha256"]
 
         completed = subprocess.run(
             command,
