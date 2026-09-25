@@ -22,16 +22,36 @@ pub use pub_reader::{
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
-    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, build_failure_envelope,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
+    PubReaderOpenTiming, PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild,
+    build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
+    build_mature_0x2c_source_graph, build_mature_0x2c_source_graph_with_timing,
     resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
+use std::time::{Duration, Instant};
 
 pub const VIEWER_DOCUMENT_SCHEMA_V0_1: &str = "0.1";
 pub const VIEWER_GEOMETRY_SCHEMA_V0_1: &str = "0.1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ViewerOpenTiming {
+    pub reader: PubReaderOpenTiming,
+    pub resolve_model_ns: u64,
+    pub viewer_document_projection_ns: u64,
+    pub dependency_resolution_ns: u64,
+    pub layout_projection_ns: u64,
+    pub visible_resource_materialization_ns: u64,
+    pub scene_resolution_ns: u64,
+    pub page_count: u64,
+    pub story_count: u64,
+    pub resource_count: u64,
+}
+
+fn duration_ns_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
 
 pub const VIEWER_FAILURE_REPORT_SCHEMA_V0_1: &str = "chaptera-viewer-failure-report/v0.1";
 
@@ -271,10 +291,27 @@ pub fn open_mature_0x2c_geometry(
     bytes: &[u8],
     environment: BoundedLayoutEnvironment,
 ) -> Result<ViewerGeometryDocument> {
-    let pipeline = build_mature_0x2c_pipeline(bytes)?;
+    Ok(open_mature_0x2c_geometry_with_timing(bytes, environment)?.0)
+}
+
+pub fn open_mature_0x2c_geometry_with_timing(
+    bytes: &[u8],
+    environment: BoundedLayoutEnvironment,
+) -> Result<(ViewerGeometryDocument, ViewerOpenTiming)> {
+    let (pipeline, reader_timing, resolve_model_ns) =
+        build_mature_0x2c_pipeline_with_timing(bytes)?;
+
+    let document_started = Instant::now();
     let mut document = viewer_document_from_pipeline(bytes.len(), &pipeline)?;
+    let viewer_document_projection_ns = duration_ns_u64(document_started.elapsed());
+
+    let dependency_started = Instant::now();
     let authoring = bounded_authoring_slice_from_resolved(&pipeline.resolved.graph)?;
+    let dependency_resolution_ns = duration_ns_u64(dependency_started.elapsed());
+
+    let layout_started = Instant::now();
     let projection = project_bounded(authoring);
+    let layout_projection_ns = duration_ns_u64(layout_started.elapsed());
 
     document
         .diagnostics
@@ -323,6 +360,7 @@ pub fn open_mature_0x2c_geometry(
         })
         .collect::<Vec<_>>();
 
+    let resources_started = Instant::now();
     let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
         bytes,
         &pipeline.source.graph,
@@ -368,6 +406,9 @@ pub fn open_mature_0x2c_geometry(
         }
     };
 
+    let visible_resource_materialization_ns = duration_ns_u64(resources_started.elapsed());
+
+    let scene_started = Instant::now();
     let scene = resolve_bounded_geometry(&projection, environment).map_err(|blocked| {
         let codes = blocked
             .projection_errors
@@ -377,6 +418,8 @@ pub fn open_mature_0x2c_geometry(
             .join(", ");
         anyhow!("Viewer geometry resolution blocked by layout projection errors: {codes}")
     })?;
+
+    let scene_resolution_ns = duration_ns_u64(scene_started.elapsed());
 
     document
         .diagnostics
@@ -392,14 +435,32 @@ pub fn open_mature_0x2c_geometry(
     }
     normalize_diagnostics(&mut document.diagnostics);
 
-    Ok(ViewerGeometryDocument {
-        schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
-        document,
-        scene,
-        paints,
-        story_frames,
-        images,
-    })
+    let page_count = u64::try_from(document.pages.len()).unwrap_or(u64::MAX);
+    let story_count = u64::try_from(document.stories.len()).unwrap_or(u64::MAX);
+    let resource_count = u64::try_from(images.len()).unwrap_or(u64::MAX);
+
+    Ok((
+        ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document,
+            scene,
+            paints,
+            story_frames,
+            images,
+        },
+        ViewerOpenTiming {
+            reader: reader_timing,
+            resolve_model_ns,
+            viewer_document_projection_ns,
+            dependency_resolution_ns,
+            layout_projection_ns,
+            visible_resource_materialization_ns,
+            scene_resolution_ns,
+            page_count,
+            story_count,
+            resource_count,
+        },
+    ))
 }
 
 /// Explicit deterministic environment profile for the geometry-only Viewer
@@ -413,17 +474,30 @@ pub fn viewer_geometry_environment_v0_1() -> BoundedLayoutEnvironment {
 }
 
 fn build_mature_0x2c_pipeline(bytes: &[u8]) -> Result<Mature0x2cPipeline> {
+    Ok(build_mature_0x2c_pipeline_with_timing(bytes)?.0)
+}
+
+fn build_mature_0x2c_pipeline_with_timing(
+    bytes: &[u8],
+) -> Result<(Mature0x2cPipeline, PubReaderOpenTiming, u64)> {
     let source_hash = sha256_digest(bytes)?;
-    let source = build_mature_0x2c_source_graph(Cursor::new(bytes), source_hash)
-        .context("build mature-0x2C PUB source graph for Viewer")?;
+    let (source, reader_timing) =
+        build_mature_0x2c_source_graph_with_timing(Cursor::new(bytes), source_hash)
+            .context("build mature-0x2C PUB source graph for Viewer")?;
+    let resolve_started = Instant::now();
     let resolved =
         resolve_pub_source_graph(&source.graph).context("resolve PUB source graph for Viewer")?;
+    let resolve_model_ns = duration_ns_u64(resolve_started.elapsed());
 
-    Ok(Mature0x2cPipeline {
-        source_hash,
-        source,
-        resolved,
-    })
+    Ok((
+        Mature0x2cPipeline {
+            source_hash,
+            source,
+            resolved,
+        },
+        reader_timing,
+        resolve_model_ns,
+    ))
 }
 
 fn viewer_document_from_pipeline(
