@@ -11,7 +11,6 @@ on:
       - "apps/chaptera-server/src/main.rs"
       - "apps/chaptera-server/src/config.rs"
       - "deploy/config/chaptera.prod.example.toml"
-      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/migrations/0003_jobs.sql"
       - ".github/workflows/cloud-async-runtime-v0.yml"
   workflow_dispatch:
