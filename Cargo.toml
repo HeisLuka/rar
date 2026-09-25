@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/chaptera-server",
+  "apps/chaptera-desktop",
   "crates/pub-model",
   "crates/chaptera-layout-projection",
   "crates/chaptera-scene-instance",
@@ -11,6 +12,7 @@ members = [
   "crates/pub-paint-bridge",
   "crates/pub-plccmob-projection",
 ]
+exclude = ["vendor/producer-a"]
 resolver = "2"
 
 [workspace.package]
@@ -20,7 +22,14 @@ rust-version = "1.94.1"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+anyhow = "1"
+cfb = "0.14"
+clap = { version = "4", features = ["derive"] }
+harfrust = "=0.13.3"
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v5"] }
+uax14-linebreak = "=0.1.0"
+uuid = { version = "1", features = ["v5", "v7"] }
+zip = { version = "=2.4.2", default-features = false }

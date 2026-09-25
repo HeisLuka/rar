@@ -1,0 +1,16 @@
+[package]
+name = "pub-idml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-export = { path = "../pub-export" }
+pub-format-registry = { path = "../pub-format-registry" }
+pub-model = { path = "../pub-model" }
+serde.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

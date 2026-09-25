@@ -1,0 +1,60 @@
+name: Chaptera Desktop Windows V0
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "apps/chaptera-desktop/**"
+      - "crates/chaptera-scene-instance/**"
+      - "vendor/producer-a/**"
+      - ".github/workflows/chaptera-desktop-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-editor:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Check desktop package
+        run: cargo check -p chaptera-desktop --all-targets
+
+      - name: Test current scene-instance mutation gate
+        run: cargo test -p chaptera-scene-instance
+
+      - name: Build Chaptera desktop release
+        run: cargo build -p chaptera-desktop --release
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = "target/release/chaptera.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Chaptera desktop executable was not produced"
+          }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $exe).Length
+          @{
+            schema_version = "chaptera.desktop-build.v1"
+            target = "x86_64-pc-windows-msvc"
+            executable = "chaptera.exe"
+            sha256 = $hash
+            byte_len = $bytes
+            source_commit = "${{ github.sha }}"
+          } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera.desktop-build.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-editor-windows-x86_64
+          path: |
+            target/release/chaptera.exe
+            target/release/chaptera.desktop-build.json
+          if-no-files-found: error

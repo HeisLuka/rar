@@ -1,0 +1,26 @@
+[package]
+name = "chaptera-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chaptera"
+path = "src/main.rs"
+
+[features]
+default = []
+reader-only = []
+embedded-fixture-tests = []
+
+[dependencies]
+chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
+eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
+image = { version = "=0.25.8", default-features = false, features = ["jpeg", "png"] }
+pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+pub-interaction = { path = "../../vendor/producer-a/crates/pub-interaction" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
