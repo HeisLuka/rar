@@ -58,6 +58,7 @@ pub struct ExportJobPayloadV1 {
     pub schema_version: String,
     pub tenant_id: String,
     pub document_id: String,
+    pub requesting_principal_id: String,
     pub exact_revision_id: String,
     pub canonical_authoring_revision_id: String,
     pub target_profile: String,
@@ -86,6 +87,7 @@ impl ExportJobPayloadV1 {
         for (label, value) in [
             ("tenant_id", self.tenant_id.as_str()),
             ("document_id", self.document_id.as_str()),
+            ("requesting_principal_id", self.requesting_principal_id.as_str()),
             ("exact_revision_id", self.exact_revision_id.as_str()),
         ] {
             require_ident(value, label)?;
@@ -574,6 +576,7 @@ mod tests {
             schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.into(),
             tenant_id: "tenant:1".into(),
             document_id: "doc:1".into(),
+            requesting_principal_id: "principal:1".into(),
             exact_revision_id: format!("sha256:{}", "a".repeat(64)),
             canonical_authoring_revision_id: "c".repeat(64),
             target_profile: "pdf:v1".into(),
@@ -589,6 +592,7 @@ mod tests {
             schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.into(),
             tenant_id: "tenant:1".into(),
             document_id: "doc:1".into(),
+            requesting_principal_id: "principal:1".into(),
             exact_revision_id: "service-rev:1".into(),
             canonical_authoring_revision_id: "not-a-canonical-authoring-revision".into(),
             target_profile: IDML_BOUNDED_EDITABLE_PROFILE.into(),
