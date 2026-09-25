@@ -1,4 +1,4 @@
-name: TEMP CORPUS BOOKMARK 95-97 opaque3 header-data split
+name: TEMP CORPUS BOOKMARK printer29 nested record widening
 
 on:
   pull_request:
@@ -411,7 +411,44 @@ jobs:
               "data_hash_equal":ls["data_sha256"]==rs["data_sha256"] and ls["data_len"]==rs["data_len"]
             })
           opaque3_analysis={"ids":opaque3_ids,"rows":opaque3}
-          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts,"ext10_analysis":ext10_analysis,"opaque3_analysis":opaque3_analysis}
+          def ptr_records(raw):
+            data_off=raw[3]; d=raw[data_off:]
+            n16=u16(d,0); m16=u16(d,2)
+            ptr=4 if n16>m16 else 2
+            if ptr==2:
+              n=u16(d,0); pos0=10
+            else:
+              n=u32(d,0); pos0=18
+            positions=[]
+            for i in range(n+1):
+              p=pos0+i*ptr
+              positions.append(int.from_bytes(d[p:p+ptr],"little"))
+            return [d[pos0+positions[i]:pos0+positions[i+1]] for i in range(n)]
+          l284=L["dir"]["chunks"][284]["raw"]; r284=R["dir"]["chunks"][284]["raw"]
+          lrecs=ptr_records(l284); rrecs=ptr_records(r284)
+          record_widen=[]
+          for idx,(lr,rr) in enumerate(zip(lrecs,rrecs)):
+            growth=len(rr)-len(lr)
+            k=growth//2 if growth>=0 and growth%2==0 else -1
+            if k>=0 and len(lr)>=2*k and len(rr)>=4*k:
+              left_scalars=[u16(lr,2*i) for i in range(k)]
+              right_scalars=[u32(rr,4*i) for i in range(k)]
+              left_tail=lr[2*k:]; right_tail=rr[4*k:]
+              shift_ok=all(b==a+growth for a,b in zip(left_scalars,right_scalars))
+              tail_equal=left_tail==right_tail
+            else:
+              left_scalars=[]; right_scalars=[]; shift_ok=False; tail_equal=False; left_tail=b""; right_tail=b""
+            record_widen.append({
+              "record_index":idx,"left_len":len(lr),"right_len":len(rr),"growth":growth,"candidate_scalar_count":k,
+              "left_u16_scalars":left_scalars,"right_u32_scalars":right_scalars,
+              "all_right_equal_left_plus_growth":shift_ok,
+              "tail_len_left":len(left_tail),"tail_len_right":len(right_tail),
+              "tail_sha256_left":sha(left_tail),"tail_sha256_right":sha(right_tail),
+              "tail_byte_identical":tail_equal,
+              "pure_offset_widening":bool(k>=0 and shift_ok and tail_equal)
+            })
+          printer29_record_widening={"id":284,"records":record_widen,"all_records_pure_offset_widening":all(x["pure_offset_widening"] for x in record_widen)}
+          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts,"ext10_analysis":ext10_analysis,"opaque3_analysis":opaque3_analysis,"printer29_record_widening":printer29_record_widening}
 
           # strip raw before retention
           for side in parsed.values():
@@ -443,7 +480,7 @@ jobs:
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: corpus-lineage-bookmark-95-97-opaque3-receipt
+          name: corpus-lineage-bookmark-printer29-record-widen-receipt
           path: out/**
           if-no-files-found: error
           retention-days: 90
