@@ -19,6 +19,7 @@ use pub_viewer::{
     ViewerGeometryDocument, ViewerTextMatch, classify_failure_candidate,
     exact_file_intake_eligible,
 };
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -162,6 +163,19 @@ fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
 
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--product-smoke-check")) {
+        match product_smoke_receipt() {
+            Ok(receipt) => {
+                println!("{receipt}");
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("Chaptera product smoke failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         let Some(path) = args.next().map(PathBuf::from) else {
             std::process::exit(2);
@@ -192,6 +206,40 @@ fn main() -> eframe::Result<()> {
             )))
         }),
     )
+}
+
+fn product_smoke_receipt() -> Result<String, String> {
+    if reader_only_mode() {
+        return Err("reader-only build is not an Editor product artifact".to_owned());
+    }
+
+    let executable =
+        std::env::current_exe().map_err(|error| format!("resolve current executable: {error}"))?;
+    let bytes = fs::read(&executable)
+        .map_err(|error| format!("read current executable {}: {error}", executable.display()))?;
+    let digest = Sha256::digest(&bytes);
+    let executable_name = executable
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "current executable has no UTF-8 file name".to_owned())?;
+
+    let receipt = serde_json::json!({
+        "schema_version": "chaptera.desktop-product-smoke.v1",
+        "product": "Chaptera Editor",
+        "editor_enabled": true,
+        "reader_only": false,
+        "executable": executable_name,
+        "executable_sha256": format!("{digest:x}"),
+        "executable_byte_len": bytes.len(),
+        "source_commit": option_env!("GITHUB_SHA").unwrap_or("local-build"),
+        "runtime_boundary": {
+            "source_checkout_required": false,
+            "cargo_required": false,
+            "repo_relative_assets_required_by_smoke_path": false
+        }
+    });
+
+    serde_json::to_string(&receipt).map_err(|error| format!("serialize smoke receipt: {error}"))
 }
 
 fn smoke_check(path: &Path) -> Result<(), String> {
