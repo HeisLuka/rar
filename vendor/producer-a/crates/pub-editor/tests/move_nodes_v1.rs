@@ -285,6 +285,29 @@ fn duplicate_resize_and_wrong_page_fail_closed() {
 }
 
 #[test]
+fn v0_5_project_cannot_smuggle_movenodes_history_shape() {
+    let base = graph();
+    let (page_id, _, _) = ids();
+    let mut batch = entries(&base);
+    batch.sort_by_key(|entry| entry.node_id);
+    let project = EditorProject {
+        schema_version: "pub-editor-v0.5".to_owned(),
+        source_hash: source_hash(),
+        assets: Vec::new(),
+        operations: vec![EditOperation::MoveNodes {
+            page_id,
+            entries: batch,
+        }],
+    };
+    let mut session = EditorSession::new(base).expect("session");
+    assert!(matches!(
+        session.apply_project(&project),
+        Err(EditorProjectError::LegacyProjectCarriesMoveNodesOperation { index: 0 })
+    ));
+    assert!(session.operations().is_empty());
+}
+
+#[test]
 fn movenodes_wire_is_canonical_and_batch_error_codes_are_stable() {
     let base = graph();
     let (page_id, node_a, _) = ids();
