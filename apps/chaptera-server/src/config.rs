@@ -1288,6 +1288,78 @@ client_secret = {secret_source}
         assert_eq!(config.runtime_config().listen, DEFAULT_LISTEN);
     }
 
+    fn source_runtime_path(name: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!("C:/chaptera/{name}"))
+        } else {
+            PathBuf::from(format!("/opt/chaptera/{name}"))
+        }
+    }
+
+    fn source_ingress_config() -> SourceIngressConfig {
+        SourceIngressConfig {
+            principal_concurrent_cap: 2,
+            tenant_concurrent_cap: 4,
+            principal_bytes_cap: 64 * 1024 * 1024,
+            tenant_bytes_cap: 128 * 1024 * 1024,
+            max_single_upload_bytes: 32 * 1024 * 1024,
+            admission_lease_seconds: 900,
+            admission_retention_seconds: 3600,
+            upload_ttl_seconds: 600,
+            direct_grant_ttl_seconds: 300,
+            scanner: SourceScannerConfig {
+                clamd_endpoint: "127.0.0.1:3310".parse().unwrap(),
+                clamd_connect_timeout_ms: 2_000,
+                clamd_io_timeout_ms: 10_000,
+                isolation_python: source_runtime_path("python"),
+                isolation_harness: source_runtime_path("isolation.py"),
+                worker_binary: source_runtime_path("chaptera-untrusted-pub-worker"),
+                worker_wall_timeout_seconds: 30,
+                worker_address_space_mb: 1024,
+                worker_cpu_seconds: 20,
+                worker_open_files: 64,
+                worker_output_file_mb: 32,
+                max_cfb_entries: 100_000,
+                max_declared_stream_bytes: 32 * 1024 * 1024,
+                temp_root: source_runtime_path("scanner-tmp"),
+            },
+            baseline: SourceBaselineRuntimeConfig {
+                isolation_python: source_runtime_path("python"),
+                isolation_harness: source_runtime_path("isolation.py"),
+                worker_binary: source_runtime_path("chaptera"),
+                worker_wall_timeout_seconds: 30,
+                worker_address_space_mb: 1024,
+                worker_cpu_seconds: 20,
+                worker_open_files: 64,
+                worker_output_file_mb: 32,
+                temp_root: source_runtime_path("baseline-tmp"),
+            },
+        }
+    }
+
+    #[test]
+    fn source_ingress_runtime_is_explicit_and_fail_closed() {
+        let mut config: ChapteraConfig =
+            toml::from_str(&prod_toml(r#"{ source = "env", name = "OIDC_SECRET" }"#)).unwrap();
+        config.source_ingress = Some(source_ingress_config());
+        config.validate().unwrap();
+
+        let source = config.source_ingress.as_mut().unwrap();
+        source.direct_grant_ttl_seconds = source.upload_ttl_seconds + 1;
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "source_ingress_ttl_order_invalid"
+        );
+
+        let source = config.source_ingress.as_mut().unwrap();
+        source.direct_grant_ttl_seconds = 300;
+        source.scanner.clamd_endpoint = "192.0.2.1:3310".parse().unwrap();
+        assert_eq!(
+            config.validate().unwrap_err().code,
+            "source_ingress_clamd_not_loopback"
+        );
+    }
+
     #[test]
     fn auth_ttls_are_explicit_positive_and_ordered() {
         let mut config: ChapteraConfig =
