@@ -5,7 +5,7 @@ use std::{
 };
 
 use sqlx::{
-    Row, SqlitePool,
+    Connection, Row, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
@@ -215,7 +215,11 @@ impl SqliteUploadAdmissionAuthority {
             )
         })?;
 
-        let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
+        let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
+        let mut tx = (&mut *connection)
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlite_error)?;
         cleanup_old_rows(&mut tx, now_ms, self.config.retention).await?;
 
         if let Some(existing) = fetch_reservation(&mut tx, &request.reservation_id).await? {
@@ -247,9 +251,10 @@ impl SqliteUploadAdmissionAuthority {
 
         require_active_principal(&mut tx, &request.principal_id).await?;
 
-        let tenant_usage = active_usage(&mut tx, "tenant_id", &request.tenant_id, now_ms).await?;
+        let tenant_usage =
+            active_usage(&mut *tx, "tenant_id", &request.tenant_id, now_ms).await?;
         let principal_usage =
-            active_usage(&mut tx, "principal_id", &request.principal_id, now_ms).await?;
+            active_usage(&mut *tx, "principal_id", &request.principal_id, now_ms).await?;
 
         enforce_capacity(
             principal_usage,
@@ -447,8 +452,9 @@ impl SqliteUploadAdmissionAuthority {
             ));
         }
         let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
-        let tenant = active_usage(&mut connection, "tenant_id", tenant_id, now_ms).await?;
-        let principal = active_usage(&mut connection, "principal_id", principal_id, now_ms).await?;
+        let tenant = active_usage(&mut *connection, "tenant_id", tenant_id, now_ms).await?;
+        let principal =
+            active_usage(&mut *connection, "principal_id", principal_id, now_ms).await?;
         Ok((tenant.0, tenant.1, principal.0, principal.1))
     }
 
