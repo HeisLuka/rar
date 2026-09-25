@@ -14,6 +14,8 @@ on:
       - "tools/validate_editor_live_trial_package_receipt.py"
       - "tools/run_editor_live_trial_package_smoke.py"
       - "tools/validate_editor_desktop_ux_snapshots.py"
+      - "tools/chaptera-resize-producer/**"
+      - "tools/run_local_resize_node_receipt.ps1"
       - ".github/workflows/chaptera-desktop-windows.yml"
       - "packages/product/desktop-suite/**"
       - "tools/validate_chaptera_desktop_suite_manifest.py"
@@ -63,7 +65,7 @@ jobs:
           "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Test local ResizeNode producer seam
-        run: cargo test -p chaptera-desktop --features resize-producer --bin chaptera-resize-producer real_sample_contract -- --ignored --nocapture
+        run: cargo test -p chaptera-resize-producer real_sample_contract -- --ignored --nocapture
 
       - name: Test GUI-only Desktop V0 walkthrough
         run: cargo test -p chaptera-desktop gui_only_v0_walkthrough_uses_real_widgets -- --ignored --nocapture
