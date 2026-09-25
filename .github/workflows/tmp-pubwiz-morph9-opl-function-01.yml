@@ -1,0 +1,136 @@
+name: TEMP PUBWIZ MORPH9 OPL function slice
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-morph9-opl-function-01.yml'
+permissions:
+  contents: read
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+      - name: Rehydrate exact MORPH9 and classify function slice
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/morph/{src,module} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/morph/source.7z
+          test "$(sha1sum /tmp/morph/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          7z x -y /tmp/morph/source.7z -o/tmp/morph/src >/dev/null
+          MDF="$(find /tmp/morph/src -type f -iname '*.mdf' | head -n1)"
+          iat "$MDF" /tmp/morph/disc.iso >/dev/null
+          test "$(sha256sum /tmp/morph/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z e -y -o/tmp/morph/module /tmp/morph/disc.iso 'PFILES/MSOFFICE/OFFICE/MORPH9.DLL' >/dev/null
+          test "$(sha256sum /tmp/morph/module/MORPH9.DLL | awk '{print $1}')" = 'd154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          python3 - <<'PY'
+          import json,hashlib,pathlib,collections
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_32,CS_GRP_JUMP,CS_GRP_CALL,CS_GRP_RET
+          from capstone.x86 import X86_OP_IMM,X86_OP_MEM,X86_OP_REG
+
+          data=pathlib.Path('/tmp/morph/module/MORPH9.DLL').read_bytes()
+          pe=pefile.PE(data=data,fast_load=False); ib=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_32); md.detail=True
+          ins=[]
+          for s in pe.sections:
+            if not (s.Characteristics & 0x20000000): continue
+            sec=s.Name.rstrip(b'\0').decode('ascii','replace')
+            for x in md.disasm(s.get_data(),ib+s.VirtualAddress):
+              ins.append((sec,x))
+
+          pro=[]
+          for i in range(len(ins)-1):
+            _,a=ins[i]; _,b=ins[i+1]
+            if a.mnemonic=='push' and a.op_str=='ebp' and b.mnemonic=='mov' and b.op_str.replace(' ','')=='ebp,esp':
+              pro.append(i)
+
+          def locate_func(target_rva):
+            tidx=min(range(len(ins)),key=lambda i:abs((ins[i][1].address-ib)-target_rva))
+            prev=[i for i in pro if i<=tidx]
+            start_idx=prev[-1] if prev else max(0,tidx-128)
+            nxt=[i for i in pro if i>tidx]
+            next_pro=nxt[0] if nxt else min(len(ins),tidx+1024)
+            # Bound at next prologue, but include all returns for evidence.
+            chunk=ins[start_idx:next_pro]
+            return start_idx,next_pro,tidx,chunk
+
+          def row(x):
+            return {'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str}
+
+          def summarize_func(target_rva):
+            start_idx,end_idx,tidx,chunk=locate_func(target_rva)
+            start_rva=ins[start_idx][1].address-ib
+            end_rva=ins[end_idx][1].address-ib if end_idx<len(ins) else None
+            ret_rvas=[]; calls=[]; jumps=[]; word_loads=[]; dword_loads=[]; advances=[]; grammar=[]
+            for sec,x in chunk:
+              rva=x.address-ib
+              if x.group(CS_GRP_RET): ret_rvas.append(rva)
+              if x.group(CS_GRP_CALL):
+                imms=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+                calls.append({'rva':rva,'op_str':x.op_str,'target_rva':(imms[0]-ib if imms and ib<=imms[0]<ib+pe.OPTIONAL_HEADER.SizeOfImage else None)})
+              if x.group(CS_GRP_JUMP): jumps.append({'rva':rva,'mnemonic':x.mnemonic,'op_str':x.op_str})
+              for op in x.operands:
+                if op.type==X86_OP_MEM:
+                  if op.size==2: word_loads.append(rva)
+                  elif op.size==4: dword_loads.append(rva)
+              imms=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+              if x.mnemonic in ('add','sub') and any(v in (2,4,6,8) for v in imms):
+                advances.append(row(x))
+              if x.mnemonic=='lea' and any(op.type==X86_OP_MEM and abs(op.mem.disp) in (2,4,6,8) for op in x.operands):
+                advances.append(row(x))
+              if any(v in (0x7ff,0xf800,0xffff,0xe800) for v in imms) or (x.mnemonic in ('shr','shl','sar') and 11 in imms):
+                grammar.append(row(x))
+            # direct callers to entry
+            entry_va=ib+start_rva
+            callers=[]
+            for sec,x in ins:
+              if not x.group(CS_GRP_CALL): continue
+              imms=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+              if imms and imms[0]==entry_va: callers.append(row(x))
+            # bounded target-centered window
+            lo=max(start_idx,tidx-40); hi=min(end_idx,tidx+80)
+            return {
+              'target_rva':target_rva,'candidate_start_rva':start_rva,'candidate_end_rva_exclusive':end_rva,
+              'instruction_count':len(chunk),'ret_rvas':ret_rvas,'direct_callers':callers,'direct_callees':calls,
+              'word_mem_operand_count':len(set(word_loads)),'dword_mem_operand_count':len(set(dword_loads)),
+              'small_pointer_advance_instructions':advances[:64],
+              'grammar_instructions':grammar,
+              'jump_count':len(jumps),
+              'target_window':[row(ins[i][1]) for i in range(lo,hi)]
+            }
+
+          candidate=summarize_func(27200)
+          helper=summarize_func(0x27470)
+
+          # classify conservatively from observed mechanics
+          parser_signals=(candidate['word_mem_operand_count']>=4 and candidate['dword_mem_operand_count']>=4 and len(candidate['small_pointer_advance_instructions'])>=2)
+          classif='stream-parser-like-candidate' if parser_signals else 'generic-opl-manipulation-or-unresolved'
+          out={'schema':'chaptera.pubwiz-morph9-opl-function.v1','module_sha256':hashlib.sha256(data).hexdigest(),
+               'candidate':candidate,'helper_27470':helper,'classification':classif,'source_safe':True,'raw_module_retained':False}
+          pathlib.Path('out/summary.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          print(json.dumps({'classification':classif,'candidate_start':candidate['candidate_start_rva'],'candidate_end':candidate['candidate_end_rva_exclusive'],
+                            'candidate_callers':len(candidate['direct_callers']),'candidate_callees':len(candidate['direct_callees']),
+                            'word_mem':candidate['word_mem_operand_count'],'dword_mem':candidate['dword_mem_operand_count'],
+                            'advances':len(candidate['small_pointer_advance_instructions']),
+                            'helper_start':helper['candidate_start_rva'],'helper_callers':len(helper['direct_callers'])},indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then exit 1; fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-morph9-opl-function-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
