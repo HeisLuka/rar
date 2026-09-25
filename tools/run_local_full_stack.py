@@ -98,7 +98,7 @@ def render_config(issuer: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--no-browser", action="store_true")\n    parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
 
     STATE.mkdir(parents=True, exist_ok=True)
@@ -174,6 +174,14 @@ def main() -> int:
             print("Use the browser UI; Ctrl+C here stops the local stack.")
             if not args.no_browser:
                 webbrowser.open(DASHBOARD)
+            if args.smoke:
+                status = urllib.request.urlopen(URL + "/local/api/status", timeout=2)
+                if status.status != 200:
+                    raise RuntimeError(f"local diagnostics status returned {status.status}")
+                dashboard = urllib.request.urlopen(DASHBOARD, timeout=2)
+                if dashboard.status != 200:
+                    raise RuntimeError(f"local dashboard returned {dashboard.status}")
+                return 0
 
             while True:
                 if server.poll() is not None:
