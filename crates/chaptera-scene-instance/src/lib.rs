@@ -24,6 +24,7 @@ pub enum SceneProjectionKindV1 {
 #[serde(rename_all = "snake_case")]
 pub enum ObjectMutationKindV1 {
     MoveNode,
+    ResizeNode,
     ReplaceImage,
 }
 
@@ -273,6 +274,7 @@ mod tests {
         let instance = direct_page_local_instance_v1(SHAPE_380, PAGE_266).expect("direct instance");
         for mutation in [
             ObjectMutationKindV1::MoveNode,
+            ObjectMutationKindV1::ResizeNode,
             ObjectMutationKindV1::ReplaceImage,
         ] {
             let decision = admit_object_mutation_v1(&instance, mutation);
