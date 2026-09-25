@@ -71,7 +71,7 @@ impl FromStr for AuthoringRevisionIdV1 {
         }
 
         let mut bytes = [0_u8; 32];
-        for (index, chunk) in input.as_bytes().chunks_exact(2).enumerate() {
+        for (index, chunk) in input.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let source = index * 2;
             let high = lowercase_hex_value(chunk[0])
                 .ok_or(AuthoringRevisionIdParseError::InvalidHex { index: source })?;
