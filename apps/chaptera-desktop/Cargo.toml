@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 reader-only = []
+embedded-fixture-tests = []
 
 [dependencies]
 chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
