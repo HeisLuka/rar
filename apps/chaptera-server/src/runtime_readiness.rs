@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use crate::{
+    auth_runtime::AuthRuntime,
     sqlite_store::SqliteRevisionStore,
     state::{DependencyFailure, RuntimeDependency, RuntimePorts},
 };
@@ -60,16 +61,19 @@ pub struct RuntimeDependencyBinding {
 }
 
 /// Concrete readiness binding for the physical RevisionStream producer.
-///
-/// Unlike lower-level storage helpers, SqliteRevisionStore is itself the
-/// required RevisionStream producer represented by RuntimePorts. AuthN and jobs
-/// intentionally do not get equivalent constructors here yet: their SQLite
-/// stores alone do not prove that the full AuthN or jobs/admission service is
-/// assembled.
 pub fn revision_stream_dependency(
     revision_stream: SqliteRevisionStore,
 ) -> RuntimeDependencyBinding {
     bind(revision_stream)
+}
+
+/// AuthN readiness is exposed only from the fully assembled AuthRuntime.
+///
+/// A bare SqliteAuthnStore is intentionally insufficient: readiness means the
+/// durable session store, OIDC adapter, session policy and HTTP state all opened
+/// successfully as one production producer.
+pub fn authn_dependency(authn: AuthRuntime) -> RuntimeDependencyBinding {
+    bind(authn)
 }
 
 pub struct RevisionStreamPorts {
@@ -87,6 +91,28 @@ pub fn ports_with_revision_stream(revision_stream: SqliteRevisionStore) -> Revis
     RevisionStreamPorts {
         ports,
         readiness: binding.readiness,
+    }
+}
+
+pub struct RevisionAndAuthnPorts {
+    pub ports: RuntimePorts,
+    pub revision_readiness: ReadinessHandle,
+    pub authn_readiness: ReadinessHandle,
+}
+
+pub fn ports_with_revision_stream_and_authn(
+    revision_stream: SqliteRevisionStore,
+    authn: AuthRuntime,
+) -> RevisionAndAuthnPorts {
+    let revision = revision_stream_dependency(revision_stream);
+    let authn = authn_dependency(authn);
+    let mut ports = RuntimePorts::unconfigured();
+    ports.revision_stream = revision.dependency;
+    ports.authn = authn.dependency;
+    RevisionAndAuthnPorts {
+        ports,
+        revision_readiness: revision.readiness,
+        authn_readiness: authn.readiness,
     }
 }
 
