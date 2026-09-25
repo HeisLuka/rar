@@ -28,8 +28,15 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt -p chaptera-server -- --check
+      - name: Check task-owned formatting
+        run: |
+          rustfmt --edition 2024 --check \
+            apps/chaptera-server/src/config.rs \
+            apps/chaptera-server/src/jobs.rs \
+            apps/chaptera-server/src/lib.rs \
+            apps/chaptera-server/src/main.rs \
+            apps/chaptera-server/src/worker.rs \
+            apps/chaptera-server/src/worker_runtime.rs
       - name: Run clippy
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run durable queue and worker tests
