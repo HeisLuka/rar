@@ -1,0 +1,15 @@
+[package]
+name = "pub-cmo-slot-flow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[[bin]]
+name = "cmo-slot-flow-packet"
+path = "src/bin/cmo_slot_flow_packet.rs"
