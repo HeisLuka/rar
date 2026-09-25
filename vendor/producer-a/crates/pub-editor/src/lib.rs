@@ -3191,11 +3191,26 @@ fn editable_export_plan(
     target: EditorEditableTarget,
     graph: &PubResolvedGraph,
     image_replacements: &BTreeMap<NodeId, Sha256Digest>,
+    authored_shapes: &BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
 ) -> ExportPlan {
     let mut features = BTreeMap::new();
     features.insert("page.geometry".into(), CapabilityLevel::Preserved);
     features.insert("story.text".into(), CapabilityLevel::Preserved);
     features.insert("story.linked_frames".into(), CapabilityLevel::Preserved);
+    if !authored_shapes.is_empty() {
+        features.insert(
+            AUTHORED_SHAPE_IDENTITY_FEATURE.into(),
+            CapabilityLevel::Preserved,
+        );
+        features.insert(
+            AUTHORED_SHAPE_GEOMETRY_FEATURE.into(),
+            CapabilityLevel::Preserved,
+        );
+        features.insert(
+            AUTHORED_SHAPE_PAINT_FEATURE.into(),
+            CapabilityLevel::Preserved,
+        );
+    }
     if matches!(
         target,
         EditorEditableTarget::Idml | EditorEditableTarget::Odg
@@ -3241,9 +3256,12 @@ fn editable_export_plan(
                 (node.header.parent_id == page_id.into_canonical()).then_some(*node_id)
             })
             .collect::<Vec<_>>();
-        if page.children != authored {
+        let has_authored_overlay = authored_shapes
+            .values()
+            .any(|shape| shape.page_id == *page_id);
+        if page.children != authored || has_authored_overlay {
             requests.push(SemanticFeatureRequest {
-                feature: "page.object_order".into(),
+                feature: AUTHORED_SHAPE_ORDER_FEATURE.into(),
                 origin: Some(page_id.into_canonical()),
                 property_path: Some("page.children".into()),
                 require_preserved: false,
@@ -3311,6 +3329,27 @@ fn editable_export_plan(
                 require_preserved: false,
             });
         }
+    }
+
+    for shape in authored_shapes.values() {
+        requests.push(SemanticFeatureRequest {
+            feature: AUTHORED_SHAPE_IDENTITY_FEATURE.into(),
+            origin: Some(shape.node_id.into_canonical()),
+            property_path: Some("node".into()),
+            require_preserved: true,
+        });
+        requests.push(SemanticFeatureRequest {
+            feature: AUTHORED_SHAPE_GEOMETRY_FEATURE.into(),
+            origin: Some(shape.node_id.into_canonical()),
+            property_path: Some("node.bounds".into()),
+            require_preserved: true,
+        });
+        requests.push(SemanticFeatureRequest {
+            feature: AUTHORED_SHAPE_PAINT_FEATURE.into(),
+            origin: Some(shape.node_id.into_canonical()),
+            property_path: Some("node.paint".into()),
+            require_preserved: true,
+        });
     }
 
     for (story_id, roots) in roots_per_story {
