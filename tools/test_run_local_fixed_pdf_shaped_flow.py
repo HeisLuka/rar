@@ -30,7 +30,7 @@ pdf = pathlib.Path(sys.argv[2])
 font = pathlib.Path(sys.argv[3])
 assert fixture.is_file()
 assert font.is_file()
-pdf.write_bytes(b"%PDF-1.7\n%fake\n")
+pdf.write_bytes(b"%PDF-1.7\n%fake\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
 source_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
 receipt = {
   "receipt_version": "chaptera.fixed-pdf-shaped-flow-receipt.v1",
