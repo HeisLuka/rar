@@ -11,6 +11,7 @@ use crate::{
     auth_http::{self, AuthHttpState},
     build_info::{BUILD_GIT_SHA, BUILD_IDENTITY},
     config::RuntimeConfig,
+    diagnostics::{self, Diagnostics},
     edge::{self, EdgePolicy},
     shutdown,
     state::AppState,
@@ -29,6 +30,16 @@ pub fn router_with_edge_and_auth(
     edge_policy: EdgePolicy,
     auth: Option<AuthHttpState>,
 ) -> Router {
+    router_with_edge_auth_and_console(state, edge_policy, auth, false)
+}
+
+pub fn router_with_edge_auth_and_console(
+    state: AppState,
+    edge_policy: EdgePolicy,
+    auth: Option<AuthHttpState>,
+    local_console: bool,
+) -> Router {
+    let diagnostics = Diagnostics::default();
     let base = Router::new()
         .route("/live", get(live))
         .route("/ready", get(ready))
@@ -38,7 +49,17 @@ pub fn router_with_edge_and_auth(
         Some(auth) => base.merge(auth_http::router(auth)),
         None => base,
     };
+    let base = if local_console {
+        base.merge(diagnostics::local_console_router(diagnostics.clone()))
+    } else {
+        base
+    };
+
     base.layer(middleware::from_fn_with_state(edge_policy, edge::enforce))
+        .layer(middleware::from_fn_with_state(
+            diagnostics,
+            diagnostics::record_requests,
+        ))
 }
 
 async fn live() -> impl IntoResponse {
@@ -70,7 +91,7 @@ pub async fn run(
     edge_policy: EdgePolicy,
     state: AppState,
 ) -> io::Result<()> {
-    run_with_auth(config, edge_policy, state, None).await
+    run_mode(config, edge_policy, state, None, false).await
 }
 
 pub async fn run_with_auth(
@@ -79,13 +100,58 @@ pub async fn run_with_auth(
     state: AppState,
     auth: Option<AuthHttpState>,
 ) -> io::Result<()> {
+    run_mode(config, edge_policy, state, auth, false).await
+}
+
+pub async fn run_local(
+    config: RuntimeConfig,
+    edge_policy: EdgePolicy,
+    state: AppState,
+) -> io::Result<()> {
+    run_mode(config, edge_policy, state, None, true).await
+}
+
+pub async fn run_local_with_auth(
+    config: RuntimeConfig,
+    edge_policy: EdgePolicy,
+    state: AppState,
+    auth: Option<AuthHttpState>,
+) -> io::Result<()> {
+    run_mode(config, edge_policy, state, auth, true).await
+}
+
+async fn run_mode(
+    config: RuntimeConfig,
+    edge_policy: EdgePolicy,
+    state: AppState,
+    auth: Option<AuthHttpState>,
+    local_console: bool,
+) -> io::Result<()> {
     config
         .validate()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
     let listener = TcpListener::bind(config.listen).await?;
-    eprintln!("chaptera serve listening on {}", listener.local_addr()?);
-    run_with_listener_policy_and_auth(listener, state, edge_policy, auth, shutdown::signal()).await
+    let address = listener.local_addr()?;
+    eprintln!(
+        "{}",
+        json!({
+            "level": "info",
+            "component": "server",
+            "event": "listening",
+            "address": address.to_string(),
+            "local_console": local_console,
+        })
+    );
+    run_with_listener_policy_and_auth(
+        listener,
+        state,
+        edge_policy,
+        auth,
+        local_console,
+        shutdown::signal(),
+    )
+    .await
 }
 
 pub async fn run_with_listener<F>(
@@ -96,8 +162,15 @@ pub async fn run_with_listener<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    run_with_listener_policy_and_auth(listener, state, EdgePolicy::development(), None, shutdown)
-        .await
+    run_with_listener_policy_and_auth(
+        listener,
+        state,
+        EdgePolicy::development(),
+        None,
+        false,
+        shutdown,
+    )
+    .await
 }
 
 async fn run_with_listener_policy_and_auth<F>(
@@ -105,6 +178,7 @@ async fn run_with_listener_policy_and_auth<F>(
     state: AppState,
     edge_policy: EdgePolicy,
     auth: Option<AuthHttpState>,
+    local_console: bool,
     shutdown: F,
 ) -> io::Result<()>
 where
@@ -112,7 +186,7 @@ where
 {
     axum::serve(
         listener,
-        router_with_edge_and_auth(state, edge_policy, auth)
+        router_with_edge_auth_and_console(state, edge_policy, auth, local_console)
             .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown)
