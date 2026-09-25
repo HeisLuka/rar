@@ -14,12 +14,7 @@ use pub_editor::EditorProject;
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::{
-    fs,
-    io::AsyncWriteExt,
-    process::Command,
-    time::timeout,
-};
+use tokio::{fs, io::AsyncWriteExt, process::Command, time::timeout};
 
 use crate::{
     blob_store::BlobStoreService,
@@ -401,7 +396,10 @@ fn validate_receipt(
             "isolated baseline worker receipt does not match the authorized source identity/profile",
         ));
     }
-    require_ident(&receipt.project_schema_version, "receipt.project_schema_version")?;
+    require_ident(
+        &receipt.project_schema_version,
+        "receipt.project_schema_version",
+    )?;
     require_prefixed_sha256(&receipt.project_hash, "receipt.project_hash")?;
     require_prefixed_sha256(&receipt.state_id, "receipt.state_id")?;
     require_prefixed_sha256(&receipt.service_revision_id, "receipt.service_revision_id")?;
@@ -550,7 +548,9 @@ fn required_env(name: &str) -> Result<String, SourceBaselineError> {
 fn require_ident(value: &str, label: &str) -> Result<(), SourceBaselineError> {
     if value.is_empty()
         || value.len() > 256
-        || value.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
     {
         return Err(SourceBaselineError::new(
             "source_baseline_identity_invalid",
@@ -697,19 +697,15 @@ mod tests {
             source_sha256: SOURCE_SHA.into(),
             source_byte_len: 291_840,
             project_schema_version: "pub-editor-v0.2".into(),
-            project_hash:
-                "sha256:575fbcb664f2a6b672a05861a4d2aff6aca339204a50e3401d04e1920d946348"
-                    .into(),
-            state_id:
-                "sha256:ce6753aab36f31db5508763601d078d2d5a2766541ef6d3377eaab9ed02be191"
-                    .into(),
+            project_hash: "sha256:575fbcb664f2a6b672a05861a4d2aff6aca339204a50e3401d04e1920d946348"
+                .into(),
+            state_id: "sha256:ce6753aab36f31db5508763601d078d2d5a2766541ef6d3377eaab9ed02be191"
+                .into(),
             service_revision_id:
-                "sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c"
-                    .into(),
+                "sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c".into(),
             canonical_schema_version: AUTHORING_REVISION_SCHEMA_V1.into(),
             canonical_authoring_revision_id:
-                "5e246c364ec168c876ed07306a1ff99d5b2eb78913f5bd36777bc2863a5360f3"
-                    .into(),
+                "5e246c364ec168c876ed07306a1ff99d5b2eb78913f5bd36777bc2863a5360f3".into(),
             filesystem_confinement: true,
         };
         validate_receipt(&receipt, DOCUMENT_ID, SOURCE_SHA, 291_840).unwrap();
