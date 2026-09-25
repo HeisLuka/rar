@@ -429,7 +429,10 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
-    use crate::job_queue::{EnqueueRequest, JobStatus};
+    use crate::{
+        job_queue::{EnqueueRequest, JobStatus},
+        schema_migration::SqliteMigrationRuntime,
+    };
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -438,6 +441,11 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("chaptera-worker-{}-{n}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
         let queue = SqliteJobQueue::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
