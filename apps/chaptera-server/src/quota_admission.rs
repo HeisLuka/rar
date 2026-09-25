@@ -11,9 +11,7 @@ use crate::{
     job_worker::{
         AdmissionDecision, AdmissionFuture, AdmissionReservation, JobAdmission, ReservationFuture,
     },
-    quota_store::{
-        QuotaWorkClass, ReserveOutcome, ReserveRequest, SqliteQuotaAuthority,
-    },
+    quota_store::{QuotaWorkClass, ReserveOutcome, ReserveRequest, SqliteQuotaAuthority},
     runtime_error::RuntimeError,
 };
 
@@ -32,7 +30,8 @@ impl SqliteQuotaAdmissionConfig {
     }
 
     fn validate(&self) -> Result<(), RuntimeError> {
-        if self.lease_duration.is_zero() || self.lease_duration > Duration::from_secs(24 * 60 * 60) {
+        if self.lease_duration.is_zero() || self.lease_duration > Duration::from_secs(24 * 60 * 60)
+        {
             return Err(RuntimeError::new(
                 "invalid_quota_admission_lease",
                 "quota admission lease must be >0 and <=24 hours",
@@ -95,9 +94,11 @@ impl JobAdmission for SqliteQuotaJobAdmission {
                         }),
                     })
                 }
-                Err(error) if retryable_quota_code(error.code) => Ok(AdmissionDecision::RetryLater {
-                    code: quota_rejection_code(error.code),
-                }),
+                Err(error) if retryable_quota_code(error.code) => {
+                    Ok(AdmissionDecision::RetryLater {
+                        code: quota_rejection_code(error.code),
+                    })
+                }
                 Err(error) => Err(quota_error(error)),
             }
         })
@@ -226,7 +227,10 @@ fn unix_now_ms() -> Result<i64, RuntimeError> {
         RuntimeError::new("clock_before_epoch", "system clock is before UNIX epoch")
     })?;
     i64::try_from(elapsed.as_millis()).map_err(|_| {
-        RuntimeError::new("clock_overflow", "system clock does not fit i64 milliseconds")
+        RuntimeError::new(
+            "clock_overflow",
+            "system clock does not fit i64 milliseconds",
+        )
     })
 }
 
@@ -374,7 +378,14 @@ mod tests {
         let receipt = worker.run().await.unwrap();
         assert_eq!(receipt.admitted, 1);
         assert_eq!(receipt.succeeded, 1);
-        assert_eq!(quota.usage("tenant-a", unix_now_ms().unwrap()).await.unwrap().export, 0);
+        assert_eq!(
+            quota
+                .usage("tenant-a", unix_now_ms().unwrap())
+                .await
+                .unwrap()
+                .export,
+            0
+        );
 
         queue.close().await;
         quota.close().await;
