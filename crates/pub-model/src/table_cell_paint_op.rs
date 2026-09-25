@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    SolidFillV1, SolidStrokeV1, TableCellBorderSideV1, TableCellPaintV1,
-    TableCellPaintValidationError, TableCellId, validate_table_cell_paint_v1,
+    SolidFillV1, SolidStrokeV1, TableCellBorderSideV1, TableCellId, TableCellPaintV1,
+    TableCellPaintValidationError, validate_table_cell_paint_v1,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,8 +105,7 @@ pub fn apply_table_cell_paint_operation_v1(
         }
     }
 
-    validate_table_cell_paint_v1(&next)
-        .map_err(TableCellPaintOperationError::InvalidAfterPaint)?;
+    validate_table_cell_paint_v1(&next).map_err(TableCellPaintOperationError::InvalidAfterPaint)?;
     Ok(next)
 }
 
@@ -114,22 +113,16 @@ pub fn inverse_table_cell_paint_operation_v1(
     operation: &TableCellPaintOperationV1,
 ) -> TableCellPaintOperationV1 {
     match operation {
-        TableCellPaintOperationV1::SetTableCellFill(operation) => {
-            match &operation.before {
-                Some(before) => TableCellPaintOperationV1::SetTableCellFill(
-                    SetTableCellFillV1 {
-                        table_cell_id: operation.table_cell_id.clone(),
-                        before: Some(operation.after.clone()),
-                        after: before.clone(),
-                    },
-                ),
-                None => TableCellPaintOperationV1::ClearTableCellFill(
-                    ClearTableCellFillV1 {
-                        table_cell_id: operation.table_cell_id.clone(),
-                        before: operation.after.clone(),
-                    },
-                ),
-            }
+        TableCellPaintOperationV1::SetTableCellFill(operation) => match &operation.before {
+            Some(before) => TableCellPaintOperationV1::SetTableCellFill(SetTableCellFillV1 {
+                table_cell_id: operation.table_cell_id.clone(),
+                before: Some(operation.after.clone()),
+                after: before.clone(),
+            }),
+            None => TableCellPaintOperationV1::ClearTableCellFill(ClearTableCellFillV1 {
+                table_cell_id: operation.table_cell_id.clone(),
+                before: operation.after.clone(),
+            }),
         }
         TableCellPaintOperationV1::ClearTableCellFill(operation) => {
             TableCellPaintOperationV1::SetTableCellFill(SetTableCellFillV1 {
@@ -138,23 +131,21 @@ pub fn inverse_table_cell_paint_operation_v1(
                 after: operation.before.clone(),
             })
         }
-        TableCellPaintOperationV1::SetTableCellBorderSide(operation) => {
-            match &operation.before {
-                Some(before) => TableCellPaintOperationV1::SetTableCellBorderSide(
-                    SetTableCellBorderSideV1 {
-                        table_cell_id: operation.table_cell_id.clone(),
-                        side: operation.side,
-                        before: Some(operation.after.clone()),
-                        after: before.clone(),
-                    },
-                ),
-                None => TableCellPaintOperationV1::ClearTableCellBorderSide(
-                    ClearTableCellBorderSideV1 {
-                        table_cell_id: operation.table_cell_id.clone(),
-                        side: operation.side,
-                        before: operation.after.clone(),
-                    },
-                ),
+        TableCellPaintOperationV1::SetTableCellBorderSide(operation) => match &operation.before {
+            Some(before) => {
+                TableCellPaintOperationV1::SetTableCellBorderSide(SetTableCellBorderSideV1 {
+                    table_cell_id: operation.table_cell_id.clone(),
+                    side: operation.side,
+                    before: Some(operation.after.clone()),
+                    after: before.clone(),
+                })
+            }
+            None => {
+                TableCellPaintOperationV1::ClearTableCellBorderSide(ClearTableCellBorderSideV1 {
+                    table_cell_id: operation.table_cell_id.clone(),
+                    side: operation.side,
+                    before: operation.after.clone(),
+                })
             }
         }
         TableCellPaintOperationV1::ClearTableCellBorderSide(operation) => {
@@ -180,9 +171,7 @@ fn operation_table_cell_id(operation: &TableCellPaintOperationV1) -> &TableCellI
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Srgb8, TABLE_CELL_PAINT_SCHEMA_V1, TableCellBordersV1, TableCellClassV1,
-    };
+    use crate::{Srgb8, TABLE_CELL_PAINT_SCHEMA_V1, TableCellBordersV1, TableCellClassV1};
 
     fn id(byte: u8) -> TableCellId {
         TableCellId::parse(&format!(
@@ -263,13 +252,12 @@ mod tests {
     #[test]
     fn set_from_absent_and_clear_border_roundtrip() {
         let before = paint();
-        let set =
-            TableCellPaintOperationV1::SetTableCellBorderSide(SetTableCellBorderSideV1 {
-                table_cell_id: id(1),
-                side: TableCellBorderSideV1::Right,
-                before: None,
-                after: border(25_400),
-            });
+        let set = TableCellPaintOperationV1::SetTableCellBorderSide(SetTableCellBorderSideV1 {
+            table_cell_id: id(1),
+            side: TableCellBorderSideV1::Right,
+            before: None,
+            after: border(25_400),
+        });
         let after = apply_table_cell_paint_operation_v1(&before, &set).expect("set right");
         assert_eq!(
             after.borders.right.as_ref().map(|value| value.width_emu),
@@ -303,14 +291,12 @@ mod tests {
         {
             current = apply_table_cell_paint_operation_v1(
                 &current,
-                &TableCellPaintOperationV1::SetTableCellBorderSide(
-                    SetTableCellBorderSideV1 {
-                        table_cell_id: id(1),
-                        side,
-                        before: None,
-                        after: border((index as i64 + 1) * 100),
-                    },
-                ),
+                &TableCellPaintOperationV1::SetTableCellBorderSide(SetTableCellBorderSideV1 {
+                    table_cell_id: id(1),
+                    side,
+                    before: None,
+                    after: border((index as i64 + 1) * 100),
+                }),
             )
             .expect("set side");
         }
@@ -328,12 +314,11 @@ mod tests {
     #[test]
     fn target_stale_noop_and_invalid_width_fail_closed() {
         let before = paint();
-        let wrong_target =
-            TableCellPaintOperationV1::SetTableCellFill(SetTableCellFillV1 {
-                table_cell_id: id(2),
-                before: Some(fill(1)),
-                after: fill(2),
-            });
+        let wrong_target = TableCellPaintOperationV1::SetTableCellFill(SetTableCellFillV1 {
+            table_cell_id: id(2),
+            before: Some(fill(1)),
+            after: fill(2),
+        });
         assert_eq!(
             apply_table_cell_paint_operation_v1(&before, &wrong_target),
             Err(TableCellPaintOperationError::TargetCellMismatch)
@@ -349,13 +334,12 @@ mod tests {
             Err(TableCellPaintOperationError::NoOp)
         );
 
-        let invalid =
-            TableCellPaintOperationV1::SetTableCellBorderSide(SetTableCellBorderSideV1 {
-                table_cell_id: id(1),
-                side: TableCellBorderSideV1::Right,
-                before: None,
-                after: border(0),
-            });
+        let invalid = TableCellPaintOperationV1::SetTableCellBorderSide(SetTableCellBorderSideV1 {
+            table_cell_id: id(1),
+            side: TableCellBorderSideV1::Right,
+            before: None,
+            after: border(0),
+        });
         assert_eq!(
             apply_table_cell_paint_operation_v1(&before, &invalid),
             Err(TableCellPaintOperationError::InvalidAfterPaint(
