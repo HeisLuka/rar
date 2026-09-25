@@ -21,11 +21,10 @@ pub use pub_reader::{
 };
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
-    FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
-    PubReaderOpenTiming, PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild,
+    FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubReaderOpenTiming,
+    PubResolveDiagnostic, PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild,
     build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
-    build_mature_0x2c_source_graph_with_timing,
-    resolve_pub_source_graph,
+    build_mature_0x2c_source_graph_with_timing, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
