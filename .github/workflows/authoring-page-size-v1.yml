@@ -1,0 +1,69 @@
+name: Authoring page extent V1
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/authoring-page-size/**"
+      - "services/editor-api/page_extent_v1.py"
+      - "services/editor-api/test_page_extent_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "vendor/producer-a/crates/pub-layout/src/lib.rs"
+      - "vendor/producer-a/crates/pub-idml/src/semantic.rs"
+      - "vendor/producer-a/crates/pub-odg/src/semantic.rs"
+      - ".github/workflows/authoring-page-size-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Install schema validator
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Run canonical page extent revision tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_page_extent_v1
+      - name: Validate public intent schema
+        run: |
+          python - <<'PY'
+          import json
+          from jsonschema import Draft202012Validator
+
+          schema = json.load(open("packages/protocol/authoring-page-size/v1/page-extent-intent.schema.json"))
+          Draft202012Validator.check_schema(schema)
+          fixture = {
+              "protocol_version": "chaptera.page-extent-intent.v1",
+              "document_id": "doc:1",
+              "source_hash": "a" * 64,
+              "base_revision_id": "sha256:" + "b" * 64,
+              "client_operation_id": "page-size-op-0001",
+              "command": {
+                  "kind": "set_page_extent",
+                  "page_id": "page:1",
+                  "expected_before": {"width_emu": 7315200, "height_emu": 9753600},
+                  "after": {"width_emu": 10000000, "height_emu": 8000000},
+                  "semantics": "keep_objects_fixed"
+              }
+          }
+          errors = list(Draft202012Validator(schema).iter_errors(fixture))
+          assert not errors, errors
+          print("page extent intent schema valid")
+          PY
+      - name: Check task-owned Rust formatting
+        working-directory: vendor/producer-a
+        run: cargo fmt -p pub-layout -p pub-idml -p pub-odg -- --check
+      - name: Lint task-owned Rust consumers
+        working-directory: vendor/producer-a
+        run: cargo clippy -p pub-layout -p pub-idml -p pub-odg --all-targets -- -D warnings
+      - name: Prove Scene and editable-export extent consumers
+        working-directory: vendor/producer-a
+        run: cargo test -p pub-layout -p pub-idml -p pub-odg
