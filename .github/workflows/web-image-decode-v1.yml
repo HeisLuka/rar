@@ -1,0 +1,252 @@
+name: WEB-IMAGE-DECODE-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/image-decode-v1.mjs"
+      - "apps/web/image-decode-v1.test.mjs"
+      - "apps/web/image-decode-worker-v1.mjs"
+      - "apps/web/image-decode-real.html"
+      - "apps/web/resource-readiness-v1.mjs"
+      - "crates/chaptera-image-decode-contract/**"
+      - "tools/materialize_web_image_decode_fixtures.py"
+      - "tools/run_web_image_decode_real.mjs"
+      - ".github/workflows/web-image-decode-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Unit-test browser decode adapter
+        run: node --test apps/web/image-decode-v1.test.mjs
+
+      - name: Test reference decode contract
+        run: cargo test -p chaptera-image-decode-contract
+
+      - name: Build reference probe
+        run: cargo build -p chaptera-image-decode-contract --bin decode_probe
+
+      - name: Materialize pinned decode fixtures
+        run: python tools/materialize_web_image_decode_fixtures.py target/web-image-decode-reference
+
+      - name: Build reference receipts from exact fixture bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/decode_probe \
+            target/web-image-decode-reference/alpha.png \
+            image/png \
+            color-disposition:explicit-srgb \
+            > target/web-image-decode-reference/alpha.png.reference.json
+          target/debug/decode_probe \
+            target/web-image-decode-reference/orientation6.jpg \
+            image/jpeg \
+            color-disposition:explicit-srgb \
+            > target/web-image-decode-reference/orientation6.jpg.reference.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root=Path("target/web-image-decode-reference")
+          alpha=json.loads((root/"alpha.png.reference.json").read_text())
+          orient=json.loads((root/"orientation6.jpg.reference.json").read_text())
+
+          assert alpha["probe_kind"] == "chaptera.image-decode-reference-probe.v1"
+          assert alpha["receipt"]["contract_version"] == "chaptera.image-decode-contract.v1"
+          assert alpha["receipt"]["decoded_dimensions"] == [1,1]
+          assert alpha["receipt"]["alpha_present"] is True
+          assert alpha["receipt"]["alpha_association"] == "straight_unassociated"
+          assert alpha["samples"] == [200,100,50,128], alpha["samples"]
+
+          assert orient["receipt"]["decoded_dimensions"] == [3,2]
+          assert orient["receipt"]["exif_orientation"] == 6
+          assert orient["receipt"]["orientation_class"] == "metadata_only_non_normal"
+          assert orient["receipt"]["orientation_applied"] is False
+          assert orient["receipt"]["frame_disposition"] == "single_static"
+          print({
+              "alpha_sha256": alpha["receipt"]["resource_sha256"],
+              "alpha_samples": alpha["samples"],
+              "orientation_sha256": orient["receipt"]["resource_sha256"],
+              "orientation": orient["receipt"]["exif_orientation"],
+              "orientation_dimensions": orient["receipt"]["decoded_dimensions"],
+          })
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-image-decode-reference
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-image-decode-reference/
+
+  real-browser:
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-image-decode-reference
+          path: target/web-image-decode-reference
+
+      - name: Install Playwright browser
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run real explicit browser decode path
+        run: node tools/run_web_image_decode_real.mjs ${{ matrix.browser }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-image-decode-real-${{ matrix.browser }}
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-image-decode-real/${{ matrix.browser }}-receipt.json
+
+  cross-browser:
+    needs: real-browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: web-image-decode-real-*
+          path: target/web-image-decode-cross/input
+          merge-multiple: true
+
+      - name: Cross-check exact-path receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/web-image-decode-cross
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root=Path("target/web-image-decode-cross/input")
+          paths=sorted(root.glob("*-receipt.json"))
+          assert len(paths)==2, [str(p) for p in paths]
+          rows=[json.loads(p.read_text()) for p in paths]
+          by_engine={row["browser"]["engine"]:row for row in rows}
+          assert set(by_engine)=={"chromium","firefox"}, set(by_engine)
+
+          expected_options={
+              "imageOrientation":"none",
+              "premultiplyAlpha":"none",
+              "colorSpaceConversion":"none",
+          }
+          for row in rows:
+              assert row["receipt_kind"] == "chaptera.web-image-decode-real-browser.v1"
+              assert row["exact_api"] == "createImageBitmap"
+              assert row["exact_options"] == expected_options
+              assert row["no_decode_time_resize"] is True
+              assert row["reference_contract"] == "chaptera.image-decode-contract.v1"
+              assert row["browser_is_semantic_authority"] is False
+              assert row["browser_default_decode_trusted_as_exact"] is False
+              assert row["actual_worker_path_exercised"] is True
+              assert row["alpha_exact_reference_match"] is True
+
+              cases={item["fixture"]:item for item in row["cases"]}
+              assert set(cases)=={"alpha.png","orientation6.jpg"}
+              alpha=cases["alpha.png"]
+              orient=cases["orientation6.jpg"]
+              assert alpha["reference_decoded_dimensions"] == [1,1]
+              assert alpha["exact_decoded_dimensions"] == [1,1]
+              assert alpha["alpha_reference_match"] is True
+              assert alpha["main_worker_receipt_equal"] is True
+              assert alpha["alpha_readback"]["pixels"] == [200,100,50,128] or all(
+                  abs(a-b) <= 1 for a,b in zip(alpha["alpha_readback"]["pixels"], [200,100,50,128])
+              )
+              assert alpha["alpha_readback"]["method"] in {"webgl","canvas2d_fallback"}
+              assert alpha["alpha_reference_samples"] == [200,100,50,128]
+              assert orient["reference_decoded_dimensions"] == [3,2]
+              assert orient["exact_native_supported"] is False
+              assert orient["exact_native_status"] == "reference_fallback_required"
+              assert orient["exact_native_error_code"] == "explicit_orientation_policy_ignored"
+              assert orient["main_worker_incompatibility_equal"] is True
+              assert orient["orientation_policy"] == "preserve_metadata_do_not_apply"
+              assert orient["default_decode_trusted_as_exact"] is False
+              assert orient["default_decoded_dimensions"] == [2,3]
+              assert orient["default_orientation_dimension_difference"] is True
+
+          c=by_engine["chromium"]
+          f=by_engine["firefox"]
+          c_cases={item["fixture"]:item for item in c["cases"]}
+          f_cases={item["fixture"]:item for item in f["cases"]}
+          for name in sorted(c_cases):
+              for field in [
+                  "source_sha256",
+                  "reference_decoded_dimensions",
+                  "exact_options",
+                  "orientation_policy",
+                  "alpha_association",
+                  "color_conversion_policy",
+                  "resize_policy",
+                  "reference_cache_identity_sha256",
+                  "reference_sample_digest_sha256",
+              ]:
+                  assert c_cases[name][field] == f_cases[name][field], (name,field)
+
+          receipt={
+              "receipt_kind":"chaptera.web-image-decode-cross-browser.v1",
+              "browser_engines":sorted(by_engine),
+              "exact_path_compatible_for_admitted_subset":True,
+              "non_normal_exif_native_exact_supported":False,
+              "non_normal_exif_fallback_required":True,
+              "reference_contract":"chaptera.image-decode-contract.v1",
+              "exact_options":expected_options,
+              "alpha_reference_match_both":True,
+              "orientation_reference_dimensions_both":[3,2],
+              "orientation_native_observed_dimensions_both":[2,3],
+              "orientation_native_error_code":"explicit_orientation_policy_ignored",
+              "browser_default_decode_trusted_as_exact":False,
+              "default_orientation_observations":{
+                  engine:{
+                      "decoded_dimensions": {
+                          item["fixture"]: item["default_decoded_dimensions"]
+                          for item in by_engine[engine]["cases"]
+                          if item["default_decoded_dimensions"] is not None
+                      },
+                      "orientation_dimension_difference":
+                          next(
+                              item["default_orientation_dimension_difference"]
+                              for item in by_engine[engine]["cases"]
+                              if item["fixture"]=="orientation6.jpg"
+                          ),
+                  }
+                  for engine in sorted(by_engine)
+              },
+              "worker_main_normalized_receipts_equal":True,
+              "browser_is_semantic_authority":False,
+              "readback_scope":"explicit_srgb_alpha_fixture_only",
+          }
+          out=Path("target/web-image-decode-cross/receipt.json")
+          out.write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n")
+          print(json.dumps(receipt,indent=2,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-image-decode-real-cross-browser
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-image-decode-cross/receipt.json
