@@ -52,9 +52,65 @@ pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_4;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
+/// Canonical Story-state identity shared with services/editor-api/story_range_v1.py.
+pub fn story_state_id_v1(story_id: StoryId, text: &str) -> String {
+    let payload = serde_json::json!({
+        "protocol_version": "chaptera.story-state.v1",
+        "story_id": story_id.as_canonical().to_string(),
+        "text": text,
+    });
+    let bytes = serde_json::to_vec(&payload)
+        .expect("canonical Story state JSON serialization cannot fail");
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn scalar_byte_offset(text: &str, scalar_index: u32) -> Option<usize> {
+    let target = usize::try_from(scalar_index).ok()?;
+    if target == text.chars().count() {
+        return Some(text.len());
+    }
+    text.char_indices().nth(target).map(|(offset, _)| offset)
+}
+
+fn replace_scalar_range_text(
+    text: &str,
+    start_scalar: u32,
+    end_scalar: u32,
+    expected_before: &str,
+    replacement_text: &str,
+) -> Option<String> {
+    if end_scalar < start_scalar {
+        return None;
+    }
+    let start = scalar_byte_offset(text, start_scalar)?;
+    let end = scalar_byte_offset(text, end_scalar)?;
+    if text.get(start..end)? != expected_before {
+        return None;
+    }
+    let mut after = String::with_capacity(
+        text.len()
+            .saturating_sub(end.saturating_sub(start))
+            .saturating_add(replacement_text.len()),
+    );
+    after.push_str(&text[..start]);
+    after.push_str(replacement_text);
+    after.push_str(&text[end..]);
+    Some(after)
+}
+
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
+    ReplaceStoryRange {
+        story_id: StoryId,
+        start_scalar: u32,
+        end_scalar: u32,
+        expected_before: String,
+        replacement_text: String,
+        before_story_state_id: String,
+        after_story_state_id: String,
+    },
     ReplaceStoryText {
         story_id: StoryId,
         before: String,
@@ -85,7 +141,7 @@ pub enum EditOperation {
 impl PersistenceRequirements for EditOperation {
     fn persistence_requirements(&self) -> Vec<PersistenceRequirement> {
         match self {
-            Self::ReplaceStoryText { story_id, .. } => vec![PersistenceRequirement {
+            Self::ReplaceStoryRange { story_id, .. } | Self::ReplaceStoryText { story_id, .. } => vec![PersistenceRequirement {
                 feature: "story.text".into(),
                 origin: Some(story_id.into_canonical()),
                 property_path: Some("story.text".into()),
@@ -1481,14 +1537,18 @@ impl EditorSession {
         Ok(operation)
     }
 
-    pub fn replace_story_text(
+    pub fn replace_story_range(
         &mut self,
         story_id: StoryId,
-        replacement: impl Into<String>,
+        start_scalar: u32,
+        end_scalar: u32,
+        expected_before: impl Into<String>,
+        replacement_text: impl Into<String>,
     ) -> Result<EditOperation, EditorError> {
         self.can_replace_story_text(story_id)?;
 
-        let replacement = replacement.into();
+        let expected_before = expected_before.into();
+        let replacement_text = replacement_text.into();
         let before = self
             .graph
             .stories
@@ -1497,14 +1557,27 @@ impl EditorSession {
             .text
             .clone();
 
-        if before == replacement {
+        let after = replace_scalar_range_text(
+            &before,
+            start_scalar,
+            end_scalar,
+            &expected_before,
+            &replacement_text,
+        )
+        .ok_or(EditorError::StaleOperation { story_id })?;
+
+        if before == after {
             return Err(EditorError::NoChange { story_id });
         }
 
-        let operation = EditOperation::ReplaceStoryText {
+        let operation = EditOperation::ReplaceStoryRange {
             story_id,
-            before,
-            after: replacement,
+            start_scalar,
+            end_scalar,
+            expected_before,
+            replacement_text,
+            before_story_state_id: story_state_id_v1(story_id, &before),
+            after_story_state_id: story_state_id_v1(story_id, &after),
         };
 
         apply_forward(&mut self.graph, &operation)?;
@@ -1512,6 +1585,26 @@ impl EditorSession {
         self.redo.clear();
         self.validate_source_identity()?;
         Ok(operation)
+    }
+
+    pub fn replace_story_text(
+        &mut self,
+        story_id: StoryId,
+        replacement: impl Into<String>,
+    ) -> Result<EditOperation, EditorError> {
+        self.can_replace_story_text(story_id)?;
+        let before = self
+            .graph
+            .stories
+            .get(&story_id)
+            .expect("capability check verified story presence")
+            .text
+            .clone();
+        let scalar_len =
+            u32::try_from(before.chars().count()).map_err(|_| EditorError::StaleOperation {
+                story_id,
+            })?;
+        self.replace_story_range(story_id, 0, scalar_len, before, replacement)
     }
 
     pub fn undo(&mut self) -> Result<&EditOperation, EditorError> {
@@ -1602,6 +1695,22 @@ fn replay_canonical_operation(
     index: usize,
 ) -> Result<EditOperation, EditorProjectError> {
     match expected {
+        EditOperation::ReplaceStoryRange {
+            story_id,
+            start_scalar,
+            end_scalar,
+            expected_before,
+            replacement_text,
+            ..
+        } => session
+            .replace_story_range(
+                *story_id,
+                *start_scalar,
+                *end_scalar,
+                expected_before.clone(),
+                replacement_text.clone(),
+            )
+            .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ReplaceStoryText {
             story_id, after, ..
         } => session
@@ -1847,6 +1956,43 @@ fn apply_forward(
     operation: &EditOperation,
 ) -> Result<(), EditorError> {
     match operation {
+        EditOperation::ReplaceStoryRange {
+            story_id,
+            start_scalar,
+            end_scalar,
+            expected_before,
+            replacement_text,
+            before_story_state_id,
+            after_story_state_id,
+        } => {
+            let story = graph
+                .stories
+                .get_mut(story_id)
+                .ok_or(EditorError::MissingStory {
+                    story_id: *story_id,
+                })?;
+            if story_state_id_v1(*story_id, &story.text) != *before_story_state_id {
+                return Err(EditorError::StaleOperation {
+                    story_id: *story_id,
+                });
+            }
+            let after = replace_scalar_range_text(
+                &story.text,
+                *start_scalar,
+                *end_scalar,
+                expected_before,
+                replacement_text,
+            )
+            .ok_or(EditorError::StaleOperation {
+                story_id: *story_id,
+            })?;
+            if story_state_id_v1(*story_id, &after) != *after_story_state_id {
+                return Err(EditorError::StaleOperation {
+                    story_id: *story_id,
+                });
+            }
+            story.text = after;
+        }
         EditOperation::ReplaceStoryText {
             story_id,
             before,
@@ -1910,6 +2056,49 @@ fn apply_inverse(
     operation: &EditOperation,
 ) -> Result<(), EditorError> {
     match operation {
+        EditOperation::ReplaceStoryRange {
+            story_id,
+            start_scalar,
+            expected_before,
+            replacement_text,
+            before_story_state_id,
+            after_story_state_id,
+            ..
+        } => {
+            let story = graph
+                .stories
+                .get_mut(story_id)
+                .ok_or(EditorError::MissingStory {
+                    story_id: *story_id,
+                })?;
+            if story_state_id_v1(*story_id, &story.text) != *after_story_state_id {
+                return Err(EditorError::StaleOperation {
+                    story_id: *story_id,
+                });
+            }
+            let replacement_end = start_scalar
+                .checked_add(
+                    u32::try_from(replacement_text.chars().count())
+                        .map_err(|_| EditorError::StaleOperation { story_id: *story_id })?,
+                )
+                .ok_or(EditorError::StaleOperation { story_id: *story_id })?;
+            let before = replace_scalar_range_text(
+                &story.text,
+                *start_scalar,
+                replacement_end,
+                replacement_text,
+                expected_before,
+            )
+            .ok_or(EditorError::StaleOperation {
+                story_id: *story_id,
+            })?;
+            if story_state_id_v1(*story_id, &before) != *before_story_state_id {
+                return Err(EditorError::StaleOperation {
+                    story_id: *story_id,
+                });
+            }
+            story.text = before;
+        }
         EditOperation::ReplaceStoryText {
             story_id,
             before,
