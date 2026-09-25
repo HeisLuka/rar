@@ -43,7 +43,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 fn parse_fixture_arg() -> Result<PathBuf, Box<dyn Error>> {
     let mut args = std::env::args_os().skip(1);
     match (args.next(), args.next(), args.next()) {
-        (Some(flag), Some(path), None) if flag == "--fixture" => Ok(PathBuf::from(path)),
+        (Some(flag), Some(path), None) if flag == std::ffi::OsStr::new("--fixture") => Ok(PathBuf::from(path)),
         _ => Err("usage: chaptera-resize-producer --fixture FILE.pub".into()),
     }
 }
@@ -145,14 +145,11 @@ fn select_resize_candidate(
                 continue;
             }
 
-            let instance = direct_page_local_instance_v1(
-                &scene_node.origin.as_canonical().to_string(),
-                &page_id,
-            )?;
+            let origin_node_id = scene_node.origin.as_canonical().to_string();
+            let instance = direct_page_local_instance_v1(&origin_node_id, &page_id)?;
             let admission = admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
             if !admission.admitted
-                || admission.origin_node_id.as_deref()
-                    != Some(scene_node.origin.as_canonical().to_string().as_str())
+                || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
             {
                 continue;
             }
