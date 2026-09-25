@@ -1,0 +1,90 @@
+name: PUB Save roundtrip handoff
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/pub-save-roundtrip-handoff.yml"
+      - "vendor/producer-a/crates/pub-writer/**"
+      - "vendor/producer-a/crates/pub-quill/tests/fixtures/Sample3.pub.b64"
+      - "tools/windows/pub-runtime/run_story_native_roundtrip.ps1"
+      - "tools/windows/pub-runtime/PubRuntime.psm1"
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-handoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Generate deterministic PUB candidate handoff
+        run: |
+          set -euo pipefail
+          rm -rf out/pub-save-roundtrip-handoff
+          cargo run --manifest-path vendor/producer-a/Cargo.toml \
+            -p pub-writer \
+            --bin pub-story-native-handoff \
+            -- generate \
+            --output-dir out/pub-save-roundtrip-handoff
+
+      - name: Verify candidate with current Rar reader
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path vendor/producer-a/Cargo.toml \
+            -p pub-writer \
+            --bin pub-story-native-handoff \
+            -- verify \
+            --pub out/pub-save-roundtrip-handoff/candidate.pub \
+            --manifest out/pub-save-roundtrip-handoff/handoff.json
+
+      - name: Write Local Codex handoff
+        shell: bash
+        run: |
+          cat > out/pub-save-roundtrip-handoff/LOCAL-CODEX.txt <<EOF
+          PUB Save roundtrip handoff
+
+          Exact Rar commit: $SOURCE_SHA
+
+          This artifact proves only hosted candidate generation + current-Rar offline reopen.
+          It does NOT claim Microsoft Publisher acceptance.
+
+          On the authorized Windows checkout with Microsoft Publisher 16.0/build 12527:
+            git checkout $SOURCE_SHA
+            pwsh -NoProfile -File tools/windows/pub-runtime/run_story_native_roundtrip.ps1 \`
+              -BundleDir <downloaded-artifact-directory> \`
+              -OutputRoot <local-output-directory>
+
+          PASS requires:
+            1. Publisher opens candidate.pub without repair/rejection.
+            2. Publisher SaveAs creates a new PUB.
+            3. Fresh Publisher process reopens the saved PUB.
+            4. Current Rar reparses the native-saved PUB.
+            5. The exact expected Story text hash and UTF-16 length survive.
+            6. source.pub and candidate.pub remain byte-immutable.
+
+          Return/share native-roundtrip-receipt.json only.
+          Keep native-saveas.pub local unless explicitly approved for evidence handling.
+          EOF
+
+      - name: Upload exact handoff bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-save-roundtrip-handoff-${{ github.run_id }}
+          path: |
+            out/pub-save-roundtrip-handoff/source.pub
+            out/pub-save-roundtrip-handoff/candidate.pub
+            out/pub-save-roundtrip-handoff/handoff.json
+            out/pub-save-roundtrip-handoff/LOCAL-CODEX.txt
+          if-no-files-found: error
+          retention-days: 30
