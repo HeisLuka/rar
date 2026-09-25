@@ -174,12 +174,25 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
         .filter(|node| node.parent_origin == page_origin)
         .map(|node| node.origin)
         .collect::<BTreeSet<_>>();
-    let has_text_layout = visual
+    let first_page_story_frames = visual
         .story_frames
         .iter()
-        .any(|frame| page_nodes.contains(&frame.frame_id));
+        .filter(|frame| page_nodes.contains(&frame.frame_id))
+        .collect::<Vec<_>>();
+    let current_text_layout_present = first_page_story_frames.iter().all(|frame| {
+        let frame_count = visual
+            .story_frames
+            .iter()
+            .filter(|candidate| candidate.story_id == frame.story_id)
+            .count();
+        frame_count == 1
+            && visual
+                .document
+                .stories
+                .iter()
+                .any(|story| story.id == frame.story_id)
+    });
     let non_empty_visible_content = !page_nodes.is_empty();
-    let paint_ready = first_surface.is_some() && non_empty_visible_content;
     let paint_ms = elapsed_ms(paint_started);
 
     let search_started = Instant::now();
@@ -282,8 +295,14 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
         &mut cursor,
         paint_ms,
         "first_page_only",
-        (0, 0, 1, if has_text_layout { 1 } else { 0 }, resource_count),
-        "hosted headless paint-readiness boundary; separate reader-only WGPU acceptance proves an actual rendered first frame",
+        (
+            0,
+            0,
+            1,
+            u64::try_from(first_page_story_frames.len()).unwrap_or(u64::MAX),
+            resource_count,
+        ),
+        "hosted headless paint-readiness boundary; text-layout readiness mirrors the current desktop law: pages with no text frames have no text-layout obligation, while every present frame must resolve to one unlinked Story; separate reader-only WGPU acceptance proves an actual rendered first frame",
     ));
     let first_useful_page_ms = cursor;
     phases.push(phase(
@@ -327,7 +346,7 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
             page_geometry_present: first_surface.is_some(),
             fidelity_diagnostics_present: true,
             visible_resources_ready: true,
-            current_text_layout_present: has_text_layout,
+            current_text_layout_present,
             non_empty_visible_content,
         },
         phases,
