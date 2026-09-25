@@ -1,4 +1,4 @@
-name: TEMP CORPUS Publisher95-97 Printers 0x29 census
+name: TEMP CORPUS Publisher95-97 paired Printers 0x29 census
 on:
   pull_request:
     paths:
@@ -9,7 +9,7 @@ permissions:
 jobs:
   census:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +22,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from __future__ import annotations
-          import hashlib,json,time,urllib.parse,urllib.request
+          import concurrent.futures,difflib,hashlib,json,time,urllib.parse,urllib.request
           from pathlib import Path
           from collections import Counter,defaultdict
           import olefile
@@ -172,84 +172,123 @@ jobs:
               positions.append(int.from_bytes(d[p:p+ptr],"little"))
             mono=all(positions[i]<=positions[i+1] for i in range(len(positions)-1))
             bounds=all(0<=x<=len(d)-pos0 for x in positions)
-            rec_lens=[positions[i+1]-positions[i] for i in range(n)] if mono else []
-            return {"valid":mono and bounds,"pointer_size":ptr,"n":n,"maxn":maxn,"last_ptr_or_size":last,"value0":f0,"value1":f1,"positions":positions,"record_lengths":rec_lens,"chunk_len":len(chunk),"data_offset":data_off,"data_len":len(d)}
+            records=[d[pos0+positions[i]:pos0+positions[i+1]] for i in range(n)] if mono and bounds else []
+            return {"valid":mono and bounds,"pointer_size":ptr,"n":n,"maxn":maxn,"last_ptr_or_size":last,"value0":f0,"value1":f1,"positions":positions,"record_lengths":[len(x) for x in records],"record_sha256s":[sha(x) for x in records],"chunk_len":len(chunk),"data_offset":data_off,"data_len":len(d),"_records":records}
 
-          report={"schema":"chaptera.printer29-media-census.v1","source_safe":True,"raw_pub_retained":False,"media":{},"same_name_pairs":[]}
+          def prefix_len(a,b):
+            n=min(len(a),len(b));i=0
+            while i<n and a[i]==b[i]:i+=1
+            return i
+
+          def suffix_len(a,b,prefix):
+            n=min(len(a),len(b))-prefix;i=0
+            while i<n and a[-1-i]==b[-1-i]:i+=1
+            return i
+
+          def record0_pair(left,right):
+            lrs=left.get("_records") or [];rrs=right.get("_records") or []
+            if not lrs or not rrs:return None
+            lr=lrs[0];rr=rrs[0]
+            if left.get("pointer_size")!=2 or right.get("pointer_size")!=4:return None
+            if len(lr)<10 or len(rr)<20:return None
+            lb=[u16(lr,2*i) for i in range(5)]
+            rb=[u32(rr,4*i) for i in range(5)]
+            lv=all(lb[i]<=lb[i+1] for i in range(4)) and lb[0]>=10 and lb[-1]<=len(lr)
+            rv=all(rb[i]<=rb[i+1] for i in range(4)) and rb[0]>=20 and rb[-1]<=len(rr)
+            if not (lv and rv):return {"valid":False,"left_bounds":lb,"right_bounds":rb}
+            lcuts=lb+[len(lr)];rcuts=rb+[len(rr)]
+            zones=[]
+            for i in range(5):
+              a=lr[lcuts[i]:lcuts[i+1]];b=rr[rcuts[i]:rcuts[i+1]]
+              zones.append({"index":i,"left_len":len(a),"right_len":len(b),"left_sha256":sha(a),"right_sha256":sha(b),"equal":a==b})
+            bridge_l=lr[10:lb[0]];bridge_r=rr[20:rb[0]]
+            pre_l=lr[lb[0]:lb[2]];pre_r=rr[rb[0]:rb[2]]
+            p=prefix_len(pre_l,pre_r);s=suffix_len(pre_l,pre_r,p)
+            token=b"msprint1\\\\privb"
+            return {"valid":True,"left_bounds":lb,"right_bounds":rb,"boundary_deltas":[b-a for a,b in zip(lb,rb)],"bridge_left_len":len(bridge_l),"bridge_right_len":len(bridge_r),"bridge_equal":bridge_l==bridge_r,"zone_shapes":zones,"zone_equal":[z["equal"] for z in zones],"localized_prepath_left_len":len(pre_l),"localized_prepath_right_len":len(pre_r),"localized_prepath_left_sha256":sha(pre_l),"localized_prepath_right_sha256":sha(pre_r),"localized_prepath_common_prefix":p,"localized_prepath_common_suffix":s,"localized_prepath_sequence_ratio":round(difflib.SequenceMatcher(None,pre_l,pre_r,autojunk=False).ratio(),6),"left_has_msprint1_privb":token in lr,"right_has_msprint1_privb":token in rr}
+
+          isos={key:ISO(spec["url"]) for key,spec in MEDIA.items()}
+          listings={key:isos[key].listing("PAGEWIZ") for key in MEDIA}
+          names_by_media={key:sorted(n for n,(e,z,fl) in listings[key].items() if n.endswith(".PUB") and not (fl&2)) for key in MEDIA}
+          common_names=sorted(set(names_by_media["pub95"]) & set(names_by_media["pub97"]))
+
+          def analyze_name(key,name):
+            spec=MEDIA[key];iso=isos[key]
+            e,z,fl=listings[key][name]
+            pub=iso.read(e*SECTOR,z)
+            c=contents(pub)
+            if len(c)<0x18 or c[:4]!=b"\xe8\xac\x22\x00":raise ValueError("not-old22")
+            cv=u16(c,4);sig=c[0x0c:0x0e].hex()
+            generation={("7d00",300):"Publisher95",("8800",300):"Publisher97",("c002",200):"Publisher2.0"}.get((sig,cv),"unknown")
+            dirs=directory(c)
+            if dirs is None:raise ValueError("bad-directory")
+            offsets=sorted(set(r["offset"] for r in dirs))
+            occurrences=[]
+            for r in dirs:
+              if r["marker"]!=0x29:continue
+              greater=[x for x in offsets if x>r["offset"]]
+              chunk_end=min(greater) if greater else len(c)
+              chunk=c[r["offset"]:chunk_end]
+              occurrences.append({"id":r["id"],"service":r["service"],"parent":r["parent"],"analysis":ptrlist(chunk,spec["version_num"])})
+            return {"name":name,"sha256":sha(pub),"byte_len":len(pub),"generation":generation,"secondary_signature":sig,"content_version":cv,"directory_count":len(dirs),"printer29":occurrences}
+
+          rows_by_media={};fail_by_media={}
+          for key in MEDIA:
+            rows=[];fail=[]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+              futs={ex.submit(analyze_name,key,name):name for name in common_names}
+              for fut in concurrent.futures.as_completed(futs):
+                name=futs[fut]
+                try:rows.append(fut.result())
+                except Exception as e:fail.append({"name":name,"error":f"{type(e).__name__}:{e}"})
+            rows_by_media[key]=sorted(rows,key=lambda r:r["name"])
+            fail_by_media[key]=sorted(fail,key=lambda r:r["name"])
+
+          report={"schema":"chaptera.printer29-paired-census.v2","source_safe":True,"raw_pub_retained":False,"scope":"same-name-PAGEWIZ-pairs-only","media":{},"same_name_pairs":[]}
           per_name={}
           for key,spec in MEDIA.items():
-            iso=ISO(spec["url"]);listing=iso.listing("PAGEWIZ")
-            names=sorted(n for n,(e,z,fl) in listing.items() if n.endswith(".PUB") and not (fl&2))
-            rows=[];fail=[]
-            for name in names:
-              try:
-                pub=iso.member("PAGEWIZ/"+name);c=contents(pub)
-                if len(c)<0x18 or c[:4]!=b"\xe8\xac\x22\x00":raise ValueError("not-old22")
-                cv=u16(c,4);sig=c[0x0c:0x0e].hex()
-                generation={("7d00",300):"Publisher95",("8800",300):"Publisher97",("c002",200):"Publisher2.0"}.get((sig,cv),"unknown")
-                dirs=directory(c)
-                if dirs is None:raise ValueError("bad-directory")
-                offsets=sorted(set(r["offset"] for r in dirs))
-                occurrences=[]
-                for r in dirs:
-                  if r["marker"]!=0x29:continue
-                  greater=[x for x in offsets if x>r["offset"]]
-                  end=min(greater) if greater else len(c)
-                  chunk=c[r["offset"]:end]
-                  occurrences.append({"id":r["id"],"service":r["service"],"parent":r["parent"],"analysis":ptrlist(chunk,spec["version_num"])})
-                row={"name":name,"sha256":sha(pub),"byte_len":len(pub),"generation":generation,"secondary_signature":sig,"content_version":cv,"directory_count":len(dirs),"printer29":occurrences}
-                rows.append(row)
-              except Exception as e:
-                fail.append({"name":name,"error":f"{type(e).__name__}:{e}"})
+            rows=rows_by_media[key];fail=fail_by_media[key]
             expected=[r for r in rows if r["generation"]==spec["expected_generation"]]
             occ=[o["analysis"] for r in expected for o in r["printer29"] if o["analysis"].get("valid")]
             ptr_counts=Counter(str(x["pointer_size"]) for x in occ)
             topology=Counter((x["pointer_size"],x["n"],x["maxn"],x["value0"],x["value1"],tuple(x["record_lengths"])) for x in occ)
-            report["media"][key]={
-              "source_page":spec["source_page"],"root_sha256":spec["root_sha256"],"delivery_url":iso.delivery,
-              "pagewiz_pub_count":len(names),"parsed_count":len(rows),"failure_count":len(fail),
-              "expected_generation_count":len(expected),
-              "expected_generation_with_printer29":sum(bool(r["printer29"]) for r in expected),
-              "valid_printer29_occurrences":len(occ),
-              "pointer_size_counts":dict(ptr_counts),
-              "topology_counts":[{"pointer_size":k[0],"n":k[1],"maxn":k[2],"value0":k[3],"value1":k[4],"record_lengths":list(k[5]),"count":v} for k,v in sorted(topology.items(),key=lambda kv:(-kv[1],kv[0]))],
-              "files":rows,"failures":fail
-            }
+            report["media"][key]={"source_page":spec["source_page"],"root_sha256":spec["root_sha256"],"delivery_url":isos[key].delivery,"pagewiz_pub_count":len(names_by_media[key]),"common_name_count":len(common_names),"paired_scope_parsed_count":len(rows),"paired_scope_failure_count":len(fail),"paired_scope_expected_generation_count":len(expected),"paired_scope_with_printer29":sum(bool(r["printer29"]) for r in expected),"paired_scope_valid_printer29_occurrences":len(occ),"paired_scope_pointer_size_counts":dict(ptr_counts),"paired_scope_topology_counts":[{"pointer_size":k[0],"n":k[1],"maxn":k[2],"value0":k[3],"value1":k[4],"record_lengths":list(k[5]),"count":v} for k,v in sorted(topology.items(),key=lambda kv:(-kv[1],kv[0]))],"files":rows,"failures":fail}
             per_name[key]={r["name"]:r for r in expected}
 
-          common=sorted(set(per_name["pub95"])&set(per_name["pub97"]))
-          for name in common:
+          common_expected=sorted(set(per_name["pub95"])&set(per_name["pub97"]))
+          for name in common_expected:
             l=per_name["pub95"][name];r=per_name["pub97"][name]
             if not l["printer29"] or not r["printer29"]:continue
-            report["same_name_pairs"].append({
-              "name":name,
-              "left_sha256":l["sha256"],"right_sha256":r["sha256"],
-              "left":[x["analysis"] for x in l["printer29"]],
-              "right":[x["analysis"] for x in r["printer29"]]
-            })
-          pairs=report["same_name_pairs"]
-          transitions=Counter()
-          for p in pairs:
-            for a,b in zip(p["left"],p["right"]):
-              if a.get("valid") and b.get("valid"):
-                transitions[f'{a["pointer_size"]}->{b["pointer_size"]}']+=1
-          report["summary"]={
-            "same_name_pair_count_with_printer29":len(pairs),
-            "paired_pointer_transitions":dict(transitions),
-            "bounded_conclusion":(
-              "publisher95-to-97-printer29-pointer-widening-supported"
-              if transitions and set(transitions)=={"2->4"}
-              else "mixed-or-insufficient"
-            )
-          }
+            pair={"name":name,"left_sha256":l["sha256"],"right_sha256":r["sha256"],"comparisons":[]}
+            for lo,ro in zip(l["printer29"],r["printer29"]):
+              a=lo["analysis"];b=ro["analysis"]
+              pair["comparisons"].append({"left_id":lo["id"],"right_id":ro["id"],"left_pointer_size":a.get("pointer_size"),"right_pointer_size":b.get("pointer_size"),"left_topology":{"n":a.get("n"),"maxn":a.get("maxn"),"value0":a.get("value0"),"value1":a.get("value1"),"record_lengths":a.get("record_lengths")},"right_topology":{"n":b.get("n"),"maxn":b.get("maxn"),"value0":b.get("value0"),"value1":b.get("value1"),"record_lengths":b.get("record_lengths")},"record0_pair":record0_pair(a,b)})
+            report["same_name_pairs"].append(pair)
+
+          transitions=Counter();rec0_valid=[];bookmark_shape_matches=0
+          for p in report["same_name_pairs"]:
+            for cmp in p["comparisons"]:
+              a=cmp["left_pointer_size"];b=cmp["right_pointer_size"]
+              if a and b:transitions[f"{a}->{b}"]+=1
+              r0=cmp.get("record0_pair")
+              if r0 and r0.get("valid"):
+                rec0_valid.append({"name":p["name"],**r0})
+                if r0["boundary_deltas"]==[10,21,20,20,20] and r0["bridge_equal"] and r0["localized_prepath_left_len"]==27 and r0["localized_prepath_right_len"]==37 and r0["zone_equal"][2:]==[True,True,True]:
+                  bookmark_shape_matches+=1
+
+          pointer_conclusion="insufficient-paired-printer29-data"
+          if transitions and set(transitions)=={"2->4"}:pointer_conclusion="consistent-2-to-4-in-all-paired-printer29-observations"
+          elif transitions:pointer_conclusion="mixed-paired-pointer-transitions"
+          report["summary"]={"pagewiz_common_name_count":len(common_names),"same_name_pair_count_with_printer29":len(report["same_name_pairs"]),"paired_pointer_transitions":dict(transitions),"pointer_conclusion":pointer_conclusion,"valid_record0_pair_count":len(rec0_valid),"record0_pairs_matching_BOOKMARK_boundary_shape":bookmark_shape_matches,"record0_pair_summaries":rec0_valid}
+
+          for media in report["media"].values():
+            for row in media["files"]:
+              for occ in row["printer29"]:occ["analysis"].pop("_records",None)
+
           out=Path("out");out.mkdir(exist_ok=True)
           (out/"printer29-census.json").write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
-          (out/"summary.json").write_text(json.dumps(report["summary"],indent=2),encoding="utf-8")
-          print(json.dumps({
-            "pub95":{k:report["media"]["pub95"][k] for k in ("pagewiz_pub_count","expected_generation_count","expected_generation_with_printer29","valid_printer29_occurrences","pointer_size_counts")},
-            "pub97":{k:report["media"]["pub97"][k] for k in ("pagewiz_pub_count","expected_generation_count","expected_generation_with_printer29","valid_printer29_occurrences","pointer_size_counts")},
-            "summary":report["summary"]
-          },indent=2))
+          (out/"summary.json").write_text(json.dumps(report["summary"],indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(report["summary"],indent=2,ensure_ascii=False))
           PY
       - name: Enforce source-safe census
         run: |
@@ -261,7 +300,7 @@ jobs:
           r=json.loads(Path("out/printer29-census.json").read_text())
           assert r["source_safe"] is True and r["raw_pub_retained"] is False
           assert r["media"]["pub95"]["pagewiz_pub_count"] > 0
-          assert r["media"]["pub97"]["pagewiz_pub_count"] > 0
+          assert r["media"]["pub97"]["pagewiz_pub_count"] > 0\n          assert r["media"]["pub95"]["common_name_count"] == r["media"]["pub97"]["common_name_count"]
           PY
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
