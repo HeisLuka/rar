@@ -11,6 +11,7 @@ pub mod cli;
 pub mod config;
 pub mod db;
 pub mod derived_artifacts;
+pub mod diagnostics;
 pub mod doctor;
 pub mod edge;
 pub mod export_executor;
