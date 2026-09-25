@@ -552,8 +552,8 @@ impl ScanTempDir {
             let mut random = [0_u8; 16];
             rand::thread_rng().fill_bytes(&mut random);
             let name = format!(
-                "chaptera-source-scan-{}",
-                random.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+                "chaptera-source-scan-{:032x}",
+                u128::from_be_bytes(random)
             );
             let path = root.join(name);
             match fs::create_dir(&path).await {
