@@ -205,30 +205,31 @@ pub trait BlobIdGenerator: Send + Sync {
     fn next_binding_id(&self) -> Result<String, BlobStoreError>;
 }
 
+#[async_trait::async_trait]
 pub trait BlobBindingRepository: Send + Sync {
-    fn find_physical_by_content(
+    async fn find_physical_by_content(
         &self,
         tenant_id: &str,
         content_sha256: &str,
         byte_len: u64,
     ) -> Result<Option<PhysicalBlobRecord>, BlobStoreError>;
 
-    fn get_physical(
+    async fn get_physical(
         &self,
         physical_blob_id: &str,
     ) -> Result<Option<PhysicalBlobRecord>, BlobStoreError>;
 
-    fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError>;
+    async fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError>;
 
-    fn commit_physical_and_binding(
+    async fn commit_physical_and_binding(
         &self,
         physical: PhysicalBlobRecord,
         binding: ResourceBinding,
     ) -> Result<ResourceBinding, BlobStoreError>;
 
-    fn commit_binding(&self, binding: ResourceBinding) -> Result<ResourceBinding, BlobStoreError>;
+    async fn commit_binding(&self, binding: ResourceBinding) -> Result<ResourceBinding, BlobStoreError>;
 
-    fn mark_physical_deleted(
+    async fn mark_physical_deleted(
         &self,
         physical_blob_id: &str,
         expected_generation: &str,
@@ -299,13 +300,17 @@ impl BlobStoreService {
     ) -> Result<ResourceBinding, BlobStoreError> {
         validate_create_request(&request)?;
 
-        if let Some(existing) = self.repo.find_physical_by_content(
-            &request.tenant_id,
-            &request.content_sha256,
-            request.byte_len,
-        )? {
+        if let Some(existing) = self
+            .repo
+            .find_physical_by_content(
+                &request.tenant_id,
+                &request.content_sha256,
+                request.byte_len,
+            )
+            .await?
+        {
             self.verify_physical_exact(&existing).await?;
-            return self.bind_existing(&request, &existing);
+            return self.bind_existing(&request, &existing).await;
         }
 
         let physical_blob_id = self.ids.next_physical_blob_id()?;
@@ -404,7 +409,9 @@ impl BlobStoreService {
             retired_at_ms: None,
         };
 
-        self.repo.commit_physical_and_binding(physical, binding)
+        self.repo
+            .commit_physical_and_binding(physical, binding)
+            .await
     }
 
     pub async fn stream_binding_verified(
@@ -415,7 +422,7 @@ impl BlobStoreService {
     ) -> Result<u64, BlobStoreError> {
         require_ident(tenant_id, "tenant_id")?;
         require_ident(binding_id, "binding_id")?;
-        let binding = self.repo.get_binding(binding_id)?.ok_or_else(|| {
+        let binding = self.repo.get_binding(binding_id).await?.ok_or_else(|| {
             BlobStoreError::new("binding_not_found", "resource binding not found")
         })?;
         if binding.tenant_id != tenant_id {
@@ -433,7 +440,8 @@ impl BlobStoreService {
 
         let physical = self
             .repo
-            .get_physical(&binding.physical_blob_id)?
+            .get_physical(&binding.physical_blob_id)
+            .await?
             .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
         assert_binding_matches_physical(&binding, &physical)?;
         self.copy_and_verify(&physical, output).await
@@ -447,7 +455,7 @@ impl BlobStoreService {
         expires_at_ms: u64,
     ) -> Result<DownloadGrant, BlobStoreError> {
         validate_expiry(now_ms, expires_at_ms)?;
-        let binding = self.repo.get_binding(binding_id)?.ok_or_else(|| {
+        let binding = self.repo.get_binding(binding_id).await?.ok_or_else(|| {
             BlobStoreError::new("binding_not_found", "resource binding not found")
         })?;
         if binding.tenant_id != tenant_id {
@@ -464,7 +472,8 @@ impl BlobStoreService {
         }
         let physical = self
             .repo
-            .get_physical(&binding.physical_blob_id)?
+            .get_physical(&binding.physical_blob_id)
+            .await?
             .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
         assert_binding_matches_physical(&binding, &physical)?;
         self.verify_physical_exact(&physical).await?;
@@ -575,7 +584,8 @@ impl BlobStoreService {
     ) -> Result<PhysicalBlobRecord, BlobStoreError> {
         let physical = self
             .repo
-            .get_physical(physical_blob_id)?
+            .get_physical(physical_blob_id)
+            .await?
             .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
         if physical.tenant_id != tenant_id {
             return Err(BlobStoreError::new(
@@ -610,9 +620,10 @@ impl BlobStoreService {
         }
         self.repo
             .mark_physical_deleted(physical_blob_id, &physical.storage_generation)
+            .await
     }
 
-    fn bind_existing(
+    async fn bind_existing(
         &self,
         request: &CreateBindingRequest,
         physical: &PhysicalBlobRecord,
@@ -643,6 +654,7 @@ impl BlobStoreService {
             created_at_ms: request.now_ms,
             retired_at_ms: None,
         })
+        .await
     }
 
     async fn verify_physical_exact(
@@ -1050,8 +1062,9 @@ mod tests {
         bindings: Mutex<BTreeMap<String, ResourceBinding>>,
     }
 
+    #[async_trait::async_trait]
     impl BlobBindingRepository for MemoryRepo {
-        fn find_physical_by_content(
+        async fn find_physical_by_content(
             &self,
             tenant_id: &str,
             content_sha256: &str,
@@ -1071,18 +1084,18 @@ mod tests {
                 .cloned())
         }
 
-        fn get_physical(
+        async fn get_physical(
             &self,
             physical_blob_id: &str,
         ) -> Result<Option<PhysicalBlobRecord>, BlobStoreError> {
             Ok(self.physical.lock().unwrap().get(physical_blob_id).cloned())
         }
 
-        fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError> {
+        async fn get_binding(&self, binding_id: &str) -> Result<Option<ResourceBinding>, BlobStoreError> {
             Ok(self.bindings.lock().unwrap().get(binding_id).cloned())
         }
 
-        fn commit_physical_and_binding(
+        async fn commit_physical_and_binding(
             &self,
             physical: PhysicalBlobRecord,
             binding: ResourceBinding,
@@ -1102,10 +1115,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(physical.physical_blob_id.clone(), physical);
-            self.commit_binding(binding)
+            self.commit_binding(binding).await
         }
 
-        fn commit_binding(
+        async fn commit_binding(
             &self,
             binding: ResourceBinding,
         ) -> Result<ResourceBinding, BlobStoreError> {
@@ -1120,7 +1133,7 @@ mod tests {
             Ok(binding)
         }
 
-        fn mark_physical_deleted(
+        async fn mark_physical_deleted(
             &self,
             physical_blob_id: &str,
             expected_generation: &str,
