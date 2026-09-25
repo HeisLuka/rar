@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub const CONTENTS_RAW_TYPE_CELLS: u16 = 0x63;
-pub const CELLS_DECLARED_COUNT_ID: u8 = 0x01;
-pub const CELLS_RECORD_ARRAY_ID: u8 = 0x02;
-pub const CELL_START_ROW_ID: u8 = 0x01;
-pub const CELL_END_ROW_ID: u8 = 0x02;
-pub const CELL_START_COLUMN_ID: u8 = 0x03;
-pub const CELL_END_COLUMN_ID: u8 = 0x04;
+pub const CELLS_DECLARED_COUNT_ID: u16 = 0x01;
+pub const CELLS_RECORD_ARRAY_ID: u16 = 0x02;
+pub const CELL_START_ROW_ID: u16 = 0x01;
+pub const CELL_END_ROW_ID: u16 = 0x02;
+pub const CELL_START_COLUMN_ID: u16 = 0x03;
+pub const CELL_END_COLUMN_ID: u16 = 0x04;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatureCellsChunk {
@@ -219,7 +219,7 @@ fn unique_scalar_or_zero(values: &[ObservedCellScalar]) -> Option<u32> {
         .then_some(first.value)
 }
 
-fn promoted_scalar(field: &RawContentsBlock, id: u8) -> Option<ObservedCellScalar> {
+fn promoted_scalar(field: &RawContentsBlock, id: u16) -> Option<ObservedCellScalar> {
     if field.id != id {
         return None;
     }
@@ -279,14 +279,17 @@ mod tests {
     };
     use pub_core::StreamPath;
 
-    fn push_u32_block(out: &mut Vec<u8>, id: u8, value: u32) {
-        out.push(id);
-        out.push(crate::BLOCK_TYPE_U32);
+    fn push_u32_block(out: &mut Vec<u8>, id: u16, value: u32) {
+        out.extend_from_slice(
+            &crate::encode_packed_field_tag(id, crate::BLOCK_TYPE_U32).expect("test field id"),
+        );
         out.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn container_block(id: u8, content: Vec<u8>) -> Vec<u8> {
-        let mut out = vec![id, crate::BLOCK_TYPE_CONTAINER_90];
+    fn container_block(id: u16, content: Vec<u8>) -> Vec<u8> {
+        let mut out = crate::encode_packed_field_tag(id, crate::BLOCK_TYPE_CONTAINER_90)
+            .expect("test field id")
+            .to_vec();
         let declared_length = u32::try_from(content.len() + 4).unwrap();
         out.extend_from_slice(&declared_length.to_le_bytes());
         out.extend_from_slice(&content);
