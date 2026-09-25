@@ -415,12 +415,7 @@ pub fn encode_editor_revision_event_v1(
     event: &EditorRevisionEventV1,
 ) -> Result<Vec<u8>, RevisionMaterializerError> {
     validate_event_fields(event)?;
-    let payload = serde_json::to_vec(event).map_err(|error| {
-        RevisionMaterializerError::new(
-            "event_encode_failed",
-            format!("could not serialize editor revision event: {error}"),
-        )
-    })?;
+    let payload = canonical_json_bytes(event, "event_encode_failed", "editor revision event")?;
     encode_canonical_event(&payload)
         .map_err(|error| RevisionMaterializerError::new(error.code, error.message))
 }
@@ -440,14 +435,33 @@ pub fn decode_editor_revision_event_v1(
     Ok(event)
 }
 
+/// Raw lowercase SHA-256 of the existing Rar canonical JSON project law.
 pub fn project_sha256(project: &EditorProject) -> Result<String, RevisionMaterializerError> {
-    let bytes = serde_json::to_vec(project).map_err(|error| {
+    let bytes = canonical_json_bytes(project, "project_encode_failed", "EditorProject")?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn canonical_json_bytes<T: Serialize>(
+    value: &T,
+    code: &'static str,
+    label: &'static str,
+) -> Result<Vec<u8>, RevisionMaterializerError> {
+    // serde_json::Value uses its canonical sorted-key map when the optional
+    // preserve_order feature is not enabled. The workspace does not enable it.
+    // Serializing via Value therefore matches the existing Rar/Python
+    // sort_keys=True, separators=(",", ":"), ensure_ascii=False hash law.
+    let canonical = serde_json::to_value(value).map_err(|error| {
         RevisionMaterializerError::new(
-            "project_encode_failed",
-            format!("could not serialize EditorProject deterministically: {error}"),
+            code,
+            format!("could not normalize {label} into canonical JSON: {error}"),
         )
     })?;
-    Ok(sha256_hex(&bytes))
+    serde_json::to_vec(&canonical).map_err(|error| {
+        RevisionMaterializerError::new(
+            code,
+            format!("could not serialize canonical {label}: {error}"),
+        )
+    })
 }
 
 fn append_event_operation(
