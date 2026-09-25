@@ -1,4 +1,7 @@
+use crate::{LengthEmu, NodeId, StoryId, TableCellId, TableColumnId, TableRowId};
 use serde::{Deserialize, Serialize};
+
+pub const EFFECTIVE_TABLE_GRID_V1: &str = "chaptera.effective-table-grid.v1";
 
 /// Координата ячейки в простом прямоугольном table subset.
 ///
@@ -172,5 +175,157 @@ mod tests {
                 address: TableCellAddress { row: 0, column: 0 },
             }
         );
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveTableTrackV1<Id> {
+    pub id: Id,
+    pub index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extent: Option<LengthEmu>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveTableCellV1 {
+    pub id: TableCellId,
+    pub row_id: TableRowId,
+    pub column_id: TableColumnId,
+    pub address: TableCellAddress,
+    pub row_span: u32,
+    pub column_span: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story_id: Option<StoryId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utf16_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utf16_end: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveTableGridV1 {
+    pub version: String,
+    pub table_id: NodeId,
+    pub rows: Vec<EffectiveTableTrackV1<TableRowId>>,
+    pub columns: Vec<EffectiveTableTrackV1<TableColumnId>>,
+    pub cells: Vec<EffectiveTableCellV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectiveTableGridError {
+    WrongVersion,
+    EmptyRows,
+    EmptyColumns,
+    NonContiguousRowIndex,
+    NonContiguousColumnIndex,
+    DuplicateRowId,
+    DuplicateColumnId,
+    WrongCellCount { expected: u64, actual: usize },
+    CellOutOfBounds { id: TableCellId, address: TableCellAddress },
+    DuplicateCellId { id: TableCellId },
+    DuplicateAddress { address: TableCellAddress },
+    WrongTrackReference { id: TableCellId },
+    UnsupportedSpan { id: TableCellId, row_span: u32, column_span: u32 },
+    IncompleteStoryRange { id: TableCellId },
+    InvalidStoryRange { id: TableCellId, start: u32, end: u32 },
+    NonPositiveRowExtent { id: TableRowId, value: i64 },
+    NonPositiveColumnExtent { id: TableColumnId, value: i64 },
+}
+
+impl EffectiveTableGridV1 {
+    pub fn validate(&self) -> Result<(), EffectiveTableGridError> {
+        if self.version != EFFECTIVE_TABLE_GRID_V1 {
+            return Err(EffectiveTableGridError::WrongVersion);
+        }
+        if self.rows.is_empty() {
+            return Err(EffectiveTableGridError::EmptyRows);
+        }
+        if self.columns.is_empty() {
+            return Err(EffectiveTableGridError::EmptyColumns);
+        }
+        for (index, row) in self.rows.iter().enumerate() {
+            if row.index != u32::try_from(index).expect("bounded Vec index") {
+                return Err(EffectiveTableGridError::NonContiguousRowIndex);
+            }
+            if self.rows[..index].iter().any(|other| other.id == row.id) {
+                return Err(EffectiveTableGridError::DuplicateRowId);
+            }
+            if let Some(extent) = row.extent {
+                if extent.get() <= 0 {
+                    return Err(EffectiveTableGridError::NonPositiveRowExtent {
+                        id: row.id,
+                        value: extent.get(),
+                    });
+                }
+            }
+        }
+        for (index, column) in self.columns.iter().enumerate() {
+            if column.index != u32::try_from(index).expect("bounded Vec index") {
+                return Err(EffectiveTableGridError::NonContiguousColumnIndex);
+            }
+            if self.columns[..index].iter().any(|other| other.id == column.id) {
+                return Err(EffectiveTableGridError::DuplicateColumnId);
+            }
+            if let Some(extent) = column.extent {
+                if extent.get() <= 0 {
+                    return Err(EffectiveTableGridError::NonPositiveColumnExtent {
+                        id: column.id,
+                        value: extent.get(),
+                    });
+                }
+            }
+        }
+
+        let expected = u64::try_from(self.rows.len()).expect("row count fits u64")
+            * u64::try_from(self.columns.len()).expect("column count fits u64");
+        if expected != self.cells.len() as u64 {
+            return Err(EffectiveTableGridError::WrongCellCount {
+                expected,
+                actual: self.cells.len(),
+            });
+        }
+
+        for (index, cell) in self.cells.iter().enumerate() {
+            let row = usize::try_from(cell.address.row).ok().and_then(|i| self.rows.get(i));
+            let column = usize::try_from(cell.address.column).ok().and_then(|i| self.columns.get(i));
+            let (Some(row), Some(column)) = (row, column) else {
+                return Err(EffectiveTableGridError::CellOutOfBounds {
+                    id: cell.id,
+                    address: cell.address,
+                });
+            };
+            if row.id != cell.row_id || column.id != cell.column_id {
+                return Err(EffectiveTableGridError::WrongTrackReference { id: cell.id });
+            }
+            if cell.row_span != 1 || cell.column_span != 1 {
+                return Err(EffectiveTableGridError::UnsupportedSpan {
+                    id: cell.id,
+                    row_span: cell.row_span,
+                    column_span: cell.column_span,
+                });
+            }
+            if self.cells[..index].iter().any(|other| other.id == cell.id) {
+                return Err(EffectiveTableGridError::DuplicateCellId { id: cell.id });
+            }
+            if self.cells[..index].iter().any(|other| other.address == cell.address) {
+                return Err(EffectiveTableGridError::DuplicateAddress {
+                    address: cell.address,
+                });
+            }
+            match (cell.utf16_start, cell.utf16_end) {
+                (None, None) => {}
+                (Some(start), Some(end)) if start <= end => {}
+                (Some(start), Some(end)) => {
+                    return Err(EffectiveTableGridError::InvalidStoryRange {
+                        id: cell.id,
+                        start,
+                        end,
+                    });
+                }
+                _ => return Err(EffectiveTableGridError::IncompleteStoryRange { id: cell.id }),
+            }
+        }
+        Ok(())
     }
 }
