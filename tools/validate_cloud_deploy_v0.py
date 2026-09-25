@@ -99,6 +99,10 @@ def main() -> int:
 
     require(config, 'listen = "127.0.0.1:8080"', "config")
     require(config, "heavy_concurrency = 1", "config")
+    require(config, "quota_shared_capacity =", "config")
+    require(config, "quota_semantic_headroom =", "config")
+    require(config, "quota_export_cap =", "config")
+    require(config, "quota_background_cap =", "config")
     require(config, 'journal_mode = "wal"', "config")
     require(config, 'synchronous = "full"', "config")
     require(config, '[auth.oidc]', "config")
@@ -142,6 +146,7 @@ def main() -> int:
             "proxy_authority_rewritten_at_edge": True,
             "typed_rust_edge_limits": True,
             "heavy_worker_concurrency": 1,
+            "explicit_worker_quota_budgets": True,
             "typed_production_config": True,
             "web_oidc_secret_via_systemd_credential": True,
             "worker_has_no_oidc_credential": True,
