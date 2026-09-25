@@ -3581,6 +3581,9 @@ mod tests {
         harness.step();
         let sidecar = editor_project_sidecar_path(&fixture).expect("sidecar path");
         assert!(sidecar.is_file(), "GUI Save Project must write the sidecar");
+        // Save happens after command enablement is computed for this frame.
+        // Advance once more so the accessibility tree reflects the saved sidecar.
+        harness.step();
 
         {
             let reopen = harness.get_by_label("Reopen Project");
