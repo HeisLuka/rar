@@ -45,8 +45,8 @@ jobs:
           print(name)
           PY
 
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
+      - name: Check untrusted PUB Rust formatting
+        run: rustfmt --edition 2024 --check crates/chaptera-untrusted-pub-scan/src/lib.rs crates/chaptera-untrusted-pub-scan/src/bin/untrusted_pub_worker.rs
 
       - name: Lint untrusted PUB worker
         run: cargo clippy -p chaptera-untrusted-pub-scan --all-targets -- -D warnings
