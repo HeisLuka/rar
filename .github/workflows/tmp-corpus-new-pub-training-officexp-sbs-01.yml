@@ -1,0 +1,209 @@
+name: TEMP Office XP SBS companion locator census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-officexp-sbs-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Query bounded public archive/catalog surfaces
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json, re, time
+          from pathlib import Path
+          from urllib.parse import urlencode, quote
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+
+          UA='rar-pub-training-officexp-locator/1.0 (public format research)'
+          ISBN10='0735612943'
+          ISBN13='9780735612945'
+          exact_names=['SpotColor.pub','SpotColor2.pub','ProcessColor.pub','PrintDoc1.pub','PrintDoc2.pub']
+
+          def get_json(url, timeout=60, cap=64*1024*1024):
+              req=Request(url,headers={'User-Agent':UA,'Accept':'application/json'})
+              with urlopen(req,timeout=timeout) as resp:
+                  raw=resp.read(cap+1)
+                  if len(raw)>cap:
+                      raise ValueError('response exceeded cap')
+                  return json.loads(raw.decode('utf-8'))
+
+          errors=[]
+          ia_docs=[]
+          ia_queries=[
+              f'isbn:{ISBN10}',
+              f'isbn:{ISBN13}',
+              '"Microsoft Office XP Step by Step"',
+              f'"{ISBN10}"',
+              f'"{ISBN13}"',
+          ]
+          for q in ia_queries:
+              params=[
+                  ('q',q),('fl[]','identifier'),('fl[]','title'),('fl[]','description'),
+                  ('fl[]','date'),('fl[]','year'),('fl[]','mediatype'),('fl[]','collection'),
+                  ('rows','100'),('page','1'),('output','json')
+              ]
+              url='https://archive.org/advancedsearch.php?'+urlencode(params)
+              try:
+                  data=get_json(url)
+                  for doc in data.get('response',{}).get('docs',[]):
+                      doc=dict(doc)
+                      doc['query']=q
+                      ia_docs.append(doc)
+              except Exception as exc:
+                  errors.append({'surface':'internet_archive_search','query':q,'error':f'{type(exc).__name__}: {exc}'})
+              time.sleep(0.5)
+
+          # Deduplicate IA item identifiers and inventory only metadata/file names.
+          ia_items=[]
+          seen=set()
+          carrier_re=re.compile(r'\.(?:iso|img|bin|cue|zip|7z|rar|cab|exe|pub)(?:$|[?#])',re.I)
+          exact_lower={x.casefold() for x in exact_names}
+          for doc in ia_docs:
+              ident=str(doc.get('identifier',''))
+              if not ident or ident in seen:
+                  continue
+              seen.add(ident)
+              item={'identifier':ident,'search_doc':doc,'files':[]}
+              try:
+                  meta=get_json('https://archive.org/metadata/'+quote(ident,safe=''))
+                  for f in meta.get('files',[]):
+                      name=str(f.get('name',''))
+                      if carrier_re.search(name) or name.rsplit('/',1)[-1].casefold() in exact_lower:
+                          item['files'].append({
+                              'name':name,
+                              'size':f.get('size'),
+                              'format':f.get('format'),
+                              'md5':f.get('md5'),
+                              'sha1':f.get('sha1'),
+                              'source':f.get('source'),
+                          })
+              except Exception as exc:
+                  item['metadata_error']=f'{type(exc).__name__}: {exc}'
+              ia_items.append(item)
+              time.sleep(0.3)
+
+          # Open Library can expose an Internet Archive ocaid even when IA search metadata is sparse.
+          openlibrary=[]
+          for isbn in (ISBN10,ISBN13):
+              url=f'https://openlibrary.org/isbn/{isbn}.json'
+              try:
+                  data=get_json(url)
+                  openlibrary.append({
+                      'isbn':isbn,
+                      'key':data.get('key'),
+                      'title':data.get('title'),
+                      'publish_date':data.get('publish_date'),
+                      'ocaid':data.get('ocaid'),
+                      'publishers':data.get('publishers'),
+                  })
+              except HTTPError as exc:
+                  openlibrary.append({'isbn':isbn,'status':exc.code,'error':str(exc)})
+              except Exception as exc:
+                  openlibrary.append({'isbn':isbn,'error':f'{type(exc).__name__}: {exc}'})
+
+          # Bounded Wayback prefixes for the historical Microsoft Press / later O'Reilly routes.
+          cdx='https://web.archive.org/cdx/search/cdx'
+          cdx_queries=[
+              ('mspress-officexp','mspress.microsoft.com/officexp/'),
+              ('microsoft-mspress-officexp','www.microsoft.com/mspress/officexp/'),
+              ('mspress-office-xp','mspress.microsoft.com/office/xp/'),
+              ('oreilly-isbn13','examples.oreilly.com/9780735612945/'),
+              ('oreilly-isbn10','examples.oreilly.com/0735612943/'),
+          ]
+          cdx_rows=[]
+          for label,prefix in cdx_queries:
+              params=[
+                  ('url',prefix),('matchType','prefix'),('output','json'),
+                  ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                  ('filter','statuscode:200'),('collapse','urlkey'),('limit','10000'),('gzip','false')
+              ]
+              try:
+                  data=get_json(cdx+'?'+urlencode(params))
+                  if data:
+                      hdr=data[0]
+                      for row in data[1:]:
+                          if isinstance(row,list):
+                              d={str(k):str(v) for k,v in zip(hdr,row)}
+                              d['query_label']=label
+                              cdx_rows.append(d)
+              except Exception as exc:
+                  errors.append({'surface':'wayback_cdx','query':label,'error':f'{type(exc).__name__}: {exc}'})
+              time.sleep(0.8)
+
+          filename_re=re.compile(r'(SpotColor2?\.pub|ProcessColor\.pub|PrintDoc[12]\.pub)',re.I)
+          candidate_re=re.compile(r'(publisher|office.?xp|step.?by.?step|practice|companion|download|1294|12945|\.(?:pub|zip|cab|exe|iso|img|bin|rar|7z)(?:[?#].*)?$)',re.I)
+          cdx_candidates=[]
+          for row in cdx_rows:
+              u=row.get('original','')
+              if filename_re.search(u) or candidate_re.search(u):
+                  cdx_candidates.append(row)
+
+          # Deduplicate exact original URLs.
+          dedup={}
+          for row in sorted(cdx_candidates,key=lambda x:x.get('timestamp','')):
+              dedup.setdefault(row.get('original','').casefold(),row)
+          cdx_candidates=sorted(dedup.values(),key=lambda x:(x.get('query_label',''),x.get('original','')))
+
+          summary={
+              'schema':'chaptera.corpus-training-officexp-sbs-locator-census.v1',
+              'source_safe':True,
+              'raw_payload_retained':False,
+              'book':'Microsoft Office XP Step by Step',
+              'isbn10':ISBN10,
+              'isbn13':ISBN13,
+              'known_publisher_practice_paths':[
+                  'Office XP SBS/Publisher/Chap23/'+x for x in exact_names
+              ],
+              'internet_archive_search_docs':len(ia_docs),
+              'internet_archive_unique_items':len(ia_items),
+              'internet_archive_items_with_candidate_files':sum(bool(x.get('files')) for x in ia_items),
+              'openlibrary':openlibrary,
+              'wayback_raw_rows':len(cdx_rows),
+              'wayback_candidate_rows':len(cdx_candidates),
+              'errors':errors,
+              'guardrail':'Book/CD provenance and archive metadata are locator evidence. No carrier bytes downloaded; no writer-version inference.'
+          }
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/internet-archive-items.json').write_text(json.dumps(ia_items,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/wayback-candidates.json').write_text(json.dumps(cdx_candidates,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          print('--- IA candidate file inventories ---')
+          for item in ia_items:
+              if item.get('files'):
+                  print(item['identifier'], json.dumps(item['files'],ensure_ascii=False))
+          print('--- Wayback top candidates ---')
+          for row in cdx_candidates[:200]:
+              print(row.get('timestamp',''),row.get('original',''),row.get('mimetype',''),row.get('length',''))
+          PY
+
+      - name: Source-safe artifact guard
+        run: |
+          set -euo pipefail
+          find out -maxdepth 1 -type f -print
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected byte-bearing carrier leaked into locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-officexp-sbs-locator-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
