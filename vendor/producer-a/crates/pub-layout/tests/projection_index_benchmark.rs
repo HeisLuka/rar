@@ -121,6 +121,13 @@ fn input(size: usize, case: MatrixCase) -> BoundedAuthoringSlice {
     }
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn triangular(size: u64) -> u64 {
     size.saturating_mul(size.saturating_add(1)) / 2
 }
@@ -190,7 +197,7 @@ fn projection_membership_benchmark_matrix() {
 
             let projection_bytes =
                 serde_json::to_vec(&projection).expect("serialize benchmark projection");
-            let projection_sha256 = format!("{:x}", Sha256::digest(&projection_bytes));
+            let projection_sha256 = sha256_hex(&projection_bytes);
 
             rows.push(BenchmarkRow {
                 size,
