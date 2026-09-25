@@ -27,8 +27,12 @@
   if (!api) throw new Error("api query parameter is required");
   const operationId = params.get("operation_id");
   const emuPerCssPx = Number(params.get("emu_per_css_px") ?? "9525");
+  const panYCssPx = Number(params.get("pan_y_css_px") ?? "0");
   if (!Number.isFinite(emuPerCssPx) || !(emuPerCssPx > 0)) {
     throw new Error("emu_per_css_px must be a positive finite number");
+  }
+  if (!Number.isFinite(panYCssPx)) {
+    throw new Error("pan_y_css_px must be finite");
   }
 
   const runtimeStatus = document.getElementById("runtime-status");
@@ -51,7 +55,7 @@
     host,
     service,
     rendererKind: "svg",
-    view: { emu_per_css_px: emuPerCssPx },
+    view: { emu_per_css_px: emuPerCssPx, pan_y_css_px: panYCssPx },
     operationIdFactory: operationId ? (() => operationId) : null,
     onState: (state) => {
       states.push(state);
