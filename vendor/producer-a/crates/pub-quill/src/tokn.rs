@@ -67,7 +67,7 @@ impl QuillToknPropertyBlock {
 pub struct QuillToknEffectiveToken {
     pub index: u32,
     pub start_utf16: Decoded<u32>,
-    pub end_utf16: Decoded<u32>,
+    pub next_boundary_utf16: Decoded<u32>,
     pub state_raw: Option<u32>,
     pub text_length_utf16: Option<u32>,
     pub kind_raw: Option<u32>,
@@ -379,7 +379,7 @@ fn effective_tokens(
                 count: u32::MAX,
             })?,
             start_utf16: start,
-            end_utf16: end,
+            next_boundary_utf16: end,
             state_raw,
             text_length_utf16: text_length,
             kind_raw,
