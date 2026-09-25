@@ -1,83 +1,85 @@
-# WEB-RENDER-01 — browser render surface preflight
+# WEB-RENDER-01 — browser render surface V0 decision
 
-This repository currently contains a **synthetic/protocol-fixture benchmark preflight**, not the final renderer technology decision.
+The bounded visible-page V0 browser editor uses **SVG as its primary renderer**.
 
-The final decision remains blocked on the retained source-free real-PUB Scene V1 handoff owned by WEB-SCENE-ADAPTER-01.
+Canvas2D remains a retained scale/fallback lane. WebGL2-hybrid remains optional/experimental and product correctness does not depend on its availability. No synthetic threshold is used to auto-switch renderers.
 
-## Candidate surfaces
+## Evidence correction
 
-The same BrowserSceneSnapshotV1 render plan is exercised through:
+The first real-PUB benchmark (rar#583 / V1) was structurally valid but targeted page order 0 of SampleNewsletter. That page is empty, while all 68 Scene nodes are on later pages. Its screenshots were therefore blank page chrome and its timings are not renderer-decision evidence.
 
-1. SVG/DOM;
-2. Canvas2D;
-3. WebGL2-hybrid geometry with DOM text/diagnostic layer and Canvas2D transient overlay.
+rar#599 corrected the benchmark by focusing the first populated page and added an image-level gate that rejects blank real-PUB screenshots. The V2 receipt is the authoritative real visible-page measurement.
 
-The accelerated path is included for measurement, not because it is presumed better.
+## V2 real visible SampleNewsletter
+
+Pinned BrowserSceneSnapshotV1:
+
+- 53,630 serialized bytes;
+- 8 pages;
+- 68 nodes;
+- 44 stories;
+- 1 resource;
+- 51 diagnostics;
+- focused page order 1.
+
+Chromium:
+
+- SVG first render: about 11.3 ms;
+- Canvas2D: about 39.9 ms;
+- WebGL2-hybrid: about 33.1 ms;
+- SVG pan/zoom p50: about 1.3 ms;
+- Canvas2D pan/zoom p50: about 0.8 ms.
+
+Firefox:
+
+- SVG first render: about 11 ms;
+- Canvas2D: about 33 ms;
+- WebGL2-hybrid: unavailable;
+- SVG pan/zoom p50: about 1 ms;
+- Canvas2D pan/zoom p50: about 2 ms.
+
+For the current representative bounded visible-page case, SVG has the strongest first-paint evidence in both required browser engines.
+
+## Scale pressure
+
+The retained synthetic 5,000-node stress probe is useful pressure evidence, but it is not representative corpus evidence.
+
+It shows Canvas2D scaling materially better than SVG at high node cardinality and avoids SVG's roughly 5,000-element DOM growth. This keeps Canvas2D valuable as a retained scale/fallback lane.
+
+It does **not** justify inventing a numeric automatic switch threshold. Such a threshold requires representative multi-document corpus evidence and is not part of V0.
+
+## Color and alpha contract
+
+WEB-COLOR-SURFACE-01 exercises the active candidate surfaces in Chromium and Firefox under the bounded V1 target:
+
+- SDR;
+- sRGB;
+- explicit alpha;
+- deterministic pixel/readback comparison.
+
+Canvas2D and SVG are required cross-browser surfaces and pass with maximum channel delta 1. WebGL2-hybrid must satisfy the same contract when available; explicit unavailability is a compatibility fact, not a false failure. WebGPU is not an active renderer candidate.
+
+The readback receipt does not claim absolute monitor colorimetry. P3/HDR remain optional future capabilities.
+
+## Product binding
+
+BrowserEditorShellV1 already defaults to `rendererKind = "svg"`. This matches the corrected visible-page V2 evidence, so closure does not require another renderer switch.
+
+The V0 decision is therefore:
+
+1. **SVG primary** for the bounded visible-page editor;
+2. **Canvas2D retained scale/fallback lane**;
+3. **WebGL2-hybrid optional/experimental**;
+4. no automatic renderer threshold without representative evidence.
 
 ## Authority boundary
 
-All candidates consume only BrowserSceneSnapshotV1.
+All renderers consume only BrowserSceneSnapshotV1. They do not receive raw PUB bytes, parser records, CFB paths, SourceRefs or writer types.
 
-They do not receive raw PUB bytes, parser records, CFB paths, SourceRefs or writer types.
+Browser rendering is display/runtime authority only. Canonical layout, authoring geometry, text flow and export truth remain server/canonical-model responsibilities.
 
-The render plan preserves canonical NodeId and exact Scene EMU values. View conversion creates CSS-pixel display coordinates without modifying the snapshot.
+## Re-open rule
 
-Browser text is explicitly tagged browser_preview_only. DOM/Canvas metrics are not canonical line-break, overflow or authoring-layout authority.
+Re-open the renderer decision only when materially broader representative corpus evidence demonstrates that the bounded SVG V0 choice is no longer adequate, or when the supported browser capability floor changes.
 
-## Layering
-
-Canonical Scene V1 feeds the base page/object/resource/text-preview layer.
-
-Transient UI state feeds a separate selection overlay and MoveGesture preview overlay.
-
-Selection and drag preview redraw independently. They never rewrite Scene node bounds.
-
-## Current fixture coverage
-
-Protocol fixtures cover:
-
-- simple text frame with non-authoritative browser text;
-- image resource descriptor with opaque fetch handle;
-- group + table + shape;
-- partial/unsupported node with negative off-page geometry.
-
-Synthetic stress covers 5,000 exact-stacking shape nodes. It is explicitly marked synthetic_stress and must never be represented as a real-PUB corpus percentile.
-
-## Measurements
-
-The headless-browser harness records per input:
-
-- JSON parse time;
-- payload bytes;
-- page/node/Story/resource/diagnostic counts;
-- first renderer construction plus two-animation-frame paint latency;
-- repeated zoom/pan CPU update cost;
-- selection overlay update cost;
-- transient preview update cost;
-- DOM element count;
-- JS heap when the browser exposes it;
-- WebGL2 availability.
-
-Resource decode is reported separately as not measured because public protocol fixtures expose opaque resource handles, not production-fetchable image bytes.
-
-## Why there is no winner yet
-
-A synthetic 5,000-rectangle benchmark can expose obvious scaling problems, but it cannot tell us the real distribution of page count, text density, images, tables/groups, off-page scratch objects, diagnostics, or resource decode cost.
-
-Every receipt therefore states real_pub=false, representative_corpus=false and technology_decision_allowed=false.
-
-No SVG/Canvas/WebGL choice is evidence-backed until representative real source-free Scene V1 snapshots are benchmarked through the same harness.
-
-## Closure boundary
-
-This preflight can prove:
-
-- all three candidates consume one public scene contract;
-- exact geometry/order is shared;
-- negative/off-page geometry survives;
-- zoom/pan does not mutate canonical coordinates;
-- selection/transient preview is an independent layer;
-- missing/partial state is visible;
-- renderer public API rejects raw/private source carrier fields.
-
-WEB-RENDER-01 remains IN PROGRESS after this preflight. Final closure requires the real-PUB Scene receipt, corpus complexity measurements, browser benchmark evidence and an explicit technology decision with rejected alternatives.
+Synthetic stress by itself is not sufficient to overturn the V0 product default.
