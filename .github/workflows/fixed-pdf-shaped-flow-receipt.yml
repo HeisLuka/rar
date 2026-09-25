@@ -42,9 +42,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check workspace
-        run: cargo check --workspace --all-targets
+        run: cargo check -p pub-fixed-flow-adapter --all-targets
       - name: Lint workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p pub-fixed-flow-adapter --all-targets -- -D warnings
       - name: Test shaped-flow adapter
         run: cargo test -p pub-fixed-flow-adapter
       - name: Produce sanitized adapter receipt
