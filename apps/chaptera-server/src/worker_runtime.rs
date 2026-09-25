@@ -81,9 +81,10 @@ impl ConfiguredWorkerRuntime {
             publication_committer,
             authorizer,
         ));
-        let registry = Arc::new(JobExecutorRegistry::new(vec![
-            (JobKind::Export, export_executor),
-        ])?);
+        let registry = Arc::new(JobExecutorRegistry::new(vec![(
+            JobKind::Export,
+            export_executor,
+        )])?);
         registry.require_kinds(&[JobKind::Export])?;
 
         let quota = SqliteQuotaAuthority::open(
@@ -112,13 +113,8 @@ impl ConfiguredWorkerRuntime {
             .await
             .map_err(|error| runtime_error(error.code, error.message))?;
         let control = WorkerControl::default();
-        let worker_loop = WorkerLoop::new(
-            queue,
-            registry,
-            admission,
-            control.clone(),
-            loop_config,
-        )?;
+        let worker_loop =
+            WorkerLoop::new(queue, registry, admission, control.clone(), loop_config)?;
 
         let run = worker_loop.run();
         tokio::pin!(run);
