@@ -68,6 +68,7 @@ def open_failure_page(message: str) -> None:
 <p>{html.escape(message)}</p>
 <h2>server.log</h2><pre>{html.escape(tail(SERVER_LOG))}</pre>
 <h2>worker.log</h2><pre>{html.escape(tail(WORKER_LOG))}</pre>
+<h2>editor-service.log</h2><pre>{html.escape(tail(EDITOR_LOG))}</pre>
 <p>Файлы логов: <code>.chaptera-local/logs/</code></p>"""
     page.write_text(body, encoding="utf-8")
     webbrowser.open(page.resolve().as_uri())
@@ -172,9 +173,20 @@ def main() -> int:
             if ready != 200:
                 raise RuntimeError(f"runtime did not reach /ready=200 (last status: {ready})")
 
+            editor_handle = EDITOR_LOG.open("w", encoding="utf-8")
+            editor = subprocess.Popen(
+                [sys.executable, "tools/run_local_real_editor.py"],
+                cwd=ROOT,
+                env=env,
+                stdout=editor_handle,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
             print(f"Chaptera Local READY: {DASHBOARD}")
             print(f"Server log: {SERVER_LOG}")
             print(f"Worker log: {WORKER_LOG}")
+            print(f"Editor log: {EDITOR_LOG}")
             print("Use the browser UI; Ctrl+C here stops the local stack.")
             if not args.no_browser:
                 webbrowser.open(DASHBOARD)
@@ -185,6 +197,27 @@ def main() -> int:
                 dashboard = urllib.request.urlopen(DASHBOARD, timeout=2)
                 if dashboard.status != 200:
                     raise RuntimeError(f"local dashboard returned {dashboard.status}")
+
+                editor_deadline = time.monotonic() + 240
+                editor_ready = None
+                while time.monotonic() < editor_deadline:
+                    if editor.poll() is not None:
+                        raise RuntimeError(
+                            f"local editor exited during startup with code {editor.returncode}; "
+                            f"see {EDITOR_LOG}"
+                        )
+                    editor_ready = http_code("http://127.0.0.1:18765/health")
+                    editor_page = http_code(
+                        "http://127.0.0.1:18083/apps/web/local-editor.html"
+                    )
+                    if editor_ready == 200 and editor_page == 200:
+                        break
+                    time.sleep(0.5)
+                if editor_ready != 200 or editor_page != 200:
+                    raise RuntimeError(
+                        "local editor did not become browser-ready "
+                        f"(api={editor_ready}, page={editor_page}); see {EDITOR_LOG}"
+                    )
                 return 0
 
             while True:
@@ -192,7 +225,7 @@ def main() -> int:
                     raise RuntimeError(f"server exited with code {server.returncode}")
                 if worker.poll() is not None:
                     raise RuntimeError(f"worker exited with code {worker.returncode}")
-                if editor.poll() is not None:
+                if editor is not None and editor.poll() is not None:
                     print(
                         f"Local editor bootstrap exited with code {editor.returncode}; "
                         f"base stack remains available. See {EDITOR_LOG}",
