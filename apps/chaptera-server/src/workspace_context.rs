@@ -368,13 +368,11 @@ async fn require_active_workspace(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     workspace_id: &str,
 ) -> Result<(), WorkspaceContextError> {
-    let row = sqlx::query(
-        "SELECT lifecycle_state FROM workspaces WHERE workspace_id=? LIMIT 2",
-    )
-    .bind(workspace_id.as_bytes())
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(sqlite_error)?;
+    let row = sqlx::query("SELECT lifecycle_state FROM workspaces WHERE workspace_id=? LIMIT 2")
+        .bind(workspace_id.as_bytes())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(sqlite_error)?;
 
     if row.is_empty() {
         return Err(WorkspaceContextError::new(
@@ -402,13 +400,11 @@ async fn require_active_principal(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     principal_id: &str,
 ) -> Result<(), WorkspaceContextError> {
-    let row = sqlx::query(
-        "SELECT disabled_at_ms FROM principals WHERE principal_id=? LIMIT 2",
-    )
-    .bind(principal_id.as_bytes())
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(sqlite_error)?;
+    let row = sqlx::query("SELECT disabled_at_ms FROM principals WHERE principal_id=? LIMIT 2")
+        .bind(principal_id.as_bytes())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(sqlite_error)?;
 
     if row.is_empty() {
         return Err(WorkspaceContextError::new(
@@ -502,19 +498,16 @@ mod tests {
         }
     }
 
-    async fn setup(
-        label: &str,
-    ) -> (PathBuf, SqliteWorkspaceContextAuthority, SqlitePool) {
+    async fn setup(label: &str) -> (PathBuf, SqliteWorkspaceContextAuthority, SqlitePool) {
         let path = temp_db(label);
         SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
             .unwrap()
             .migrate_up()
             .await
             .unwrap();
-        let authority =
-            SqliteWorkspaceContextAuthority::open(&path, 4, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let authority = SqliteWorkspaceContextAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         let pool = SqlitePool::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -558,10 +551,9 @@ mod tests {
         );
 
         authority.close().await;
-        let reopened =
-            SqliteWorkspaceContextAuthority::open(&path, 4, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let reopened = SqliteWorkspaceContextAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         assert_eq!(
             reopened
                 .resolve("principal:1", "workspace:1")
