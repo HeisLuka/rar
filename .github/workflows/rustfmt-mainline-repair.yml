@@ -1,5 +1,7 @@
 name: Rustfmt mainline repair
 
+# One-shot compatibility repair for current rustfmt 1.94.1.
+
 on:
   push:
     branches:
