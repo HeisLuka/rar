@@ -267,6 +267,69 @@ pub struct SourceIngressService {
     projects: Arc<dyn ProjectCreationPort>,
 }
 
+pub fn plan_upload_candidate(
+    max_source_bytes: u64,
+    upload_id: String,
+    request: IssueUploadRequest,
+) -> Result<UploadRecord, IngressError> {
+    if max_source_bytes == 0 {
+        return Err(IngressError::new(
+            "invalid_config",
+            "max_source_bytes must be positive",
+        ));
+    }
+    require_ident(&upload_id, "upload_id")?;
+    require_ident(&request.tenant_id, "tenant_id")?;
+    require_ident(&request.principal_id, "principal_id")?;
+    require_ident(&request.idempotency_key, "idempotency_key")?;
+    if request.expected_byte_len == 0 || request.expected_byte_len > max_source_bytes {
+        return Err(IngressError::new(
+            "upload_size_rejected",
+            "expected_byte_len is outside the bounded PUB source class",
+        ));
+    }
+    if request.expires_at_ms <= request.now_ms {
+        return Err(IngressError::new(
+            "invalid_expiry",
+            "upload expiry must be after issue time",
+        ));
+    }
+    if let Some(content_type) = &request.declared_content_type
+        && (content_type.len() > 256 || content_type.chars().any(char::is_control))
+    {
+        return Err(IngressError::new(
+            "invalid_content_type",
+            "declared content type is not a bounded display hint",
+        ));
+    }
+
+    let request_hash = issue_request_hash(&request)?;
+    let physical_upload_ref = format!("quarantine/{}/{}", request.tenant_id, upload_id);
+
+    Ok(UploadRecord {
+        upload_id,
+        tenant_id: request.tenant_id,
+        principal_id: request.principal_id,
+        purpose: UploadPurpose::PubSource,
+        expected_byte_len: request.expected_byte_len,
+        declared_content_type: request.declared_content_type,
+        physical_upload_ref,
+        state: UploadState::Issued,
+        upload_generation: 0,
+        object_version: None,
+        object_etag: None,
+        observed_byte_len: None,
+        canonical_sha256: None,
+        durable_binding_id: None,
+        created_at_ms: request.now_ms,
+        expires_at_ms: request.expires_at_ms,
+        completed_at_ms: None,
+        terminal_code: None,
+        idempotency_key: request.idempotency_key,
+        request_hash,
+    })
+}
+
 impl SourceIngressService {
     pub fn new(
         max_source_bytes: u64,
@@ -298,58 +361,8 @@ impl SourceIngressService {
         &self,
         request: IssueUploadRequest,
     ) -> Result<IssueUploadResult, IngressError> {
-        require_ident(&request.tenant_id, "tenant_id")?;
-        require_ident(&request.principal_id, "principal_id")?;
-        require_ident(&request.idempotency_key, "idempotency_key")?;
-        if request.expected_byte_len == 0 || request.expected_byte_len > self.max_source_bytes {
-            return Err(IngressError::new(
-                "upload_size_rejected",
-                "expected_byte_len is outside the bounded PUB source class",
-            ));
-        }
-        if request.expires_at_ms <= request.now_ms {
-            return Err(IngressError::new(
-                "invalid_expiry",
-                "upload expiry must be after issue time",
-            ));
-        }
-        if let Some(content_type) = &request.declared_content_type
-            && (content_type.len() > 256 || content_type.chars().any(char::is_control))
-        {
-            return Err(IngressError::new(
-                "invalid_content_type",
-                "declared content type is not a bounded display hint",
-            ));
-        }
-
-        let request_hash = issue_request_hash(&request)?;
         let upload_id = self.ids.next_upload_id()?;
-        require_ident(&upload_id, "upload_id")?;
-        let physical_upload_ref = format!("quarantine/{}/{}", request.tenant_id, upload_id);
-
-        let candidate = UploadRecord {
-            upload_id,
-            tenant_id: request.tenant_id,
-            principal_id: request.principal_id,
-            purpose: UploadPurpose::PubSource,
-            expected_byte_len: request.expected_byte_len,
-            declared_content_type: request.declared_content_type,
-            physical_upload_ref,
-            state: UploadState::Issued,
-            upload_generation: 0,
-            object_version: None,
-            object_etag: None,
-            observed_byte_len: None,
-            canonical_sha256: None,
-            durable_binding_id: None,
-            created_at_ms: request.now_ms,
-            expires_at_ms: request.expires_at_ms,
-            completed_at_ms: None,
-            terminal_code: None,
-            idempotency_key: request.idempotency_key,
-            request_hash,
-        };
-
+        let candidate = plan_upload_candidate(self.max_source_bytes, upload_id, request)?;
         let upload = self.repo.issue_idempotent(candidate)?;
         let transport = self.quarantine.issue_transport(&upload)?;
         Ok(IssueUploadResult { upload, transport })
