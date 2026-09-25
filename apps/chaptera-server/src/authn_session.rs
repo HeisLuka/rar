@@ -36,6 +36,10 @@ impl SessionPolicy {
             absolute_ttl,
         })
     }
+
+    pub fn refreshed_idle_expiry(&self, now_ms: i64) -> Result<i64, AuthnError> {
+        checked_expiry(now_ms, self.idle_ttl)
+    }
 }
 
 pub struct IssuedSession {
@@ -59,6 +63,18 @@ impl fmt::Debug for IssuedSession {
             .field("return_path", &self.return_path)
             .finish()
     }
+}
+
+pub async fn rotate_session_csrf(
+    store: &SqliteAuthnStore,
+    session_token: &str,
+    now_ms: i64,
+) -> Result<String, AuthnError> {
+    let csrf_token = random_hex_256();
+    store
+        .rotate_csrf(session_token.as_bytes(), csrf_token.as_bytes(), now_ms)
+        .await?;
+    Ok(csrf_token)
 }
 
 pub async fn issue_verified_login_session(
