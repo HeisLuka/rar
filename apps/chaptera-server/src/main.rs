@@ -53,6 +53,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 .await?;
                 if config.auth.is_some() {
                     let auth_runtime = AuthRuntime::open(&config, &secrets).await?;
+                    drop(secrets);
                     let auth_http = auth_runtime.http_state();
                     let assembled =
                         ports_with_revision_stream_and_authn(revision_stream, auth_runtime);
@@ -65,11 +66,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     )
                     .await?;
                 } else {
+                    drop(secrets);
                     let assembled = ports_with_revision_stream(revision_stream);
                     let state = AppState::new(assembled.ports);
                     serve::run(config.runtime_config(), edge_policy, state).await?;
                 }
             } else {
+                drop(secrets);
                 let state = AppState::new(RuntimePorts::unconfigured());
                 serve::run(config.runtime_config(), edge_policy, state).await?;
             }
