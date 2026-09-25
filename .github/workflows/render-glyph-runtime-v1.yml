@@ -1,0 +1,35 @@
+name: RENDER-GLYPH-RUNTIME-01
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-glyph-runtime/**"
+      - ".github/workflows/render-glyph-runtime-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  glyph-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: cargo fmt --check -p chaptera-glyph-runtime
+      - name: Check crate
+        run: cargo check -p chaptera-glyph-runtime
+      - name: Test cache atlas and generation laws
+        run: cargo test -p chaptera-glyph-runtime
+      - name: Emit source-neutral text-heavy runtime receipt
+        run: |
+          mkdir -p target/glyph-runtime
+          cargo run -p chaptera-glyph-runtime --bin glyph_runtime_receipt --quiet | tee target/glyph-runtime/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glyph-runtime-${{ github.run_id }}
+          path: target/glyph-runtime/receipt.json
+          if-no-files-found: error
