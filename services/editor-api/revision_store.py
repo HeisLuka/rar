@@ -150,6 +150,40 @@ except ModuleNotFoundError:
     validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
 
 try:
+    from create_textbox_v1 import (
+        validate_create_textbox_intent_v1,
+        validate_create_textbox_operation_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _create_textbox_path = pathlib.Path(__file__).with_name("create_textbox_v1.py")
+    _create_textbox_spec = importlib.util.spec_from_file_location(
+        "chaptera_create_textbox_v1",
+        _create_textbox_path,
+    )
+    if _create_textbox_spec is None or _create_textbox_spec.loader is None:
+        raise ImportError("cannot load create_textbox_v1 sibling module")
+    _create_textbox_module = importlib.util.module_from_spec(_create_textbox_spec)
+    sys.modules[_create_textbox_spec.name] = _create_textbox_module
+    _create_textbox_sibling_dir = str(_create_textbox_path.parent)
+    _create_textbox_added_path = _create_textbox_sibling_dir not in sys.path
+    if _create_textbox_added_path:
+        sys.path.insert(0, _create_textbox_sibling_dir)
+    try:
+        _create_textbox_spec.loader.exec_module(_create_textbox_module)
+    finally:
+        if _create_textbox_added_path:
+            sys.path.remove(_create_textbox_sibling_dir)
+    validate_create_textbox_intent_v1 = (
+        _create_textbox_module.validate_create_textbox_intent_v1
+    )
+    validate_create_textbox_operation_v1 = (
+        _create_textbox_module.validate_create_textbox_operation_v1
+    )
+
+try:
     from rotate_quarter_v1 import (
         authored_bounds_center_v1,
         validate_affine_v1,
@@ -645,6 +679,96 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_create_picture_frame_request_shape,
             canonical_validator=self._validate_canonical_create_picture_frame,
+        )
+
+    def commit_create_textbox(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        def bound_executor(base_project: dict, command: dict):
+            operation, resulting_project, consequences = executor(
+                base_project,
+                command,
+            )
+            node_id = command["node_id"]
+            story_id = command["story_id"]
+            page_id = command["page_id"]
+
+            frames = resulting_project.get("text_frames")
+            frame = frames.get(node_id) if isinstance(frames, dict) else None
+            expected_frame = {
+                "node_id": node_id,
+                "kind": "text_frame",
+                "page_id": page_id,
+                "parent_id": page_id,
+                "story_id": story_id,
+                "bounds": operation.get("bounds"),
+                "transform": {"kind": "identity"},
+                "text_preset_id": operation.get("text_preset_id"),
+                "provenance": {"kind": "author_created"},
+            }
+            if frame != expected_frame:
+                raise ValueError(
+                    "CreateTextBox resulting project is not bound to canonical TextFrame"
+                )
+
+            stories = resulting_project.get("stories")
+            if (
+                not isinstance(stories, dict)
+                or stories.get(story_id) != operation.get("story_text")
+            ):
+                raise ValueError(
+                    "CreateTextBox resulting project is not bound to canonical Story text"
+                )
+
+            story_models = resulting_project.get("story_models")
+            story_model = (
+                story_models.get(story_id)
+                if isinstance(story_models, dict)
+                else None
+            )
+            if (
+                not isinstance(story_model, dict)
+                or story_model.get("story_id") != story_id
+                or story_model.get("provenance") != "chaptera_created"
+                or story_model.get("paragraph_state", {}).get("story_text")
+                != operation.get("story_text")
+            ):
+                raise ValueError(
+                    "CreateTextBox resulting project is not bound to canonical Story model"
+                )
+
+            presets = resulting_project.get("text_presets")
+            preset_record = (
+                presets.get(operation.get("text_preset_id"))
+                if isinstance(presets, dict)
+                else None
+            )
+            if preset_record != {
+                "preset_id": operation.get("text_preset_id"),
+                "preset": operation.get("text_preset"),
+            }:
+                raise ValueError(
+                    "CreateTextBox resulting project is not bound to canonical text preset"
+                )
+
+            pages = resulting_project.get("pages")
+            page = pages.get(page_id) if isinstance(pages, dict) else None
+            if (
+                not isinstance(page, dict)
+                or page.get("children") != operation.get("page_children_after")
+            ):
+                raise ValueError(
+                    "CreateTextBox resulting project is not bound to canonical page-child edge"
+                )
+            return operation, resulting_project, consequences
+
+        return self._commit_command(
+            request,
+            bound_executor,
+            request_validator=self._validate_create_textbox_request_shape,
+            canonical_validator=self._validate_canonical_create_textbox,
         )
 
     def commit_create_shape(
@@ -1915,6 +2039,16 @@ class RevisionKernel:
             raise ValueError(
                 "authoritative executor returned non-canonical CreatePictureFrame operation"
             )
+
+    @staticmethod
+    def _validate_create_textbox_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.create-textbox-intent.v1":
+            raise ValueError("V1 CreateTextBox protocol_version is required")
+        validate_create_textbox_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_create_textbox(command: dict, operation: dict) -> None:
+        validate_create_textbox_operation_v1(command, operation)
 
     @staticmethod
     def _validate_create_shape_request_shape(request: dict) -> None:
