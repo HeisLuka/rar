@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import time
 import urllib.parse
