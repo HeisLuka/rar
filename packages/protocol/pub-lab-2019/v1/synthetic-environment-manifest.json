@@ -1,0 +1,9 @@
+{
+  "schema_version": "chaptera.publisher2019-environment-manifest.v1",
+  "vm_name": "PUB-LAB-2019",
+  "restore_nonce": "0123456789abcdef0123456789abcdef",
+  "publisher_version": "16.0",
+  "publisher_build": "16.0.12527.22145",
+  "environment_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "captured_at_utc": "2026-09-25T15:00:01Z"
+}
