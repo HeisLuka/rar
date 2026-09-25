@@ -20,9 +20,7 @@ use url::{Position, Url};
 
 use crate::{
     authn::{AuthnError, LoginFlowStore, SqliteAuthnStore},
-    authn_session::{
-        SessionPolicy, issue_verified_login_session, rotate_session_csrf,
-    },
+    authn_session::{SessionPolicy, issue_verified_login_session, rotate_session_csrf},
     oidc_authn::{OidcAdapterError, OidcAuthorizationAdapter},
 };
 
@@ -161,11 +159,7 @@ async fn session(
         .map_err(map_authn_error)?;
     let record = state
         .store
-        .authenticate_session(
-            session_token.as_bytes(),
-            now,
-            refresh_idle_expires_at_ms,
-        )
+        .authenticate_session(session_token.as_bytes(), now, refresh_idle_expires_at_ms)
         .await
         .map_err(map_authn_error)?;
     let csrf_token = rotate_session_csrf(&state.store, &session_token, now)
@@ -410,9 +404,15 @@ mod tests {
         policy.require_origin(&headers).unwrap();
 
         headers.insert(HOST, HeaderValue::from_static("evil.example.test"));
-        assert_eq!(policy.require_host(&headers).unwrap_err().code, "host_mismatch");
+        assert_eq!(
+            policy.require_host(&headers).unwrap_err().code,
+            "host_mismatch"
+        );
         headers.insert(HOST, HeaderValue::from_static("cloud.example.test"));
-        headers.insert(ORIGIN, HeaderValue::from_static("https://evil.example.test"));
+        headers.insert(
+            ORIGIN,
+            HeaderValue::from_static("https://evil.example.test"),
+        );
         assert_eq!(
             policy.require_origin(&headers).unwrap_err().code,
             "origin_mismatch"
