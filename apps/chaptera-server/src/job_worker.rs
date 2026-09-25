@@ -328,25 +328,11 @@ impl WorkerLoop {
                     return self.finish_execution(lease, result).await;
                 }
                 _ = heartbeat.tick() => {
-                    reservation.renew().await?;
-                    let now_ms = unix_now_ms()?;
-                    match self.queue.heartbeat(
-                        &lease.job.job_id,
-                        &lease.lease_owner,
-                        lease.lease_generation,
-                        now_ms,
-                        self.config.lease_ms()?,
-                    ).await {
-                        Ok(job) => {
-                            if job.cancel_requested_at_ms.is_some() {
-                                cancellation.cancel();
-                            }
-                        }
-                        Err(error) if error.code == "stale_lease" => {
-                            cancellation.cancel();
-                            return Ok(ExecutionCompletion::LeaseLost);
-                        }
-                        Err(error) => return Err(queue_error(error)),
+                    if let Some(completion) = self
+                        .heartbeat_lease(lease, reservation, &cancellation)
+                        .await?
+                    {
+                        return Ok(completion);
                     }
                 }
                 _ = self.control.wait_for_drain(), if !drain_started => {
@@ -359,6 +345,41 @@ impl WorkerLoop {
                     return Ok(ExecutionCompletion::DrainDeadline);
                 }
             }
+        }
+    }
+
+    async fn heartbeat_lease(
+        &self,
+        lease: &Lease,
+        reservation: &dyn AdmissionReservation,
+        cancellation: &CancellationFlag,
+    ) -> Result<Option<ExecutionCompletion>, RuntimeError> {
+        let now_ms = unix_now_ms()?;
+        match self
+            .queue
+            .heartbeat(
+                &lease.job.job_id,
+                &lease.lease_owner,
+                lease.lease_generation,
+                now_ms,
+                self.config.lease_ms()?,
+            )
+            .await
+        {
+            Ok(job) => {
+                if job.cancel_requested_at_ms.is_some() {
+                    cancellation.cancel();
+                }
+                // Quota ownership may be extended only after the durable job
+                // lease has just proven that this worker still owns the job.
+                reservation.renew().await?;
+                Ok(None)
+            }
+            Err(error) if error.code == "stale_lease" => {
+                cancellation.cancel();
+                Ok(Some(ExecutionCompletion::LeaseLost))
+            }
+            Err(error) => Err(queue_error(error)),
         }
     }
 
@@ -743,6 +764,55 @@ mod tests {
         assert_eq!(receipt.succeeded, 1);
         assert!(counters.renews.load(Ordering::SeqCst) >= 1);
         assert_eq!(counters.releases.load(Ordering::SeqCst), 1);
+
+        queue.close().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn stale_job_lease_does_not_renew_quota_reservation() {
+        let (queue, path) = queue().await;
+        enqueue(&queue, "job-stale-before-heartbeat").await;
+
+        let lease = queue
+            .claim_one(
+                "worker-stale",
+                unix_now_ms().unwrap(),
+                1,
+                &[JobKind::Export],
+            )
+            .await
+            .unwrap()
+            .expect("job must be claimable");
+        sleep(Duration::from_millis(5)).await;
+
+        let counters = Arc::new(ReservationCounters::default());
+        let reservation = TrackingReservation {
+            counters: counters.clone(),
+        };
+        let control = WorkerControl::default();
+        let worker = WorkerLoop::new(
+            queue.clone(),
+            Arc::new(ImmediateSuccess),
+            Arc::new(Allow {
+                counters: counters.clone(),
+            }),
+            control,
+            config("worker-stale-probe"),
+        )
+        .unwrap();
+        let cancellation = CancellationFlag::default();
+
+        let completion = worker
+            .heartbeat_lease(&lease, &reservation, &cancellation)
+            .await
+            .unwrap()
+            .expect("stale lease must terminate this execution path");
+
+        assert!(matches!(completion, ExecutionCompletion::LeaseLost));
+        assert!(cancellation.is_cancelled());
+        assert_eq!(counters.renews.load(Ordering::SeqCst), 0);
+        assert_eq!(counters.releases.load(Ordering::SeqCst), 0);
 
         queue.close().await;
         let _ = std::fs::remove_file(path);
