@@ -431,9 +431,6 @@ def build(
     blast_raw = (
         json.dumps(blast, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     ).encode("utf-8")
-    blast_out.parent.mkdir(parents=True, exist_ok=True)
-    blast_out.write_bytes(blast_raw)
-
     shape_identity = (
         f"pageid:{native['page_id']}|tag:{native['tag_name']}={native['tag_value']}"
     )
@@ -505,7 +502,9 @@ def build(
         if forbidden and forbidden in encoded:
             raise BuilderError("source-free receipt unexpectedly contains a local path")
 
+    blast_out.parent.mkdir(parents=True, exist_ok=True)
     receipt_out.parent.mkdir(parents=True, exist_ok=True)
+    blast_out.write_bytes(blast_raw)
     receipt_out.write_text(encoded, encoding="utf-8")
     return blast, receipt
 
