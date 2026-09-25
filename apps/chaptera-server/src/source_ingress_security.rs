@@ -146,6 +146,7 @@ impl StructuralScanRunner for IsolatedPubWorkerRunner {
             .arg(config.worker_open_files.to_string())
             .arg("--output-file-mb")
             .arg(config.worker_output_file_mb.to_string())
+            .arg("--clear-environment")
             .arg("--")
             .arg(&config.worker_binary)
             .arg("inspect")
