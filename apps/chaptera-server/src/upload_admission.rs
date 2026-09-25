@@ -189,6 +189,14 @@ impl SqliteUploadAdmissionAuthority {
         self.pool.close().await;
     }
 
+    pub async fn get(
+        &self,
+        reservation_id: &str,
+    ) -> Result<Option<UploadAdmissionReservation>, UploadAdmissionError> {
+        require_ident(reservation_id, "reservation_id")?;
+        fetch_reservation_pool(&self.pool, reservation_id).await
+    }
+
     pub async fn reserve(
         &self,
         request: UploadAdmissionRequest,
