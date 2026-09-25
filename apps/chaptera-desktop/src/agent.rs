@@ -14,6 +14,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 const PROTOCOL_VERSION: &str = "chaptera.agent-control.v1";
+const AGENT_CONTROL_CATALOG_JSON: &str = include_str!("../../../packages/protocol/editor-agent-control/v1.catalog.json");
 
 struct AgentSession {
     source_path: PathBuf,
@@ -173,39 +174,53 @@ impl AgentServer {
         object: &Map<String, Value>,
     ) -> Result<(Value, Vec<(&'static str, Value)>), (&'static str, String)> {
         match command {
-            "protocol.describe" => Ok((
-                json!({
-                    "protocol_version": PROTOCOL_VERSION,
-                    "transport": "ndjson_stdio",
-                    "commands": [
-                        "protocol.describe",
-                        "open",
-                        "document.describe",
-                        "pages.list",
-                        "stories.list",
-                        "story.inspect",
-                        "story.read_local",
-                        "scene.instances.list",
-                        "instance.inspect",
-                        "capabilities.get",
-                        "edit.apply",
-                        "undo",
-                        "redo",
-                        "project.save",
-                        "project.reopen",
-                        "loss.preview",
-                        "export",
-                        "snapshot.get",
-                        "trace.subscribe",
-                        "diagnostics.deep",
-                        "shutdown"
-                    ],
-                    "privacy_default": "source_free",
-                    "native_pub_write": false,
-                    "deep_diagnostics_provider": "operation_blast_radius_v1_local_receipt"
-                }),
-                vec![("observed", json!({"surface":"protocol"}))],
-            )),
+            "protocol.describe" => {
+                let catalog = agent_control_catalog()?;
+                let command_contracts = catalog
+                    .get("commands")
+                    .cloned()
+                    .ok_or((
+                        "agent_catalog_invalid",
+                        "embedded agent catalog has no commands object".to_owned(),
+                    ))?;
+                Ok((
+                    json!({
+                        "protocol_version": PROTOCOL_VERSION,
+                        "transport": "ndjson_stdio",
+                        "commands": [
+                            "protocol.describe",
+                            "open",
+                            "document.describe",
+                            "pages.list",
+                            "stories.list",
+                            "story.inspect",
+                            "story.read_local",
+                            "scene.instances.list",
+                            "instance.inspect",
+                            "capabilities.get",
+                            "edit.apply",
+                            "undo",
+                            "redo",
+                            "project.save",
+                            "project.reopen",
+                            "loss.preview",
+                            "export",
+                            "snapshot.get",
+                            "trace.subscribe",
+                            "diagnostics.deep",
+                            "shutdown"
+                        ],
+                        "catalog_schema":catalog.get("schema"),
+                        "executable":catalog.get("executable"),
+                        "global_laws":catalog.get("global_laws"),
+                        "command_contracts":command_contracts,
+                        "privacy_default": "source_free",
+                        "native_pub_write": false,
+                        "deep_diagnostics_provider": "operation_blast_radius_v1_local_receipt"
+                    }),
+                    vec![("observed", json!({"surface":"protocol"}))],
+                ))
+            },
             "open" => {
                 let path = required_string(object, "path")?;
                 self.open_document(Path::new(path))?;
@@ -1760,6 +1775,28 @@ fn is_sha256_hex(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn agent_control_catalog() -> Result<Value, (&'static str, String)> {
+    let catalog = serde_json::from_str::<Value>(AGENT_CONTROL_CATALOG_JSON)
+        .map_err(|error| ("agent_catalog_invalid", error.to_string()))?;
+    let object = catalog.as_object().ok_or((
+        "agent_catalog_invalid",
+        "embedded agent catalog must be a JSON object".to_owned(),
+    ))?;
+    if object.get("schema").and_then(Value::as_str)
+        != Some("chaptera.agent-control.catalog.v1")
+        || object.get("protocol_version").and_then(Value::as_str) != Some(PROTOCOL_VERSION)
+        || object.get("executable").and_then(Value::as_str) != Some("chaptera-editor.exe")
+        || !object.get("commands").is_some_and(Value::is_object)
+        || !object.get("global_laws").is_some_and(Value::is_object)
+    {
+        return Err((
+            "agent_catalog_invalid",
+            "embedded agent catalog identity does not match Agent V1".to_owned(),
+        ));
+    }
+    Ok(catalog)
 }
 
 fn required_string<'a>(
