@@ -1,0 +1,32 @@
+name: WEB-FONT-ENV-01
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/font-environment/v1/**"
+      - "apps/web/font-environment-v1.mjs"
+      - "apps/web/font-environment-v1.test.mjs"
+      - "tools/validate_font_environment.py"
+      - "docs/web-editor-font-environment-v1.md"
+      - ".github/workflows/web-font-env.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install "jsonschema==4.23.0"
+      - name: Validate font environment protocol
+        run: python tools/validate_font_environment.py
+      - name: Test browser font policy adapter
+        run: node --test apps/web/font-environment-v1.test.mjs
