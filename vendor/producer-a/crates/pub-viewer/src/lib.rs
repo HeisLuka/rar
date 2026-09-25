@@ -24,7 +24,7 @@ use pub_reader::{
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubReaderOpenTiming, PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild,
     build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
-    build_mature_0x2c_source_graph, build_mature_0x2c_source_graph_with_timing,
+    build_mature_0x2c_source_graph_with_timing,
     resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
