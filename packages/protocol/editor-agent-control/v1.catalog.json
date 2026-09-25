@@ -44,6 +44,7 @@
         "protocol_version",
         "transport",
         "commands",
+        "catalog_sha256",
         "command_contracts",
         "privacy_default",
         "native_pub_write",
