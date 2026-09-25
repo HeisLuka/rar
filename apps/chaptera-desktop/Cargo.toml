@@ -9,6 +9,10 @@ license.workspace = true
 name = "chaptera-editor"
 path = "src/main.rs"
 
+[[bin]]
+name = "chaptera-resize-producer"
+path = "src/bin/resize_node_producer.rs"
+
 [features]
 default = []
 reader-only = []
