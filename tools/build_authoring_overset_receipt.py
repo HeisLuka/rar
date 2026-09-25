@@ -122,7 +122,7 @@ def build_receipt(
     edit_intent = baseline_output["edit_intent"]
     require_exact_keys(
         edit_intent,
-        {"start_scalar", "end_scalar", "replacement_text"},
+        {"start_scalar", "end_scalar", "expected_before", "replacement_text"},
         "edit_intent",
     )
 
@@ -142,6 +142,7 @@ def build_receipt(
             "story_id": story_id,
             "start_scalar": edit_intent["start_scalar"],
             "end_scalar": edit_intent["end_scalar"],
+            "expected_before": edit_intent["expected_before"],
             "replacement_text": edit_intent["replacement_text"],
         },
     }
