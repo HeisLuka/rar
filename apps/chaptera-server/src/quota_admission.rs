@@ -420,7 +420,14 @@ mod tests {
         let receipt = worker.run().await.unwrap();
         assert_eq!(receipt.succeeded, 1);
         assert_eq!(receipt.lease_lost, 0);
-        assert_eq!(quota.usage("tenant-a", unix_now_ms().unwrap()).await.unwrap().export, 0);
+        assert_eq!(
+            quota
+                .usage("tenant-a", unix_now_ms().unwrap())
+                .await
+                .unwrap()
+                .export,
+            0
+        );
 
         queue.close().await;
         quota.close().await;
