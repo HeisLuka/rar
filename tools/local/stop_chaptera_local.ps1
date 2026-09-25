@@ -1,8 +1,8 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$pidPath = Join-Path $repoRoot ".chaptera-local\chaptera.pid"
+$localBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }
+$pidPath = Join-Path $localBase "Chaptera\local\chaptera.pid"
 
 if (-not (Test-Path -LiteralPath $pidPath)) {
     Write-Host "Chaptera Local is not running."
