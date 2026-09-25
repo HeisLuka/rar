@@ -31,8 +31,28 @@ const APP_TITLE: &str = "Chaptera PUB Reader — Technical Preview";
 #[cfg(not(feature = "reader-only"))]
 const APP_TITLE: &str = "Chaptera Editor";
 
+const READER_PRODUCT_LABEL: &str = "Chaptera PUB Reader";
+const READER_FIRST_RUN_HEADING: &str = "Open a PUB file";
+const READER_FIRST_RUN_TRUST_CUE: &str =
+    "Files open locally. Chaptera does not require an account for reading.";
+const READER_READ_ONLY_CUE: &str = "Reader is read-only. The original PUB is never overwritten.";
+
 fn reader_only_mode() -> bool {
     cfg!(feature = "reader-only")
+}
+
+fn product_surface_label() -> &'static str {
+    if reader_only_mode() {
+        READER_PRODUCT_LABEL
+    } else {
+        "Chaptera Editor"
+    }
+}
+
+fn failure_mailto_recipient_configured() -> bool {
+    // CHAPTERA-FAILURE-MAILTO-01 owns replacing this with validated packaged
+    // configuration. Missing verified recipient must fail closed.
+    false
 }
 const SUPPORTER_STORAGE_KEY: &str = "chaptera.supporter.v1";
 const PAGE_MARGIN: f32 = 24.0;
@@ -478,6 +498,30 @@ impl ViewerApp {
         app
     }
 
+    fn open_pub_picker(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Microsoft Publisher", &["pub"])
+                .pick_file()
+            {
+                self.load_path(path);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.load_error = Some(ViewerLoadFailure {
+                kind: ViewerLoadFailureKind::FileAccess,
+                message:
+                    "The native Open dialog is currently provided by the Windows Reader build; drag and drop a PUB file on this platform."
+                        .to_owned(),
+                classification: None,
+                diagnostic_json: None,
+            });
+        }
+    }
+
     fn load_path(&mut self, path: PathBuf) {
         self.supporter_value
             .observe(supporter::ValueEvent::WorkflowFailed);
@@ -604,32 +648,24 @@ impl ViewerApp {
             .map(|name| name.to_string_lossy().into_owned());
 
         ui.horizontal(|ui| {
-            ui.strong("Chaptera Editor");
+            ui.strong(product_surface_label());
             ui.separator();
 
             if ui.button("Open PUB…").clicked() {
-                #[cfg(target_os = "windows")]
-                {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Microsoft Publisher", &["pub"])
-                        .pick_file()
-                    {
-                        self.load_path(path);
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    self.edit_status = Some(
-                        "The native Open dialog is part of Windows Portable V0; drag and drop a PUB file on this platform."
-                            .to_owned(),
-                    );
-                }
+                self.open_pub_picker();
             }
 
             if let Some(label) = document_label {
                 ui.label(label);
             } else {
                 ui.weak("Open or drop a .pub file to begin");
+            }
+
+            if reader_only_mode() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak("Local · read-only");
+                });
+                return;
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -743,7 +779,11 @@ impl ViewerApp {
             if self.visual.is_some() {
                 ui.strong("Source PUB protected");
                 ui.label("·");
-                ui.label(format!("{operation_count} edit operation(s)"));
+                if reader_only_mode() {
+                    ui.label("Local · read-only");
+                } else {
+                    ui.label(format!("{operation_count} edit operation(s)"));
+                }
                 if let Some(fidelity) = self.fidelity_status() {
                     ui.label("·");
                     ui.label(format!("Fidelity: {}", fidelity_status_label(fidelity)));
@@ -751,7 +791,11 @@ impl ViewerApp {
             } else {
                 ui.weak("No document open");
                 ui.label("·");
-                ui.label("Source files stay local and are never overwritten.");
+                if reader_only_mode() {
+                    ui.label("Files open locally; no account is required.");
+                } else {
+                    ui.label("Source files stay local and are never overwritten.");
+                }
             }
         });
     }
@@ -957,7 +1001,11 @@ impl ViewerApp {
             if let Some(name) = path.file_name() {
                 ui.strong(name.to_string_lossy());
             }
-            ui.small("The original PUB stays unchanged; edits live in the Chaptera project.");
+            if reader_only_mode() {
+                ui.small("The original PUB stays unchanged. Reader is local and read-only.");
+            } else {
+                ui.small("The original PUB stays unchanged; edits live in the Chaptera project.");
+            }
             ui.add_space(8.0);
         }
 
@@ -972,6 +1020,16 @@ impl ViewerApp {
             if let Some(error) = &self.load_error {
                 ui.add_space(12.0);
                 ui.colored_label(ui.visuals().error_fg_color, &error.message);
+                if error.kind == ViewerLoadFailureKind::FileAccess {
+                    ui.add_space(8.0);
+                    ui.strong("File access problem");
+                    ui.label(
+                        "Chaptera could not read this path. Check that the file still exists and that you have permission to open it.",
+                    );
+                    ui.small(
+                        "This is a local filesystem/read failure; it does not mean the document is unsupported.",
+                    );
+                }
                 if let Some(classification) = &error.classification {
                     ui.add_space(8.0);
                     ui.strong(failure_intake_label(classification.class));
@@ -982,12 +1040,15 @@ impl ViewerApp {
 
                     if exact_file_consent_cta_visible(classification.class) {
                         ui.add_space(10.0);
-                        if ui
-                            .button("Send this file to help Chaptera support it")
-                            .clicked()
-                        {
-                            self.exact_file_consent_open = true;
-                            self.exact_file_consent_status = None;
+                        if failure_mailto_recipient_configured() {
+                            if ui.button("Report this broken PUB…").clicked() {
+                                self.exact_file_consent_open = true;
+                                self.exact_file_consent_status = None;
+                            }
+                        } else {
+                            ui.small(
+                                "Private file handoff is not configured in this build. Save local diagnostics below; no file is sent.",
+                            );
                         }
                     }
                 }
@@ -1172,11 +1233,12 @@ impl ViewerApp {
             return;
         }
 
-        let eligible = self
-            .load_error
-            .as_ref()
-            .and_then(|failure| failure.classification.as_ref())
-            .is_some_and(|classification| exact_file_consent_cta_visible(classification.class));
+        let eligible = failure_mailto_recipient_configured()
+            && self
+                .load_error
+                .as_ref()
+                .and_then(|failure| failure.classification.as_ref())
+                .is_some_and(|classification| exact_file_consent_cta_visible(classification.class));
         if !eligible {
             self.exact_file_consent_open = false;
             return;
@@ -2059,8 +2121,24 @@ impl ViewerApp {
         let Some(visual) = &self.visual else {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
-                    ui.heading("Open a Publisher file");
-                    ui.label("Use Open PUB… above, or drag and drop a .pub file here.");
+                    if reader_only_mode() {
+                        ui.heading(READER_FIRST_RUN_HEADING);
+                        if ui.button("Open a PUB file").clicked() {
+                            self.open_pub_picker();
+                        }
+                        ui.label("or drag and drop a .pub file here");
+                        ui.small("Keyboard: Ctrl+O");
+                        ui.add_space(14.0);
+                        ui.strong(READER_FIRST_RUN_TRUST_CUE);
+                        ui.small(READER_READ_ONLY_CUE);
+                        ui.add_space(8.0);
+                        ui.small(
+                            "After opening, use page navigation, search/copy, fidelity status, and diagnostics without a required internet connection.",
+                        );
+                    } else {
+                        ui.heading("Open a Publisher file");
+                        ui.label("Use Open PUB… above, or drag and drop a .pub file here.");
+                    }
                     if let Some(error) = &self.load_error {
                         ui.add_space(12.0);
                         ui.colored_label(ui.visuals().error_fg_color, &error.message);
@@ -2486,6 +2564,9 @@ impl eframe::App for ViewerApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|input| input.modifiers.ctrl && input.key_pressed(egui::Key::O)) {
+            self.open_pub_picker();
+        }
         self.accept_dropped_file(ctx);
 
         debug_assert_eq!(
@@ -3015,6 +3096,31 @@ mod tests {
         };
 
         assert_eq!(app.fidelity_status(), None);
+    }
+
+    #[test]
+    fn reader_first_run_contract_is_local_read_only_and_product_qualified() {
+        assert_eq!(READER_PRODUCT_LABEL, "Chaptera PUB Reader");
+        assert_eq!(READER_FIRST_RUN_HEADING, "Open a PUB file");
+        assert!(READER_FIRST_RUN_TRUST_CUE.contains("Files open locally"));
+        assert!(READER_FIRST_RUN_TRUST_CUE.contains("does not require an account"));
+        assert!(READER_READ_ONLY_CUE.contains("read-only"));
+        assert!(READER_READ_ONLY_CUE.contains("never overwritten"));
+
+        let source = include_str!("main.rs");
+        assert!(source.contains("Keyboard: Ctrl+O"));
+        assert!(source.contains("input.modifiers.ctrl && input.key_pressed(egui::Key::O)"));
+        assert!(source.contains("Local · read-only"));
+        let retired_cli_hint = ["or start with:", " chaptera FILE.pub"].concat();
+        assert!(!source.contains(&retired_cli_hint));
+    }
+
+    #[test]
+    fn reader_first_run_hides_unconfigured_exact_file_handoff() {
+        assert!(!failure_mailto_recipient_configured());
+        let source = include_str!("main.rs");
+        assert!(source.contains("Private file handoff is not configured in this build."));
+        assert!(source.contains("Save local diagnostics below; no file is sent."));
     }
 
     #[test]

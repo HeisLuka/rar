@@ -36,6 +36,9 @@ jobs:
       - name: Check compile-time Reader surface
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
 
+      - name: Test Reader first-run contract
+        run: cargo test -p chaptera-desktop --features reader-only reader_first_run -- --nocapture
+
       - name: Build Reader-only desktop source
         run: cargo build -p chaptera-desktop --release --features reader-only
 
