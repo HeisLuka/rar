@@ -27,7 +27,7 @@ use pub_idml::{
     IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlEmbeddedImagePlacement,
     IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
 };
-pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
+pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_model::{
     ResourceId, SourceDerivedIdInput, StoryFrame, derive_source_canonical_id, validate_story_frames,
 };
@@ -50,7 +50,9 @@ pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
 pub const EDITOR_PROJECT_VERSION_V0_3: &str = "pub-editor-v0.3";
 pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_5;
+pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_6;
+pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -107,6 +109,13 @@ fn replace_scalar_range_text(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoveNodeBatchEntry {
+    pub node_id: NodeId,
+    pub before: RectEmu,
+    pub after: RectEmu,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
     ReplaceStoryRange {
@@ -142,6 +151,10 @@ pub enum EditOperation {
         node_id: NodeId,
         before: RectEmu,
         after: RectEmu,
+    },
+    MoveNodes {
+        page_id: PageId,
+        entries: Vec<MoveNodeBatchEntry>,
     },
     ResizeNode {
         node_id: NodeId,
@@ -184,6 +197,14 @@ impl PersistenceRequirements for EditOperation {
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("node.bounds.position".into()),
             }],
+            Self::MoveNodes { entries, .. } => entries
+                .iter()
+                .map(|entry| PersistenceRequirement {
+                    feature: "node.geometry.position".into(),
+                    origin: Some(entry.node_id.into_canonical()),
+                    property_path: Some("node.bounds.position".into()),
+                })
+                .collect(),
             Self::ResizeNode { node_id, .. } => vec![PersistenceRequirement {
                 feature: "node.geometry.bounds".into(),
                 origin: Some(node_id.into_canonical()),
@@ -388,6 +409,20 @@ pub enum EditorError {
     StaleNodeMove {
         node_id: NodeId,
     },
+    MoveNodesEmpty,
+    MoveNodesTooLarge {
+        found: usize,
+    },
+    MoveNodesDuplicate {
+        node_id: NodeId,
+    },
+    MoveNodesSizeChanged {
+        node_id: NodeId,
+    },
+    MoveNodesPageMismatch {
+        node_id: NodeId,
+        page_id: PageId,
+    },
     NodeResizeUnsupported {
         node_id: NodeId,
     },
@@ -503,6 +538,27 @@ impl fmt::Display for EditorError {
                 "node {} no longer matches the move operation precondition",
                 node_id.as_canonical()
             ),
+            Self::MoveNodesEmpty => formatter.write_str("MoveNodes requires at least one entry"),
+            Self::MoveNodesTooLarge { found } => write!(
+                formatter,
+                "MoveNodes contains {found} entries; maximum is {MAX_MOVE_NODES_V1}"
+            ),
+            Self::MoveNodesDuplicate { node_id } => write!(
+                formatter,
+                "MoveNodes contains duplicate node {}",
+                node_id.as_canonical()
+            ),
+            Self::MoveNodesSizeChanged { node_id } => write!(
+                formatter,
+                "MoveNodes entry for node {} changes width or height",
+                node_id.as_canonical()
+            ),
+            Self::MoveNodesPageMismatch { node_id, page_id } => write!(
+                formatter,
+                "MoveNodes node {} is not directly owned by page {}",
+                node_id.as_canonical(),
+                page_id.as_canonical()
+            ),
             Self::NodeResizeUnsupported { node_id } => write!(
                 formatter,
                 "node {} is outside the bounded directly-page-owned resize slice",
@@ -569,6 +625,11 @@ impl EditorError {
             Self::NodeMoveNoChange { .. } => "node_move_no_change",
             Self::NodeMoveOverflow { .. } => "node_move_overflow",
             Self::StaleNodeMove { .. } => "stale_node_move",
+            Self::MoveNodesEmpty => "move_nodes_empty",
+            Self::MoveNodesTooLarge { .. } => "move_nodes_too_large",
+            Self::MoveNodesDuplicate { .. } => "move_nodes_duplicate",
+            Self::MoveNodesSizeChanged { .. } => "move_nodes_size_changed",
+            Self::MoveNodesPageMismatch { .. } => "move_nodes_page_mismatch",
             Self::NodeResizeUnsupported { .. } => "node_resize_unsupported",
             Self::NodeResizeNoChange { .. } => "node_resize_no_change",
             Self::NodeResizeNoSizeChange { .. } => "node_resize_no_size_change",
@@ -630,6 +691,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesResizeOperation {
         index: usize,
     },
+    LegacyProjectCarriesMoveNodesOperation {
+        index: usize,
+    },
     MissingAssetBytes {
         sha256: Sha256Digest,
     },
@@ -667,7 +731,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, or {EDITOR_PROJECT_VERSION_V0_5:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, or {EDITOR_PROJECT_VERSION_V0_6:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -690,6 +754,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesResizeOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses ResizeNode but the project schema predates pub-editor-v0.5"
+            ),
+            Self::LegacyProjectCarriesMoveNodesOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses MoveNodes but the project schema predates pub-editor-v0.6"
             ),
             Self::MissingAssetBytes { sha256 } => {
                 write!(
@@ -946,6 +1014,12 @@ impl EditorSession {
         let schema_version = if self
             .undo
             .iter()
+            .any(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
+        {
+            EDITOR_PROJECT_VERSION_V0_6
+        } else if self
+            .undo
+            .iter()
             .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
         {
             EDITOR_PROJECT_VERSION_V0_5
@@ -1019,6 +1093,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_3
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1040,6 +1115,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             if let Some(index) = project
                 .operations
@@ -1049,13 +1125,24 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesGeometryOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+        {
             if let Some(index) = project
                 .operations
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesMoveNodesOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
@@ -1729,6 +1816,81 @@ impl EditorSession {
         Ok(operation)
     }
 
+    /// Consume one already-authorized canonical MoveNodesV1 operation.
+    ///
+    /// Author-created provenance admission belongs to the source-neutral
+    /// canonical authoring layer. This producer-side consumer deliberately
+    /// does not infer provenance from Publisher source refs. It revalidates
+    /// exact page ownership, stale before-state, translation-only geometry,
+    /// canonical ordering/uniqueness and the existing bounded MoveNode
+    /// capability before committing the whole batch as one history unit.
+    pub fn consume_canonical_move_nodes(
+        &mut self,
+        page_id: PageId,
+        mut entries: Vec<MoveNodeBatchEntry>,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+        if entries.is_empty() {
+            return Err(EditorError::MoveNodesEmpty);
+        }
+        if entries.len() > MAX_MOVE_NODES_V1 {
+            return Err(EditorError::MoveNodesTooLarge {
+                found: entries.len(),
+            });
+        }
+
+        entries.sort_by_key(|entry| entry.node_id);
+        for pair in entries.windows(2) {
+            if pair[0].node_id == pair[1].node_id {
+                return Err(EditorError::MoveNodesDuplicate {
+                    node_id: pair[0].node_id,
+                });
+            }
+        }
+
+        let page_parent = page_id.into_canonical();
+        for entry in &entries {
+            let node = self
+                .graph
+                .nodes
+                .get(&entry.node_id)
+                .ok_or(EditorError::NodeMoveUnsupported {
+                    node_id: entry.node_id,
+                })?;
+            if node.header.parent_id != page_parent {
+                return Err(EditorError::MoveNodesPageMismatch {
+                    node_id: entry.node_id,
+                    page_id,
+                });
+            }
+            if node.header.bounds != entry.before {
+                return Err(EditorError::StaleNodeMove {
+                    node_id: entry.node_id,
+                });
+            }
+            if entry.before.width != entry.after.width
+                || entry.before.height != entry.after.height
+            {
+                return Err(EditorError::MoveNodesSizeChanged {
+                    node_id: entry.node_id,
+                });
+            }
+            if entry.before == entry.after {
+                return Err(EditorError::NodeMoveNoChange {
+                    node_id: entry.node_id,
+                });
+            }
+            self.can_move_node_to(entry.node_id, entry.after.x, entry.after.y)?;
+        }
+
+        let operation = EditOperation::MoveNodes { page_id, entries };
+        apply_forward(&mut self.graph, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
     pub fn can_resize_node(&self, node_id: NodeId) -> Result<(), EditorError> {
         self.validate_source_identity()?;
 
@@ -2038,6 +2200,9 @@ fn replay_canonical_operation(
         EditOperation::MoveNode { node_id, after, .. } => session
             .move_node_to(*node_id, after.x, after.y)
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::MoveNodes { page_id, entries } => session
+            .consume_canonical_move_nodes(*page_id, entries.clone())
+            .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ResizeNode { node_id, after, .. } => session
             .resize_node_to(*node_id, *after)
             .map_err(|error| EditorProjectError::Operation { index, error }),
@@ -2232,6 +2397,78 @@ fn idml_base_projection_plan(
     projection
 }
 
+fn validate_move_nodes_transition(
+    graph: &PubResolvedGraph,
+    page_id: PageId,
+    entries: &[MoveNodeBatchEntry],
+    forward: bool,
+) -> Result<(), EditorError> {
+    if entries.is_empty() {
+        return Err(EditorError::MoveNodesEmpty);
+    }
+    if entries.len() > MAX_MOVE_NODES_V1 {
+        return Err(EditorError::MoveNodesTooLarge {
+            found: entries.len(),
+        });
+    }
+
+    let page_parent = page_id.into_canonical();
+    let mut previous = None;
+    for entry in entries {
+        if previous.is_some_and(|node_id| node_id >= entry.node_id) {
+            return Err(EditorError::MoveNodesDuplicate {
+                node_id: entry.node_id,
+            });
+        }
+        previous = Some(entry.node_id);
+
+        if entry.before.width != entry.after.width
+            || entry.before.height != entry.after.height
+        {
+            return Err(EditorError::MoveNodesSizeChanged {
+                node_id: entry.node_id,
+            });
+        }
+        if entry.before == entry.after {
+            return Err(EditorError::NodeMoveNoChange {
+                node_id: entry.node_id,
+            });
+        }
+        let node = graph
+            .nodes
+            .get(&entry.node_id)
+            .ok_or(EditorError::NodeMoveUnsupported {
+                node_id: entry.node_id,
+            })?;
+        if node.header.parent_id != page_parent {
+            return Err(EditorError::MoveNodesPageMismatch {
+                node_id: entry.node_id,
+                page_id,
+            });
+        }
+        if node.header.transform != pub_model::Affine2D::identity()
+            || entry.before.width.get() <= 0
+            || entry.before.height.get() <= 0
+            || entry.before.right().is_none()
+            || entry.before.bottom().is_none()
+            || entry.after.right().is_none()
+            || entry.after.bottom().is_none()
+        {
+            return Err(EditorError::NodeMoveUnsupported {
+                node_id: entry.node_id,
+            });
+        }
+
+        let expected = if forward { entry.before } else { entry.after };
+        if node.header.bounds != expected {
+            return Err(EditorError::StaleNodeMove {
+                node_id: entry.node_id,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn apply_forward(
     graph: &mut PubResolvedGraph,
     operation: &EditOperation,
@@ -2324,6 +2561,17 @@ fn apply_forward(
                 return Err(EditorError::StaleNodeMove { node_id: *node_id });
             }
             node.header.bounds = *after;
+        }
+        EditOperation::MoveNodes { page_id, entries } => {
+            validate_move_nodes_transition(graph, *page_id, entries, true)?;
+            for entry in entries {
+                graph
+                    .nodes
+                    .get_mut(&entry.node_id)
+                    .expect("validated MoveNodes node")
+                    .header
+                    .bounds = entry.after;
+            }
         }
         EditOperation::ResizeNode {
             node_id,
@@ -2449,6 +2697,17 @@ fn apply_inverse(
                 return Err(EditorError::StaleNodeMove { node_id: *node_id });
             }
             node.header.bounds = *before;
+        }
+        EditOperation::MoveNodes { page_id, entries } => {
+            validate_move_nodes_transition(graph, *page_id, entries, false)?;
+            for entry in entries {
+                graph
+                    .nodes
+                    .get_mut(&entry.node_id)
+                    .expect("validated MoveNodes node")
+                    .header
+                    .bounds = entry.before;
+            }
         }
         EditOperation::ResizeNode {
             node_id,
