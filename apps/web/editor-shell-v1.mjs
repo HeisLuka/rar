@@ -1,4 +1,4 @@
-import { createRenderer, normalizeView } from "./render-v1.mjs";
+import { RENDERER_POLICY_V1, createRenderer, normalizeView } from "./render-v1.mjs";
 import {
   MoveGestureV1,
   TransientSelectionV1,
@@ -24,7 +24,7 @@ export class BrowserEditorShellV1 {
   constructor({
     host,
     service,
-    rendererKind = "svg",
+    rendererKind = RENDERER_POLICY_V1.primary,
     view = DEFAULT_VIEW,
     operationIdFactory = null,
     onState = null,
