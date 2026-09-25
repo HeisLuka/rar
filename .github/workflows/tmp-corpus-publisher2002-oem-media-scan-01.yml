@@ -1,0 +1,160 @@
+name: TEMP Publisher 2002 OEM media PUB scan
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-publisher2002-oem-media-scan-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install static archive parsers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Resolve and download pinned IA Publisher 2002 OEM ISO
+        run: |
+          set -euo pipefail
+          mkdir -p work/iso-root work/cabs work/pubs out
+          python - <<'PY'
+          import hashlib,json,pathlib,urllib.parse,urllib.request
+          ITEM='publisher-office-xp-2002-cd'
+          UA='rar-publisher2002-oem-media-scan/1.0'
+          with urllib.request.urlopen(urllib.request.Request('https://archive.org/metadata/'+ITEM,headers={'User-Agent':UA}),timeout=60) as r:
+              meta=json.load(r)
+          candidates=[]
+          for f in meta.get('files',[]):
+              name=str(f.get('name',''))
+              if name.lower().endswith('.iso'):
+                  try: size=int(f.get('size') or 0)
+                  except: size=0
+                  candidates.append({'name':name,'size':size,'md5':f.get('md5'),'sha1':f.get('sha1'),'source':f.get('source')})
+          candidates.sort(key=lambda x:(0 if 'publisher' in x['name'].lower() else 1, x['size'] or 10**18))
+          if not candidates: raise SystemExit('no ISO candidate in IA item')
+          chosen=candidates[0]
+          if chosen['size'] and chosen['size']>400*1024*1024: raise SystemExit('ISO exceeds 400 MiB cap')
+          url='https://archive.org/download/'+ITEM+'/'+urllib.parse.quote(chosen['name'])
+          req=urllib.request.Request(url,headers={'User-Agent':UA})
+          h=hashlib.sha256(); total=0; cap=400*1024*1024
+          with urllib.request.urlopen(req,timeout=240) as r, open('work/source.iso','wb') as o:
+              while True:
+                  b=r.read(1024*1024)
+                  if not b: break
+                  total+=len(b)
+                  if total>cap: raise SystemExit('download cap exceeded')
+                  o.write(b); h.update(b)
+              final=r.geturl()
+          receipt={'item':ITEM,'candidates':candidates,'chosen':chosen,'download_size':total,'sha256':h.hexdigest(),'final_url':final}
+          pathlib.Path('work/carrier.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8')
+          print(json.dumps(receipt,indent=2))
+          PY
+
+      - name: Extract direct PUB and cabinet carriers
+        run: |
+          set -euo pipefail
+          7z x -y -owork/iso-root work/source.iso >/dev/null
+          find work/iso-root -type f -iname '*.pub' -print0 | while IFS= read -r -d '' f; do
+            rel="${f#work/iso-root/}"
+            key="$(printf '%s' "$rel" | sha256sum | cut -c1-16)"
+            cp "$f" "work/pubs/direct-${key}.pub"
+            printf '%s\t%s\n' "work/pubs/direct-${key}.pub" "$rel" >> work/pub-origins.tsv
+          done
+          find work/iso-root -type f -iname '*.cab' -print0 | while IFS= read -r -d '' cab; do
+            rel="${cab#work/iso-root/}"
+            key="$(printf '%s' "$rel" | sha256sum | cut -c1-16)"
+            mkdir -p "work/cabs/${key}"
+            # Extract only PUB members; some cabinets may not contain any.
+            7z x -y -r -i'!*.pub' "-owork/cabs/${key}" "$cab" >/dev/null 2>&1 || true
+            find "work/cabs/${key}" -type f -iname '*.pub' -print0 | while IFS= read -r -d '' f; do
+              inner="${f#work/cabs/${key}/}"
+              out="work/pubs/cab-${key}-$(printf '%s' "$inner" | sha256sum | cut -c1-16).pub"
+              cp "$f" "$out"
+              printf '%s\t%s::%s\n' "$out" "$rel" "$inner" >> work/pub-origins.tsv
+            done
+          done
+          : > /dev/null
+
+      - name: Inventory Publisher payloads
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib,shutil
+          import olefile
+          carrier=json.loads(pathlib.Path('work/carrier.json').read_text())
+          origins={}
+          p=pathlib.Path('work/pub-origins.tsv')
+          if p.exists():
+              for line in p.read_text(errors='replace').splitlines():
+                  if '\t' in line:
+                      a,b=line.split('\t',1); origins[pathlib.Path(a).name]=b
+          rows=[]
+          for p in sorted(pathlib.Path('work/pubs').glob('*.pub')):
+              raw=p.read_bytes()
+              rec={'origin':origins.get(p.name,p.name),'size':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+                   'cfb_magic':raw[:8].hex(),'is_cfb':raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1')}
+              if rec['is_cfb']:
+                  try:
+                      ole=olefile.OleFileIO(str(p))
+                      streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                      rec['streams']=streams
+                      cn=next((x for x in ole.listdir(streams=True,storages=False) if x and x[-1]=='Contents'),None)
+                      rec['has_contents']=cn is not None
+                      if cn:
+                          c=ole.openstream(cn).read(64)
+                          rec['contents_prefix_hex']=c.hex()
+                          rec['contents_len']=ole.get_size(cn)
+                          rec['contents_magic']=c[:4].hex()
+                          rec['contents_byte_0c']=c[12] if len(c)>12 else None
+                      ole.close()
+                  except Exception as e:
+                      rec['ole_error']=f'{type(e).__name__}: {e}'
+              rows.append(rec)
+          cfb=[r for r in rows if r.get('is_cfb') and r.get('has_contents')]
+          rev={}
+          for r in cfb:
+              k=f"{r.get('contents_magic')}:{r.get('contents_byte_0c')}"
+              rev[k]=rev.get(k,0)+1
+          summary={
+              'schema':'chaptera.publisher2002-oem-media-pub-scan.v1',
+              'source_safe':True,'raw_pub_retained':False,
+              'carrier':carrier,
+              'observed_pub_members':len(rows),
+              'complete_publisher_cfb':len(cfb),
+              'unique_complete_sha256':len({r['sha256'] for r in cfb}),
+              'contents_revision_histogram':rev,
+              'files':rows,
+              'guardrail':'OEM Publisher 2002 media pins distribution provenance, not necessarily each embedded file producer. Exact file dialect is classified independently from Contents/DSI bytes.'
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps({k:v for k,v in summary.items() if k!='files'},indent=2,ensure_ascii=False))
+          print('FILES',json.dumps(rows,indent=2,ensure_ascii=False))
+          shutil.rmtree('work',ignore_errors=True)
+          PY
+
+      - name: Source-safe artifact guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected raw payload leaked into artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher2002-oem-media-pub-scan
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
