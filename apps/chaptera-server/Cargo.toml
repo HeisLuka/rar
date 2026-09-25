@@ -19,6 +19,7 @@ aws-sdk-s3 = "=1.149.0"
 aws-smithy-types = { version = "=1.8.0", features = ["http-body-1-x"] }
 bytes = "=1.12.1"
 http-body = "=1.1.0"
+futures-util = "=0.3.31"
 async-trait = "=0.1.89"
 axum = { version = "=0.8.9", features = ["http1", "json", "tokio"] }
 axum-extra = { version = "=0.12.6", features = ["cookie"] }
