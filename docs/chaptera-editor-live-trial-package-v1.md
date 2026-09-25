@@ -10,7 +10,7 @@ If the local Chaptera Editor binary already exists, package it from the active R
 
 ```powershell
 python tools/package_editor_live_trial.py `
-  --editor-exe "D:\path\to\Chaptera.exe" `
+  --editor-exe "D:\path\to\Chaptera-Editor.exe" `
   --output-zip "D:\path\to\Chaptera-Editor.zip" `
   --manifest "D:\path\to\Chaptera-Editor.package.json"
 ```
@@ -24,7 +24,7 @@ Run from the active `HeisLuka/rar` checkout on the authorized Windows machine:
 ```powershell
 python tools/build_editor_live_trial_package_receipt.py `
   --zip "D:\\path\\to\\Chaptera-Editor.zip" `
-  --binary-entry "Chaptera.exe" `
+  --binary-entry "Chaptera-Editor.exe" `
   --readme-entry "TRIAL-README.md" `
   --chaptera-version "0.1.0-local" `
   --fixture-kind real_pub_sanitized `
@@ -60,7 +60,7 @@ The command after `--` receives one JSON object on stdin:
   "action": "editor_live_trial_package_smoke",
   "fixture_kind": "real_pub_sanitized",
   "zip_path": "<local absolute path>",
-  "binary_entry": "Chaptera.exe",
+  "binary_entry": "Chaptera-Editor.exe",
   "readme_entry": "TRIAL-README.md"
 }
 ```
