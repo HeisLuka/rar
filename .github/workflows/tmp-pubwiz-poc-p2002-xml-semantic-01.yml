@@ -61,7 +61,6 @@ jobs:
           pathlib.Path("out/o12-source.json").write_text(json.dumps({"item":ident,"name":name,"size":size,"md5":md5,"sha1":sha1},indent=2))
           PY
           curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -o /tmp/xw/o12media/office12.img "$(cat /tmp/xw/o12url)"
-          test "$(sha256sum /tmp/xw/o12media/office12.img | awk '{print $1}')" = '8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3'
           ACTUAL_SHA="$(sha256sum /tmp/xw/o12media/office12.img | awk '{print $1}')"
           echo "office12_sha256=$ACTUAL_SHA"
           test "$ACTUAL_SHA" = '8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3'
