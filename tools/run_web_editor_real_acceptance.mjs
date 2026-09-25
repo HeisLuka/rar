@@ -23,6 +23,7 @@ const CANONICAL_OPERATION_ID = "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b002";
 const BEFORE = { x: 526710, y: 1191292, width: 4436165, height: 587274 };
 const AFTER = { x: 653710, y: 1445292, width: 4436165, height: 587274 };
 const EMU_PER_CSS_PX = 12700;
+const TARGET_PAN_Y_CSS_PX = -2600;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) {
@@ -118,7 +119,8 @@ function pageUrl(port) {
     "http://127.0.0.1:" + port +
     "/apps/web/editor-shell-http-harness.html?api=" + encodeURIComponent(API_BASE) +
     "&operation_id=" + encodeURIComponent(CANONICAL_OPERATION_ID) +
-    "&emu_per_css_px=" + encodeURIComponent(String(EMU_PER_CSS_PX))
+    "&emu_per_css_px=" + encodeURIComponent(String(EMU_PER_CSS_PX)) +
+    "&pan_y_css_px=" + encodeURIComponent(String(TARGET_PAN_Y_CSS_PX))
   );
 }
 
