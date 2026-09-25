@@ -1,0 +1,112 @@
+name: TEMP Publisher Rescue inner provenance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-publisher-rescue-prov-01-inner.yml'
+permissions:
+  contents: read
+
+jobs:
+  inspect-inner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full msitools file binutils llvm
+      - name: Fetch pinned 1.0.9 packages and inspect inner payload
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/pr/win /tmp/pr/mac
+          curl -fL --retry 3 -o /tmp/pr/win.msi 'https://highcaliberapplications.com/downloads/Publisher%20Rescue%201.0.9%20%28x64%29.msi'
+          curl -fL --retry 3 -o /tmp/pr/mac.dmg 'https://highcaliberapplications.com/downloads/Publisher%20Rescue%201.0.9.dmg'
+          echo 'bc145a043e8ae8988f57bcb053a3f3bb7979f4d5fcbe393cf1e393f98340bffd  /tmp/pr/win.msi' | sha256sum -c -
+          echo '709dd63e4af13299bdae4ee5e7cdb4d84a560c20c0407821ee6218107029e010  /tmp/pr/mac.dmg' | sha256sum -c -
+          msiextract -C /tmp/pr/win /tmp/pr/win.msi >/tmp/pr/msiextract.log 2>&1
+          7z x -y -o/tmp/pr/mac /tmp/pr/mac.dmg >/tmp/pr/dmgextract.log 2>&1
+
+          python - <<'PY'
+          import pathlib,hashlib,json,subprocess,re,os
+          KNOWN=["libmspub","librevenge","writerperfect","libwpd","libreoffice","openoffice"]
+          roots={"windows":pathlib.Path("/tmp/pr/win"),"mac":pathlib.Path("/tmp/pr/mac")}
+          def sha(p):
+              h=hashlib.sha256()
+              with p.open("rb") as f:
+                  for c in iter(lambda:f.read(1<<20),b""): h.update(c)
+              return h.hexdigest()
+          def run(cmd):
+              try: return subprocess.run(cmd,capture_output=True,text=True,errors="replace",timeout=30).stdout+subprocess.run(cmd,capture_output=True,text=True,errors="replace",timeout=30).stderr
+              except Exception as e: return f"ERROR {e}"
+          out={}
+          for label,root in roots.items():
+              files=[p for p in root.rglob("*") if p.is_file()]
+              inv=[]
+              combined=""
+              binaries=[]
+              notices=[]
+              for p in files:
+                  rel=str(p.relative_to(root))
+                  ft=run(["file","-b",str(p)]).strip()
+                  row={"path":rel,"size":p.stat().st_size,"sha256":sha(p),"file_type":ft}
+                  inv.append(row)
+                  low=rel.lower()
+                  if any(x in low for x in ["license","licence","notice","third","copying","copyright","readme","eula"]):
+                      notices.append(row)
+                  if ("PE32" in ft or "Mach-O" in ft or p.suffix.lower() in {".exe",".dll"} or "publisher-rescue-gui" in p.name):
+                      binaries.append(row)
+                      s=run(["strings","-a","-n","5",str(p)])
+                      combined += "\n"+s
+                      if "PE32" in ft or p.suffix.lower() in {".exe",".dll"}:
+                          row["imports_excerpt"]=run(["objdump","-p",str(p)])[:30000]
+                      if "Mach-O" in ft or "publisher-rescue-gui" in p.name:
+                          row["dylibs_excerpt"]=run(["llvm-objdump","--macho","--dylibs-used",str(p)])[:30000]
+                      row["marker_excerpt"]="\n".join(x for x in s.splitlines() if re.search(r"Publisher Rescue|High Caliber|libmspub|librevenge|writerperfect|libwpd|LibreOffice|OpenOffice|Lemon Squeezy|Copyright|license|third.party|Qt|Electron|Tauri|Rust|Python",x,re.I))[:30000]
+              combined_low=combined.lower()
+              out[label]={
+                "file_count":len(files),
+                "inventory":inv,
+                "binary_count":len(binaries),
+                "binaries":binaries,
+                "notice_candidates":notices,
+                "known_engine_marker_counts":{k:combined_low.count(k) for k in KNOWN}
+              }
+          report={
+            "schema":"chaptera.publisher-rescue-inner-provenance.v1",
+            "source_safe":True,
+            "raw_packages_retained":False,
+            "package_sha256":{"windows":"bc145a043e8ae8988f57bcb053a3f3bb7979f4d5fcbe393cf1e393f98340bffd","mac":"709dd63e4af13299bdae4ee5e7cdb4d84a560c20c0407821ee6218107029e010"},
+            "platforms":out,
+            "guardrail":"Absence of known-engine strings/imports narrows trivial/shared-engine packaging but does not prove independent reverse engineering."
+          }
+          pathlib.Path("out/report.json").write_text(json.dumps(report,indent=2))
+          summary={"schema":"chaptera.publisher-rescue-inner-provenance-summary.v1","platforms":{},"guardrail":report["guardrail"]}
+          for k,v in out.items():
+              summary["platforms"][k]={
+                "file_count":v["file_count"],
+                "binary_count":v["binary_count"],
+                "binaries":[{"path":x["path"],"size":x["size"],"sha256":x["sha256"],"file_type":x["file_type"],"imports_excerpt":x.get("imports_excerpt","")[:8000],"dylibs_excerpt":x.get("dylibs_excerpt","")[:8000],"marker_excerpt":x.get("marker_excerpt","")[:8000]} for x in v["binaries"]],
+                "notice_candidates":v["notice_candidates"],
+                "known_engine_marker_counts":v["known_engine_marker_counts"]
+              }
+          pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe artifact
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.dmg' -o -iname '*.msi' -o -iname '*.bin' \) | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          r=json.load(open("out/report.json"))
+          assert r["source_safe"] is True and r["raw_packages_retained"] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher-rescue-inner-provenance-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
