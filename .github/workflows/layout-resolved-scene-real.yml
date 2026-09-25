@@ -62,6 +62,15 @@ jobs:
           echo "resolved_graph_sha256=$actual"
           test "$actual" = "7c327cd729fc2f9760e59cce1dd7c104c55162f4c3032c132068cfee513b1c4d"
 
+      - name: Upload fresh graph for mismatch diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-resolved-scene-fresh-graph
+          path: .web-v0/resolved-graph.json
+          if-no-files-found: warn
+          retention-days: 3
+
       - name: Build real current-graph Scene lifecycle receipt
         shell: bash
         run: |
