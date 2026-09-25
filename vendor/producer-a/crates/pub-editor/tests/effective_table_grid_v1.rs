@@ -1,6 +1,6 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_6, EDITOR_PROJECT_VERSION_V0_7, EditorProject, EditorProjectError,
-    EditorSession,
+    EDITOR_PROJECT_VERSION_V0_6, EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8,
+    EditorProject, EditorProjectError, EditorSession,
 };
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, LengthEmu, Node, NodeHeader, NodeId, NodeKind,
@@ -249,6 +249,21 @@ fn v0_7_inherits_table_grid_replay_integrity() {
     let error = replay
         .apply_project(&project)
         .expect_err("v0.7 must not bypass v0.6 table-grid integrity");
+
+    assert!(matches!(error, EditorProjectError::TableGridMismatch));
+}
+
+#[test]
+fn v0_8_inherits_table_grid_replay_integrity() {
+    let baseline_session = EditorSession::new(graph()).unwrap();
+    let mut project = baseline_session.project();
+    project.schema_version = EDITOR_PROJECT_VERSION_V0_8.into();
+    project.table_grids[0].rows[0].extent = Some(LengthEmu::new(502));
+
+    let mut replay = EditorSession::new(graph()).unwrap();
+    let error = replay
+        .apply_project(&project)
+        .expect_err("v0.8 must not bypass v0.6 table-grid integrity");
 
     assert!(matches!(error, EditorProjectError::TableGridMismatch));
 }
