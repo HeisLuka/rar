@@ -123,7 +123,7 @@ impl SqliteProjectPersistence {
         validate_request(&request)?;
         validate_baseline_identity(&baseline)?;
         let planned = plan_project_identity(&request)?;
-        let request_hash = consumption_request_hash(&request, &baseline)?;
+        let request_hash = consumption_request_hash(&request)?;
 
         let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
 
@@ -497,10 +497,16 @@ async fn verify_lifecycle_rows(
     .await
     .map_err(sqlite_error)?;
 
-    if project_count != 1 || document_count != 1 || identity_count != 1 {
+    if project_count != 1 || document_count != 1 {
         return Err(IngressError::new(
             "project_persistence_corrupt",
-            "persisted consumption is missing exact project/document/revision-identity rows",
+            "persisted consumption is missing exact project/document lifecycle rows",
+        ));
+    }
+    if identity_count != 1 {
+        return Err(IngressError::new(
+            "idempotency_conflict",
+            "project creation key was replayed with a different baseline revision identity",
         ));
     }
     Ok(())
@@ -540,10 +546,7 @@ fn validate_request(request: &ConsumeUploadRequest) -> Result<(), IngressError> 
     Ok(())
 }
 
-fn consumption_request_hash(
-    request: &ConsumeUploadRequest,
-    baseline: &ProjectBaselineIdentity,
-) -> Result<String, IngressError> {
+fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, IngressError> {
     #[derive(Serialize)]
     struct Fingerprint<'a> {
         protocol: &'static str,
@@ -552,9 +555,6 @@ fn consumption_request_hash(
         expected_upload_generation: u64,
         workspace_id: &'a str,
         name: &'a str,
-        service_revision_id: &'a str,
-        canonical_schema_version: &'a str,
-        canonical_authoring_revision_id: &'a str,
     }
 
     let bytes = serde_json::to_vec(&Fingerprint {
@@ -564,9 +564,6 @@ fn consumption_request_hash(
         expected_upload_generation: request.expected_upload_generation,
         workspace_id: &request.workspace_id,
         name: &request.name,
-        service_revision_id: &baseline.service_revision_id,
-        canonical_schema_version: &baseline.canonical_schema_version,
-        canonical_authoring_revision_id: &baseline.canonical_authoring_revision_id,
     })
     .map_err(|error| IngressError::new("request_hash_failed", error.to_string()))?;
 
@@ -927,6 +924,17 @@ mod tests {
         changed.name = "Different name".into();
         let error = adapter
             .create_project_from_upload(changed, baseline("upload-1"))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "idempotency_conflict");
+
+        let mut changed_baseline = baseline("upload-1");
+        changed_baseline.canonical_authoring_revision_id = "f".repeat(64);
+        let error = adapter
+            .create_project_from_upload(
+                request("upload-1", "create-1", 3),
+                changed_baseline,
+            )
             .await
             .unwrap_err();
         assert_eq!(error.code, "idempotency_conflict");
