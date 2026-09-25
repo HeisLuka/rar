@@ -329,3 +329,135 @@ impl EffectiveTableGridV1 {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod effective_grid_tests {
+    use super::*;
+    use crate::{CanonicalId, StoryId};
+
+    fn row_id(byte: u8) -> TableRowId {
+        TableRowId::from_canonical(CanonicalId::from_bytes([byte; 16]))
+    }
+
+    fn column_id(byte: u8) -> TableColumnId {
+        TableColumnId::from_canonical(CanonicalId::from_bytes([byte; 16]))
+    }
+
+    fn cell_id(byte: u8) -> TableCellId {
+        TableCellId::from_canonical(CanonicalId::from_bytes([byte; 16]))
+    }
+
+    fn node_id(byte: u8) -> NodeId {
+        NodeId::from_canonical(CanonicalId::from_bytes([byte; 16]))
+    }
+
+    fn story_id(byte: u8) -> StoryId {
+        StoryId::from_canonical(CanonicalId::from_bytes([byte; 16]))
+    }
+
+    fn grid(row_extent: Option<LengthEmu>, column_extent: Option<LengthEmu>) -> EffectiveTableGridV1 {
+        let rows = vec![
+            EffectiveTableTrackV1 { id: row_id(1), index: 0, extent: row_extent },
+            EffectiveTableTrackV1 { id: row_id(2), index: 1, extent: row_extent },
+        ];
+        let columns = vec![
+            EffectiveTableTrackV1 { id: column_id(3), index: 0, extent: column_extent },
+            EffectiveTableTrackV1 { id: column_id(4), index: 1, extent: column_extent },
+        ];
+        let cells = vec![
+            EffectiveTableCellV1 {
+                id: cell_id(10),
+                row_id: rows[0].id,
+                column_id: columns[0].id,
+                address: TableCellAddress { row: 0, column: 0 },
+                row_span: 1,
+                column_span: 1,
+                story_id: Some(story_id(9)),
+                utf16_start: Some(0),
+                utf16_end: Some(2),
+            },
+            EffectiveTableCellV1 {
+                id: cell_id(11),
+                row_id: rows[0].id,
+                column_id: columns[1].id,
+                address: TableCellAddress { row: 0, column: 1 },
+                row_span: 1,
+                column_span: 1,
+                story_id: Some(story_id(9)),
+                utf16_start: Some(2),
+                utf16_end: Some(4),
+            },
+            EffectiveTableCellV1 {
+                id: cell_id(12),
+                row_id: rows[1].id,
+                column_id: columns[0].id,
+                address: TableCellAddress { row: 1, column: 0 },
+                row_span: 1,
+                column_span: 1,
+                story_id: Some(story_id(9)),
+                utf16_start: Some(4),
+                utf16_end: Some(6),
+            },
+            EffectiveTableCellV1 {
+                id: cell_id(13),
+                row_id: rows[1].id,
+                column_id: columns[1].id,
+                address: TableCellAddress { row: 1, column: 1 },
+                row_span: 1,
+                column_span: 1,
+                story_id: Some(story_id(9)),
+                utf16_start: Some(6),
+                utf16_end: Some(8),
+            },
+        ];
+        EffectiveTableGridV1 {
+            version: EFFECTIVE_TABLE_GRID_V1.into(),
+            table_id: node_id(7),
+            rows,
+            columns,
+            cells,
+        }
+    }
+
+    #[test]
+    fn valid_grid_preserves_stable_track_and_cell_identity() {
+        let grid = grid(Some(LengthEmu::new(200)), Some(LengthEmu::new(300)));
+        assert_eq!(grid.validate(), Ok(()));
+        assert_eq!(grid.rows[0].id, row_id(1));
+        assert_eq!(grid.columns[1].id, column_id(4));
+        assert_eq!(grid.cells[2].id, cell_id(12));
+    }
+
+    #[test]
+    fn unknown_metrics_are_valid_state_not_inferred_values() {
+        let grid = grid(None, None);
+        assert_eq!(grid.validate(), Ok(()));
+        assert!(grid.rows.iter().all(|row| row.extent.is_none()));
+        assert!(grid.columns.iter().all(|column| column.extent.is_none()));
+    }
+
+    #[test]
+    fn shifted_coordinate_must_keep_matching_track_identity() {
+        let mut grid = grid(None, None);
+        grid.cells[0].address.row = 1;
+        assert!(matches!(
+            grid.validate(),
+            Err(EffectiveTableGridError::WrongTrackReference { id }) if id == cell_id(10)
+        ));
+    }
+
+    #[test]
+    fn v1_rejects_merged_cells() {
+        let mut grid = grid(None, None);
+        grid.cells[0].column_span = 2;
+        assert!(matches!(
+            grid.validate(),
+            Err(EffectiveTableGridError::UnsupportedSpan {
+                id,
+                row_span: 1,
+                column_span: 2,
+            }) if id == cell_id(10)
+        ));
+    }
+}
