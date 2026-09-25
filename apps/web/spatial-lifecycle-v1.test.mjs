@@ -25,6 +25,16 @@ const rows = () => [
   { node_id: "p3n", page_id: "p3", bounds: { x: 0, y: 0, width: 100, height: 100 }, paint_order: 0, z_order: 0 },
 ];
 
+test("different pages may legitimately share the same shard content fingerprint", () => {
+  const index = new SpatialWindowLifecycleV2();
+  const shared = {
+    ...identity(1),
+    shard_fingerprints: ["same:sha", "same:sha", "different:sha"],
+  };
+  assert.doesNotThrow(() => index.replaceWindow(shared, rows()));
+  assert.equal(index.receipt().page_count, 3);
+});
+
 test("point candidates are current-generation only and existing hit-test still chooses winner", () => {
   const index = new SpatialWindowLifecycleV2({ cellSizeEmu: 100 });
   index.replaceWindow(identity(1), rows());
