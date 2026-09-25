@@ -185,6 +185,14 @@ impl SqliteUploadAdmissionAuthority {
         &self.path
     }
 
+    pub fn max_single_upload_bytes(&self) -> i64 {
+        self.config.max_single_upload_bytes
+    }
+
+    pub fn lease_duration(&self) -> Duration {
+        self.config.lease_duration
+    }
+
     pub async fn close(&self) {
         self.pool.close().await;
     }
