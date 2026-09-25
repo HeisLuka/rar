@@ -1,0 +1,247 @@
+name: TEMP Running Office 2000 Publisher sample recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-runningoffice2000-publish-01.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install static CFB reader
+        run: python -m pip install --disable-pip-version-check --no-input olefile==0.47
+
+      - name: Recover and statically inspect exact historical Publisher carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out work
+          python - <<'PY'
+          import hashlib, json, os, pathlib, shutil, subprocess, time
+          import urllib.parse, urllib.request
+          import olefile
+
+          UA = 'rar-runningoffice2000-publish-recovery/1.0 (public format research)'
+          CDX = 'https://web.archive.org/cdx/search/cdx'
+          CFB = bytes.fromhex('d0cf11e0a1b11ae1')
+          exact_urls = [
+              'http://mspress.microsoft.com:80/mspodownload/office2000/runningoffice/publish.exe',
+              'http://mspress.microsoft.com/mspodownload/office2000/runningoffice/publish.exe',
+              'https://mspress.microsoft.com/mspodownload/office2000/runningoffice/publish.exe',
+              'http://www.microsoft.com/mspress/mspodownload/office2000/runningoffice/publish.exe',
+              'https://www.microsoft.com/mspress/mspodownload/office2000/runningoffice/publish.exe',
+          ]
+
+          def sha256_bytes(b):
+              return hashlib.sha256(b).hexdigest()
+
+          def get_bytes(url, cap, attempts=4, accept='*/*'):
+              last = None
+              for n in range(attempts):
+                  try:
+                      req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept': accept})
+                      with urllib.request.urlopen(req, timeout=60) as resp:
+                          raw = resp.read(cap + 1)
+                          if len(raw) > cap:
+                              raise ValueError(f'response exceeded cap {cap}')
+                          return raw, {
+                              'status': getattr(resp, 'status', None),
+                              'final_url': resp.geturl(),
+                              'content_type': resp.headers.get('Content-Type'),
+                              'content_length': resp.headers.get('Content-Length'),
+                          }
+                  except Exception as exc:
+                      last = f'{type(exc).__name__}: {exc}'
+                      time.sleep(1.5 * (n + 1))
+              raise RuntimeError(last or 'request failed')
+
+          cdx_rows = []
+          query_receipts = []
+          for u in exact_urls:
+              params = [
+                  ('url', u), ('matchType', 'exact'), ('output', 'json'),
+                  ('fl', 'timestamp,original,mimetype,statuscode,digest,length'),
+                  ('filter', 'statuscode:200'), ('collapse', 'digest'),
+                  ('limit', '50'), ('gzip', 'false')
+              ]
+              qurl = CDX + '?' + urllib.parse.urlencode(params)
+              rec = {'url': u, 'cdx_url': qurl}
+              try:
+                  raw, meta = get_bytes(qurl, 8 * 1024 * 1024, accept='application/json')
+                  data = json.loads(raw.decode('utf-8'))
+                  rows = []
+                  if data and isinstance(data, list) and len(data) >= 1 and isinstance(data[0], list):
+                      hdr = data[0]
+                      for item in data[1:]:
+                          if isinstance(item, list):
+                              row = {str(k): str(v) for k, v in zip(hdr, item)}
+                              row['query_url'] = u
+                              rows.append(row)
+                              cdx_rows.append(row)
+                  rec.update(meta)
+                  rec['rows'] = len(rows)
+              except Exception as exc:
+                  rec['error'] = f'{type(exc).__name__}: {exc}'
+              query_receipts.append(rec)
+
+          # Deduplicate captures by archive digest + original URL.
+          seen = set()
+          captures = []
+          for row in sorted(cdx_rows, key=lambda r: (r.get('timestamp',''), r.get('original',''))):
+              key = (row.get('digest',''), row.get('original','').casefold())
+              if key in seen:
+                  continue
+              seen.add(key)
+              captures.append(row)
+
+          recovered = []
+          pub_rows = []
+          errors = []
+
+          # Keep the recovery bounded even if CDX unexpectedly returns many captures.
+          for idx, row in enumerate(captures[:8], 1):
+              ts = row.get('timestamp','')
+              orig = row.get('original','')
+              replay = f'https://web.archive.org/web/{ts}id_/{orig}'
+              item = {
+                  'timestamp': ts,
+                  'original': orig,
+                  'replay': replay,
+                  'cdx_digest': row.get('digest'),
+                  'cdx_length': row.get('length'),
+                  'mimetype': row.get('mimetype'),
+              }
+              try:
+                  body, meta = get_bytes(replay, 128 * 1024 * 1024)
+                  item.update(meta)
+                  item['payload_size'] = len(body)
+                  item['payload_sha256'] = sha256_bytes(body)
+                  item['payload_head_hex'] = body[:32].hex()
+
+                  exe_path = pathlib.Path('work') / f'publish-{idx}.exe'
+                  exe_path.write_bytes(body)
+
+                  listing = subprocess.run(
+                      ['7z', 'l', '-slt', str(exe_path)],
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                      text=True, errors='replace', timeout=120
+                  )
+                  item['sevenzip_list_rc'] = listing.returncode
+                  item['sevenzip_list_head'] = listing.stdout[:4000]
+
+                  extract_dir = pathlib.Path('work') / f'extract-{idx}'
+                  extract_dir.mkdir(parents=True, exist_ok=True)
+                  extraction = subprocess.run(
+                      ['7z', 'x', '-y', '-bd', f'-o{extract_dir}', str(exe_path)],
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                      text=True, errors='replace', timeout=180
+                  )
+                  item['sevenzip_extract_rc'] = extraction.returncode
+                  item['sevenzip_extract_tail'] = extraction.stdout[-4000:]
+
+                  pubs = sorted(p for p in extract_dir.rglob('*') if p.is_file() and p.suffix.lower() == '.pub')
+                  item['pub_members'] = len(pubs)
+
+                  for p in pubs:
+                      b = p.read_bytes()
+                      pr = {
+                          'capture_timestamp': ts,
+                          'carrier_sha256': item['payload_sha256'],
+                          'relative_path': str(p.relative_to(extract_dir)),
+                          'size': len(b),
+                          'sha256': sha256_bytes(b),
+                          'cfb_magic': b.startswith(CFB),
+                      }
+                      if pr['cfb_magic']:
+                          try:
+                              ole = olefile.OleFileIO(str(p))
+                              streams = ['/'.join(parts) for parts in ole.listdir(streams=True, storages=False)]
+                              pr['streams'] = streams
+                              contents_name = None
+                              for parts in ole.listdir(streams=True, storages=False):
+                                  if len(parts) == 1 and parts[0] == 'Contents':
+                                      contents_name = parts
+                                      break
+                              pr['has_contents'] = contents_name is not None
+                              if contents_name is not None:
+                                  data = ole.openstream(contents_name).read()
+                                  pr['contents_size'] = len(data)
+                                  pr['contents_sha256'] = sha256_bytes(data)
+                                  pr['contents_head_hex'] = data[:32].hex()
+                              ole.close()
+                          except Exception as exc:
+                              pr['ole_error'] = f'{type(exc).__name__}: {exc}'
+                      else:
+                          pr['has_contents'] = False
+                      pub_rows.append(pr)
+
+                  recovered.append(item)
+              except Exception as exc:
+                  item['error'] = f'{type(exc).__name__}: {exc}'
+                  recovered.append(item)
+                  errors.append({'timestamp': ts, 'original': orig, 'error': item['error']})
+
+          valid_pubs = [p for p in pub_rows if p.get('cfb_magic') and p.get('has_contents')]
+          unique_valid_sha = sorted({p['sha256'] for p in valid_pubs})
+
+          summary = {
+              'schema': 'chaptera.corpus-training-runningoffice2000-publish-recovery.v1',
+              'source_safe': True,
+              'raw_carrier_retained': False,
+              'raw_pub_retained': False,
+              'grounded_historical_locator': 'http://mspress.microsoft.com:80/mspodownload/office2000/runningoffice/publish.exe',
+              'locator_provenance': 'href observed in archived Microsoft Press Running Office 2000 sample page by rar#608',
+              'exact_url_variants': exact_urls,
+              'cdx_query_receipts': query_receipts,
+              'cdx_rows': len(cdx_rows),
+              'unique_captures': len(captures),
+              'captures_attempted': min(len(captures), 8),
+              'captures_recovered': sum(1 for x in recovered if x.get('payload_sha256')),
+              'pub_members': len(pub_rows),
+              'valid_cfb_contents_pubs': len(valid_pubs),
+              'unique_valid_pub_sha256': unique_valid_sha,
+              'errors': errors,
+              'guardrail': 'Historical EXE is treated as opaque data and only inspected/extracted by 7-Zip. It is never executed. Public artifact contains metadata receipts only.'
+          }
+
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
+          pathlib.Path('out/captures.json').write_text(json.dumps(recovered, indent=2, ensure_ascii=False), encoding='utf-8')
+          pathlib.Path('out/pub-manifest.json').write_text(json.dumps(pub_rows, indent=2, ensure_ascii=False), encoding='utf-8')
+
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          print('--- valid PUB members ---')
+          for p in valid_pubs:
+              print(p['sha256'], p['relative_path'], p.get('contents_head_hex',''))
+
+          # Destroy byte-bearing material before artifact upload.
+          shutil.rmtree('work', ignore_errors=True)
+          PY
+
+      - name: Enforce metadata-only artifact boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.exe' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.bin' \) | grep -q .; then
+            echo 'byte-bearing carrier or PUB leaked into public artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-runningoffice2000-publish-recovery
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
