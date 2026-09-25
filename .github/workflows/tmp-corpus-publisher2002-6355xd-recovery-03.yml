@@ -1,0 +1,166 @@
+name: TEMP Publisher 2002 6355-xd exact recovery
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recover exact archived 6355-xd SFX as inert data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out work
+          python - <<'PY'
+          import hashlib, json, os, shutil, subprocess, time
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          UA="rar-publisher2002-6355xd-recovery/1.0"
+          observed=[
+            "ftp://ftp.course.com/course/Graphic_Design/6355-xd.exe",
+            "ftp://ftp2.course.com/course/Graphic_Design/6355-xd.exe",
+          ]
+          variants=observed+[
+            "http://ftp.course.com/course/Graphic_Design/6355-xd.exe",
+            "http://ftp2.course.com/course/Graphic_Design/6355-xd.exe",
+          ]
+          source_ts="20021105020834"
+
+          def cdx(u):
+            params=[
+              ("url",u),("matchType","exact"),("output","json"),
+              ("fl","timestamp,original,mimetype,statuscode,digest,length"),
+              ("filter","statuscode:200"),("collapse","digest"),("limit","20"),("gzip","false")
+            ]
+            q="https://web.archive.org/cdx/search/cdx?"+urlencode(params)
+            req=Request(q,headers={"User-Agent":UA,"Accept":"application/json"})
+            with urlopen(req,timeout=30) as r:
+              data=json.load(r)
+            return [dict(zip(data[0],x)) for x in data[1:]] if data else []
+
+          captures=[]; errors=[]
+          seen=set()
+          for u in variants:
+            try:
+              rows=cdx(u)
+            except Exception as e:
+              rows=[]; errors.append({"surface":"cdx","url":u,"error":f"{type(e).__name__}: {e}"})
+            for c in rows:
+              k=(c.get("timestamp"),c.get("original"),c.get("digest"))
+              if k not in seen:
+                seen.add(k); captures.append(c)
+          # If the FTP objects are not independently indexed, try one direct replay at the exact source-page timestamp for each observed href.
+          attempts=[{"timestamp":c["timestamp"],"original":c["original"],"capture":c,"mode":"cdx"} for c in captures]
+          if not attempts:
+            for u in observed:
+              attempts.append({"timestamp":source_ts,"original":u,"capture":{"timestamp":source_ts,"original":u,"digest":"unindexed-direct-replay"},"mode":"direct-replay"})
+
+          downloads=[]
+          for idx,a in enumerate(attempts[:10]):
+            replay=f"https://web.archive.org/web/{a['timestamp']}id_/{a['original']}"
+            rec={**a,"replay":replay}
+            try:
+              req=Request(replay,headers={"User-Agent":UA,"Accept":"application/octet-stream,*/*;q=0.1"})
+              with urlopen(req,timeout=60) as r:
+                raw=r.read(100*1024*1024+1)
+                rec["status"]=getattr(r,"status",None)
+                rec["content_type"]=r.headers.get("Content-Type")
+                rec["final_url"]=r.geturl()
+              if len(raw)>100*1024*1024:
+                raise ValueError("carrier exceeds 100 MiB bound")
+              rec["size"]=len(raw)
+              rec["sha256"]=hashlib.sha256(raw).hexdigest()
+              rec["mz_magic"]=raw.startswith(b"MZ")
+              rec["zip_signature_offset"]=raw.find(b"PK\x03\x04")
+              rec["cab_signature_offset"]=raw.find(b"MSCF")
+              p=Path(f"work/carrier-{idx}.exe")
+              p.write_bytes(raw)
+              rec["work_path"]=str(p)
+              downloads.append(rec)
+            except Exception as e:
+              rec["error"]=f"{type(e).__name__}: {e}"
+              downloads.append(rec)
+            time.sleep(.25)
+
+          Path("out/downloads.json").write_text(json.dumps(downloads,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps({"captures":captures,"downloads":downloads,"errors":errors},indent=2,ensure_ascii=False))
+          PY
+      - name: Statically extract SFX containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/extracted out/listings
+          shopt -s nullglob
+          for f in work/carrier-*.exe; do
+            b="$(basename "$f" .exe)"
+            mkdir -p "work/extracted/$b"
+            if command -v 7z >/dev/null 2>&1; then
+              7z l -slt "$f" > "out/listings/$b-7z-list.txt" 2>&1 || true
+              7z x -y "-owork/extracted/$b" "$f" > "out/listings/$b-7z-extract.txt" 2>&1 || true
+            else
+              echo "7z unavailable" > "out/listings/$b-7z-list.txt"
+            fi
+          done
+      - name: Inventory extracted members and identify PUB/CFB
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          rows=[]; hits=[]
+          root=Path("work/extracted")
+          for p in sorted(root.rglob("*")):
+            if not p.is_file(): continue
+            b=p.read_bytes()
+            row={
+              "path":str(p.relative_to(root)),
+              "size":len(b),
+              "sha256":hashlib.sha256(b).hexdigest(),
+              "pub_extension":p.suffix.lower()==".pub",
+              "cfb_magic":b.startswith(bytes.fromhex("d0cf11e0a1b11ae1")),
+            }
+            rows.append(row)
+            if row["pub_extension"] or row["cfb_magic"]:
+              hits.append(row)
+          summary={
+            "schema":"chaptera.corpus-publisher2002-6355xd-recovery.v1",
+            "source_safe":True,
+            "raw_payload_retained":False,
+            "extracted_member_count":len(rows),
+            "pub_or_cfb_count":len(hits),
+            "pub_or_cfb_members":hits,
+            "members":rows,
+            "guardrail":"6355-xd.exe is never executed. Archive tooling only lists/extracts it as inert data; raw carrier and member bytes remain outside the uploaded artifact."
+          }
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Source-safe artifact guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.7z' -o -iname '*.rar' \) | grep -q .; then
+            echo 'unexpected raw carrier/member bytes in artifact' >&2
+            exit 1
+          fi
+          sha256sum out/downloads.json out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-publisher2002-6355xd-recovery
+          path: out/**
+          retention-days: 60
+          if-no-files-found: error
