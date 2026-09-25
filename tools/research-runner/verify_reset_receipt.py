@@ -115,6 +115,44 @@ def validate_receipt(
     }
 
 
+def validate_cold_restore_comparison(primary: dict[str, str], comparison: dict[str, str]) -> None:
+    for field in (
+        "provider_id",
+        "provider_version",
+        "baseline_id",
+        "snapshot_id",
+        "environment_fingerprint_sha256",
+    ):
+        if primary[field] != comparison[field]:
+            fail(
+                f"cold-restore comparison drift for {field}: "
+                f"{primary[field]!r} != {comparison[field]!r}"
+            )
+
+    primary_started = parse_utc(primary["restore_started_at_utc"], "primary.restore_started_at_utc")
+    primary_completed = parse_utc(
+        primary["restore_completed_at_utc"], "primary.restore_completed_at_utc"
+    )
+    comparison_started = parse_utc(
+        comparison["restore_started_at_utc"], "comparison.restore_started_at_utc"
+    )
+    comparison_completed = parse_utc(
+        comparison["restore_completed_at_utc"], "comparison.restore_completed_at_utc"
+    )
+
+    if (
+        primary["restore_started_at_utc"] == comparison["restore_started_at_utc"]
+        and primary["restore_completed_at_utc"] == comparison["restore_completed_at_utc"]
+    ):
+        fail("two-cold-restore proof reused the same restore interval")
+
+    if not (
+        primary_completed <= comparison_started
+        or comparison_completed <= primary_started
+    ):
+        fail("two-cold-restore proof contains overlapping restore intervals")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--receipt", required=True)
@@ -144,12 +182,7 @@ def main() -> int:
             expected_experiment=args.expected_experiment,
             expected_packet_sha256=args.expected_packet_sha256,
         )
-        for field in ("provider_id", "baseline_id", "snapshot_id", "environment_fingerprint_sha256"):
-            if primary[field] != comparison[field]:
-                fail(
-                    f"cold-restore comparison drift for {field}: "
-                    f"{primary[field]!r} != {comparison[field]!r}"
-                )
+        validate_cold_restore_comparison(primary, comparison)
 
     print(json.dumps({"schema": SCHEMA, **primary}, indent=2))
     return 0
