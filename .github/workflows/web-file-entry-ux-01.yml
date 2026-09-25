@@ -1,0 +1,26 @@
+name: Web File Entry UX V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/file-entry-v1.mjs"
+      - "apps/web/file-entry-v1.test.mjs"
+      - ".github/workflows/web-file-entry-ux-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  file-entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test bounded file-entry controller
+        run: node --test apps/web/file-entry-v1.test.mjs
