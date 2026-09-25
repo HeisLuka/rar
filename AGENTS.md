@@ -84,6 +84,8 @@ concurrency:
 
 This rule is specifically for replaceable PR validation.
 
+Repository safety net: `.github/workflows/pr-obsolete-head-canceller.yml` may cancel older PR-head runs when a new head arrives, but it is a backstop, not a substitute for workflow-level `concurrency`. A saturated runner pool can delay the backstop; workflow-level cancellation is the primary mechanism.
+
 Do **not** use cancellation when completion of every historical attempt is itself required evidence. Such exceptions must be explicit in the workflow/task and must not be invented casually.
 
 For mixed triggers such as `pull_request` + `push` + `workflow_dispatch`, PR attempts should supersede older PR attempts, while independent push/manual evidence may remain independent.
