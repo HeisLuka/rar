@@ -38,12 +38,14 @@ try {
       const id = ++seq;
       const before = buffer.byteLength;
       const started = performance.now();
+      let postBlockMs = 0;
       const handler = (event) => {
         if (event.data.id !== id) return;
         worker.removeEventListener("message", handler);
         requestAnimationFrame(() => {
           resolve({
             roundtrip_to_visible_ms: performance.now() - started,
+            main_thread_post_block_ms: postBlockMs,
             worker_ms: event.data.worker_ms,
             producer_bytes_before: before,
             producer_bytes_after_post: buffer.byteLength,
@@ -53,7 +55,9 @@ try {
       };
       worker.addEventListener("message", handler);
       worker.addEventListener("error", reject, { once: true });
+      const postStarted = performance.now();
       worker.postMessage({ kind: "work", id, buffer }, transfer ? [buffer] : []);
+      postBlockMs = performance.now() - postStarted;
     });
 
     const runs = [];
@@ -76,6 +80,7 @@ try {
   const rows = result.runs.map((run) => {
     const visible = run.samples.map((sample) => sample.roundtrip_to_visible_ms);
     const worker = run.samples.map((sample) => sample.worker_ms);
+    const postBlock = run.samples.map((sample) => sample.main_thread_post_block_ms);
     const last = run.samples.at(-1);
     const transferDetached = run.transport === "transfer"
       ? run.samples.every((sample) => sample.producer_bytes_after_post === 0)
@@ -88,6 +93,8 @@ try {
       input_to_visible_p50_ms: percentile(visible, 0.50),
       input_to_visible_p95_ms: percentile(visible, 0.95),
       worker_compute_p50_ms: percentile(worker, 0.50),
+      main_thread_post_block_p50_ms: percentile(postBlock, 0.50),
+      main_thread_post_block_p95_ms: percentile(postBlock, 0.95),
       producer_bytes_after_post: last.producer_bytes_after_post,
       transfer_detached: transferDetached,
       clone_bytes: run.transport === "clone" ? run.size_bytes * run.samples.length : 0,
