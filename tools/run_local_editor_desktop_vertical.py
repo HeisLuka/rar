@@ -36,6 +36,10 @@ from validate_editor_desktop_vertical_receipt import (  # noqa: E402
     validate_schema,
     validate_semantics,
 )
+from verify_editable_export_geometry import (  # noqa: E402
+    RectEmu,
+    verify_export as verify_editable_export_geometry,
+)
 
 SAMPLE_SOURCE_HASH = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
 SAMPLE_SOURCE_BYTE_LEN = 291840
@@ -299,7 +303,13 @@ def load_and_verify_project(
     return raw, project, len(story_ops), len(move_ops)
 
 
-def verify_export_package(path: pathlib.Path, export_format: str) -> bytes:
+def verify_export_package(
+    path: pathlib.Path,
+    export_format: str,
+    *,
+    moved_node_id: str,
+    after_rect: dict[str, Any],
+) -> bytes:
     if not path.is_file():
         raise DesktopVerticalError("desktop producer did not write edited export")
     raw = path.read_bytes()
@@ -322,6 +332,25 @@ def verify_export_package(path: pathlib.Path, export_format: str) -> bytes:
                 raise DesktopVerticalError("ODG mimetype mismatch")
         else:
             raise DesktopVerticalError("unsupported edited export format")
+
+    try:
+        geometry_proof = verify_editable_export_geometry(
+            path,
+            export_format,
+            moved_node_id,
+            RectEmu(
+                x=after_rect["x"],
+                y=after_rect["y"],
+                width=after_rect["width"],
+                height=after_rect["height"],
+            ),
+        )
+    except (AssertionError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as error:
+        raise DesktopVerticalError(
+            "edited export does not reproduce canonical MoveNode geometry"
+        ) from error
+    if geometry_proof.get("geometry_matches_edit") is not True:
+        raise DesktopVerticalError("edited export geometry proof is not affirmative")
     return raw
 
 
@@ -410,7 +439,12 @@ def run_local_desktop_vertical(
         before_rect=move["before"],
         after_rect=move["after"],
     )
-    export_raw = verify_export_package(export_output, export_format)
+    export_raw = verify_export_package(
+        export_output,
+        export_format,
+        moved_node_id=move["origin_node_id"],
+        after_rect=move["after"],
+    )
 
     project_sha256 = hashlib.sha256(project_raw).hexdigest()
     export_sha256 = hashlib.sha256(export_raw).hexdigest()
