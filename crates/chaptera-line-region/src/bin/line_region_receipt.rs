@@ -1,7 +1,6 @@
 use chaptera_line_region::{
-    ColumnsV1, EffectiveWrapModeV1, EffectiveWrapObstacleV1, FrameRegionV1,
-    InsetsEmuV1, LineBandRequestV1, RectEmuV1, WrapDistancesV1,
-    resolve_line_band_v1,
+    ColumnsV1, EffectiveWrapModeV1, EffectiveWrapObstacleV1, FrameRegionV1, InsetsEmuV1,
+    LineBandRequestV1, RectEmuV1, WrapDistancesV1, resolve_line_band_v1,
 };
 use std::time::Instant;
 
@@ -59,13 +58,8 @@ fn main() {
     let mut drag_interval_count = 0usize;
     for step in 0..iterations {
         let x = 30_000 + i64::from(step % 200) * 500;
-        let slots = resolve_line_band_v1(
-            &frame(900_000),
-            columns,
-            &[obstacle(x)],
-            band,
-        )
-        .expect("obstacle drag solve");
+        let slots = resolve_line_band_v1(&frame(900_000), columns, &[obstacle(x)], band)
+            .expect("obstacle drag solve");
         drag_interval_count += slots.intervals.len();
     }
     let drag_ns = drag_start.elapsed().as_nanos();
@@ -74,23 +68,14 @@ fn main() {
     let mut resize_interval_count = 0usize;
     for step in 0..iterations {
         let width = 700_000 + i64::from(step % 200) * 1_000;
-        let slots = resolve_line_band_v1(
-            &frame(width),
-            columns,
-            &[obstacle(200_000)],
-            band,
-        )
-        .expect("frame resize solve");
+        let slots = resolve_line_band_v1(&frame(width), columns, &[obstacle(200_000)], band)
+            .expect("frame resize solve");
         resize_interval_count += slots.intervals.len();
     }
     let resize_ns = resize_start.elapsed().as_nanos();
 
     println!(
         "{{\"schema\":\"chaptera.line-region-benchmark.v1\",\"iterations_per_arm\":{},\"obstacle_drag_ns\":{},\"frame_resize_ns\":{},\"obstacle_drag_interval_count\":{},\"frame_resize_interval_count\":{},\"shaping_calls\":0,\"story_mutations\":0,\"raw_source_accesses\":0}}",
-        iterations,
-        drag_ns,
-        resize_ns,
-        drag_interval_count,
-        resize_interval_count
+        iterations, drag_ns, resize_ns, drag_interval_count, resize_interval_count
     );
 }
