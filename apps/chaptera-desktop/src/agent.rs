@@ -211,6 +211,7 @@ impl AgentServer {
                             "shutdown"
                         ],
                         "catalog_schema":catalog.get("schema"),
+                        "catalog_sha256":sha256_hex(AGENT_CONTROL_CATALOG_JSON.as_bytes()),
                         "executable":catalog.get("executable"),
                         "global_laws":catalog.get("global_laws"),
                         "command_contracts":command_contracts,
@@ -2158,6 +2159,10 @@ mod tests {
         assert_eq!(
             result["catalog_schema"],
             "chaptera.agent-control.catalog.v1"
+        );
+        assert_eq!(
+            result["catalog_sha256"],
+            sha256_hex(AGENT_CONTROL_CATALOG_JSON.as_bytes())
         );
         assert_eq!(result["executable"], "chaptera-editor.exe");
         assert_eq!(result["native_pub_write"], false);
