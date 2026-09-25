@@ -10,6 +10,7 @@ pub mod db;
 pub mod derived_artifacts;
 pub mod doctor;
 pub mod edge;
+pub mod export_executor;
 pub mod job_executor_registry;
 pub mod job_queue;
 pub mod job_worker;

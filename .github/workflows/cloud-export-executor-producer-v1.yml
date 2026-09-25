@@ -1,0 +1,41 @@
+name: CLOUD-EXPORT-EXECUTOR-01 edited producer proof
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/**"
+      - "vendor/producer-a/crates/pub-editor/**"
+      - ".github/workflows/cloud-export-executor-producer-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  edited-export-producer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check chaptera-server formatting
+        run: cargo fmt --package chaptera-server -- --check
+
+      - name: Lint chaptera-server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+
+      - name: Fetch pinned real Publisher fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"             --output "$fixture"
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          test "$actual" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          echo "CHAPTERA_EXPORT_FIXTURE=$fixture" >> "$GITHUB_ENV"
+
+      - name: Prove exact edited real-PUB producer
+        run: cargo test -p chaptera-server --test export_executor_producer -- --ignored --nocapture
