@@ -77,6 +77,8 @@ def main() -> int:
                 "authz_documents",
                 "authz_principal_grants",
                 "authz_audit_events",
+                "workspaces",
+                "workspace_memberships",
             }:
                 if required not in tables:
                     raise SystemExit(f"migration chain did not materialize {required}")
