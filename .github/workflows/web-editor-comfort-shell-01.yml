@@ -1,0 +1,25 @@
+name: Web Editor Comfort Shell V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/editor-shell-v1.mjs"
+      - "apps/web/editor-comfort-shell-v1.mjs"
+      - "apps/web/editor-comfort-shell-v1.test.mjs"
+      - ".github/workflows/web-editor-comfort-shell-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comfort-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test physical comfort-shell integration
+        run: node --test apps/web/editor-comfort-shell-v1.test.mjs
