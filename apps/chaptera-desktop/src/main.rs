@@ -414,11 +414,8 @@ fn main() -> eframe::Result<()> {
 
 fn smoke_check(path: &Path) -> Result<(), String> {
     let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    let visual = pub_viewer::open_mature_0x2c_geometry(
-        &bytes,
-        pub_viewer::viewer_geometry_environment_v0_1(),
-    )
-    .map_err(|error| format!("open {}: {error:#}", path.display()))?;
+    let visual = diagnostic_sweep::open_for_product(&bytes)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
 
     if visual.document.pages.is_empty() {
         return Err("document has no Viewer pages".to_owned());
@@ -681,7 +678,7 @@ impl ViewerApp {
                 } else {
                     ui.heading("Failure groups");
                     egui::ScrollArea::vertical()
-                        .max_height(420.0)
+                        .max_height(320.0)
                         .show(ui, |ui| {
                             for group in &report.failure_groups {
                                 egui::CollapsingHeader::new(format!(
@@ -714,6 +711,32 @@ impl ViewerApp {
                             }
                         });
                 }
+
+                ui.separator();
+                ui.collapsing(format!("Per-file results ({})", report.files.len()), |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            for file in &report.files {
+                                let verdict = if file.opened { "OPEN" } else { "FAIL" };
+                                let detail = file
+                                    .failure_group_id
+                                    .as_deref()
+                                    .or(file.format_version.as_deref())
+                                    .or(file.format.as_deref())
+                                    .unwrap_or("");
+                                ui.monospace(format!(
+                                    "{verdict:4}  d={}  {:>10}  {}  {}",
+                                    file.depth,
+                                    file.byte_len
+                                        .map(|value| value.to_string())
+                                        .unwrap_or_else(|| "-".to_owned()),
+                                    file.relative_path,
+                                    detail
+                                ));
+                            }
+                        });
+                });
             });
         self.diagnostic_sweep_open = open;
     }
@@ -785,10 +808,7 @@ impl ViewerApp {
             }
         };
 
-        match pub_viewer::open_mature_0x2c_geometry(
-            &bytes,
-            pub_viewer::viewer_geometry_environment_v0_1(),
-        ) {
+        match diagnostic_sweep::open_for_product(&bytes) {
             Ok(visual) => {
                 let supporter_status = match visual.document.fidelity_status() {
                     ViewerFidelityStatus::Supported => supporter::OpenStatus::Supported,
@@ -3484,10 +3504,12 @@ mod tests {
     }
 
     #[test]
-    fn path_loading_calls_geometry_boundary() {
+    fn path_loading_uses_shared_product_open_boundary() {
         let source = include_str!("main.rs");
-        assert!(source.contains("open_mature_0x2c_geometry"));
-        assert!(source.contains("viewer_geometry_environment_v0_1"));
+        assert!(source.contains("diagnostic_sweep::open_for_product(&bytes)"));
+        let sweep = include_str!("diagnostic_sweep.rs");
+        assert!(sweep.contains("open_mature_0x2c_geometry"));
+        assert!(sweep.contains("viewer_geometry_environment_v0_1"));
     }
 
     #[test]
