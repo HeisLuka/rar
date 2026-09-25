@@ -68,8 +68,23 @@ def main() -> int:
         if "User=root" in unit:
             raise AssertionError(f"{label}: root service identity is forbidden")
 
-    require(web, "ExecStart=/opt/chaptera/current/chaptera serve", "web")
-    require(worker, "ExecStart=/opt/chaptera/current/chaptera worker", "worker")
+    require(
+        web,
+        "ExecStart=/opt/chaptera/current/chaptera --config /etc/chaptera/chaptera.toml serve",
+        "web",
+    )
+    require(
+        worker,
+        "ExecStart=/opt/chaptera/current/chaptera --config /etc/chaptera/chaptera.toml worker",
+        "worker",
+    )
+    require(
+        web,
+        "LoadCredential=oidc_client_secret:/etc/chaptera/credentials/oidc_client_secret",
+        "web",
+    )
+    if "LoadCredential=oidc_client_secret" in worker:
+        raise AssertionError("worker must not receive the web/OIDC client secret")
     require(worker, "MemoryHigh=384M", "worker")
     require(worker, "MemoryMax=640M", "worker")
 
@@ -82,6 +97,9 @@ def main() -> int:
     require(config, "heavy_concurrency = 1", "config")
     require(config, 'journal_mode = "wal"', "config")
     require(config, 'synchronous = "full"', "config")
+    require(config, '[auth.oidc]', "config")
+    require(config, 'source = "systemd"', "config")
+    require(config, 'name = "oidc_client_secret"', "config")
     if "0.0.0.0:8080" in config or "[::]:8080" in config:
         raise AssertionError("example config exposes the app listener publicly")
 
@@ -112,6 +130,9 @@ def main() -> int:
             "stream_upload_bounded": True,
             "ordinary_api_bounded": True,
             "heavy_worker_concurrency": 1,
+            "typed_production_config": True,
+            "web_oidc_secret_via_systemd_credential": True,
+            "worker_has_no_oidc_credential": True,
         },
         "files": {
             name: {

@@ -11,9 +11,9 @@ Group=chaptera
 Slice=chaptera.slice
 WorkingDirectory=/var/lib/chaptera
 
-# CLOUD-ASYNC-RUNTIME-01 owns exact worker CLI/config semantics.
-ExecStartPre=/opt/chaptera/current/chaptera doctor
-ExecStart=/opt/chaptera/current/chaptera worker
+# CLOUD-ASYNC-RUNTIME-01 owns exact worker execution semantics.
+# The worker parses the same typed config but is intentionally not given AuthN secrets.
+ExecStart=/opt/chaptera/current/chaptera --config /etc/chaptera/chaptera.toml worker
 
 Restart=on-failure
 RestartSec=3s

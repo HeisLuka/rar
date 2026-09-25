@@ -8,6 +8,10 @@ on:
       - "docs/cloud-server-runtime-v1.md"
       - "tools/run_cloud_server_runtime_receipt.py"
       - "tools/run_cloud_migration_receipt.py"
+      - "tools/run_cloud_config_receipt.py"
+      - "deploy/config/**"
+      - "deploy/systemd/chaptera-web.service"
+      - "deploy/systemd/chaptera-worker.service"
       - ".github/workflows/cloud-server-runtime.yml"
   workflow_dispatch:
 
@@ -127,4 +131,19 @@ jobs:
         with:
           name: cloud-migration-01-receipt
           path: target/cloud-migration-01/
+          if-no-files-found: error
+
+      - name: Exercise typed production config and secret boundary
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: >-
+          python tools/run_cloud_config_receipt.py
+          --binary ./target/debug/chaptera
+          --example-config deploy/config/chaptera.prod.example.toml
+          --out target/cloud-secrets-config-01
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-secrets-config-01-receipt
+          path: target/cloud-secrets-config-01/receipt.json
           if-no-files-found: error

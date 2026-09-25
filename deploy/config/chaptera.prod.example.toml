@@ -1,7 +1,6 @@
-# Illustrative public-safe shape only.
-# CLOUD-SECRETS-CONFIG-01 owns the final typed keys and secret injection model.
-# Never place credentials, signing keys, session secrets, presigned URLs,
-# customer data, or private object-store tokens in this file.
+# Canonical public-safe production shape.
+# Secret *references* are allowed here; secret values are not.
+# systemd credentials are exposed to the service through CREDENTIALS_DIRECTORY.
 
 environment = "prod"
 listen = "127.0.0.1:8080"
@@ -26,3 +25,24 @@ private_namespace = "chaptera-private"
 [limits]
 worker_spool_bytes = 4294967296
 min_free_disk_bytes = 1073741824
+
+[auth.oidc]
+issuer = "https://id.example.invalid"
+client_id = "chaptera-cloud"
+redirect_path = "/v1/auth/callback"
+client_secret = { source = "systemd", name = "oidc_client_secret" }
+
+# Optional short-lived application key ring. Enable only when an owning
+# protocol actually uses application-managed symmetric keys.
+#
+# [key_ring]
+# active = "grant-2026-09"
+# previous = ["grant-2026-08"]
+#
+# [[key_ring.keys]]
+# id = "grant-2026-09"
+# secret = { source = "systemd", name = "grant_key_2026_09" }
+#
+# [[key_ring.keys]]
+# id = "grant-2026-08"
+# secret = { source = "systemd", name = "grant_key_2026_08" }
