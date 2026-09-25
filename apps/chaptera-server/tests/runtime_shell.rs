@@ -75,6 +75,42 @@ async fn injected_required_dependencies_make_runtime_ready() {
 }
 
 #[tokio::test]
+async fn local_console_is_not_mounted_on_standard_router() {
+    let response = serve::router(ready_state())
+        .oneshot(
+            Request::builder()
+                .uri("/__chaptera")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn local_console_is_mounted_only_for_local_router() {
+    let response = serve::router_with_edge_auth_and_console(
+        ready_state(),
+        chaptera_server::edge::EdgePolicy::development(),
+        None,
+        true,
+    )
+    .oneshot(
+        Request::builder()
+            .uri("/__chaptera")
+            .header("host", "127.0.0.1:8080")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn loopback_server_starts_answers_live_and_shuts_down() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
