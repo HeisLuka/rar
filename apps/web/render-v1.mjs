@@ -5,6 +5,9 @@ const FORBIDDEN_SOURCE_KEYS = new Set([
 ]);
 
 export const RENDERER_KINDS = Object.freeze(["svg", "canvas2d", "webgl2-hybrid"]);
+export const DEFAULT_RENDERER_KIND = "canvas2d";
+export const FALLBACK_RENDERER_KIND = "svg";
+export const OPTIONAL_ACCELERATED_RENDERER_KIND = "webgl2-hybrid";
 
 function finite(value, label) {
   if (!Number.isFinite(value)) throw new TypeError(label + " must be finite");
