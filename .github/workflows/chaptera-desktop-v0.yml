@@ -1,0 +1,59 @@
+name: Chaptera Desktop V0
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "apps/chaptera-desktop/**"
+      - "crates/chaptera-scene-instance/**"
+      - "vendor/producer-a/**"
+      - ".github/workflows/chaptera-desktop-v0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Check desktop target
+        run: cargo check -p chaptera-desktop
+
+      - name: Test current SceneInstance admission
+        run: cargo test -p chaptera-scene-instance
+
+      - name: Build Chaptera desktop
+        run: cargo build --release -p chaptera-desktop
+
+      - name: Record binary hash
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash target/release/chaptera.exe -Algorithm SHA256).Hash.ToLower()
+          $length = (Get-Item target/release/chaptera.exe).Length
+          @{
+            schema = "chaptera.desktop-build-receipt.v1"
+            commit = "${{ github.sha }}"
+            target = "windows-x86_64"
+            binary = "chaptera.exe"
+            sha256 = $hash
+            byte_len = $length
+            editor_controls = $true
+            native_save_pub = $false
+          } | ConvertTo-Json | Set-Content target/release/chaptera.build.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-desktop-v0-${{ github.run_id }}
+          path: |
+            target/release/chaptera.exe
+            target/release/chaptera.build.json
+          if-no-files-found: error
