@@ -161,9 +161,23 @@ impl SqliteBlobGcLedger {
             ));
         }
 
+        let path = path.as_ref();
+        if path.as_os_str().is_empty() {
+            return Err(BlobGcError::new(
+                "invalid_gc_database_path",
+                "GC ledger database path must be non-empty",
+            ));
+        }
+        if !path.exists() {
+            return Err(BlobGcError::new(
+                "gc_database_missing",
+                "GC ledger database must be created by chaptera migrate up before worker startup",
+            ));
+        }
+
         let options = SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(true)
+            .create_if_missing(false)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
@@ -177,7 +191,8 @@ impl SqliteBlobGcLedger {
             .map_err(sqlite_error)?;
 
         let ledger = Self { pool };
-        ledger.bootstrap().await?;
+        ledger.require_schema().await?;
+        ledger.verify_profile().await?;
         Ok(ledger)
     }
 
@@ -185,46 +200,85 @@ impl SqliteBlobGcLedger {
         self.pool.close().await;
     }
 
-    async fn bootstrap(&self) -> Result<(), BlobGcError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS gc_candidates (
-              candidate_id          BLOB PRIMARY KEY,
-              tenant_id             BLOB NOT NULL,
-              object_kind           TEXT NOT NULL CHECK (
-                object_kind IN (
-                  'physical_blob','quarantine_upload','temp_object',
-                  'derived_artifact','export_artifact'
-                )
-              ),
-              object_id             BLOB NOT NULL,
-              reason_code           TEXT NOT NULL,
-              not_before_ms         INTEGER NOT NULL,
-              observed_generation   TEXT,
-              state                 TEXT NOT NULL CHECK (
-                state IN ('pending','running','completed','cancelled')
-              ),
-              attempt               INTEGER NOT NULL CHECK (attempt >= 0),
-              lease_owner           TEXT,
-              lease_generation      INTEGER NOT NULL CHECK (lease_generation >= 0),
-              lease_expires_at_ms   INTEGER,
-              last_error_code       TEXT,
-              created_at_ms         INTEGER NOT NULL,
-              completed_at_ms       INTEGER,
-              UNIQUE (tenant_id, object_kind, object_id, reason_code)
+    async fn require_schema(&self) -> Result<(), BlobGcError> {
+        for table in ["chaptera_schema_migrations", "gc_candidates"] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
             )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(sqlite_error)?;
+            .bind(table)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+            if exists != 1 {
+                return Err(BlobGcError::new(
+                    "gc_schema_missing",
+                    format!("required GC table {table} is absent; run chaptera migrate up"),
+                ));
+            }
+        }
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS gc_due ON gc_candidates(state, not_before_ms, lease_expires_at_ms)",
+        let index_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='gc_due'",
         )
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(sqlite_error)?;
+        if index_exists != 1 {
+            return Err(BlobGcError::new(
+                "gc_schema_missing",
+                "required GC index gc_due is absent; run chaptera migrate up",
+            ));
+        }
+
+        let migration: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM chaptera_schema_migrations WHERE version = 4 AND name = 'blob_gc'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
+        if migration != 1 {
+            return Err(BlobGcError::new(
+                "gc_schema_missing",
+                "blob GC migration v4 is not recorded",
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn verify_profile(&self) -> Result<(), BlobGcError> {
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        if !journal_mode.eq_ignore_ascii_case("wal") {
+            return Err(BlobGcError::new(
+                "gc_profile_mismatch",
+                format!("expected WAL journal mode, got {journal_mode}"),
+            ));
+        }
+
+        let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        if synchronous != 2 {
+            return Err(BlobGcError::new(
+                "gc_profile_mismatch",
+                format!("expected synchronous=FULL(2), got {synchronous}"),
+            ));
+        }
+
+        let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        if foreign_keys != 1 {
+            return Err(BlobGcError::new(
+                "gc_profile_mismatch",
+                "foreign_keys pragma is not enabled",
+            ));
+        }
 
         Ok(())
     }
@@ -755,6 +809,8 @@ mod tests {
         },
     };
 
+    use crate::schema_migration::SqliteMigrationRuntime;
+
     use super::*;
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -764,10 +820,35 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("chaptera-gc-{}-{n}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
         let ledger = SqliteBlobGcLedger::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
         (ledger, path)
+    }
+
+    #[tokio::test]
+    async fn unmigrated_open_fails_closed_without_creating_database() {
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-gc-unmigrated-{}-{n}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let error = match SqliteBlobGcLedger::open(&path, 1, Duration::from_secs(2)).await {
+            Ok(ledger) => {
+                ledger.close().await;
+                panic!("unmigrated GC ledger unexpectedly opened")
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "gc_database_missing");
+        assert!(!path.exists());
     }
 
     async fn schedule(
