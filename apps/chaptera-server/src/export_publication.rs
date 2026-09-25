@@ -124,9 +124,9 @@ pub struct ExportPublicationRecordV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExportPublicationOutcomeV1 {
-    Published(ExportPublicationRecordV1),
-    AlreadyPublished(ExportPublicationRecordV1),
+pub enum ExportPublicationPrepareOutcomeV1 {
+    Prepared(ExportPublicationRecordV1),
+    AlreadyPrepared(ExportPublicationRecordV1),
 }
 
 #[derive(Clone)]
@@ -188,11 +188,11 @@ impl SqliteExportPublicationStore {
         self.pool.close().await;
     }
 
-    pub async fn publish(
+    pub async fn prepare(
         &self,
         input: ExportPublicationInputV1,
         created_at_ms: i64,
-    ) -> Result<ExportPublicationOutcomeV1, ExportPublicationError> {
+    ) -> Result<ExportPublicationPrepareOutcomeV1, ExportPublicationError> {
         input.validate()?;
         if created_at_ms < 0 {
             return Err(ExportPublicationError::new(
@@ -243,7 +243,7 @@ impl SqliteExportPublicationStore {
         .await;
 
         match result {
-            Ok(done) if done.rows_affected() == 1 => Ok(ExportPublicationOutcomeV1::Published(
+            Ok(done) if done.rows_affected() == 1 => Ok(ExportPublicationPrepareOutcomeV1::Prepared(
                 ExportPublicationRecordV1 {
                     publication_id,
                     effect_key,
@@ -270,7 +270,7 @@ impl SqliteExportPublicationStore {
                     && existing.effect_key == effect_key
                     && existing.publication_id == publication_id
                 {
-                    Ok(ExportPublicationOutcomeV1::AlreadyPublished(existing))
+                    Ok(ExportPublicationPrepareOutcomeV1::AlreadyPrepared(existing))
                 } else {
                     Err(ExportPublicationError::new(
                         "export_publication_conflict",
@@ -280,6 +280,46 @@ impl SqliteExportPublicationStore {
             }
             Err(error) => Err(sqlite_error(error)),
         }
+    }
+
+    pub async fn get_visible_by_job(
+        &self,
+        tenant_id: &str,
+        job_id: &str,
+    ) -> Result<Option<ExportPublicationRecordV1>, ExportPublicationError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(job_id, "job_id")?;
+        let row = sqlx::query(
+            r#"
+            SELECT
+                p.publication_id,
+                p.effect_key,
+                p.tenant_id,
+                p.job_id,
+                p.document_id,
+                p.exact_revision_id,
+                p.canonical_revision_id,
+                p.target_profile,
+                p.layout_environment_id,
+                p.fence_id,
+                p.artifact_binding_id,
+                p.artifact_content_hash,
+                p.loss_binding_id,
+                p.loss_report_hash,
+                p.created_at_ms
+            FROM export_publications p
+            INNER JOIN job_effects e
+              ON e.job_id = p.job_id
+             AND e.effect_key = p.effect_key
+            WHERE p.tenant_id=? AND p.job_id=?
+            "#,
+        )
+        .bind(tenant_id.as_bytes())
+        .bind(job_id.as_bytes())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
+        row.map(decode_record).transpose()
     }
 
     pub async fn get_by_job(
@@ -544,16 +584,16 @@ mod tests {
         let db = path("retry");
         let store = store(&db).await;
         let first_input = input('a', 'b');
-        let first = store.publish(first_input.clone(), 100).await.unwrap();
-        let ExportPublicationOutcomeV1::Published(first) = first else {
+        let first = store.prepare(first_input.clone(), 100).await.unwrap();
+        let ExportPublicationPrepareOutcomeV1::Prepared(first) = first else {
             panic!("first publish must create publication")
         };
 
         let mut retry_input = first_input;
         retry_input.artifact_binding_id = "binding-artifact-retry".into();
         retry_input.loss_binding_id = "binding-loss-retry".into();
-        let retry = store.publish(retry_input, 200).await.unwrap();
-        let ExportPublicationOutcomeV1::AlreadyPublished(retry) = retry else {
+        let retry = store.prepare(retry_input, 200).await.unwrap();
+        let ExportPublicationPrepareOutcomeV1::AlreadyPrepared(retry) = retry else {
             panic!("exact retry must resolve prior publication")
         };
         assert_eq!(retry.effect_key, first.effect_key);
@@ -568,10 +608,10 @@ mod tests {
     async fn changed_artifact_or_loss_under_same_job_fails_closed() {
         let db = path("conflict");
         let store = store(&db).await;
-        store.publish(input('a', 'b'), 100).await.unwrap();
+        store.prepare(input('a', 'b'), 100).await.unwrap();
 
         for changed in [input('d', 'b'), input('a', 'e')] {
-            let error = store.publish(changed, 200).await.unwrap_err();
+            let error = store.prepare(changed, 200).await.unwrap_err();
             assert_eq!(error.code, "export_publication_conflict");
         }
 
