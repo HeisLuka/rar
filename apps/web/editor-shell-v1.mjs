@@ -48,6 +48,7 @@ export class BrowserEditorShellV1 {
     this.commitRequests = 0;
     this.pointerMoveCount = 0;
     this.lastCommitResult = null;
+    this.pointerInteractionEnabled = true;
     this._bound = false;
     this._handlers = null;
   }
@@ -71,6 +72,7 @@ export class BrowserEditorShellV1 {
   bindPointerEvents() {
     if (this._bound) return;
     const down = (event) => {
+      if (!this.pointerInteractionEnabled || event.defaultPrevented) return;
       if (event.button !== 0) return;
       const point = this._hostPoint(event);
       const state = this.pointerDownCss(point.x, point.y);
@@ -79,11 +81,13 @@ export class BrowserEditorShellV1 {
       }
     };
     const move = (event) => {
+      if (!this.pointerInteractionEnabled || event.defaultPrevented) return;
       if (!this.gesture) return;
       const point = this._hostPoint(event);
       this.pointerMoveCss(point.x, point.y);
     };
     const up = async (event) => {
+      if (!this.pointerInteractionEnabled || event.defaultPrevented) return;
       if (!this.gesture) return;
       const point = this._hostPoint(event);
       try {
@@ -192,6 +196,58 @@ export class BrowserEditorShellV1 {
     this._renderOverlay();
     this._emitState("gesture_cancelled");
     return true;
+  }
+
+  setPointerInteractionEnabled(enabled) {
+    this.pointerInteractionEnabled = enabled === true;
+    if (!this.pointerInteractionEnabled && this.gesture) this.cancelGesture();
+    this._emitState(this.pointerInteractionEnabled ? "pointer_interaction_enabled" : "pointer_interaction_disabled");
+    return this.pointerInteractionEnabled;
+  }
+
+  setView(view) {
+    this.view = normalizeView(view);
+    if (this.renderer) {
+      this.renderer.setView(this.view);
+      this._renderOverlay();
+    }
+    this._emitState("view_changed");
+    return clone(this.view);
+  }
+
+  currentView() {
+    return clone(this.view);
+  }
+
+  pageCanonicalGeometry(pageId = null) {
+    this._requireScene();
+    const page = pageId
+      ? this.snapshot.pages.find((item) => item.page_id === pageId)
+      : this.snapshot.pages[0];
+    if (!page) return null;
+    return {
+      page_id: page.page_id,
+      width_emu: page.width_emu,
+      height_emu: page.height_emu,
+    };
+  }
+
+  selectedCanonicalBounds() {
+    this._requireScene();
+    const nodeId = this.selection.nodeId;
+    if (!nodeId) return null;
+    const node = this.snapshot.nodes.find((item) => item.node_id === nodeId);
+    return node ? clone(node.bounds) : null;
+  }
+
+  screenToDocumentCss(xCss, yCss) {
+    this._requireScene();
+    const page = this._pageAt(xCss, yCss);
+    if (!page) return null;
+    return {
+      page_id: page.page_id,
+      point: this._documentPoint(page, xCss, yCss),
+    };
   }
 
   nodeScreenBounds(nodeId) {
