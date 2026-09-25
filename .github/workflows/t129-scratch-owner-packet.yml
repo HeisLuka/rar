@@ -1,0 +1,55 @@
+name: T129 Scratch owner packet self-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/t129-scratch-owner-packet.yml'
+      - 'tools/research-runner/experiments/scratch-owner-01.packet.json'
+      - 'tools/research-runner/operations/scratch_owner_01.ps1'
+      - 'tools/windows/pub-runtime/SCRATCH-OWNER-01.md'
+  push:
+    branches:
+      - research/scratch-owner-01
+    paths:
+      - '.github/workflows/t129-scratch-owner-packet.yml'
+      - 'tools/research-runner/experiments/scratch-owner-01.packet.json'
+      - 'tools/research-runner/operations/scratch_owner_01.ps1'
+      - 'tools/windows/pub-runtime/SCRATCH-OWNER-01.md'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate experiment packet
+        run: |
+          python3 tools/research-runner/validate_packet.py \
+            --packet tools/research-runner/experiments/scratch-owner-01.packet.json \
+            --expected-environment publisher-2019
+      - name: Parse native PowerShell without executing Publisher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/research-runner/operations/scratch_owner_01.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            throw 'PowerShell parse failed: scratch_owner_01.ps1'
+          }
+      - name: Enforce bounded owner-domain contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'SCRATCH_OWNER_PAGE' tools/research-runner/operations/scratch_owner_01.ps1
+          grep -F 'SCRATCH_OWNER_SCRATCH' tools/research-runner/operations/scratch_owner_01.ps1
+          grep -F '$document.ScratchArea' tools/research-runner/operations/scratch_owner_01.ps1
+          grep -F 'raw_owner_semantics_claimed = $false' tools/research-runner/operations/scratch_owner_01.ps1
+          grep -F 'private\\scratch-owner-01' tools/research-runner/operations/scratch_owner_01.ps1
