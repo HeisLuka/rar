@@ -62,6 +62,13 @@ def valid_receipt():
             "viewer_origin_mapping_hash": STABLE_ORIGINS,
             "adapter_origin_mapping_hash": STABLE_ORIGINS,
         },
+        "projection_context_state": {
+            "projection_context_hash": "sha256:" + "1" * 64,
+            "master_relation_count": 0,
+            "cmo_relation_count": 0,
+            "carried_outside_editor_project": True,
+            "cmo_layout_consumed": False,
+        },
         "invariants": {
             "source_reparse_after_edit_count": 0,
             "viewer_private_mapping_used": False,
@@ -69,6 +76,8 @@ def valid_receipt():
             "second_geometry_model_created": False,
             "context_extension_seam_present": True,
             "graph_only_wrapper_is_empty_context": True,
+            "projection_context_carried_outside_editor_project": True,
+            "unsupported_cmo_layout_deferred": True,
             "raw_source_bytes_emitted": False,
         },
     }
