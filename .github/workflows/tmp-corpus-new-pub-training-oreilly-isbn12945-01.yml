@@ -1,0 +1,96 @@
+name: TEMP OReilly ISBN 9780735612945 Wayback census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-oreilly-isbn12945-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Enumerate exact ISBN-linked historical carrier routes
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re,time
+          from urllib.parse import urlencode
+          from urllib.request import Request,urlopen
+          from pathlib import Path
+
+          UA='rar-pub-training-oreilly-isbn12945/1.0'
+          prefixes=[
+            'examples.oreilly.com/9780735612945/',
+            'examples.oreilly.com/0735612943/',
+          ]
+          rows=[]; errors=[]
+          for prefix in prefixes:
+              params=[
+                ('url',prefix),('matchType','prefix'),('output','json'),
+                ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                ('filter','statuscode:200'),('collapse','digest'),('limit','50000'),('gzip','false')
+              ]
+              url='https://web.archive.org/cdx/search/cdx?'+urlencode(params)
+              try:
+                  req=Request(url,headers={'User-Agent':UA,'Accept':'application/json'})
+                  with urlopen(req,timeout=90) as r:
+                      data=json.load(r)
+                  if data:
+                      hdr=data[0]
+                      for x in data[1:]:
+                          d={str(k):str(v) for k,v in zip(hdr,x)}
+                          d['prefix']=prefix
+                          rows.append(d)
+              except Exception as e:
+                  errors.append({'prefix':prefix,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(1)
+
+          carrier_re=re.compile(r'(?:\.pub|\.zip|\.cab|\.exe|\.msi|\.iso|\.img|\.7z|\.rar)(?:$|[?#])',re.I)
+          exact_re=re.compile(r'(BusinessCard\.pub|SpotColor2?\.pub|ProcessColor\.pub|PrintDoc[12]\.pub)',re.I)
+          likely=[r for r in rows if carrier_re.search(r.get('original','')) or exact_re.search(r.get('original',''))]
+          # keep all rows too: directory index / html may expose filenames
+          summary={
+            'schema':'chaptera.corpus-training-oreilly-isbn12945-wayback.v1',
+            'source_safe':True,
+            'raw_payload_retained':False,
+            'isbn10':'0735612943','isbn13':'9780735612945',
+            'prefixes':prefixes,
+            'row_count':len(rows),
+            'likely_carrier_count':len(likely),
+            'likely_carriers':likely,
+            'errors':errors,
+            'guardrail':'Exact ISBN-linked archive route is provenance evidence only; recovered file writer/version must be classified from bytes.'
+          }
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/all_rows.json').write_text(json.dumps(rows,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          print('--- all rows ---')
+          for r in rows:
+              print(r.get('timestamp',''),r.get('original',''),r.get('mimetype',''),r.get('length',''))
+          PY
+
+      - name: Source-safe artifact guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected raw payload leaked into locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-oreilly-isbn12945-wayback-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
