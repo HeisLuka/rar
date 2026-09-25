@@ -247,7 +247,10 @@ impl ExportPublishAuthorizer for CountingAuthorizer {
         payload: &'a ExportJobPayloadV1,
     ) -> ExportPublishAuthFuture<'a> {
         Box::pin(async move {
-            if job.job_kind != JobKind::Export || job.tenant_id != payload.tenant_id {
+            if job.job_kind != JobKind::Export
+                || job.tenant_id != payload.tenant_id
+                || payload.requesting_principal_id != "principal:fixture"
+            {
                 return Err(ExportExecutorError::new(
                     "export_publish_unauthorized",
                     "test authorization boundary rejected mismatched job identity",
@@ -333,6 +336,7 @@ fn exact_edited_fixture_state() -> (ExactRevisionMaterializedState, ExportJobPay
         schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.to_owned(),
         tenant_id: "tenant:fixture".to_owned(),
         document_id: "document:fixture".to_owned(),
+        requesting_principal_id: "principal:fixture".to_owned(),
         exact_revision_id: service_revision,
         canonical_authoring_revision_id: canonical_revision,
         target_profile: IDML_BOUNDED_EDITABLE_PROFILE.to_owned(),
