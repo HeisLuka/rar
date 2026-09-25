@@ -11,7 +11,7 @@
   },
   "vmx_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "environment_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  "environment_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "environment_fingerprint": "ac470ff16c69eeec6607e7ef1d358502c3232456421a76be4b9103cb251d1c21",
   "vmware": {
     "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "vmware_vmx_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
