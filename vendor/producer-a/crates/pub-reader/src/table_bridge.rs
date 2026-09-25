@@ -714,7 +714,7 @@ fn scan_table_tail_scalars(
             0x48 => {
                 position = checked_skip(position, 24, end, id, wire_type)?;
             }
-            0x80 | 0x82 | 0x88 | 0x8A | 0x90 | 0x98 | 0xA0 | 0xC0 => {
+            0x80 | 0x88 | 0x90 | 0x98 | 0xA0 | 0xC0 => {
                 if end - position < 4 {
                     bail!("truncated TABLE tail variable field 0x{id:02X} length at {position}");
                 }
@@ -752,7 +752,7 @@ fn checked_skip(
     position: usize,
     length: usize,
     end: usize,
-    id: u8,
+    id: u16,
     wire_type: u8,
 ) -> Result<usize> {
     position
