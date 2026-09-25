@@ -6,6 +6,13 @@ on:
       - "apps/chaptera-server/src/source_ingress.rs"
       - "apps/chaptera-server/src/source_ingress_async.rs"
       - "apps/chaptera-server/src/source_ingress_sqlite.rs"
+      - "apps/chaptera-server/src/source_ingress_http.rs"
+      - "apps/chaptera-server/src/auth_http.rs"
+      - "apps/chaptera-server/src/config.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/serve.rs"
+      - "apps/chaptera-server/src/upload_admission.rs"
+      - "apps/chaptera-server/src/workspace_context.rs"
       - "apps/chaptera-server/src/source_authority.rs"
       - "apps/chaptera-server/src/blob_store.rs"
       - "apps/chaptera-server/src/lib.rs"
@@ -30,5 +37,9 @@ jobs:
         run: cargo fmt --package chaptera-server -- --check
       - name: Run Chaptera server clippy
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Run focused SourceIngress HTTP and router-mount tests
+        run: |
+          cargo test -p chaptera-server source_ingress_http::tests::
+          cargo test -p chaptera-server --test runtime_shell product_router_is_merged_under_the_same_edge_boundary
       - name: Run Chaptera server tests
         run: cargo test -p chaptera-server
