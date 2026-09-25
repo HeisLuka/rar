@@ -426,11 +426,22 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
                 && entry.font_generation == font.generation
         }) {
             self.metrics.hits += 1;
+            let device_generation = self.device_generation;
+            let atlas_generation = self.atlas.generation;
+            let rasterizer_version = self.rasterizer_version;
             let entry = self.entries.get_mut(&key).expect("checked above");
             entry.last_touch = self.touch_seq;
-            return Ok(GlyphRequestResult::Ready {
-                binding: self.binding(&key, entry),
-            });
+            let binding = GlyphBinding {
+                key: key.clone(),
+                residency_generation: entry.residency_generation,
+                font_generation: entry.font_generation,
+                device_generation,
+                atlas_generation,
+                atlas_page: entry.atlas_page.expect("resident entry page"),
+                atlas_slot: entry.atlas_slot.expect("resident entry slot"),
+                rasterizer_version,
+            };
+            return Ok(GlyphRequestResult::Ready { binding });
         }
 
         self.metrics.misses += 1;
