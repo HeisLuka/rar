@@ -536,7 +536,9 @@ async fn known_schema_tables_present(
             'authz_principal_grants',
             'authz_audit_events',
             'projects',
-            'documents'
+            'documents',
+            'workspaces',
+            'workspace_memberships'
           )
         "#,
     )
