@@ -31,7 +31,7 @@ jobs:
         run: cargo test -p pub-layout
       - name: Run 1k 10k 50k projection-index benchmark
         env:
-          LAYOUT_PROJECTION_INDEX_RECEIPT: target/layout-projection-index/benchmark.json
+          LAYOUT_PROJECTION_INDEX_RECEIPT: ${{ github.workspace }}/vendor/producer-a/target/layout-projection-index/benchmark.json
         run: cargo test -p pub-layout --test projection_index_benchmark -- --ignored --nocapture
       - uses: actions/upload-artifact@v4
         with:
