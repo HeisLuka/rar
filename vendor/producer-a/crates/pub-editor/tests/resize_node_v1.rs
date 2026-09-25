@@ -1,5 +1,6 @@
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
+    EDITOR_PROJECT_VERSION_V0_7,
     EditOperation, EditorError, LengthEmu, NodeId, RectEmu,
 };
 
@@ -17,8 +18,9 @@ fn rect(x: i64, y: i64, width: i64, height: i64) -> RectEmu {
 }
 
 #[test]
-fn current_project_schema_advances_to_v0_6_without_erasing_v0_5() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_6);
+fn current_project_schema_advances_to_v0_7_without_erasing_v0_5_or_v0_6() {
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_7);
+    assert_eq!(EDITOR_PROJECT_VERSION_V0_7, "pub-editor-v0.7");
     assert_eq!(EDITOR_PROJECT_VERSION_V0_6, "pub-editor-v0.6");
     assert_eq!(EDITOR_PROJECT_VERSION_V0_5, "pub-editor-v0.5");
 }
