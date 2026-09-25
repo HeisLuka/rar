@@ -173,6 +173,47 @@ async fn changed_retry_and_cross_tenant_alias_fail_closed() {
 }
 
 #[tokio::test]
+async fn binding_conflict_rolls_back_new_physical_without_orphan_metadata() {
+    let (repo, path) = migrated_repo("rollback").await;
+
+    let first_physical = physical("tenant-a", "blob-1", 'd');
+    let first_binding = binding("tenant-a", "binding-1", &first_physical);
+    repo.commit_physical_and_binding(first_physical.clone(), first_binding.clone())
+        .await
+        .unwrap();
+
+    let second_physical = physical("tenant-a", "blob-2", 'e');
+    let conflicting_binding = binding("tenant-a", "binding-1", &second_physical);
+    let error = repo
+        .commit_physical_and_binding(second_physical.clone(), conflicting_binding)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "binding_collision");
+
+    assert_eq!(
+        repo.get_binding("binding-1").await.unwrap(),
+        Some(first_binding)
+    );
+    assert!(
+        repo.get_physical("blob-2").await.unwrap().is_none(),
+        "failed binding commit must roll back the newly inserted physical metadata"
+    );
+    assert!(
+        repo.find_physical_by_content(
+            "tenant-a",
+            &second_physical.content_sha256,
+            second_physical.byte_len,
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+
+    repo.close().await;
+    cleanup(&path);
+}
+
+#[tokio::test]
 async fn generation_fenced_delete_is_idempotent() {
     let (repo, path) = migrated_repo("delete").await;
     let p = physical("tenant-a", "blob-1", 'c');
