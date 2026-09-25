@@ -30,4 +30,4 @@ jobs:
       - name: Show generated JS size
         shell: bash
         run: |
-          wc -c src/PendingState.res src/PendingState.res.mjs
+          wc -c src/*.res src/*.res.mjs
