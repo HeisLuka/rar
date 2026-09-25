@@ -41,6 +41,7 @@ def _legacy_diff_render_scenes(base,target):
         "upsert_nodes":upserts,
         "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
         "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "path_deltas": None if base["tables"].get("paths",[])==target["tables"].get("paths",[]) else copy.deepcopy(target["tables"].get("paths",[])),
         "effect_deltas": {
             "effects": None,
             "effect_groups": None,
