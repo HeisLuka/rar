@@ -6,6 +6,7 @@
 //! historical repositories.
 
 mod create_shape;
+mod create_textbox;
 mod fragment;
 mod projection_context;
 mod rotate_quarter;
@@ -23,6 +24,11 @@ pub use shape_paint::{
 pub use shape_paint_op::{
     SetFillV1, SetStrokeV1, ShapePaintOperationError, ShapePaintOperationV1,
     apply_shape_paint_operation_v1, inverse_shape_paint_operation_v1,
+};
+
+pub use create_textbox::{
+    AuthoredTextFrameV1, AuthoringStorySeedV1, CreateTextBoxError, CreateTextBoxPlanV1,
+    CreateTextBoxV1, TextBoxProvenanceV1, create_textbox_plan_v1,
 };
 
 pub use create_shape::{
