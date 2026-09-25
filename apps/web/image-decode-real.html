@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Browser Image Decode V1</title>
+<script type="module">
+  import { BrowserImageDecodeAdapterV1 } from "./image-decode-v1.mjs";
+
+  async function fetchBytes(path) {
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) throw new Error("fixture fetch failed: " + path);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  async function fetchJson(path) {
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) throw new Error("reference fetch failed: " + path);
+    return response.json();
+  }
+
+  function workerDecode(identity, reference, bytes) {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker("./image-decode-worker-v1.mjs", { type: "module" });
+      const timer = setTimeout(() => {
+        worker.terminate();
+        reject(new Error("worker decode timed out"));
+      }, 15000);
+      worker.onmessage = (event) => {
+        clearTimeout(timer);
+        worker.terminate();
+        if (!event.data.ok) reject(new Error("worker decode failed: " + JSON.stringify(event.data)));
+        else resolve(event.data);
+      };
+      worker.onerror = (event) => {
+        clearTimeout(timer);
+        worker.terminate();
+        reject(new Error(event.message));
+      };
+      const copy = bytes.slice();
+      worker.postMessage({ identity, reference, bytes: copy.buffer }, [copy.buffer]);
+    });
+  }
+
+  function alphaReadback(bitmap) {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true, colorSpace: "srgb" });
+    if (!context) throw new Error("2d readback unavailable");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0);
+    const pixel = [...context.getImageData(0, 0, 1, 1).data];
+    return {
+      rgba: pixel,
+      expected_source_rgba: [200, 40, 120, 64],
+      path: "canvas2d_readback_observation",
+      caveat: "canvas readback is an observation after browser compositing; exact claim is bound to explicit decode policy and reference dimensions",
+    };
+  }
+
+  async function runFixture(name, file, mime, referenceFile) {
+    const [bytes, reference] = await Promise.all([fetchBytes(file), fetchJson(referenceFile)]);
+    const identity = {
+      resource_id: "fixture:" + name,
+      derivative_id: "source-exact",
+      content_hash: reference.resource_sha256,
+      mime_type: mime,
+    };
+    const adapter = new BrowserImageDecodeAdapterV1({ runtime_generation: "main-thread-v1" });
+    const result = await adapter.decode(adapter.begin(identity), bytes, reference);
+    if (!result.accepted) throw new Error(name + " main decode failed: " + JSON.stringify(result));
+    const mainReceipt = result.receipt;
+
+    if (mainReceipt.browser_default_decode_used !== false ||
+        mainReceipt.orientation_policy !== "preserve_metadata_do_not_apply" ||
+        mainReceipt.alpha_policy !== "straight_unassociated_at_decode_boundary" ||
+        mainReceipt.color_conversion_policy !== "none" ||
+        mainReceipt.resize_policy !== "no_decode_time_resize") {
+      throw new Error(name + " exact decode policy drift");
+    }
+
+    if (name === "orientation-6") {
+      if (reference.exif_orientation !== 6 || reference.orientation_applied !== false) {
+        throw new Error("reference EXIF orientation contract drift");
+      }
+      if (mainReceipt.decoded_dimensions[0] !== 3 || mainReceipt.decoded_dimensions[1] !== 2) {
+        throw new Error("browser silently applied EXIF orientation");
+      }
+    }
+
+    const observation = name === "alpha" ? alphaReadback(result.handle.bitmap) : null;
+    const worker = await workerDecode(identity, reference, bytes);
+    const comparable = [
+      "resource_sha256", "mime_type", "orientation_policy", "alpha_policy",
+      "color_conversion_policy", "resize_policy", "frame_policy",
+    ];
+    for (const field of comparable) {
+      if (worker.receipt[field] !== mainReceipt[field]) {
+        throw new Error("worker/main decode receipt mismatch: " + field);
+      }
+    }
+    if (JSON.stringify(worker.receipt.decoded_dimensions) !== JSON.stringify(mainReceipt.decoded_dimensions)) {
+      throw new Error("worker/main dimensions mismatch");
+    }
+    if (worker.released !== true) throw new Error("worker did not release ImageBitmap");
+
+    result.handle.close();
+    if (!result.handle.released) throw new Error("main thread did not release ImageBitmap");
+
+    return {
+      name,
+      reference: {
+        resource_sha256: reference.resource_sha256,
+        decoder_id: reference.decoder_id,
+        encoded_dimensions: reference.encoded_dimensions,
+        decoded_dimensions: reference.decoded_dimensions,
+        exif_orientation: reference.exif_orientation,
+        orientation_applied: reference.orientation_applied,
+        alpha_association: reference.alpha_association,
+      },
+      main_thread: mainReceipt,
+      worker: worker.receipt,
+      main_released: true,
+      worker_released: true,
+      readback_observation: observation,
+    };
+  }
+
+  window.runRealImageDecodeProbe = async function() {
+    const alpha = await runFixture(
+      "alpha",
+      "/target/web-image-decode/alpha.png",
+      "image/png",
+      "/target/web-image-decode/alpha.reference.json",
+    );
+    const orientation = await runFixture(
+      "orientation-6",
+      "/target/web-image-decode/orientation-6.jpg",
+      "image/jpeg",
+      "/target/web-image-decode/orientation-6.reference.json",
+    );
+    return {
+      receipt_kind: "chaptera.web-image-decode-real-browser.v1",
+      exact_path: true,
+      default_img_decode_used: false,
+      fixtures: [alpha, orientation],
+    };
+  };
+</script>
