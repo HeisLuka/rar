@@ -150,6 +150,38 @@ except ModuleNotFoundError:
     validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
 
 try:
+    from delete_node_v1 import (
+        execute_delete_node_v1,
+        validate_delete_node_intent_v1,
+        validate_delete_node_operation_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _delete_node_path = pathlib.Path(__file__).with_name("delete_node_v1.py")
+    _delete_node_spec = importlib.util.spec_from_file_location(
+        "chaptera_delete_node_v1",
+        _delete_node_path,
+    )
+    if _delete_node_spec is None or _delete_node_spec.loader is None:
+        raise ImportError("cannot load delete_node_v1 sibling module")
+    _delete_node_module = importlib.util.module_from_spec(_delete_node_spec)
+    sys.modules[_delete_node_spec.name] = _delete_node_module
+    _delete_node_sibling_dir = str(_delete_node_path.parent)
+    _delete_node_added_path = _delete_node_sibling_dir not in sys.path
+    if _delete_node_added_path:
+        sys.path.insert(0, _delete_node_sibling_dir)
+    try:
+        _delete_node_spec.loader.exec_module(_delete_node_module)
+    finally:
+        if _delete_node_added_path:
+            sys.path.remove(_delete_node_sibling_dir)
+    execute_delete_node_v1 = _delete_node_module.execute_delete_node_v1
+    validate_delete_node_intent_v1 = _delete_node_module.validate_delete_node_intent_v1
+    validate_delete_node_operation_v1 = _delete_node_module.validate_delete_node_operation_v1
+
+try:
     from delete_textbox_v1 import (
         validate_delete_textbox_intent_v1,
         validate_delete_textbox_operation_v1,
@@ -1127,13 +1159,28 @@ class RevisionKernel:
     def commit_delete_node(
         self,
         request: dict,
-        executor: AuthoritativeExecutor,
+        executor: AuthoritativeExecutor = execute_delete_node_v1,
         *,
         pre_execute_validator: Optional[Callable[[dict], None]] = None,
     ) -> dict:
+        def bound_executor(base_project: dict, command: dict):
+            operation, resulting_project, consequences = executor(base_project, command)
+            node_id = command["node_id"]
+            page_id = command["expected_parent_id"]
+            shapes = resulting_project.get("shapes")
+            if isinstance(shapes, dict) and node_id in shapes:
+                raise ValueError("DeleteNode resulting project retained target Shape")
+            stacks = resulting_project.get("authored_stacks")
+            lane = stacks.get(page_id) if isinstance(stacks, dict) else None
+            if lane != operation.get("authored_lane_after"):
+                raise ValueError("DeleteNode resulting project differs from canonical authored lane")
+            if isinstance(lane, list) and node_id in lane:
+                raise ValueError("DeleteNode resulting authored lane retained target Shape")
+            return operation, resulting_project, consequences
+
         return self._commit_command(
             request,
-            executor,
+            bound_executor,
             request_validator=self._validate_delete_node_request_shape,
             canonical_validator=self._validate_canonical_delete_node,
             pre_execute_validator=pre_execute_validator,
@@ -2017,54 +2064,11 @@ class RevisionKernel:
     def _validate_delete_node_request_shape(request: dict) -> None:
         if request.get("protocol_version") != "chaptera.delete-node-intent.v1":
             raise ValueError("V1 DeleteNode protocol_version is required")
-        command = request.get("command")
-        allowed = {
-            "kind",
-            "node_id",
-            "expected_state_id",
-            "expected_parent_id",
-            "expected_child_index",
-        }
-        if (
-            not isinstance(command, dict)
-            or command.get("kind") != "delete_node"
-            or set(command) != allowed
-        ):
-            raise ValueError("DeleteNode contains non-intent/authoritative fields")
-        for field in ("node_id", "expected_parent_id"):
-            value = command.get(field)
-            if not isinstance(value, str) or not value:
-                raise ValueError(f"DeleteNode {field} is required")
-        expected_state_id = command.get("expected_state_id")
-        if (
-            not isinstance(expected_state_id, str)
-            or not expected_state_id.startswith("sha256:")
-            or len(expected_state_id) != 71
-            or any(ch not in "0123456789abcdef" for ch in expected_state_id[7:])
-        ):
-            raise ValueError("DeleteNode expected_state_id must be sha256:<lowercase hex>")
-        index = command.get("expected_child_index")
-        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
-            raise ValueError("DeleteNode expected_child_index must be a non-negative integer")
+        validate_delete_node_intent_v1(request.get("command"))
 
     @staticmethod
     def _validate_canonical_delete_node(command: dict, operation: dict) -> None:
-        if operation.get("kind") != "delete_node":
-            raise ValueError("authoritative executor returned non-DeleteNode operation")
-        if operation.get("node_id") != command.get("node_id"):
-            raise ValueError("canonical DeleteNode targets a different node")
-        if operation.get("parent_id") != command.get("expected_parent_id"):
-            raise ValueError("canonical DeleteNode parent differs from expected precondition")
-        if operation.get("child_index") != command.get("expected_child_index"):
-            raise ValueError("canonical DeleteNode child index differs from expected precondition")
-        before_entity = operation.get("before_entity")
-        if not isinstance(before_entity, dict):
-            raise ValueError("authoritative executor must derive canonical before_entity")
-        before_state_id = hash_id(before_entity)
-        if before_state_id != command.get("expected_state_id"):
-            raise ValueError("canonical DeleteNode entity state differs from expected precondition")
-        if operation.get("before_state_id") != before_state_id:
-            raise ValueError("canonical DeleteNode before_state_id is not bound to before_entity")
+        validate_delete_node_operation_v1(command, operation)
 
     @staticmethod
     def _validate_text_frame_columns_state(state: dict, label: str) -> None:
