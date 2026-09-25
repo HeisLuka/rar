@@ -2,13 +2,16 @@ use std::{error::Error, process::ExitCode, time::Duration};
 
 use chaptera_server::{
     auth_runtime::AuthRuntime,
+    authz_runtime::SqliteAuthzAuthority,
+    blob_runtime::BlobStoreRuntime,
     cli::{Cli, Command},
     config::{ChapteraConfig, SecretResolver},
     doctor,
     edge::EdgePolicy,
     jobs::UnconfiguredWorkerRuntime,
+    jobs_runtime::JobsRuntime,
     migrate,
-    runtime_readiness::{ports_with_revision_stream, ports_with_revision_stream_and_authn},
+    runtime_readiness::{ports_with_configured_serve, ports_with_revision_stream},
     schema_migration::SqliteMigrationRuntime,
     serve,
     sqlite_store::SqliteRevisionStore,
@@ -56,8 +59,28 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     let auth_runtime = AuthRuntime::open(&config, &secrets).await?;
                     drop(secrets);
                     let auth_http = auth_runtime.http_state();
-                    let assembled =
-                        ports_with_revision_stream_and_authn(revision_stream, auth_runtime);
+                    let busy_timeout = Duration::from_millis(config.sqlite.busy_timeout_ms);
+                    let authz = SqliteAuthzAuthority::open(
+                        &config.sqlite.path,
+                        config.sqlite.pool_max,
+                        busy_timeout,
+                    )
+                    .await?;
+                    let jobs = JobsRuntime::open_with_authz(
+                        &config.sqlite.path,
+                        config.sqlite.pool_max,
+                        busy_timeout,
+                        authz.clone(),
+                    )
+                    .await?;
+                    let blob_store = BlobStoreRuntime::open(&config).await?;
+                    let assembled = ports_with_configured_serve(
+                        revision_stream,
+                        auth_runtime,
+                        authz,
+                        jobs,
+                        blob_store,
+                    );
                     let state = AppState::new(assembled.ports);
                     serve::run_with_auth(
                         config.runtime_config(),
