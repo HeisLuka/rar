@@ -29,7 +29,9 @@ use pub_idml::{
 };
 pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_model::{
-    ResourceId, SourceDerivedIdInput, StoryFrame, derive_source_canonical_id, validate_story_frames,
+    EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
+    ResourceId, SourceDerivedIdInput, StoryFrame, TableColumnId, TableRowId,
+    derive_source_canonical_id, validate_story_frames,
 };
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
@@ -50,7 +52,8 @@ pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
 pub const EDITOR_PROJECT_VERSION_V0_3: &str = "pub-editor-v0.3";
 pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_5;
+pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_6;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -226,6 +229,8 @@ pub struct EditorProject {
     pub source_hash: Sha256Digest,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<EditorProjectAsset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub table_grids: Vec<EffectiveTableGridV1>,
     pub operations: Vec<EditOperation>,
 }
 
@@ -630,6 +635,8 @@ pub enum EditorProjectError {
     LegacyProjectCarriesResizeOperation {
         index: usize,
     },
+    LegacyProjectCarriesTableGrids,
+    TableGridMismatch,
     MissingAssetBytes {
         sha256: Sha256Digest,
     },
@@ -943,7 +950,10 @@ impl EditorSession {
     }
 
     pub fn project(&self) -> EditorProject {
-        let schema_version = if self
+        let table_grids = effective_table_grids(&self.graph);
+        let schema_version = if !table_grids.is_empty() {
+            EDITOR_PROJECT_VERSION_V0_6
+        } else if self
             .undo
             .iter()
             .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
@@ -969,6 +979,7 @@ impl EditorSession {
             schema_version: schema_version.into(),
             source_hash: self.source_hash,
             assets: self.project_asset_metadata(),
+            table_grids,
             operations: self.undo.clone(),
         }
     }
@@ -1019,6 +1030,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_3
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1049,7 +1061,9 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesGeometryOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+        {
             if let Some(index) = project
                 .operations
                 .iter()
@@ -1057,6 +1071,11 @@ impl EditorSession {
             {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
             }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+            && !project.table_grids.is_empty()
+        {
+            return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
         }
         if project.source_hash != self.source_hash {
             return Err(EditorProjectError::SourceHashMismatch {
@@ -1112,6 +1131,11 @@ impl EditorSession {
             if &actual != expected {
                 return Err(EditorProjectError::OperationMismatch { index });
             }
+        }
+
+        let actual_grids = effective_table_grids(&candidate.graph);
+        if actual_grids != project.table_grids {
+            return Err(EditorProjectError::TableGridMismatch);
         }
 
         *self = candidate;
@@ -2042,6 +2066,97 @@ fn replay_canonical_operation(
             .resize_node_to(*node_id, *after)
             .map_err(|error| EditorProjectError::Operation { index, error }),
     }
+}
+
+
+fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> {
+    let mut grids = Vec::new();
+
+    for (table_id, node) in &graph.nodes {
+        let Some(table) = node.payload.table.as_ref() else {
+            continue;
+        };
+        let Some(simple) = table.simple_table.as_ref() else {
+            continue;
+        };
+
+        let row_extent = table.layout_metrics.as_ref().map(|metrics| metrics.row_pitch);
+        let column_extent = table.layout_metrics.as_ref().map(|metrics| metrics.cell_width);
+
+        let rows = (0..simple.rows)
+            .map(|index| EffectiveTableTrackV1 {
+                id: TableRowId::from_canonical(
+                    derive_source_canonical_id(SourceDerivedIdInput {
+                        source_hash: &graph.source.source_hash,
+                        adapter_id: "pub-rs",
+                        source_object_key: &format!(
+                            "table/{}/row/{index}",
+                            table_id.as_canonical()
+                        ),
+                        semantic_role: "cdm.table_row",
+                    })
+                    .expect("fixed effective table row identity contract"),
+                ),
+                index,
+                extent: row_extent,
+            })
+            .collect::<Vec<_>>();
+
+        let columns = (0..simple.columns)
+            .map(|index| EffectiveTableTrackV1 {
+                id: TableColumnId::from_canonical(
+                    derive_source_canonical_id(SourceDerivedIdInput {
+                        source_hash: &graph.source.source_hash,
+                        adapter_id: "pub-rs",
+                        source_object_key: &format!(
+                            "table/{}/column/{index}",
+                            table_id.as_canonical()
+                        ),
+                        semantic_role: "cdm.table_column",
+                    })
+                    .expect("fixed effective table column identity contract"),
+                ),
+                index,
+                extent: column_extent,
+            })
+            .collect::<Vec<_>>();
+
+        let mut cells = simple
+            .cells
+            .iter()
+            .map(|cell| {
+                let source = table.cells.iter().find(|source| source.id == cell.id);
+                EffectiveTableCellV1 {
+                    id: cell.id,
+                    row_id: rows[usize::try_from(cell.address.row).expect("row u32 fits usize")].id,
+                    column_id: columns
+                        [usize::try_from(cell.address.column).expect("column u32 fits usize")]
+                    .id,
+                    address: cell.address,
+                    row_span: 1,
+                    column_span: 1,
+                    story_id: table.story_id,
+                    utf16_start: source.map(|source| source.utf16_start),
+                    utf16_end: source.map(|source| source.utf16_end),
+                }
+            })
+            .collect::<Vec<_>>();
+        cells.sort_by_key(|cell| (cell.address.row, cell.address.column, cell.id));
+
+        let grid = EffectiveTableGridV1 {
+            version: EFFECTIVE_TABLE_GRID_V1.into(),
+            table_id: *table_id,
+            rows,
+            columns,
+            cells,
+        };
+        grid.validate()
+            .expect("grounded simple table must produce valid EffectiveTableGridV1");
+        grids.push(grid);
+    }
+
+    grids.sort_by_key(|grid| grid.table_id);
+    grids
 }
 
 fn frame_from_payload(
