@@ -3,6 +3,7 @@ members = [
   "apps/chaptera-server",
   "crates/pub-model",
   "crates/chaptera-layout-projection",
+  "crates/chaptera-scene-instance",
   "crates/chaptera-layout-invalidation",
   "crates/pub-master-projection",
   "crates/pub-fixed-flow-adapter",

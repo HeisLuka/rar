@@ -1,0 +1,34 @@
+name: Editor projection instance gate V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/chaptera-scene-instance/**"
+      - "crates/chaptera-layout-projection/**"
+      - "crates/pub-model/src/projection_context.rs"
+      - "crates/pub-model/src/source_identity.rs"
+      - ".github/workflows/editor-projection-instance-gate-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check instance gate
+        run: cargo check -p chaptera-scene-instance -p chaptera-layout-projection --all-targets
+      - name: Lint instance gate
+        run: cargo clippy -p chaptera-scene-instance -p chaptera-layout-projection --all-targets -- -D warnings
+      - name: Test instance gate
+        run: cargo test -p chaptera-scene-instance -p chaptera-layout-projection

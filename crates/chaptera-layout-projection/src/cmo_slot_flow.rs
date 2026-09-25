@@ -1,8 +1,8 @@
+use chaptera_scene_instance::cmo_story_slot_instance_v1;
 use pub_model::{
     CmoProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1, PubProjectionContextV1,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CMO_SLOT_FLOW_SCHEMA_V1: &str = "chaptera.cmo-slot-flow.native.v1";
@@ -27,6 +27,7 @@ pub struct CarrierExtentV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CmoStorySlotFlowInputV1 {
     pub target_qsid: u32,
+    pub target_page_id: String,
     pub target_story_id: String,
     pub target_frame_node_id: String,
     pub frame_count: u32,
@@ -97,6 +98,7 @@ pub struct CmoSlotFlowOutputV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CmoSlotFlowError {
     ProjectionContextVersion,
+    TargetPageMissing,
     TargetStoryMissing,
     TargetFrameMissing,
     MultiFrameUnsupported,
@@ -121,6 +123,7 @@ impl std::fmt::Display for CmoSlotFlowError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ProjectionContextVersion => f.write_str("projection context version mismatch"),
+            Self::TargetPageMissing => f.write_str("target_page_id is required"),
             Self::TargetStoryMissing => f.write_str("target_story_id is required"),
             Self::TargetFrameMissing => f.write_str("target_frame_node_id is required"),
             Self::MultiFrameUnsupported => {
@@ -223,6 +226,9 @@ pub fn resolve_cmo_slot_flow_v1(
 ) -> Result<CmoSlotFlowOutputV1, CmoSlotFlowError> {
     if context.schema_version != PUB_PROJECTION_CONTEXT_SCHEMA_V1 {
         return Err(CmoSlotFlowError::ProjectionContextVersion);
+    }
+    if input.target_page_id.is_empty() {
+        return Err(CmoSlotFlowError::TargetPageMissing);
     }
     if input.target_story_id.is_empty() {
         return Err(CmoSlotFlowError::TargetStoryMissing);
@@ -434,12 +440,16 @@ pub fn resolve_cmo_slot_flow_v1(
                 }
 
                 visible_slots.push(VisibleCmoSlotV1 {
-                    instance_id: slot_instance_id_v1(
-                        &input.target_story_id,
-                        &input.target_frame_node_id,
-                        *scalar_index,
+                    instance_id: cmo_story_slot_instance_v1(
                         relation,
-                    ),
+                        &input.target_page_id,
+                        *slot_index,
+                        *scalar_index,
+                    )
+                    .map_err(|_| CmoSlotFlowError::RelationTargetMismatch {
+                        source_order: relation.source_order,
+                    })?
+                    .instance_id,
                     slot_index: *slot_index,
                     scalar_index: *scalar_index,
                     source_order: relation.source_order,
@@ -510,32 +520,6 @@ pub fn resolve_cmo_slot_flow_v1(
     })
 }
 
-fn slot_instance_id_v1(
-    target_story_id: &str,
-    target_frame_node_id: &str,
-    scalar_index: u32,
-    relation: &CmoProjectionRelationV1,
-) -> String {
-    let mut hasher = Sha256::new();
-    hash_part(&mut hasher, b"chaptera.scene-instance.cmo-story-slot.v1");
-    hash_part(&mut hasher, target_story_id.as_bytes());
-    hash_part(&mut hasher, target_frame_node_id.as_bytes());
-    hasher.update(scalar_index.to_be_bytes());
-    hasher.update(
-        u64::try_from(relation.source_order)
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
-    hasher.update(relation.cmo_id.to_be_bytes());
-    hash_part(&mut hasher, relation.carrier_node_id.as_bytes());
-    format!("sha256:{:x}", hasher.finalize())
-}
-
-fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
-    hasher.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
-    hasher.update(bytes);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +557,7 @@ mod tests {
     fn input(markers: Vec<u32>, extents: Vec<CarrierExtentV1>) -> CmoStorySlotFlowInputV1 {
         CmoStorySlotFlowInputV1 {
             target_qsid: 49,
+            target_page_id: "20000000-0000-4000-8000-000000000266".to_owned(),
             target_story_id: STORY.to_owned(),
             target_frame_node_id: FRAME.to_owned(),
             frame_count: 1,
