@@ -254,7 +254,7 @@ def validate_observation(
             "protocol_version",
             "source_hash",
             "rar_commit",
-             "auth_wrap_receipt_sha256",
+            "auth_wrap_receipt_sha256",
             "saved_project_sha256",
             "reopened_project_sha256",
             "user_path",
@@ -269,7 +269,7 @@ def validate_observation(
         raise FixedPageTrialError("trial observation source hash mismatch")
     if observation["rar_commit"] != rar_commit:
         raise FixedPageTrialError("trial producer ran a different Rar commit")
-     if observation["auth_wrap_receipt_sha256"] != auth_wrap_sha256:
+    if observation["auth_wrap_receipt_sha256"] != auth_wrap_sha256:
         raise FixedPageTrialError("trial did not bind the selected AUTH-WRAP receipt")
     user_path = require_exact_keys(
         observation["user_path"],
