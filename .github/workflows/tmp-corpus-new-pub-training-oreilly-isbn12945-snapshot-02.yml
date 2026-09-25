@@ -1,0 +1,127 @@
+name: Corpus training OReilly ISBN12945 snapshot inspect
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect exact archived index body and outbound routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import hashlib, html, json, re, time
+          from pathlib import Path
+          from urllib.parse import urlencode, urljoin
+          from urllib.request import Request, urlopen
+
+          UA = "rar-pub-training-oreilly-isbn12945-snapshot/1.0"
+          ts = "20101018185557"
+          originals = [
+              "http://examples.oreilly.com:80/9780735612945/",
+              "http://examples.oreilly.com/9780735612945/",
+              "https://examples.oreilly.com/9780735612945/",
+          ]
+          results = []
+          discovered = set()
+
+          for i, original in enumerate(originals):
+              replay = f"https://web.archive.org/web/{ts}id_/{original}"
+              item = {"original": original, "replay": replay}
+              try:
+                  req = Request(replay, headers={"User-Agent": UA, "Accept": "text/html,*/*;q=0.1"})
+                  with urlopen(req, timeout=90) as r:
+                      body = r.read(1024 * 1024)
+                      item["status"] = getattr(r, "status", None)
+                      item["final_url"] = r.geturl()
+                      item["content_type"] = r.headers.get("Content-Type")
+                      item["location"] = r.headers.get("Location")
+                  item["length"] = len(body)
+                  item["sha256"] = hashlib.sha256(body).hexdigest()
+                  ctype = (item.get("content_type") or "").lower()
+                  if "text" in ctype or "html" in ctype or body[:256].lstrip().startswith(b"<"):
+                      text = body.decode("utf-8", "replace")
+                      Path(f"out/body_{i}.html").write_text(text, encoding="utf-8")
+                      item["body_preview"] = text[:4000]
+                      patterns = [
+                          r'''(?is)\b(?:href|src|action)\s*=\s*["']([^"']+)["']''',
+                          r'''(?is)http-equiv\s*=\s*["']refresh["'][^>]*content\s*=\s*["'][^"']*url\s*=\s*([^"';>\s]+)''',
+                          r'''(?is)\bhttps?://[^\s"'<>]+''',
+                      ]
+                      vals = []
+                      for pat in patterns:
+                          for m in re.finditer(pat, text):
+                              v = m.group(1) if m.lastindex else m.group(0)
+                              v = html.unescape(v.strip())
+                              if not v or v.startswith(("#", "javascript:", "mailto:")):
+                                  continue
+                              vals.append(urljoin(original, v))
+                      item["links"] = sorted(set(vals))
+                      discovered.update(item["links"])
+              except Exception as e:
+                  item["error"] = f"{type(e).__name__}: {e}"
+              results.append(item)
+              time.sleep(1)
+
+          cdx = []
+          for u in sorted(discovered):
+              if not u.lower().startswith(("http://", "https://")):
+                  continue
+              params = [
+                  ("url", u), ("matchType", "exact"), ("output", "json"),
+                  ("fl", "timestamp,original,mimetype,statuscode,digest,length"),
+                  ("filter", "statuscode:200"), ("collapse", "digest"), ("limit", "100"), ("gzip", "false"),
+              ]
+              endpoint = "https://web.archive.org/cdx/search/cdx?" + urlencode(params)
+              row = {"url": u, "endpoint": endpoint}
+              try:
+                  req = Request(endpoint, headers={"User-Agent": UA, "Accept": "application/json"})
+                  with urlopen(req, timeout=90) as r:
+                      data = json.load(r)
+                  row["captures"] = [dict(zip(data[0], x)) for x in data[1:]] if data else []
+              except Exception as e:
+                  row["error"] = f"{type(e).__name__}: {e}"
+              cdx.append(row)
+              time.sleep(0.4)
+
+          summary = {
+              "schema": "chaptera.corpus-training-oreilly-isbn12945-snapshot.v1",
+              "source_safe": True,
+              "raw_binary_retained": False,
+              "timestamp": ts,
+              "results": results,
+              "discovered_urls": sorted(discovered),
+              "discovered_count": len(discovered),
+              "exact_cdx": cdx,
+              "guardrail": "Snapshot/index routing evidence only; recovered carrier writer/version must be classified from bytes.",
+          }
+          Path("out/summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+      - name: Source-safe artifact guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.7z' -o -iname '*.rar' \) | grep -q .; then
+            echo 'unexpected raw carrier leaked into snapshot artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-oreilly-isbn12945-snapshot-inspect
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
