@@ -125,6 +125,22 @@ jobs:
         run: |
           python tools/untrusted_pub_batch_v1.py probe             --worker target/debug/chaptera-untrusted-pub-worker             --source "$RUNNER_TEMP/source/help.pub"             --output-dir "$RUNNER_TEMP/fs-probe"             > "$RUNNER_TEMP/fs-probe.json"
 
+      - name: Prove Cloud SourceIngress isolated scanner adapter
+        shell: bash
+        env:
+          CHAPTERA_SCAN_FIXTURE_SHA256: ${{ env.FIXTURE_SHA256 }}
+        run: |
+          set -euo pipefail
+          export CHAPTERA_PYTHON_PROGRAM="$(command -v python)"
+          export CHAPTERA_ISOLATION_SCRIPT="$GITHUB_WORKSPACE/tools/migration_pdf_worker_isolation.py"
+          export CHAPTERA_UNTRUSTED_WORKER="$GITHUB_WORKSPACE/target/debug/chaptera-untrusted-pub-worker"
+          export CHAPTERA_SCAN_FIXTURE="$RUNNER_TEMP/source/help.pub"
+          export CHAPTERA_SCAN_TEMP_ROOT="$RUNNER_TEMP/cloud-source-scanner"
+          mkdir -p "$CHAPTERA_SCAN_TEMP_ROOT"
+          cargo test -p chaptera-server \
+            source_ingress_scanner::tests::isolated_scanner_accepts_pinned_pub_through_canonical_guard \
+            -- --ignored --nocapture
+
       - name: Run hostile batch twice
         run: |
           python tools/untrusted_pub_batch_v1.py batch "$RUNNER_TEMP/negative"             --worker target/debug/chaptera-untrusted-pub-worker             --output-root "$RUNNER_TEMP/negative-out-1"             > "$RUNNER_TEMP/negative-1.json"
