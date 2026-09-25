@@ -1,0 +1,139 @@
+name: TEMP Office XP ISBN cd_contents tree census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-officexp-isbn-cdcontents-tree-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Traverse exact archived cd_contents directory metadata
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re
+          from collections import deque
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import urljoin,urlparse,unquote
+          from urllib.request import Request,urlopen
+
+          UA='rar-officexp-isbn-cdcontents-tree/1.0'
+          TS='20101018185557'
+          LIVE_ROOT='http://examples.oreilly.com/9780735612945/cd_contents/'
+          ARCH_ROOT=f'https://web.archive.org/web/{TS}id_/{LIVE_ROOT}'
+          MAX_DEPTH=5
+          MAX_PAGES=500
+          MAX_LINKS=10000
+
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__(); self.links=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag.lower()=='a':
+                      d=dict(attrs)
+                      if d.get('href'): self.links.append(d['href'].strip())
+
+          def archive_url(live):
+              return f'https://web.archive.org/web/{TS}id_/{live}'
+
+          q=deque([(LIVE_ROOT,0)])
+          seen=set()
+          pages=[]
+          files={}
+          errors=[]
+          total_links=0
+          while q and len(pages)<MAX_PAGES and total_links<MAX_LINKS:
+              live,depth=q.popleft()
+              key=live.casefold()
+              if key in seen: continue
+              seen.add(key)
+              aurl=archive_url(live)
+              try:
+                  req=Request(aurl,headers={'User-Agent':UA,'Accept':'text/html,*/*;q=0.1'})
+                  with urlopen(req,timeout=45) as r:
+                      raw=r.read(2*1024*1024+1)
+                      status=getattr(r,'status',None)
+                      final=r.geturl()
+                      ctype=r.headers.get('Content-Type','')
+                  if len(raw)>2*1024*1024:
+                      raise RuntimeError('directory HTML exceeded 2 MiB cap')
+                  html=raw.decode('utf-8','replace')
+                  p=P(); p.feed(html)
+                  page={'live_url':live,'archived_url':aurl,'depth':depth,'status':status,'final_url':final,'content_type':ctype,'html_len':len(raw),'link_count':len(p.links)}
+                  pages.append(page)
+                  for href in p.links:
+                      total_links+=1
+                      if total_links>MAX_LINKS: break
+                      if href.startswith('?') or href.startswith('#'): continue
+                      child=urljoin(live,href)
+                      u=urlparse(child)
+                      if u.netloc.lower()!='examples.oreilly.com': continue
+                      if not child.lower().startswith(LIVE_ROOT.lower()): continue
+                      # Strip query/fragment for stable path identity.
+                      child=u._replace(query='',fragment='').geturl()
+                      path=unquote(urlparse(child).path)
+                      if child.endswith('/'):
+                          if depth<MAX_DEPTH and child.casefold() not in seen:
+                              q.append((child,depth+1))
+                      else:
+                          ext=Path(path).suffix.lower()
+                          files.setdefault(child.casefold(),{
+                              'live_url':child,
+                              'parent':live,
+                              'depth':depth+1,
+                              'filename':Path(path).name,
+                              'extension':ext
+                          })
+              except Exception as e:
+                  errors.append({'live_url':live,'depth':depth,'archived_url':aurl,'error':f'{type(e).__name__}: {e}'})
+
+          file_rows=sorted(files.values(),key=lambda x:x['live_url'].casefold())
+          pub=[x for x in file_rows if x['extension']=='.pub']
+          carriers=[x for x in file_rows if x['extension'] in {'.pub','.zip','.cab','.exe','.msi','.iso','.img','.bin','.cue','.7z','.rar'}]
+          summary={
+              'schema':'chaptera.corpus-officexp-isbn-cdcontents-tree.v1',
+              'source_safe':True,
+              'raw_payload_retained':False,
+              'isbn13':'9780735612945',
+              'root_live_url':LIVE_ROOT,
+              'root_archived_url':ARCH_ROOT,
+              'max_depth':MAX_DEPTH,
+              'pages_visited':len(pages),
+              'files_seen':len(file_rows),
+              'pub_links':len(pub),
+              'carrier_links':len(carriers),
+              'pub':pub,
+              'carriers':carriers,
+              'errors':errors,
+              'guardrail':'Directory/listing metadata only. No linked file bodies downloaded; exact ISBN distribution provenance is not writer-version authority.'
+          }
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/pages.json').write_text(json.dumps(pages,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/files.json').write_text(json.dumps(file_rows,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Metadata-only guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected carrier bytes in locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-officexp-isbn-cdcontents-tree
+          path: out/**
+          retention-days: 60
