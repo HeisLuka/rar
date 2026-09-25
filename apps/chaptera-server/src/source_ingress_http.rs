@@ -461,9 +461,7 @@ async fn complete_upload(
             release_admission_exact(&state, &upload, now_ms).await?;
             None
         }
-        UploadState::ValidatedDurable
-        | UploadState::Consumed
-        | UploadState::Rejected => None,
+        UploadState::ValidatedDurable | UploadState::Consumed | UploadState::Rejected => None,
         UploadState::Issued => {
             return Err(SourceIngressHttpError::internal(
                 "upload_completion_state_invalid",
