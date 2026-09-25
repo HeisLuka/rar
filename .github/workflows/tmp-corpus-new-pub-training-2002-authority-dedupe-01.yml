@@ -1,0 +1,119 @@
+name: TEMP Publisher 2002 authority dedupe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-2002-authority-dedupe-01.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download pinned baseline950 evidence artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p work/artifacts out
+          cat > work/artifacts.tsv <<'EOF'
+          commoncrawl	10801347100	de7d1fbcf15547abf1e581b64c1d503aa85b184930811324ba7f17f4305e7add
+          wayback	10801683740	b331e81c30a182d1e769e307281f6155f987198f25de8a4df772ff499b1253dd
+          internet_archive	10801684167	8e3b9fd5388b38e696d97e3ec5fd713c5bf8bd3273dc9e8f1f1bfefe8c58ad8d
+          container_first_wave	10789500808	4f959cf3ff0337ea9e009951cde3faa15b3bbdca303aace47ce8a9c4daa3a80a
+          govdocs1	10788840886	0624ad8b9d6f50d3b868ef3b4a8602585f0c8fc13fc4e82b5819c2bbfb6cf54f
+          forum_support	10801453513	ef0ef0f9f46023b4d79f82b580958704faa8094b8d9a8ed934571fab4b4e8b60
+          github_history	10799384286	666368c90d37390c9e8802d03c249e19de7b2b19399b1e268a24a38b0628f371
+          positive_domain_probe	10800300307	dc2055e6d81f15c5c18d43e6e3ff4aae6bc2ca881c78c6ae09c4ea398ce6de1e
+          EOF
+          while IFS=$'\t' read -r label id digest; do
+            zip="work/${label}.zip"
+            mkdir -p "work/artifacts/${label}"
+            gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            actual="$(sha256sum "$zip" | awk '{print $1}')"
+            if [ "$actual" != "$digest" ]; then
+              echo "artifact digest mismatch for $label: $actual != $digest" >&2
+              exit 1
+            fi
+            unzip -q "$zip" -d "work/artifacts/${label}"
+            rm "$zip"
+          done < work/artifacts.tsv
+
+      - name: Compare six exact Publisher 2002 SHA against Rar authority
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+
+          targets={
+            'BusinessCard.pub':'58c0746aafd2dd3507e5d423e0517907b3102d01e51b89c5edb8e5bd2b41990b',
+            'PrintDoc1.pub':'fc17e25db2121cf67d4ed7fea9796187d2a8469d720a30fa1dfa545402e9d386',
+            'PrintDoc2.pub':'5ca332349e7c51295daf1feb765522e6fbc3268b29757465a00e8e92afdff017',
+            'ProcessColor.pub':'878006a356b55de273c65f88e731c8610fda37c2ab7985a3b528e5d4e65c7f4b',
+            'SpotColor.pub':'66fc3c1c08c8041a873cd890a7bba157af83a6271f221fd0976e5f467481a147',
+            'SpotColor2.pub':'2ba7cb71c9637eafe185bde36d0dd0f18a98cc1869ff1c6df6cd86dae0dd4c10',
+          }
+          search_roots=[pathlib.Path('work/artifacts')]
+          local_files=[
+            pathlib.Path('tools/corpus/receipts/corpus-post-m1-delta-2026-09-24.tsv'),
+            *sorted(pathlib.Path('tools/corpus/receipts').glob('container-net-new-407-part-*.sha256.txt')),
+          ]
+
+          def text_hits(sha):
+              hits=[]
+              for root in search_roots:
+                  for p in root.rglob('*'):
+                      if not p.is_file(): continue
+                      try:
+                          if sha.encode('ascii') in p.read_bytes():
+                              hits.append(str(p))
+                      except Exception:
+                          pass
+              for p in local_files:
+                  if sha in p.read_text(encoding='utf-8',errors='ignore'):
+                      hits.append(str(p))
+              return sorted(set(hits))
+
+          rows=[]
+          for name,sha in targets.items():
+              hits=text_hits(sha)
+              rows.append({'filename':name,'sha256':sha,'authority_hits':hits,'new_vs_rar_exact_union_1486':not hits})
+
+          net_new=[r for r in rows if r['new_vs_rar_exact_union_1486']]
+          summary={
+            'schema':'chaptera.publisher2002-rar-authority-dedupe.v1',
+            'baseline_authority':'tools/corpus/receipts/corpus-current-authority-2026-09-24.json',
+            'authority_count_before':1486,
+            'target_unique_sha256':6,
+            'net_new_vs_rar_exact_union':len(net_new),
+            'authority_count_if_admitted':1486+len(net_new),
+            'files':rows,
+            'scope_note':'Exact check covers the Rar exact union of 1486 (baseline950 evidence artifacts + post-M1 delta129 + container net407). It does not resolve overlap against the 23 historical unrematerialized identities.',
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+          print(json.dumps(summary,indent=2))
+          PY
+          rm -rf work
+
+      - name: Public-safe receipt guard
+        run: |
+          set -euo pipefail
+          find out -type f -maxdepth 1 -print
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected raw payload leaked into artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher2002-rar-authority-dedupe
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
