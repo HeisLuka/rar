@@ -1,0 +1,48 @@
+{
+  "schema_version": "chaptera.desktop-suite-products.v1",
+  "products": [
+    {
+      "product_id": "chaptera.reader",
+      "display_name": "Chaptera Reader",
+      "application_kind": "interactive",
+      "canonical_windows_executable": "chaptera-reader.exe",
+      "canonical_windows_package": "Chaptera-Reader-Windows-x86_64.zip",
+      "capability_surface": ["open", "inspect", "navigate", "search", "copy", "extract"],
+      "implementation_state": "separate_target_pending"
+    },
+    {
+      "product_id": "chaptera.rescue",
+      "display_name": "Chaptera Rescue",
+      "application_kind": "interactive_with_isolated_jobs",
+      "canonical_windows_executable": "chaptera-rescue.exe",
+      "canonical_windows_package": "Chaptera-Rescue-Windows-x86_64.zip",
+      "capability_surface": ["damaged_file_intake", "triage", "recovery", "loss_report", "recovery_bundle"],
+      "implementation_state": "separate_target_pending"
+    },
+    {
+      "product_id": "chaptera.editor",
+      "display_name": "Chaptera Editor",
+      "application_kind": "interactive",
+      "canonical_windows_executable": "chaptera-editor.exe",
+      "canonical_windows_package": "Chaptera-Editor-Windows-x86_64.zip",
+      "capability_surface": ["open", "edit", "undo_redo", "project_persistence", "export"],
+      "implementation_state": "current_rar_target"
+    },
+    {
+      "product_id": "chaptera.migration",
+      "display_name": "Chaptera Migration",
+      "application_kind": "batch_orchestrator",
+      "canonical_windows_executable": "chaptera-migration.exe",
+      "canonical_windows_package": "Chaptera-Migration-Windows-x86_64.zip",
+      "capability_surface": ["inventory", "classify", "batch_convert", "manifest", "exception_route"],
+      "implementation_state": "separate_target_pending"
+    }
+  ],
+  "legacy_binary_aliases": [
+    {
+      "name": "chaptera.exe",
+      "product_id": "chaptera.editor",
+      "policy": "historical_receipts_only_no_new_builds"
+    }
+  ]
+}
