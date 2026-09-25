@@ -51,6 +51,9 @@ jobs:
       - name: Test Chaptera agent protocol core
         run: cargo test -p chaptera-desktop
 
+      - name: Test GUI-only Desktop V0 walkthrough
+        run: cargo test -p chaptera-desktop --features embedded-fixture-tests gui_only_v0_walkthrough_uses_real_widgets -- --nocapture
+
       - name: Test canonical desktop Story range wire
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test story_range_v1
 
