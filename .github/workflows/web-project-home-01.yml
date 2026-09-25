@@ -1,0 +1,24 @@
+name: Web Project Home V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/project-home-v1.mjs"
+      - "apps/web/project-home-v1.test.mjs"
+      - ".github/workflows/web-project-home-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-home:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test project-home controller
+        run: node --test apps/web/project-home-v1.test.mjs
