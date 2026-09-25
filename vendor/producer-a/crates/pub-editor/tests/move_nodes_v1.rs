@@ -269,6 +269,7 @@ fn duplicate_resize_and_wrong_page_fail_closed() {
             schema_version: EDITOR_PROJECT_VERSION_V0_8.to_owned(),
             source_hash: source_hash(),
             assets: Vec::new(),
+            table_grids: Vec::new(),
             operations: vec![EditOperation::MoveNodes { page_id, entries }],
         };
         let mut session = EditorSession::new(base.clone()).expect("session");
