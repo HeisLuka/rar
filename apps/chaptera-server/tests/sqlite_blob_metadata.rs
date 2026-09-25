@@ -60,11 +60,7 @@ fn physical(tenant: &str, id: &str, hash_ch: char) -> PhysicalBlobRecord {
     }
 }
 
-fn binding(
-    tenant: &str,
-    binding_id: &str,
-    physical: &PhysicalBlobRecord,
-) -> ResourceBinding {
+fn binding(tenant: &str, binding_id: &str, physical: &PhysicalBlobRecord) -> ResourceBinding {
     ResourceBinding {
         binding_id: binding_id.into(),
         tenant_id: tenant.into(),
