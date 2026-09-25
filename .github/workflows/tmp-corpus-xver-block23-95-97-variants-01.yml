@@ -1,0 +1,517 @@
+name: TEMP CORPUS Publisher95-97 BlockData23 variant generalization
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-xver-block23-95-97-variants-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Verify BlockData23 structural variants
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          from collections import Counter
+          from pathlib import Path
+
+          import olefile
+
+          UA = "rar-block23-variants/1.0"
+          SECTOR = 2048
+
+          MEDIA = {
+              "pub95": {
+                  "url": "https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+                  "generation": "Publisher95",
+              },
+              "pub97": {
+                  "url": "https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+                  "generation": "Publisher97",
+              },
+          }
+
+          TARGETS = {
+              "BMEMO1.PUB": {
+                  "control": False,
+                  "object_id": 391,
+                  "chunk_len": {"pub95": 36, "pub97": 54},
+                  "sha256": {
+                      "pub95": "2045174006892d8cc5be2ff10cdddc5ec3a5174a3d3b47da03522d4a9f51d6eb",
+                      "pub97": "df2528195a253a229ecc1648e16633d85d95e030c11d42db215eba9afd214cc2",
+                  },
+                  "byte_len": {"pub95": 13824, "pub97": 14848},
+              },
+              "BMEMO2.PUB": {
+                  "control": False,
+                  "object_id": 391,
+                  "chunk_len": {"pub95": 36, "pub97": 54},
+                  "sha256": {
+                      "pub95": "587772508a6dfa4636a19fd9af8b514f5d93367277d3cc94c6ab0a4ebe0ecab7",
+                      "pub97": "1c6b07ba75d1621e89d9437a1a4f6dddf408644bf25a4ca54c509eec40f7b35a",
+                  },
+                  "byte_len": {"pub95": 15872, "pub97": 16384},
+              },
+              "PMEMO1.PUB": {
+                  "control": False,
+                  "object_id": 319,
+                  "chunk_len": {"pub95": 36, "pub97": 54},
+                  "sha256": {
+                      "pub95": "33757251ddcab7058084e6d8c29323f045520ec8633d840afc451b976440dd9d",
+                      "pub97": "136fbd367c3a7a7cd5a2a556f76de3a3c84aeffdff8ea555c509b56ce2e8bc25",
+                  },
+                  "byte_len": {"pub95": 16384, "pub97": 16384},
+              },
+              "BOOKMARK.PUB": {
+                  "control": True,
+                  "object_id": 276,
+                  "chunk_len": {"pub95": 30, "pub97": 48},
+                  "sha256": {
+                      "pub95": "0d4c2e9e6a84a39f212f71c95591e17eb62ebaac7026427a4f84f6d1e636f5d5",
+                      "pub97": "8a706ca56ce5d2853b9469a666cd769bab4c62d6fb56d8d7872ff9a322394367",
+                  },
+                  "byte_len": {"pub95": 22528, "pub97": 22528},
+              },
+          }
+
+          def sha(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def u16(data: bytes, off: int) -> int:
+              return int.from_bytes(data[off:off+2], "little")
+
+          def u32(data: bytes, off: int) -> int:
+              return int.from_bytes(data[off:off+4], "little")
+
+          class RangeISO:
+              def __init__(self, archive_url: str):
+                  self.archive_url = archive_url
+                  self.delivery_urls = self._delivery_urls()
+                  self.delivery_url = self._select()
+                  self.cache = {}
+
+              def _delivery_urls(self):
+                  p = urllib.parse.urlparse(self.archive_url)
+                  parts = p.path.split("/")
+                  ident = parts[2]
+                  filename = "/".join(parts[3:])
+                  req = urllib.request.Request(
+                      f"https://archive.org/metadata/{ident}",
+                      headers={"User-Agent": UA},
+                  )
+                  last = None
+                  for attempt in range(4):
+                      try:
+                          with urllib.request.urlopen(req, timeout=45) as r:
+                              meta = json.load(r)
+                          break
+                      except Exception as exc:
+                          last = exc
+                          if attempt == 3:
+                              raise
+                          time.sleep(2 ** attempt)
+                  directory = str(meta.get("dir") or "")
+                  out = []
+                  for key in ("d1", "d2"):
+                      host = str(meta.get(key) or "")
+                      if host and directory:
+                          out.append(
+                              "https://" + host + directory.rstrip("/") + "/"
+                              + urllib.parse.quote(filename, safe="/")
+                          )
+                  out += [self.archive_url, self.archive_url + "?download=1"]
+                  return list(dict.fromkeys(out))
+
+              def _rr(self, url: str, start: int, length: int) -> bytes:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": UA,
+                          "Range": f"bytes={start}-{start + length - 1}",
+                          "Accept-Encoding": "identity",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=45) as r:
+                      if getattr(r, "status", None) != 206 and not r.headers.get("Content-Range"):
+                          raise ValueError("range unsupported")
+                      data = r.read(length + 1)
+                  if len(data) != length:
+                      raise ValueError(f"range length {len(data)} != {length}")
+                  return data
+
+              def _select(self):
+                  last = None
+                  for url in self.delivery_urls:
+                      for attempt in range(3):
+                          try:
+                              pvd = self._rr(url, 16 * SECTOR, SECTOR)
+                              if pvd[:6] != b"\x01CD001":
+                                  raise ValueError("bad ISO9660 PVD")
+                              return url
+                          except Exception as exc:
+                              last = exc
+                              if attempt < 2:
+                                  time.sleep(2 ** attempt)
+                  raise last
+
+              def read(self, start: int, length: int) -> bytes:
+                  last = None
+                  for attempt in range(5):
+                      try:
+                          return self._rr(self.delivery_url, start, length)
+                      except Exception as exc:
+                          last = exc
+                          if attempt < 4:
+                              time.sleep(2 ** attempt)
+                  raise last
+
+              @staticmethod
+              def rec(rec: bytes):
+                  name = rec[33:33 + rec[32]].decode("ascii", "replace")
+                  extent = int.from_bytes(rec[2:6], "little")
+                  size = int.from_bytes(rec[10:14], "little")
+                  flags = rec[25]
+                  return name, extent, size, flags
+
+              def directory(self, extent: int, size: int):
+                  key = (extent, size)
+                  if key in self.cache:
+                      return self.cache[key]
+                  data = self.read(extent * SECTOR, size)
+                  out = {}
+                  pos = 0
+                  while pos < len(data):
+                      n = data[pos]
+                      if n == 0:
+                          pos = ((pos // SECTOR) + 1) * SECTOR
+                          continue
+                      name, ex, sz, flags = self.rec(data[pos:pos+n])
+                      if name not in ("\x00", "\x01"):
+                          out[name.split(";")[0].upper()] = (ex, sz, flags)
+                      pos += n
+                  self.cache[key] = out
+                  return out
+
+              def root(self):
+                  pvd = self.read(16 * SECTOR, SECTOR)
+                  n = pvd[156]
+                  _, extent, size, flags = self.rec(pvd[156:156+n])
+                  return extent, size, flags
+
+              def listing(self, path: str):
+                  extent, size, flags = self.root()
+                  for part in [x.upper() for x in path.strip("/").split("/") if x]:
+                      extent, size, flags = self.directory(extent, size)[part]
+                      if not flags & 2:
+                          raise ValueError(f"{part} is not a directory")
+                  return self.directory(extent, size)
+
+              def member(self, directory_path: str, name: str) -> bytes:
+                  listing = self.listing(directory_path)
+                  extent, size, flags = listing[name.upper()]
+                  if flags & 2:
+                      raise ValueError(f"{name} is a directory")
+                  return self.read(extent * SECTOR, size)
+
+          def contents_bytes(pub: bytes) -> bytes:
+              with olefile.OleFileIO(pub) as ole:
+                  if not ole.exists(["Contents"]):
+                      raise ValueError("missing Contents")
+                  return ole.openstream(["Contents"]).read()
+
+          def parse_old22(contents: bytes):
+              if contents[:4] != b"\xe8\xac\x22\x00":
+                  raise ValueError("not old Contents 0x22")
+              cv = u16(contents, 4)
+              sig = contents[0x0C:0x0E].hex()
+              generation = {
+                  ("7d00", 300): "Publisher95",
+                  ("8800", 300): "Publisher97",
+              }.get((sig, cv), "unknown")
+              directory_offset = u32(contents, 0x16)
+              count = u16(contents, directory_offset)
+              if count > 512 or directory_offset + 2 + count * 10 > len(contents):
+                  raise ValueError("invalid object directory")
+              rows = []
+              for i in range(count):
+                  pos = directory_offset + 2 + i * 10
+                  row = {
+                      "service": u16(contents, pos),
+                      "id": u16(contents, pos + 2),
+                      "parent": u16(contents, pos + 4),
+                      "offset": u32(contents, pos + 6),
+                  }
+                  row["marker"] = u16(contents, row["offset"])
+                  rows.append(row)
+              offsets = sorted({row["offset"] for row in rows})
+              chunks = {}
+              for row in rows:
+                  nxt = [x for x in offsets if x > row["offset"]]
+                  end = min(nxt) if nxt else len(contents)
+                  chunks[row["id"]] = contents[row["offset"]:end]
+              return {
+                  "generation": generation,
+                  "by_id": {row["id"]: row for row in rows},
+                  "chunks": chunks,
+              }
+
+          def read_int(data: bytes, off: int, width: int, signed=False):
+              return int.from_bytes(data[off:off+width], "little", signed=signed)
+
+          def parse_ptrlist(raw: bytes, pointer_size: int):
+              if len(raw) < 4:
+                  return {"valid": False, "reason": "short-chunk"}
+              data_off = raw[3]
+              if not (4 <= data_off < len(raw)):
+                  return {"valid": False, "reason": "bad-data-offset", "data_offset": data_off}
+              off = data_off
+              header_need = pointer_size * 4 + 2
+              if off + header_need > len(raw):
+                  return {"valid": False, "reason": "short-header", "data_offset": data_off}
+              n = read_int(raw, off, pointer_size); off += pointer_size
+              maxn = read_int(raw, off, pointer_size); off += pointer_size
+              data_size = read_int(raw, off, pointer_size); off += pointer_size
+              f0 = read_int(raw, off, 2, signed=True); off += 2
+              f1 = read_int(raw, off, pointer_size, signed=True); off += pointer_size
+              if n > 128 or maxn < n:
+                  return {"valid": False, "reason": "bad-count", "n": n, "maxn": maxn}
+              beg = off
+              table_bytes = (n + 1) * pointer_size
+              if beg + table_bytes > len(raw):
+                  return {"valid": False, "reason": "short-vector", "n": n}
+              vec = [
+                  read_int(raw, beg + i * pointer_size, pointer_size)
+                  for i in range(n + 1)
+              ]
+              in_bounds = all(table_bytes <= x <= len(raw) - beg for x in vec)
+              monotone = all(vec[i] <= vec[i+1] for i in range(len(vec)-1))
+              zones = []
+              if in_bounds and monotone:
+                  for i in range(n):
+                      zones.append(raw[beg + vec[i]:beg + vec[i+1]])
+              bridge = b""
+              tail = b""
+              if in_bounds and vec:
+                  bridge = raw[beg + table_bytes:beg + vec[0]]
+                  tail = raw[beg + vec[-1]:]
+              return {
+                  "valid": bool(in_bounds and monotone and len(zones) == n),
+                  "data_offset": data_off,
+                  "pointer_size": pointer_size,
+                  "n": n,
+                  "maxn": maxn,
+                  "data_size": data_size,
+                  "f0": f0,
+                  "f1": f1,
+                  "vector_start": beg,
+                  "table_bytes": table_bytes,
+                  "vector": vec,
+                  "bridge_len": len(bridge),
+                  "bridge_sha256": sha(bridge),
+                  "zone_lengths": [len(z) for z in zones],
+                  "zone_sha256s": [sha(z) for z in zones],
+                  "tail_len": len(tail),
+                  "tail_sha256": sha(tail),
+                  "_bridge": bridge,
+                  "_zones": zones,
+                  "_tail": tail,
+              }
+
+          isos = {k: RangeISO(v["url"]) for k, v in MEDIA.items()}
+          results = []
+
+          for name, spec in TARGETS.items():
+              sides = {}
+              for side in ("pub95", "pub97"):
+                  pub = isos[side].member("PAGEWIZ", name)
+                  actual_sha = sha(pub)
+                  if actual_sha != spec["sha256"][side]:
+                      raise ValueError(f"{name}:{side}:sha {actual_sha} != {spec['sha256'][side]}")
+                  if len(pub) != spec["byte_len"][side]:
+                      raise ValueError(f"{name}:{side}:size {len(pub)} != {spec['byte_len'][side]}")
+                  parsed = parse_old22(contents_bytes(pub))
+                  if parsed["generation"] != MEDIA[side]["generation"]:
+                      raise ValueError(f"{name}:{side}:generation {parsed['generation']}")
+                  oid = spec["object_id"]
+                  row = parsed["by_id"].get(oid)
+                  if not row or row["marker"] != 0x23:
+                      raise ValueError(f"{name}:{side}:object {oid} is not marker0x23")
+                  raw = parsed["chunks"][oid]
+                  if len(raw) != spec["chunk_len"][side]:
+                      raise ValueError(f"{name}:{side}:chunk {len(raw)} != {spec['chunk_len'][side]}")
+                  ptr = parse_ptrlist(raw, 2 if side == "pub95" else 4)
+                  if not ptr["valid"]:
+                      raise ValueError(f"{name}:{side}:invalid ptrlist {ptr}")
+                  sides[side] = {
+                      "sha256": actual_sha,
+                      "byte_len": len(pub),
+                      "object_id": oid,
+                      "service": row["service"],
+                      "parent": row["parent"],
+                      "chunk_len": len(raw),
+                      "prefix_sha256": sha(raw[:ptr["data_offset"]]),
+                      "ptr": ptr,
+                      "_raw": raw,
+                  }
+
+              left = sides["pub95"]
+              right = sides["pub97"]
+              lh = left["ptr"]
+              rh = right["ptr"]
+              metadata_equal = all(lh[k] == rh[k] for k in ("n", "maxn", "data_size", "f0", "f1"))
+              n = lh["n"]
+              header_growth = 8
+              vector_growth = 2 * (n + 1)
+              expected_growth = header_growth + vector_growth
+              vector_widening = (
+                  len(lh["vector"]) == len(rh["vector"])
+                  and all(r == l + vector_growth for l, r in zip(lh["vector"], rh["vector"]))
+              )
+              prefix_equal = (
+                  left["_raw"][:lh["data_offset"]]
+                  == right["_raw"][:rh["data_offset"]]
+              )
+              bridge_equal = lh["_bridge"] == rh["_bridge"]
+              zones_equal = (
+                  len(lh["_zones"]) == len(rh["_zones"])
+                  and all(a == b for a, b in zip(lh["_zones"], rh["_zones"]))
+              )
+              tail_equal = lh["_tail"] == rh["_tail"]
+              growth_matches = right["chunk_len"] - left["chunk_len"] == expected_growth
+              pure = all([
+                  left["service"] == right["service"],
+                  left["parent"] == right["parent"],
+                  lh["pointer_size"] == 2,
+                  rh["pointer_size"] == 4,
+                  metadata_equal,
+                  vector_widening,
+                  prefix_equal,
+                  bridge_equal,
+                  zones_equal,
+                  tail_equal,
+                  growth_matches,
+              ])
+              classification = (
+                  "pure-ptrlist-header-and-vector-widening"
+                  if pure else
+                  "block23-residual-or-framing-variant"
+              )
+              for side in ("pub95", "pub97"):
+                  sides[side]["ptr"] = {
+                      k: v for k, v in sides[side]["ptr"].items()
+                      if not k.startswith("_")
+                  }
+                  sides[side].pop("_raw", None)
+              results.append({
+                  "name": name,
+                  "control": spec["control"],
+                  "sides": sides,
+                  "metadata_equal": metadata_equal,
+                  "n": n,
+                  "header_growth": header_growth,
+                  "vector_growth": vector_growth,
+                  "expected_growth": expected_growth,
+                  "actual_growth": right["chunk_len"] - left["chunk_len"],
+                  "vector_widening_exact": vector_widening,
+                  "prefix_equal": prefix_equal,
+                  "bridge_equal": bridge_equal,
+                  "zones_equal": zones_equal,
+                  "tail_equal": tail_equal,
+                  "classification": classification,
+              })
+
+          counts = Counter(row["classification"] for row in results)
+          variants = [r for r in results if not r["control"]]
+          controls = [r for r in results if r["control"]]
+          summary = {
+              "schema": "chaptera.block23-95-97-variants-summary.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "target_count": len(results),
+              "variant_count": len(variants),
+              "control_count": len(controls),
+              "classification_counts": dict(counts),
+              "all_n_4": all(r["n"] == 4 for r in results),
+              "all_growth_18": all(r["actual_growth"] == 18 for r in results),
+              "all_pure": all(r["classification"] == "pure-ptrlist-header-and-vector-widening" for r in results),
+              "all_variants_pure": all(r["classification"] == "pure-ptrlist-header-and-vector-widening" for r in variants),
+              "variant_names": [r["name"] for r in variants],
+              "control_names": [r["name"] for r in controls],
+          }
+          report = {
+              "schema": "chaptera.block23-95-97-variants.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "source_anchor": {
+                  "repo": "renyxa/re-lab",
+                  "path": "oletoy/pub.py",
+                  "contract": "BlockData23 -> pub98ptrlistheader",
+              },
+              "media": {
+                  side: {
+                      "archive_url": MEDIA[side]["url"],
+                      "delivery_url": isos[side].delivery_url,
+                      "generation": MEDIA[side]["generation"],
+                  }
+                  for side in MEDIA
+              },
+              "summary": summary,
+              "files": results,
+          }
+          out = Path("out")
+          out.mkdir(exist_ok=True)
+          (out / "block23.json").write_text(
+              json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+      - name: Enforce bounded closure and source safety
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("out/block23.json").read_text())
+          s=r["summary"]
+          assert r["source_safe"] is True
+          assert r["raw_pub_retained"] is False
+          assert s["target_count"] == 4
+          assert s["variant_count"] == 3
+          assert s["control_count"] == 1
+          assert s["all_n_4"] is True, s
+          assert s["all_growth_18"] is True, s
+          assert s["all_pure"] is True, s
+          assert s["all_variants_pure"] is True, s
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-xver-block23-95-97-variants-receipt
+          path: out/**
+          if-no-files-found: warn
+          retention-days: 90
