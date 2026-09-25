@@ -9,6 +9,8 @@ mod agent;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
+#[allow(dead_code)]
+mod supporter_routes;
 
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
