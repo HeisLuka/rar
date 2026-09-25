@@ -1,3 +1,11 @@
+mod cmo_slot_flow;
+
+pub use cmo_slot_flow::{
+    CMO_SLOT_FLOW_SCHEMA_V1, CarrierExtentV1, CmoNonFitReasonV1, CmoSlotFlowError,
+    CmoSlotFlowOutputV1, CmoSlotOversetV1, CmoStorySlotFlowInputV1, ResolvedTextLineV1,
+    VisibleCmoSlotV1, resolve_cmo_slot_flow_v1,
+};
+
 //! Source-neutral Story -> paragraph/shaping projection for
 //! LAYOUT-PARAGRAPH-PROJECTION-01.
 //!
