@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-desktop/**"
-      - "vendor/producer-a/**"
       - "packages/product/reader-portable/**"
       - "installer/windows/chaptera-reader.iss"
       - ".github/workflows/chaptera-reader-installer.yml"
