@@ -17,7 +17,7 @@ $outputPath = [System.IO.Path]::GetFullPath($Output)
 $sourceHash = (Get-FileHash $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $documentId = [guid]::NewGuid().ToString()
 
-cargo build -p chaptera-desktop --release --features resize-producer --bin chaptera-resize-producer
+cargo build -p chaptera-resize-producer --release
 if ($LASTEXITCODE -ne 0) {
     throw "chaptera-resize-producer release build failed"
 }
