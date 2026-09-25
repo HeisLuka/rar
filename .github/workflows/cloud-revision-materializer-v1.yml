@@ -42,7 +42,7 @@ jobs:
           echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  $fixture"             | sha256sum -c -
       - name: Prove real PUB R0 R1 R2 and historical R1 replay
         shell: bash
-        env:
-          CHAPTERA_SAMPLE_NEWSLETTER_PUB: target/cloud-revision-materializer/SampleNewsletter.pub
         run: |
+          set -euo pipefail
+          export CHAPTERA_SAMPLE_NEWSLETTER_PUB="$GITHUB_WORKSPACE/target/cloud-revision-materializer/SampleNewsletter.pub"
           cargo test -p chaptera-server --test revision_materializer             real_sample_newsletter_materializes_exact_historical_revision             -- --ignored --exact --nocapture
