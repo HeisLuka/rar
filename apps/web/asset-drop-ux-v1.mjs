@@ -227,6 +227,7 @@ export function bindCanvasImageDropPasteV1({
   clipboardTarget = globalThis.window ?? null,
   screenToDocumentPoint,
   getFocusOwner,
+  getPasteDocumentPoint = null,
   onMultipleImages = null,
   onUnsupported = null,
 }) {
@@ -267,7 +268,8 @@ export function bindCanvasImageDropPasteV1({
     const selection = classifyCanvasImageFiles(files);
     if (selection.kind === "single_image") {
       event.preventDefault();
-      void controller.handleFile(selection.file,{document_point:null,source:"paste"});
+      const documentPoint = typeof getPasteDocumentPoint === "function" ? getPasteDocumentPoint() : null;
+      void controller.handleFile(selection.file,{document_point:documentPoint,source:"paste"});
       return;
     }
     if (selection.kind === "multiple_images") onMultipleImages?.(selection.files);
