@@ -4,7 +4,7 @@ use pub_editor::{
 };
 
 fn node_id() -> NodeId {
-    serde_json::from_str(""20000000-0000-4000-8000-0000000000c1"")
+    serde_json::from_str("\"20000000-0000-4000-8000-0000000000c1\"")
         .expect("canonical NodeId JSON")
 }
 

@@ -4108,7 +4108,12 @@ fn apply_image_inverse(
 }
 
 fn source_image_crop_state(graph: &PubResolvedGraph, node_id: NodeId) -> Option<ImageCropStateV1> {
-    let crop = graph.nodes.get(&node_id)?.payload.explicit_image_crop.as_ref()?;
+    let crop = graph
+        .nodes
+        .get(&node_id)?
+        .payload
+        .explicit_image_crop
+        .as_ref()?;
     if crop.ambiguous {
         return None;
     }
@@ -4412,7 +4417,10 @@ mod image_crop_runtime_tests {
         assert!(matches!(op, EditOperation::SetImageCrop { .. }));
         assert_eq!(session.image_crop_for(node_id), Some(after));
         assert_eq!(session.graph.nodes[&node_id].header.bounds, source_bounds);
-        assert_eq!(session.project().schema_version, EDITOR_PROJECT_VERSION_V0_11);
+        assert_eq!(
+            session.project().schema_version,
+            EDITOR_PROJECT_VERSION_V0_11
+        );
 
         assert!(matches!(
             session.set_image_crop(node_id, before, after),
