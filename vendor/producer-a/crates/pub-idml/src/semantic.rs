@@ -1241,4 +1241,39 @@ mod tests {
                 .any(|part| part.kind == IdmlPartKind::Spread)
         );
     }
+
+    #[test]
+    fn edited_page_extent_is_written_from_effective_graph() {
+        let frame = StoryFrame {
+            story_id: story_id(50),
+            frame_id: node_id(51),
+            ordinal: 0,
+            previous: None,
+            next: None,
+        };
+        let mut graph = graph_with_frames(vec![(node_id(51), frame, cookbook_bounds())]);
+        let page_id = graph.document.pages[0];
+        graph.pages.get_mut(&page_id).unwrap().size = Size2D::new(
+            LengthEmu::new(500 * EMU_PER_POINT),
+            LengthEmu::new(700 * EMU_PER_POINT),
+        );
+
+        let package = project_resolved_graph_to_idml(
+            &plan(Vec::new()),
+            &graph,
+            &IdmlWireProfile::legacy_dom_7(),
+            |_, payload| payload.frame.clone(),
+        )
+        .expect("edited page extent should project");
+
+        let spread = package
+            .parts
+            .iter()
+            .find(|part| part.kind == IdmlPartKind::Spread)
+            .expect("spread part");
+        assert!(spread.content.contains("GeometricBounds=\"0 0 700 500\""));
+        assert!(spread.content.contains("Anchor=\"36 36\""));
+        assert!(spread.content.contains("Anchor=\"172 186\""));
+    }
+
 }
