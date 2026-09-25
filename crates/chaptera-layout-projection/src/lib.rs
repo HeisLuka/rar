@@ -5,6 +5,14 @@
 //! shape text. It projects canonical Story Unicode-scalar semantics plus already
 //! resolved shaping-run fingerprints into a deterministic layout-facing view.
 
+mod cmo_slot_flow;
+
+pub use cmo_slot_flow::{
+    CMO_SLOT_FLOW_SCHEMA_V1, CarrierExtentV1, CmoNonFitReasonV1, CmoSlotFlowError,
+    CmoSlotFlowOutputV1, CmoSlotOversetV1, CmoStorySlotFlowInputV1, ResolvedTextLineV1,
+    VisibleCmoSlotV1, resolve_cmo_slot_flow_v1,
+};
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;

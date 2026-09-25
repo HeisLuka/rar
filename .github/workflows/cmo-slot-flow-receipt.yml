@@ -25,6 +25,17 @@ jobs:
         run: python -m pip install "jsonschema==4.23.0"
       - name: Run slot-flow unit and negative tests
         run: python tools/test_cmo_slot_flow_v1.py -v
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check native slot-flow formatting
+        run: cargo fmt --all -- --check
+      - name: Check native slot-flow crate
+        run: cargo check -p chaptera-layout-projection --all-targets
+      - name: Lint native slot-flow crate
+        run: cargo clippy -p chaptera-layout-projection --all-targets -- -D warnings
+      - name: Test native slot-flow crate
+        run: cargo test -p chaptera-layout-projection
       - name: Run exact Carlton March source-free witnesses
         run: python tools/test_cmo_slot_flow_carlton_march.py -v
       - name: Produce source-free synthetic receipt
