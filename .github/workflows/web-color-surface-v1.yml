@@ -75,9 +75,17 @@ jobs:
                   "pixel_format": "rgba8_unorm_readback",
               }
               assert row["active_renderer_candidates"] == ["svg", "canvas2d", "webgl2-hybrid"]
-              assert row["equivalence"]["all_current_candidates_available"] is True
+              assert row["equivalence"]["required_v1_surfaces"] == ["canvas2d", "svg"]
+              assert row["equivalence"]["accelerated_candidate"] == "webgl2-hybrid"
               assert row["equivalence"]["pass"] is True
-              assert row["equivalence"]["max_pair_channel_delta"] <= 1
+              assert row["surfaces"]["canvas2d"]["available"] is True
+              assert row["surfaces"]["svg"]["available"] is True
+              if row["surfaces"]["webgl2"]["available"]:
+                  assert row["surfaces"]["webgl2"]["expected_max_channel_delta"] <= 1
+                  assert row["equivalence"]["pair_max_channel_delta"]["canvas2d_webgl2"] <= 1
+                  assert row["equivalence"]["pair_max_channel_delta"]["webgl2_svg"] <= 1
+              else:
+                  assert row["surfaces"]["webgl2"]["error_code"] == "webgl2_context_unavailable"
               assert row["surfaces"]["canvas2d"]["requested"] == {
                   "alpha": True,
                   "colorSpace": "srgb",
@@ -100,7 +108,8 @@ jobs:
           f = by_engine["firefox"]
           expected = c["expected_samples"]
           assert f["expected_samples"] == expected
-          for surface in ["canvas2d", "webgl2", "svg"]:
+          cross_browser_deltas = {}
+          for surface in ["canvas2d", "svg"]:
               cs = c["surfaces"][surface]["samples"]
               fs = f["surfaces"][surface]["samples"]
               assert len(cs) == len(fs) == len(expected)
@@ -110,22 +119,28 @@ jobs:
                   for channel in range(4)
               )
               assert max_delta <= 1, (surface, max_delta, cs, fs)
+              cross_browser_deltas[surface] = max_delta
+
+          if c["surfaces"]["webgl2"]["available"] and f["surfaces"]["webgl2"]["available"]:
+              cs = c["surfaces"]["webgl2"]["samples"]
+              fs = f["surfaces"]["webgl2"]["samples"]
+              max_delta = max(
+                  abs(cs[i][channel] - fs[i][channel])
+                  for i in range(len(expected))
+                  for channel in range(4)
+              )
+              assert max_delta <= 1, ("webgl2", max_delta, cs, fs)
+              cross_browser_deltas["webgl2"] = max_delta
 
           receipt = {
               "receipt_kind": "chaptera.web-color-surface-cross-browser.v1",
               "browser_engines": sorted(by_engine),
               "v1_target": "sdr_srgb_explicit_alpha",
               "active_renderer_candidates": ["svg", "canvas2d", "webgl2-hybrid"],
-              "cross_browser_max_channel_delta": {
-                  surface: max(
-                      abs(
-                          c["surfaces"][surface]["samples"][i][channel]
-                          - f["surfaces"][surface]["samples"][i][channel]
-                      )
-                      for i in range(len(expected))
-                      for channel in range(4)
-                  )
-                  for surface in ["canvas2d", "webgl2", "svg"]
+              "cross_browser_max_channel_delta": cross_browser_deltas,
+              "accelerated_candidate_availability": {
+                  engine: by_engine[engine]["surfaces"]["webgl2"]["available"]
+                  for engine in sorted(by_engine)
               },
               "current_candidate_equivalence_pass": True,
               "wide_gamut_hdr_required": False,
