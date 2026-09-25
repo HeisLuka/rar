@@ -121,7 +121,7 @@ if ($candidateAfter.sha256 -ne $candidateBefore.sha256) {
 
 Push-Location $repoRoot
 try {
-    $verifyOutput = & cargo run --quiet --manifest-path vendor/producer-a/Cargo.toml -p pub-writer --bin pub-story-native-handoff -- verify --pub $savedPath --manifest $manifestPath
+    $verifyOutput = & cargo run --quiet --manifest-path vendor/producer-a/Cargo.toml -p pub-writer --bin pub_story_native_handoff -- verify --pub $savedPath --manifest $manifestPath
     if ($LASTEXITCODE -ne 0) {
         throw "Rar semantic verification failed after Publisher SaveAs"
     }
