@@ -6,9 +6,9 @@ use pub_core::RawSpan;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub const MARGINS_PAGE_EXTENT_ID: u8 = 0x03;
-pub const MARGINS_PAGE_WIDTH_ID: u8 = 0x01;
-pub const MARGINS_PAGE_HEIGHT_ID: u8 = 0x02;
+pub const MARGINS_PAGE_EXTENT_ID: u16 = 0x03;
+pub const MARGINS_PAGE_WIDTH_ID: u16 = 0x01;
+pub const MARGINS_PAGE_HEIGHT_ID: u16 = 0x02;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarginsPageExtent {
@@ -28,10 +28,10 @@ pub enum MarginsPageExtentReadError {
     UnexpectedExtentType { offset: u64, block_type: u8 },
     InconsistentExtentBody { offset: u64 },
     SpanTooLarge { source: RawSpan },
-    MissingDimension { id: u8 },
-    DuplicateDimension { id: u8 },
-    UnexpectedDimensionType { id: u8, offset: u64, block_type: u8 },
-    InconsistentDimensionBody { id: u8, offset: u64 },
+    MissingDimension { id: u16 },
+    DuplicateDimension { id: u16 },
+    UnexpectedDimensionType { id: u16, offset: u64, block_type: u8 },
+    InconsistentDimensionBody { id: u16, offset: u64 },
 }
 
 impl fmt::Display for MarginsPageExtentReadError {
@@ -191,7 +191,7 @@ pub fn parse_confirmed_margins_page_extent(
 
 fn read_dimension(
     block: &RawContentsBlock,
-    id: u8,
+    id: u16,
 ) -> Result<(u32, RawSpan), MarginsPageExtentReadError> {
     if block.block_type != BLOCK_TYPE_U32 {
         return Err(MarginsPageExtentReadError::UnexpectedDimensionType {
