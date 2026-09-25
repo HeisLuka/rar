@@ -54,6 +54,10 @@ pub struct SqliteConfig {
 pub struct WorkerConfig {
     pub heavy_concurrency: u32,
     pub light_concurrency: u32,
+    pub quota_shared_capacity: i64,
+    pub quota_semantic_headroom: i64,
+    pub quota_export_cap: i64,
+    pub quota_background_cap: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -224,6 +228,10 @@ impl ChapteraConfig {
             worker: WorkerConfig {
                 heavy_concurrency: 1,
                 light_concurrency: 2,
+                quota_shared_capacity: 2,
+                quota_semantic_headroom: 1,
+                quota_export_cap: 1,
+                quota_background_cap: 1,
             },
             storage: StorageConfig {
                 provider: "s3-compatible".to_owned(),
@@ -302,6 +310,24 @@ impl ChapteraConfig {
                 "worker_light_concurrency_invalid",
                 "worker.light_concurrency must be between 1 and 32",
             ));
+        }
+        if self.worker.quota_shared_capacity <= 0 {
+            return Err(ConfigError::new(
+                "worker_quota_shared_capacity_invalid",
+                "worker.quota_shared_capacity must be positive",
+            ));
+        }
+        for (field, value) in [
+            ("worker.quota_semantic_headroom", self.worker.quota_semantic_headroom),
+            ("worker.quota_export_cap", self.worker.quota_export_cap),
+            ("worker.quota_background_cap", self.worker.quota_background_cap),
+        ] {
+            if value < 0 {
+                return Err(ConfigError::new(
+                    "worker_quota_budget_invalid",
+                    format!("{field} must be non-negative"),
+                ));
+            }
         }
 
         validate_nonempty("storage.provider", &self.storage.provider)?;
@@ -895,6 +921,10 @@ pool_max = 4
 [worker]
 heavy_concurrency = 1
 light_concurrency = 2
+quota_shared_capacity = 2
+quota_semantic_headroom = 1
+quota_export_cap = 1
+quota_background_cap = 1
 
 [storage]
 provider = "s3-compatible"
