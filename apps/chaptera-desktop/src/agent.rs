@@ -2153,11 +2153,67 @@ mod tests {
         let responses = server.handle_line(r#"{"request_id":"r1","command":"protocol.describe"}"#);
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0]["ok"], true);
+        let result = &responses[0]["result"];
+        assert_eq!(result["protocol_version"], PROTOCOL_VERSION);
         assert_eq!(
-            responses[0]["result"]["protocol_version"],
-            PROTOCOL_VERSION
+            result["catalog_schema"],
+            "chaptera.agent-control.catalog.v1"
         );
-        assert_eq!(responses[0]["result"]["native_pub_write"], false);
+        assert_eq!(result["executable"], "chaptera-editor.exe");
+        assert_eq!(result["native_pub_write"], false);
+        assert_eq!(result["global_laws"]["source_pub_immutable"], true);
+        assert_eq!(result["global_laws"]["native_pub_write"], false);
+
+        let listed = result["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .map(|value| value.as_str().expect("command name"))
+            .collect::<std::collections::BTreeSet<_>>();
+        let contracts = result["command_contracts"]
+            .as_object()
+            .expect("command_contracts object");
+        let contracted = contracts
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(listed, contracted);
+        assert_eq!(listed.len(), 21);
+
+        let edit = &result["command_contracts"]["edit.apply"];
+        assert_eq!(
+            edit["request"]["fields"]["operation"]["one_of"]["move_node"]["kind"],
+            "move_node"
+        );
+        assert_eq!(
+            edit["request"]["fields"]["operation"]["one_of"]["replace_story_range"]["kind"],
+            "replace_story_range"
+        );
+
+        let deep = &result["command_contracts"]["diagnostics.deep"];
+        let optional = deep["request"]["optional"]
+            .as_array()
+            .expect("diagnostics.deep optional fields")
+            .iter()
+            .map(|value| value.as_str().expect("optional field"))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(optional.contains("receipt_path"));
+        assert!(optional.contains("joined_receipt_path"));
+        assert!(optional.contains("allow_local_file"));
+        assert_eq!(deep["consent"]["field"], "allow_local_file");
+        assert_eq!(deep["consent"]["required_value"], true);
+    }
+
+    #[test]
+    fn embedded_agent_catalog_identity_is_valid() {
+        let catalog = agent_control_catalog().expect("valid embedded catalog");
+        assert_eq!(
+            catalog["schema"],
+            "chaptera.agent-control.catalog.v1"
+        );
+        assert_eq!(catalog["protocol_version"], PROTOCOL_VERSION);
+        assert_eq!(catalog["executable"], "chaptera-editor.exe");
+        assert_eq!(catalog["global_laws"]["projected_object_mutation"], "fail_closed");
     }
 
     #[test]
