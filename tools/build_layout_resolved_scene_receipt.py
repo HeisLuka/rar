@@ -86,6 +86,15 @@ def assert_no_reparse(output: dict[str, Any], label: str) -> None:
         raise RuntimeError(f"{label} reparsed immutable source after edit")
 
 
+def assert_same_projection_context(
+    output: dict[str, Any],
+    expected: dict[str, Any],
+    label: str,
+) -> None:
+    if output.get("projection_context_state") != expected:
+        raise RuntimeError(f"{label} changed projection context state")
+
+
 def build_receipt(
     producer_command: list[str],
     *,
@@ -109,12 +118,16 @@ def build_receipt(
             "move_candidate",
             "baseline_scene_state",
             "baseline_equivalence",
+            "projection_context_state",
             "adapter_invariants",
         },
         "baseline producer response",
     )
     if baseline_output["source_hash"] != source_hash:
         raise RuntimeError("baseline producer source hash mismatch")
+    projection_context_state = copy.deepcopy(
+        baseline_output["projection_context_state"]
+    )
 
     move_candidate = baseline_output["move_candidate"]
     require_exact_keys(
@@ -164,11 +177,17 @@ def build_receipt(
                 "scene_state",
                 "source_hash_after",
                 "source_reparse_after_edit_count",
+                "projection_context_state",
             },
             "commit producer response",
         )
         assert_same_source(commit_output, source_hash, "commit producer")
         assert_no_reparse(commit_output, "commit producer")
+        assert_same_projection_context(
+            commit_output,
+            projection_context_state,
+            "commit producer",
+        )
         return (
             copy.deepcopy(commit_output["canonical_operation"]),
             copy.deepcopy(commit_output["resulting_project"]),
@@ -202,11 +221,17 @@ def build_receipt(
                 "consequences",
                 "source_hash_after",
                 "source_reparse_after_edit_count",
+                "projection_context_state",
             },
             f"{transition_kind} producer response",
         )
         assert_same_source(output, source_hash, f"{transition_kind} producer")
         assert_no_reparse(output, f"{transition_kind} producer")
+        assert_same_projection_context(
+            output,
+            projection_context_state,
+            f"{transition_kind} producer",
+        )
         history_states[transition_kind] = copy.deepcopy(output["scene_state"])
         return copy.deepcopy(output["resulting_project"]), copy.deepcopy(output["consequences"])
 
@@ -253,11 +278,17 @@ def build_receipt(
             "scene_state",
             "source_hash_after",
             "source_reparse_after_edit_count",
+            "projection_context_state",
         },
         "replay producer response",
     )
     assert_same_source(replay_output, source_hash, "replay producer")
     assert_no_reparse(replay_output, "replay producer")
+    assert_same_projection_context(
+        replay_output,
+        projection_context_state,
+        "replay producer",
+    )
     if replay_output["replayed_project"] != accepted_project:
         raise RuntimeError("fresh replay project differs from accepted project")
 
@@ -278,6 +309,8 @@ def build_receipt(
             "second_geometry_model_created",
             "context_extension_seam_present",
             "graph_only_wrapper_is_empty_context",
+            "projection_context_carried_outside_editor_project",
+            "unsupported_cmo_layout_deferred",
         },
         "adapter_invariants",
     )
@@ -306,6 +339,7 @@ def build_receipt(
             "replay": copy.deepcopy(replay_output["scene_state"]),
         },
         "baseline_equivalence": copy.deepcopy(baseline_output["baseline_equivalence"]),
+        "projection_context_state": projection_context_state,
         "invariants": {
             "source_reparse_after_edit_count": 0,
             **invariants,
