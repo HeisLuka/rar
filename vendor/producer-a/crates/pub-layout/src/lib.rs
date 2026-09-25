@@ -8,9 +8,9 @@
 //! families before a broader layout contract is stabilized.
 
 use pub_model::{
-    Affine2D, BoxEdges, CanonicalId, GroundedRulerGuide, LengthEmu, NodeId, Page, PageId,
-    ParagraphId, PublisherGuideRole, RectEmu, RulerGuide, RulerGuideAxis, SimpleRectangularTable,
-    Size2D, Story, StoryFrame, StoryId,
+    Affine2D, BoxEdges, CanonicalId, EffectiveTableGridV1, GroundedRulerGuide, LengthEmu, NodeId,
+    Page, PageId, ParagraphId, PublisherGuideRole, RectEmu, RulerGuide, RulerGuideAxis,
+    SimpleRectangularTable, SimpleTableCell, Size2D, Story, StoryFrame, StoryId,
     TableCellAddress, TableCellId, TextRunId,
 };
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,50 @@ pub struct BoundedNodeGeometryInput {
 pub struct BoundedTableInput {
     pub node_id: NodeId,
     pub table: SimpleRectangularTable<TableCellId>,
+}
+
+
+pub fn bounded_table_input_from_effective_grid(
+    grid: &EffectiveTableGridV1,
+) -> Option<BoundedTableInput> {
+    grid.validate().ok()?;
+    let table = SimpleRectangularTable::new(
+        u32::try_from(grid.rows.len()).ok()?,
+        u32::try_from(grid.columns.len()).ok()?,
+        grid.cells
+            .iter()
+            .map(|cell| SimpleTableCell {
+                id: cell.id,
+                address: cell.address,
+            })
+            .collect(),
+    )
+    .ok()?;
+    Some(BoundedTableInput {
+        node_id: grid.table_id,
+        table,
+    })
+}
+
+pub fn uniform_metrics_from_effective_grid(
+    grid: &EffectiveTableGridV1,
+) -> Option<BoundedUniformTableMetrics> {
+    grid.validate().ok()?;
+    let first_row = grid.rows.first()?.extent?;
+    let first_column = grid.columns.first()?.extent?;
+    if !grid.rows.iter().all(|row| row.extent == Some(first_row))
+        || !grid
+            .columns
+            .iter()
+            .all(|column| column.extent == Some(first_column))
+    {
+        return None;
+    }
+    Some(BoundedUniformTableMetrics {
+        table_origin: grid.table_id,
+        cell_width: first_column,
+        row_pitch: first_row,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
