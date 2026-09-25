@@ -13,10 +13,9 @@ use async_trait::async_trait;
 use chaptera_server::{
     revision_materializer::{
         AuthorizedDocumentSource, DocumentSourceAuthority, EDITOR_REVISION_EVENT_SCHEMA_V1,
-        EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorReplayEngine,
-        EditorRevisionEventV1, ExactRevisionMaterializer, ExactSourceLoader,
-        PubEditorReplayEngine, RevisionMaterializerError, encode_editor_revision_event_v1,
-        project_sha256,
+        EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorReplayEngine, EditorRevisionEventV1,
+        ExactRevisionMaterializer, ExactSourceLoader, PubEditorReplayEngine,
+        RevisionMaterializerError, encode_editor_revision_event_v1, project_sha256,
     },
     schema_migration::SqliteMigrationRuntime,
     sqlite_store::{RevisionEdge, SqliteRevisionStore, encode_canonical_event},
@@ -569,12 +568,7 @@ async fn materializer_fails_closed_on_source_before_state_root_state_and_schema_
     let mut wrong_document = authority(&bytes, "doc-other", &source_sha256);
     wrong_document.document_id = "doc-other".into();
     let (store, path) = open_store("wrong-document").await;
-    let m = materializer(
-        wrong_document,
-        bytes.clone(),
-        store.clone(),
-        Arc::new(fake),
-    );
+    let m = materializer(wrong_document, bytes.clone(), store.clone(), Arc::new(fake));
     assert_eq!(
         m.materialize("tenant-a", "doc-a", "r0")
             .await
