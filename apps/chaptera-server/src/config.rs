@@ -779,6 +779,7 @@ mod tests {
     use std::{
         collections::BTreeMap,
         fs,
+        path::PathBuf,
         sync::atomic::{AtomicU64, Ordering},
     };
 
