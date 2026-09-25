@@ -14,7 +14,7 @@ This ZIP is a bounded Chaptera Editor trial build. It is not the public Reader i
 ## 5-minute path
 
 1. Unzip the package to a normal writable folder.
-2. Launch the Chaptera executable directly; no Rust/Cargo/dev toolchain should be required.
+2. Launch `Chaptera-Editor.exe` directly; no Rust/Cargo/dev toolchain should be required.
 3. Open a copy of a Publisher file you are comfortable testing.
 4. Edit one ordinary supported text Story.
 5. Select one supported page-owned object and drag it to a new position.

@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "chaptera"
+name = "chaptera-editor"
 path = "src/main.rs"
 
 [features]

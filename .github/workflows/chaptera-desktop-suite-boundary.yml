@@ -1,0 +1,29 @@
+name: Chaptera desktop suite product boundary
+
+on:
+  pull_request:
+    paths:
+      - "packages/product/desktop-suite/**"
+      - "tools/validate_chaptera_desktop_suite_manifest.py"
+      - "tools/test_chaptera_desktop_suite_manifest.py"
+      - "apps/chaptera-desktop/Cargo.toml"
+      - ".github/workflows/chaptera-desktop-suite-boundary.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate canonical product manifest
+        run: |
+          python -m unittest tools/test_chaptera_desktop_suite_manifest.py -v
+          python tools/validate_chaptera_desktop_suite_manifest.py \
+            packages/product/desktop-suite/v1/product-manifest.json \
+            --editor-cargo apps/chaptera-desktop/Cargo.toml

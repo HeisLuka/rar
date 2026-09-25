@@ -40,7 +40,7 @@ def package_editor(
     editor_exe: pathlib.Path,
     output_zip: pathlib.Path,
     *,
-    binary_entry: str = "Chaptera.exe",
+    binary_entry: str = "Chaptera-Editor.exe",
     readme: pathlib.Path = DEFAULT_README,
     readme_entry: str = "TRIAL-README.md",
 ) -> dict[str, str | int]:
@@ -100,7 +100,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--editor-exe", required=True, type=pathlib.Path)
     parser.add_argument("--output-zip", required=True, type=pathlib.Path)
-    parser.add_argument("--binary-entry", default="Chaptera.exe")
+    parser.add_argument("--binary-entry", default="Chaptera-Editor.exe")
     parser.add_argument("--readme", type=pathlib.Path, default=DEFAULT_README)
     parser.add_argument("--readme-entry", default="TRIAL-README.md")
     parser.add_argument("--manifest", type=pathlib.Path)

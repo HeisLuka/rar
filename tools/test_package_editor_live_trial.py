@@ -33,9 +33,9 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
         with zipfile.ZipFile(output) as archive:
             self.assertEqual(
                 sorted(archive.namelist()),
-                ["Chaptera.exe", "TRIAL-README.md"],
+                ["Chaptera-Editor.exe", "TRIAL-README.md"],
             )
-            self.assertEqual(archive.read("Chaptera.exe"), self.exe.read_bytes())
+            self.assertEqual(archive.read("Chaptera-Editor.exe"), self.exe.read_bytes())
 
     def test_package_is_deterministic(self):
         first = self.root / "first.zip"

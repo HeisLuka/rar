@@ -48,7 +48,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
     def make_zip(self, *, readme_contract=True, source_pub=False):
         path = self.root / "Chaptera-Editor.zip"
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("Chaptera.exe", b"MZ\x00chaptera-editor")
+            archive.writestr("Chaptera-Editor.exe", b"MZ\x00chaptera-editor")
             marker = (
                 "chaptera.editor-live-trial-readme.v1"
                 if readme_contract
@@ -67,7 +67,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
         receipt = build_receipt(
             self.command(),
             zip_path=zip_path,
-            binary_entry="Chaptera.exe",
+            binary_entry="Chaptera-Editor.exe",
             readme_entry="TRIAL-README.md",
             chaptera_version="0.1.0-local",
             fixture_kind="real_pub_sanitized",
@@ -88,7 +88,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
             build_receipt(
                 self.command("mutate"),
                 zip_path=self.make_zip(),
-                binary_entry="Chaptera.exe",
+                binary_entry="Chaptera-Editor.exe",
                 readme_entry="TRIAL-README.md",
                 chaptera_version="0.1.0-local",
                 fixture_kind="real_pub_sanitized",
@@ -99,7 +99,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
             build_receipt(
                 self.command("reader"),
                 zip_path=self.make_zip(),
-                binary_entry="Chaptera.exe",
+                binary_entry="Chaptera-Editor.exe",
                 readme_entry="TRIAL-README.md",
                 chaptera_version="0.1.0-local",
                 fixture_kind="real_pub_sanitized",
@@ -110,7 +110,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
             build_receipt(
                 self.command("unsafe"),
                 zip_path=self.make_zip(),
-                binary_entry="Chaptera.exe",
+                binary_entry="Chaptera-Editor.exe",
                 readme_entry="TRIAL-README.md",
                 chaptera_version="0.1.0-local",
                 fixture_kind="real_pub_sanitized",
@@ -121,7 +121,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
             build_receipt(
                 self.command(),
                 zip_path=self.make_zip(readme_contract=False),
-                binary_entry="Chaptera.exe",
+                binary_entry="Chaptera-Editor.exe",
                 readme_entry="TRIAL-README.md",
                 chaptera_version="0.1.0-local",
                 fixture_kind="real_pub_sanitized",
@@ -132,7 +132,7 @@ class EditorLiveTrialPackageBuilderTests(unittest.TestCase):
             build_receipt(
                 self.command(),
                 zip_path=self.make_zip(source_pub=True),
-                binary_entry="Chaptera.exe",
+                binary_entry="Chaptera-Editor.exe",
                 readme_entry="TRIAL-README.md",
                 chaptera_version="0.1.0-local",
                 fixture_kind="real_pub_sanitized",
