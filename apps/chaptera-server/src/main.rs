@@ -14,6 +14,7 @@ use chaptera_server::{
     runtime_readiness::{ports_with_configured_serve, ports_with_revision_stream},
     schema_migration::SqliteMigrationRuntime,
     serve,
+    source_baseline,
     sqlite_store::SqliteRevisionStore,
     state::{AppState, RuntimePorts},
     worker,
@@ -140,6 +141,17 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 drop(secrets);
             }
             doctor::run(&AppState::new(RuntimePorts::unconfigured()))?;
+        }
+        Command::SourceBaseline {
+            document_id,
+            expected_sha256,
+            expected_byte_len,
+        } => {
+            source_baseline::run_source_baseline_worker(
+                &document_id,
+                &expected_sha256,
+                expected_byte_len,
+            )?;
         }
     }
 
