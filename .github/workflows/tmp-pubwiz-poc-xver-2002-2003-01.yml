@@ -1,0 +1,141 @@
+name: TEMP PUBWIZ POC XVER 2002-2003
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-poc-xver-2002-2003-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inert media tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat
+      - name: Rehydrate exact P2002 and P2003 target POC bytes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/poc/{p2src,p2disc,p3disc,p2out,p3out} out
+
+          # Publisher 2002 / X08-20172
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z' \
+            -o /tmp/poc/p2.7z
+          test "$(sha1sum /tmp/poc/p2.7z | awk '{print $1}')" = '1ebbf5a8c188794e14a5ad2556bb751797034d0c'
+          7z x -y /tmp/poc/p2.7z -o/tmp/poc/p2src >/tmp/poc/p2-unpack.log
+          MDF="$(find /tmp/poc/p2src -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF"
+          iat "$MDF" /tmp/poc/p2.iso >/tmp/poc/p2-iat.log
+          test "$(sha256sum /tmp/poc/p2.iso | awk '{print $1}')" = '2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d'
+          7z x -y /tmp/poc/p2.iso -o/tmp/poc/p2disc >/tmp/poc/p2-disc.log
+          test -f /tmp/poc/p2disc/OFFICE1.CAB
+          for n in ACCSBAR.POC ACCTBOX.POC; do
+            7z e -y /tmp/poc/p2disc/OFFICE1.CAB -o/tmp/poc/p2out "$n" >/tmp/poc/p2-$n.log
+            test -f "/tmp/poc/p2out/$n"
+          done
+
+          # Publisher 2003 / X10-14992
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X10-14992/X10-14992.ISO' \
+            -o /tmp/poc/p3.iso
+          test "$(sha256sum /tmp/poc/p3.iso | awk '{print $1}')" = '23c495d63e2d4f4486dd28cbeebf423518d7af77f28f9abdae8484da2de13036'
+          test "$(sha1sum /tmp/poc/p3.iso | awk '{print $1}')" = 'a108158fe57f7bf0ff5b45c34fe4593acf320454'
+          7z x -y /tmp/poc/p3.iso -o/tmp/poc/p3disc >/tmp/poc/p3-disc.log
+          python3 - <<'PY'
+          import pathlib, subprocess, sys
+          root=pathlib.Path("/tmp/poc/p3disc")
+          targets={"ACCSBAR.POC","ACCTBOX.POC"}
+          found={}
+          for cab in sorted(root.rglob("*.CAB"))+sorted(root.rglob("*.cab")):
+              try:
+                  p=subprocess.run(["7z","l","-slt",str(cab)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+              except Exception:
+                  continue
+              text=p.stdout.decode("utf-8","replace")
+              paths=[]
+              for line in text.splitlines():
+                  if line.startswith("Path = "):
+                      paths.append(line[7:])
+              for target in targets:
+                  matches=[x for x in paths if pathlib.PurePath(x).name.upper()==target]
+                  if matches and target not in found:
+                      out=pathlib.Path("/tmp/poc/p3out")/target
+                      q=subprocess.run(["7z","e","-y",f"-o{out.parent}",str(cab),matches[0]],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                      if q.returncode==0 and out.exists():
+                          found[target]={"cab":str(cab.relative_to(root)),"member":matches[0]}
+          missing=targets-set(found)
+          if missing:
+              raise SystemExit("missing P2003 targets: "+",".join(sorted(missing)))
+          pathlib.Path("/tmp/poc/p3-locators.json").write_text(__import__("json").dumps(found,indent=2))
+          print(__import__("json").dumps(found,indent=2))
+          PY
+
+          python3 - <<'PY'
+          import difflib, hashlib, json, pathlib
+          expected={"ACCSBAR.POC":11682,"ACCTBOX.POC":7358}
+          rows=[]
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          for name,size in expected.items():
+              a=pathlib.Path("/tmp/poc/p2out")/name
+              b=pathlib.Path("/tmp/poc/p3out")/name
+              x=a.read_bytes(); y=b.read_bytes()
+              if len(x)!=size or len(y)!=size:
+                  raise SystemExit(f"{name} size drift {len(x)} {len(y)}")
+              cp=0
+              while cp<min(len(x),len(y)) and x[cp]==y[cp]: cp+=1
+              cs=0
+              while cs<min(len(x),len(y))-cp and x[-1-cs]==y[-1-cs]: cs+=1
+              spans=[]
+              sm=difflib.SequenceMatcher(None,x,y,autojunk=False)
+              for tag,i1,i2,j1,j2 in sm.get_opcodes():
+                  if tag=="equal": continue
+                  spans.append({
+                    "tag":tag,
+                    "p2002_offset":i1,"p2002_len":i2-i1,"p2002_sha256":sha(x[i1:i2]),
+                    "p2003_offset":j1,"p2003_len":j2-j1,"p2003_sha256":sha(y[j1:j2])
+                  })
+              rows.append({
+                "name":name,
+                "size":size,
+                "p2002_sha256":sha(x),
+                "p2003_sha256":sha(y),
+                "byte_identical":x==y,
+                "sequence_match_ratio":round(sm.ratio(),6),
+                "common_prefix":cp,
+                "common_suffix":cs,
+                "delta_span_count":len(spans),
+                "delta_spans":spans
+              })
+          result={
+            "schema":"chaptera.pubwiz-poc-xver-2002-2003.v1",
+            "sources":{
+              "p2002":{"ia_identifier":"X08-20172","transport_sha1":"1ebbf5a8c188794e14a5ad2556bb751797034d0c","iso_sha256":"2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d"},
+              "p2003":{"ia_identifier":"X10-14992","iso_sha256":"23c495d63e2d4f4486dd28cbeebf423518d7af77f28f9abdae8484da2de13036","iso_sha1":"a108158fe57f7bf0ff5b45c34fe4593acf320454"}
+            },
+            "p2003_locators":json.loads(pathlib.Path("/tmp/poc/p3-locators.json").read_text()),
+            "comparisons":rows,
+            "all_byte_identical":all(r["byte_identical"] for r in rows),
+            "source_safe":True,
+            "raw_poc_retained":False
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.poc' -o -iname '*.iso' -o -iname '*.cab' -o -iname '*.7z' \) | grep -q .; then
+            exit 1
+          fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-poc-xver-2002-2003-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
