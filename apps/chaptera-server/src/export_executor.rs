@@ -435,6 +435,11 @@ impl PublishedExportJobExecutor {
                 "export resource length does not fit u64",
             )
         })?;
+        require_prefixed_sha256(&content_sha256, "export_resource_content_sha256")?;
+        let blob_content_sha256 = content_sha256
+            .strip_prefix("sha256:")
+            .expect("validated prefixed SHA-256")
+            .to_owned();
         let mut input = bytes;
         self.blob_store
             .create_canonical_binding(
@@ -442,7 +447,7 @@ impl PublishedExportJobExecutor {
                     tenant_id: payload.tenant_id.clone(),
                     project_id: None,
                     document_id: Some(payload.document_id.clone()),
-                    content_sha256,
+                    content_sha256: blob_content_sha256,
                     byte_len,
                     canonical_mime: Some(canonical_mime),
                     resource_kind: ResourceKind::ExportArtifact,
@@ -583,6 +588,17 @@ fn sha256_prefixed(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blob_store_hash_boundary_strips_only_valid_prefixed_sha256() {
+        let prefixed = format!("sha256:{}", "a".repeat(64));
+        require_prefixed_sha256(&prefixed, "test").unwrap();
+        assert_eq!(
+            prefixed.strip_prefix("sha256:").unwrap(),
+            "a".repeat(64)
+        );
+        assert!(require_prefixed_sha256(&"a".repeat(64), "test").is_err());
+    }
 
     #[test]
     fn payload_rejects_reference_pdf_profile_until_edited_pdf_is_proven() {
