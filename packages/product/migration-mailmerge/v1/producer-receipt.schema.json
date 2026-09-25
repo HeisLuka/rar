@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/migration-mailmerge-producer-receipt.v1.json",
+  "title": "Chaptera Migration mail-merge producer receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "producer",
+    "publisher",
+    "fixture",
+    "data_source",
+    "template",
+    "template_data_source_connected",
+    "data_fields",
+    "outputs",
+    "lineage",
+    "byte_identity_with_lost_merge_clone_01"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.migration-mailmerge-producer.v1"},
+    "producer": {"const": "New-MigrationMailMergeFixture.ps1"},
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "build"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^16\\.0"},
+        "build": {"type": "string", "pattern": "^12527"}
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wizard_id", "design", "merge_destination", "merge_field", "merge_values", "data_source_table"],
+      "properties": {
+        "wizard_id": {"const": 161},
+        "design": {"const": 1},
+        "merge_destination": {"const": 2},
+        "merge_field": {"const": "TextValue"},
+        "merge_values": {
+          "type": "array",
+          "prefixItems": [{"const": "TEXT_A"}, {"const": "TEXT_B"}, {"const": "TEXT_C"}],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "data_source_table": {"const": "Sheet1$"}
+      }
+    },
+    "data_source": {"$ref": "#/$defs/artifact"},
+    "template": {"$ref": "#/$defs/artifact"},
+    "template_data_source_connected": {"const": true},
+    "data_fields": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "contains": {"const": "TextValue"},
+      "minContains": 1
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["record_count", "expected_values", "observed_text", "artifact"],
+        "properties": {
+          "record_count": {"type": "integer", "minimum": 1, "maximum": 3},
+          "expected_values": {
+            "type": "array",
+            "items": {"enum": ["TEXT_A", "TEXT_B", "TEXT_C"]},
+            "minItems": 1,
+            "maxItems": 3
+          },
+          "observed_text": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1
+          },
+          "artifact": {"$ref": "#/$defs/artifact"}
+        }
+      }
+    },
+    "lineage": {"const": "new_controlled_fixture_2026_09_26"},
+    "byte_identity_with_lost_merge_clone_01": {"const": false}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_name", "byte_len", "sha256"],
+      "properties": {
+        "file_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
+        },
+        "byte_len": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
