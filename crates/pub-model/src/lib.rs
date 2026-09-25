@@ -32,10 +32,13 @@ pub use create_shape::{
 };
 
 pub use fragment::{
-    AUTHORING_FRAGMENT_SCHEMA_V1, AuthoringFragmentError, AuthoringFragmentV1,
-    FragmentSourceProvenanceV1, PasteFragmentResultV1, PasteFragmentV1, PasteIdentityRemapV1,
-    RectangleFragmentEntityV1, SINGLE_RECTANGLE_ENTITY_ID_V1, TranslationEmuV1,
-    capture_rectangle_fragment_v1, materialize_paste_fragment_v1,
+    AUTHORING_FRAGMENT_SCHEMA_V1, AUTHORING_FRAGMENT_SET_SCHEMA_V1, AuthoringFragmentError,
+    AuthoringFragmentSetMemberV1, AuthoringFragmentSetV1, AuthoringFragmentV1,
+    FragmentSetOriginEmuV1, FragmentSourceProvenanceV1, PasteFragmentResultV1,
+    PasteFragmentSetIdentityRemapV1, PasteFragmentSetResultV1, PasteFragmentSetV1, PasteFragmentV1,
+    PasteIdentityRemapV1, RectangleFragmentEntityV1, SINGLE_RECTANGLE_ENTITY_ID_V1,
+    TranslationEmuV1, capture_rectangle_fragment_set_v1, capture_rectangle_fragment_v1,
+    materialize_paste_fragment_set_v1, materialize_paste_fragment_v1,
 };
 
 pub use projection_context::{

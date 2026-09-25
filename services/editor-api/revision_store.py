@@ -244,6 +244,40 @@ except ModuleNotFoundError:
 
 
 try:
+    from authoring_fragment_set_v1 import (
+        canonical_paste_fragment_set_operation_v1,
+        validate_paste_fragment_set_intent_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _authoring_fragment_set_path = pathlib.Path(__file__).with_name(
+        "authoring_fragment_set_v1.py"
+    )
+    _authoring_fragment_set_spec = importlib.util.spec_from_file_location(
+        "chaptera_authoring_fragment_set_v1",
+        _authoring_fragment_set_path,
+    )
+    if (
+        _authoring_fragment_set_spec is None
+        or _authoring_fragment_set_spec.loader is None
+    ):
+        raise ImportError("cannot load authoring_fragment_set_v1 sibling module")
+    _authoring_fragment_set_module = importlib.util.module_from_spec(
+        _authoring_fragment_set_spec
+    )
+    sys.modules[_authoring_fragment_set_spec.name] = _authoring_fragment_set_module
+    _authoring_fragment_set_spec.loader.exec_module(_authoring_fragment_set_module)
+    canonical_paste_fragment_set_operation_v1 = (
+        _authoring_fragment_set_module.canonical_paste_fragment_set_operation_v1
+    )
+    validate_paste_fragment_set_intent_v1 = (
+        _authoring_fragment_set_module.validate_paste_fragment_set_intent_v1
+    )
+
+
+try:
     from document_text_replace_all_v1 import (
         DocumentTextReplaceAllError,
         DocumentTextReplaceAllNoOp,
@@ -741,6 +775,18 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_paste_fragment_request_shape,
             canonical_validator=self._validate_canonical_paste_fragment,
+        )
+
+    def commit_paste_fragment_set(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_paste_fragment_set_request_shape,
+            canonical_validator=self._validate_canonical_paste_fragment_set,
         )
 
     def commit_shape_fill(
@@ -2003,6 +2049,20 @@ class RevisionKernel:
         expected = canonical_paste_fragment_operation_v1(command)
         if operation != expected:
             raise ValueError("authoritative executor returned non-canonical PasteFragment operation")
+
+    @staticmethod
+    def _validate_paste_fragment_set_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.paste-fragment-set-intent.v1":
+            raise ValueError("V1 PasteFragmentSet protocol_version is required")
+        validate_paste_fragment_set_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_paste_fragment_set(command: dict, operation: dict) -> None:
+        expected = canonical_paste_fragment_set_operation_v1(command)
+        if operation != expected:
+            raise ValueError(
+                "authoritative executor returned non-canonical PasteFragmentSet operation"
+            )
 
     @staticmethod
     def _validate_srgb_color(color: dict, label: str) -> None:

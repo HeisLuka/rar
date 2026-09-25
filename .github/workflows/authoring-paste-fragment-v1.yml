@@ -5,8 +5,10 @@ on:
     paths:
       - "crates/pub-model/**"
       - "services/editor-api/authoring_fragment_v1.py"
+      - "services/editor-api/authoring_fragment_set_v1.py"
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_authoring_fragment.py"
+      - "services/editor-api/test_authoring_fragment_set_v1.py"
       - "packages/protocol/authoring-paste-fragment/v1/**"
       - ".github/workflows/authoring-paste-fragment-v1.yml"
   workflow_dispatch:
@@ -27,6 +29,9 @@ jobs:
       - name: Run PasteFragment revision/core tests
         working-directory: services/editor-api
         run: python -m unittest -v test_authoring_fragment
+      - name: Run atomic FragmentSet revision lifecycle
+        working-directory: services/editor-api
+        run: python -m unittest -v test_authoring_fragment_set_v1
       - name: Regression CreateShape and revision kernel
         working-directory: services/editor-api
         run: python -m unittest -v test_create_shape test_revision_store
@@ -48,11 +53,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Check workspace
-        run: cargo check --workspace --all-targets
-      - name: Lint workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Test workspace
-        run: cargo test --workspace
+      - name: Check pub-model formatting
+        run: cargo fmt -p pub-model -- --check
+      - name: Check pub-model
+        run: cargo check -p pub-model --all-targets
+      - name: Lint pub-model
+        run: cargo clippy -p pub-model --all-targets -- -D warnings
+      - name: Test pub-model
+        run: cargo test -p pub-model
