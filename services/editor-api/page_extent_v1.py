@@ -12,6 +12,9 @@ from __future__ import annotations
 import copy
 
 
+MAX_SAFE_EMU = 9_007_199_254_740_991
+
+
 class PageExtentV1Error(ValueError):
     pass
 
@@ -24,10 +27,13 @@ def _extent(value: object, label: str) -> dict:
             not isinstance(value.get(field), int)
             or isinstance(value.get(field), bool)
             or value[field] <= 0
+            or value[field] > MAX_SAFE_EMU
             for field in ("width_emu", "height_emu")
         )
     ):
-        raise PageExtentV1Error(f"{label} must contain positive integer EMU width/height")
+        raise PageExtentV1Error(
+            f"{label} must contain positive JavaScript-safe integer EMU width/height"
+        )
     return {"width_emu": value["width_emu"], "height_emu": value["height_emu"]}
 
 
