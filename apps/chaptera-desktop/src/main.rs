@@ -16,8 +16,9 @@ use chaptera_scene_instance::{
 };
 use eframe::egui;
 use pub_interaction::{
-    MoveTransaction, ResizeCommit, ResizeHandle, ResizePointerDown, ResizeTransaction, ResizeUpdate,
-    ScreenPoint, ScreenRect, ViewTransform, classify_resize_pointer_down, resize_handle_center,
+    MoveTransaction, ResizeCommit, ResizeHandle, ResizePointerDown, ResizeTransaction,
+    ResizeUpdate, ScreenPoint, ScreenRect, ViewTransform, classify_resize_pointer_down,
+    resize_handle_center,
 };
 use pub_viewer::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
@@ -227,22 +228,27 @@ fn main() -> eframe::Result<()> {
         }
     }
 
-
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--handoff-create-v1")) {
         if !reader_only_mode() {
             eprintln!("only the Chaptera Reader product may create a V1 suite handoff");
             std::process::exit(2);
         }
         let Some(target) = args.next().and_then(|value| value.into_string().ok()) else {
-            eprintln!("usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json");
+            eprintln!(
+                "usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json"
+            );
             std::process::exit(2);
         };
         let Some(source) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json");
+            eprintln!(
+                "usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json"
+            );
             std::process::exit(2);
         };
         let Some(output) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json");
+            eprintln!(
+                "usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json"
+            );
             std::process::exit(2);
         };
         if args.next().is_some() {
@@ -270,11 +276,10 @@ fn main() -> eframe::Result<()> {
             reader_supported,
             rescue_eligible,
         )
-            .and_then(|packet| {
-                chaptera_suite_handoff::write_packet(&packet, &output)?;
-                Ok(packet)
-            })
-        {
+        .and_then(|packet| {
+            chaptera_suite_handoff::write_packet(&packet, &output)?;
+            Ok(packet)
+        }) {
             Ok(packet) => {
                 println!(
                     "{{\"protocol_version\":\"{}\",\"sender_product_id\":\"{}\",\"target_product_id\":\"{}\",\"requested_job\":\"{}\",\"source_sha256\":\"{}\"}}",
@@ -989,7 +994,7 @@ impl ViewerApp {
             if self.selected_page != index {
                 self.canvas_selection.clear();
                 self.canvas_drag = None;
-        self.canvas_resize = None;
+                self.canvas_resize = None;
                 self.supporter_value
                     .observe(supporter::ValueEvent::PageNavigated { page_index: index });
             }
@@ -1109,7 +1114,9 @@ impl ViewerApp {
         if !reader_only_mode() {
             if self.canvas_selection.primary().is_some() {
                 ui.strong(format!("{} object selected", self.canvas_selection.len()));
-                ui.small("Drag to move supported page-local objects. Projected objects stay read-only.");
+                ui.small(
+                    "Drag to move supported page-local objects. Projected objects stay read-only.",
+                );
             } else {
                 ui.weak("No object selected");
             }
@@ -1130,7 +1137,10 @@ impl ViewerApp {
             ));
             ui.label(format!("Bytes: {}", source.byte_len));
             ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
-            ui.label(format!("Engine: {}", visual.scene.environment.engine_revision));
+            ui.label(format!(
+                "Engine: {}",
+                visual.scene.environment.engine_revision
+            ));
             ui.label("Source SHA-256");
             ui.monospace(format!("{:?}", source.source_hash));
             if let Some(instance_id) = self.canvas_selection.primary() {
@@ -1691,7 +1701,8 @@ impl ViewerApp {
             .ok_or_else(|| "saved EditorProject sidecar is unavailable".to_owned())?;
         if current_operation_count != saved_operation_count {
             return Err(
-                "current edits differ from the saved EditorProject; save before reopening".to_owned(),
+                "current edits differ from the saved EditorProject; save before reopening"
+                    .to_owned(),
             );
         }
 
@@ -1699,8 +1710,9 @@ impl ViewerApp {
         if self.editor.is_none() {
             return Err("fresh editor session could not be opened".to_owned());
         }
-        self.edit_status =
-            Some("Reopened source and replayed the saved EditorProject in a fresh session.".to_owned());
+        self.edit_status = Some(
+            "Reopened source and replayed the saved EditorProject in a fresh session.".to_owned(),
+        );
         Ok(())
     }
 
@@ -1907,8 +1919,7 @@ impl ViewerApp {
                 continue;
             }
 
-            let admission =
-                admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage);
+            let admission = admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage);
             let origin_node_id = scene_node.origin.as_canonical().to_string();
             if !admission.admitted
                 || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
@@ -1950,8 +1961,8 @@ impl ViewerApp {
         let node_id = self.selected_direct_replace_image_target()?;
         let mime = replacement_image_mime(path)
             .ok_or_else(|| "Choose a PNG or JPEG replacement image.".to_owned())?;
-        let bytes =
-            fs::read(path).map_err(|error| format!("read replacement {}: {error}", path.display()))?;
+        let bytes = fs::read(path)
+            .map_err(|error| format!("read replacement {}: {error}", path.display()))?;
 
         let editor = self
             .editor
@@ -1964,7 +1975,9 @@ impl ViewerApp {
             .map_err(|error| format!("Replacement image import rejected: {error}"))?;
         candidate
             .can_replace_image(node_id, replacement_asset)
-            .map_err(|error| format!("Replace image is unavailable: {} ({})", error, error.code()))?;
+            .map_err(|error| {
+                format!("Replace image is unavailable: {} ({})", error, error.code())
+            })?;
         candidate
             .replace_image(node_id, replacement_asset)
             .map_err(|error| format!("Replace image rejected: {} ({})", error, error.code()))?;
@@ -2009,7 +2022,8 @@ impl ViewerApp {
                     #[cfg(not(target_os = "windows"))]
                     {
                         self.edit_status = Some(
-                            "The native replacement picker is part of Windows Editor V0.".to_owned(),
+                            "The native replacement picker is part of Windows Editor V0."
+                                .to_owned(),
                         );
                     }
                 }
@@ -2357,12 +2371,8 @@ impl ViewerApp {
                             resizable_nodes.get(selected_instance).copied()
                     {
                         let selected_screen_bounds = ScreenRect::new(
-                            f64::from(
-                                page_rect.left() + before.x.get() as f32 * scene_scale,
-                            ),
-                            f64::from(
-                                page_rect.top() + before.y.get() as f32 * scene_scale,
-                            ),
+                            f64::from(page_rect.left() + before.x.get() as f32 * scene_scale),
+                            f64::from(page_rect.top() + before.y.get() as f32 * scene_scale),
                             f64::from(before.width.get() as f32 * scene_scale),
                             f64::from(before.height.get() as f32 * scene_scale),
                         );
@@ -2401,9 +2411,7 @@ impl ViewerApp {
                         }
                     }
 
-                    if !resize_started
-                        && let Some(hit) = hit_index.topmost_at(pointer_start)
-                    {
+                    if !resize_started && let Some(hit) = hit_index.topmost_at(pointer_start) {
                         canvas_hit = Some(hit.instance_id.clone());
                         next_canvas_resize = None;
                         if let Some((node_id, before)) =
@@ -2430,14 +2438,15 @@ impl ViewerApp {
                         (next_canvas_resize.take(), pointer_document)
                     {
                         match resize.update(point) {
-                            Ok(ResizeUpdate::Preview(_))
-                            | Ok(ResizeUpdate::Invalid { .. }) => match resize.commit() {
-                                Ok(commit) => resize_commit = Some(commit),
-                                Err(error) => {
-                                    resize_error =
-                                        Some(format!("Object resize cancelled: {error}"));
+                            Ok(ResizeUpdate::Preview(_)) | Ok(ResizeUpdate::Invalid { .. }) => {
+                                match resize.commit() {
+                                    Ok(commit) => resize_commit = Some(commit),
+                                    Err(error) => {
+                                        resize_error =
+                                            Some(format!("Object resize cancelled: {error}"));
+                                    }
                                 }
-                            },
+                            }
                             Err(error) => {
                                 resize_error = Some(format!("Object resize cancelled: {error}"));
                             }
@@ -2462,14 +2471,12 @@ impl ViewerApp {
                 {
                     if let Some(mut resize) = next_canvas_resize {
                         match resize.update(point) {
-                            Ok(ResizeUpdate::Preview(_))
-                            | Ok(ResizeUpdate::Invalid { .. }) => {
+                            Ok(ResizeUpdate::Preview(_)) | Ok(ResizeUpdate::Invalid { .. }) => {
                                 next_canvas_resize = Some(resize);
                             }
                             Err(error) => {
                                 next_canvas_resize = None;
-                                resize_error =
-                                    Some(format!("Object resize cancelled: {error}"));
+                                resize_error = Some(format!("Object resize cancelled: {error}"));
                             }
                         }
                     } else if let Some(mut drag) = next_canvas_drag {
@@ -2588,10 +2595,7 @@ impl ViewerApp {
                         painter.image(
                             texture.id(),
                             node_rect.shrink(1.0),
-                            egui::Rect::from_min_max(
-                                egui::pos2(0.0, 0.0),
-                                egui::pos2(1.0, 1.0),
-                            ),
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                             egui::Color32::WHITE,
                         );
                     }
@@ -2730,7 +2734,10 @@ impl ViewerApp {
                                         egui::WidgetInfo::labeled(
                                             egui::WidgetType::Other,
                                             true,
-                                            format!("Resize {} handle", resize_handle_label(handle)),
+                                            format!(
+                                                "Resize {} handle",
+                                                resize_handle_label(handle)
+                                            ),
                                         )
                                     });
                                 }
@@ -2888,8 +2895,7 @@ fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect, show_handl
         ];
 
         for handle in handles {
-            let handle_rect =
-                egui::Rect::from_center_size(handle, egui::vec2(7.0_f32, 7.0_f32));
+            let handle_rect = egui::Rect::from_center_size(handle, egui::vec2(7.0_f32, 7.0_f32));
             painter.rect_filled(handle_rect, 0, egui::Color32::WHITE);
             painter.rect_stroke(
                 handle_rect,
@@ -3489,7 +3495,10 @@ mod tests {
             .map(PathBuf::from)
             .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
         fs::read(&path).unwrap_or_else(|error| {
-            panic!("read pinned SampleNewsletter fixture {}: {error}", path.display())
+            panic!(
+                "read pinned SampleNewsletter fixture {}: {error}",
+                path.display()
+            )
         })
     }
 
@@ -3913,7 +3922,10 @@ mod tests {
             .map(PathBuf::from)
             .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
         let original = fs::read(&fixture_source).unwrap_or_else(|error| {
-            panic!("read pinned SampleNewsletter fixture {}: {error}", fixture_source.display())
+            panic!(
+                "read pinned SampleNewsletter fixture {}: {error}",
+                fixture_source.display()
+            )
         });
         let root = std::env::temp_dir().join(format!(
             "chaptera-gui-v0-walkthrough-{}",
@@ -3940,8 +3952,14 @@ mod tests {
             ..Default::default()
         });
         harness.step();
-        assert!(harness.state().visual.is_some(), "GUI file drop must open the PUB");
-        assert!(harness.state().editor.is_some(), "GUI open must create the EditorSession");
+        assert!(
+            harness.state().visual.is_some(),
+            "GUI file drop must open the PUB"
+        );
+        assert!(
+            harness.state().editor.is_some(),
+            "GUI open must create the EditorSession"
+        );
 
         let (story_id, original_story, search_term) = {
             let app = harness.state();
@@ -4063,8 +4081,7 @@ mod tests {
                     );
 
                     hit_index.entries.iter().rev().find_map(|hit| {
-                        let instance =
-                            direct_scene_instance(editor, &page_id_text, hit.node_id)?;
+                        let instance = direct_scene_instance(editor, &page_id_text, hit.node_id)?;
                         let admission =
                             admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
                         if !admission.admitted
@@ -4185,7 +4202,13 @@ mod tests {
             .click();
         harness.step();
         assert_eq!(
-            harness.state().editor.as_ref().expect("editor").graph().nodes[&moved_node_id]
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .graph()
+                .nodes[&moved_node_id]
                 .header
                 .bounds,
             before_move,
@@ -4199,7 +4222,13 @@ mod tests {
             .click();
         harness.step();
         assert_eq!(
-            harness.state().editor.as_ref().expect("editor").graph().nodes[&moved_node_id]
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .graph()
+                .nodes[&moved_node_id]
                 .header
                 .bounds,
             after_move,
@@ -4217,15 +4246,25 @@ mod tests {
 
         {
             let reopen = harness.get_by_label("Reopen Project");
-            assert!(!reopen.is_disabled(), "saved clean state enables Reopen Project");
+            assert!(
+                !reopen.is_disabled(),
+                "saved clean state enables Reopen Project"
+            );
             reopen.click();
         }
         harness.step();
         {
-            let editor = harness.state().editor.as_ref().expect("fresh reopened editor");
+            let editor = harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("fresh reopened editor");
             assert_eq!(editor.operations().len(), 2);
             assert_eq!(editor.graph().stories[&story_id].text, replacement);
-            assert_eq!(editor.graph().nodes[&moved_node_id].header.bounds, after_move);
+            assert_eq!(
+                editor.graph().nodes[&moved_node_id].header.bounds,
+                after_move
+            );
         }
 
         {
@@ -4246,9 +4285,7 @@ mod tests {
             (app.export_preview.clone(), app.edit_status.clone())
         };
         let preview = preview.unwrap_or_else(|| {
-            panic!(
-                "GUI IDML preview was not created; edit_status={preview_status:?}"
-            )
+            panic!("GUI IDML preview was not created; edit_status={preview_status:?}")
         });
         assert_eq!(
             preview.target,
@@ -4256,8 +4293,7 @@ mod tests {
             "GUI preview must target IDML"
         );
         assert_eq!(
-            preview.operation_count,
-            2,
+            preview.operation_count, 2,
             "GUI IDML preview must bind both accepted operations"
         );
         assert!(
@@ -4274,8 +4310,8 @@ mod tests {
         }
         harness.step();
 
-        let exported =
-            editable_export_path(&fixture, pub_editor::EditorEditableTarget::Idml).expect("IDML path");
+        let exported = editable_export_path(&fixture, pub_editor::EditorEditableTarget::Idml)
+            .expect("IDML path");
         assert!(exported.is_file(), "GUI export must write edited IDML");
         assert!(
             editable_export_report_path(&exported).is_file(),
@@ -4306,9 +4342,7 @@ mod tests {
             .with_size(egui::vec2(1280.0, 820.0))
             .with_pixels_per_point(1.0)
             .with_max_steps(24)
-            .build_eframe(move |cc| {
-                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
-            });
+            .build_eframe(move |cc| ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage));
         harness.step();
 
         let (page_label, target_document_point) = {
@@ -4347,8 +4381,7 @@ mod tests {
                     );
 
                     hit_index.entries.iter().rev().find_map(|hit| {
-                        let instance =
-                            direct_scene_instance(editor, &page_id_text, hit.node_id)?;
+                        let instance = direct_scene_instance(editor, &page_id_text, hit.node_id)?;
                         let admission =
                             admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
                         if !admission.admitted
@@ -4518,7 +4551,13 @@ mod tests {
             .click();
         harness.step();
         assert_eq!(
-            harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .graph()
+                .nodes[&node_id]
                 .header
                 .bounds,
             before,
@@ -4532,7 +4571,13 @@ mod tests {
             .click();
         harness.step();
         assert_eq!(
-            harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .graph()
+                .nodes[&node_id]
                 .header
                 .bounds,
             after,
@@ -4591,10 +4636,8 @@ mod tests {
                     .find_map(|scene_node| {
                         let instance =
                             direct_scene_instance(&editor, &page_id_text, scene_node.origin)?;
-                        let admission = admit_object_mutation_v1(
-                            &instance,
-                            ObjectMutationKindV1::ReplaceImage,
-                        );
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage);
                         if !admission.admitted
                             || admission.origin_node_id.as_deref()
                                 != Some(scene_node.origin.as_canonical().to_string().as_str())
@@ -4686,8 +4729,7 @@ mod tests {
         )
         .expect("SampleNewsletter Viewer open");
         let source_hash = visual.document.source.source_hash;
-        let editor =
-            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
+        let editor = pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
 
         let (page_index, instance_id, mime, replacement_bytes) = visual
             .document
@@ -4705,10 +4747,8 @@ mod tests {
                     .find_map(|scene_node| {
                         let instance =
                             direct_scene_instance(&editor, &page_id_text, scene_node.origin)?;
-                        let admission = admit_object_mutation_v1(
-                            &instance,
-                            ObjectMutationKindV1::ReplaceImage,
-                        );
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage);
                         if !admission.admitted {
                             return None;
                         }
@@ -4735,10 +4775,8 @@ mod tests {
             })
             .expect("fixture exposes one direct image placement");
 
-        let root = std::env::temp_dir().join(format!(
-            "chaptera-replace-image-ui-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("chaptera-replace-image-ui-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create replacement temp directory");
         let extension = if mime == "image/png" { "png" } else { "jpg" };
@@ -4754,12 +4792,7 @@ mod tests {
         let target = app
             .selected_direct_replace_image_target()
             .expect("selected visual instance passes ReplaceImage admission");
-        let before_count = app
-            .editor
-            .as_ref()
-            .expect("editor")
-            .operations()
-            .len();
+        let before_count = app.editor.as_ref().expect("editor").operations().len();
 
         app.replace_selected_image_from_path(&replacement_path)
             .expect("desktop ReplaceImage command");
@@ -4805,13 +4838,9 @@ mod tests {
                 let b2 = chunk.get(2).copied().unwrap_or(0);
 
                 output.push(char::from(TABLE[(b0 >> 2) as usize]));
-                output.push(char::from(
-                    TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize],
-                ));
+                output.push(char::from(TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize]));
                 if chunk.len() > 1 {
-                    output.push(char::from(
-                        TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize],
-                    ));
+                    output.push(char::from(TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize]));
                 } else {
                     output.push('=');
                 }
@@ -4905,8 +4934,7 @@ mod tests {
         )
         .expect("SampleNewsletter Viewer open");
         let source_hash = visual.document.source.source_hash;
-        let editor =
-            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
+        let editor = pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
 
         let (page_index, instance_id, target, source_asset_sha256, before_bounds, before_crop) =
             visual
@@ -4956,8 +4984,7 @@ mod tests {
                 })
                 .expect("real fixture exposes one direct crop-free image target");
 
-        let replacement_image =
-            ImageBuffer::from_pixel(2, 2, Rgba([17_u8, 91_u8, 203_u8, 255_u8]));
+        let replacement_image = ImageBuffer::from_pixel(2, 2, Rgba([17_u8, 91_u8, 203_u8, 255_u8]));
         let mut replacement_cursor = Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(replacement_image)
             .write_to(&mut replacement_cursor, ImageFormat::Png)
@@ -5016,7 +5043,10 @@ mod tests {
                 authored.payload.explicit_image_crop.clone(),
             )
         };
-        assert_eq!(after_bounds, before_bounds, "ReplaceImage preserves frame bounds");
+        assert_eq!(
+            after_bounds, before_bounds,
+            "ReplaceImage preserves frame bounds"
+        );
         assert_eq!(after_crop, before_crop, "ReplaceImage preserves crop state");
 
         // The live canvas prefers a decoded replacement texture over the source
@@ -5085,7 +5115,12 @@ mod tests {
 
         let missing_image_slot_rejected = {
             let mut graph = base_graph.clone();
-            graph.nodes.get_mut(&target).expect("target").payload.image_slot = None;
+            graph
+                .nodes
+                .get_mut(&target)
+                .expect("target")
+                .payload
+                .image_slot = None;
             let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
             let asset = candidate
                 .import_replacement_asset("image/png", negative_asset.clone())
@@ -5117,8 +5152,13 @@ mod tests {
         };
         let invalid_bounds_rejected = {
             let mut graph = base_graph.clone();
-            graph.nodes.get_mut(&target).expect("target").header.bounds.width =
-                pub_editor::LengthEmu::new(0);
+            graph
+                .nodes
+                .get_mut(&target)
+                .expect("target")
+                .header
+                .bounds
+                .width = pub_editor::LengthEmu::new(0);
             let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
             let asset = candidate
                 .import_replacement_asset("image/png", negative_asset.clone())
@@ -5127,8 +5167,12 @@ mod tests {
         };
         let non_page_owned_rejected = {
             let mut graph = base_graph;
-            graph.nodes.get_mut(&target).expect("target").header.parent_id =
-                target.into_canonical();
+            graph
+                .nodes
+                .get_mut(&target)
+                .expect("target")
+                .header
+                .parent_id = target.into_canonical();
             let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
             let asset = candidate
                 .import_replacement_asset("image/png", negative_asset)
@@ -5140,17 +5184,28 @@ mod tests {
         assert!(invalid_bounds_rejected);
         assert!(non_page_owned_rejected);
 
-        app.editor.as_mut().expect("editor").undo().expect("ReplaceImage undo");
+        app.editor
+            .as_mut()
+            .expect("editor")
+            .undo()
+            .expect("ReplaceImage undo");
         let undo_restores_previous_asset = app
             .editor
             .as_ref()
             .expect("editor")
             .image_replacement_for(target)
             .is_none();
-        app.editor.as_mut().expect("editor").redo().expect("ReplaceImage redo");
-        let redo_restores_replacement_asset =
-            app.editor.as_ref().expect("editor").image_replacement_for(target)
-                == Some(replacement_asset);
+        app.editor
+            .as_mut()
+            .expect("editor")
+            .redo()
+            .expect("ReplaceImage redo");
+        let redo_restores_replacement_asset = app
+            .editor
+            .as_ref()
+            .expect("editor")
+            .image_replacement_for(target)
+            == Some(replacement_asset);
         assert!(undo_restores_previous_asset);
         assert!(redo_restores_replacement_asset);
 

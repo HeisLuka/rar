@@ -23,17 +23,36 @@ pub struct OdgEmbeddedImagePlacement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OdgImageError {
     NonOdgPackage,
-    EmptyPayload { resource_id: ResourceId },
-    UnsupportedMime { resource_id: ResourceId, mime: String },
-    InvalidFrameBounds { node_id: NodeId },
-    DuplicatePlacement { node_id: NodeId },
-    MissingPreservedBytes { resource_id: ResourceId },
-    MissingPreservedFrameGeometry { node_id: NodeId },
-    MissingContentTransformLoss { node_id: NodeId },
+    EmptyPayload {
+        resource_id: ResourceId,
+    },
+    UnsupportedMime {
+        resource_id: ResourceId,
+        mime: String,
+    },
+    InvalidFrameBounds {
+        node_id: NodeId,
+    },
+    DuplicatePlacement {
+        node_id: NodeId,
+    },
+    MissingPreservedBytes {
+        resource_id: ResourceId,
+    },
+    MissingPreservedFrameGeometry {
+        node_id: NodeId,
+    },
+    MissingContentTransformLoss {
+        node_id: NodeId,
+    },
     MissingContent,
     InvalidContentUtf8,
-    MissingPage { page_id: PageId },
-    DuplicateResourcePath { path: String },
+    MissingPage {
+        page_id: PageId,
+    },
+    DuplicateResourcePath {
+        path: String,
+    },
 }
 
 impl fmt::Display for OdgImageError {
@@ -83,7 +102,10 @@ impl fmt::Display for OdgImageError {
                 page_id.as_canonical()
             ),
             Self::DuplicateResourcePath { path } => {
-                write!(formatter, "ODG package already contains resource path {path}")
+                write!(
+                    formatter,
+                    "ODG package already contains resource path {path}"
+                )
             }
         }
     }
@@ -147,23 +169,24 @@ pub fn add_embedded_images_to_odg(
 
         let page_name = crate::semantic::page_name(placement.page_id);
         let page_marker = format!("<draw:page draw:name=\"{page_name}\"");
-        let page_start = xml
-            .find(&page_marker)
-            .ok_or(OdgImageError::MissingPage {
-                page_id: placement.page_id,
-            })?;
-        let relative_close = xml[page_start..]
-            .find("      </draw:page>")
-            .ok_or(OdgImageError::MissingPage {
-                page_id: placement.page_id,
-            })?;
+        let page_start = xml.find(&page_marker).ok_or(OdgImageError::MissingPage {
+            page_id: placement.page_id,
+        })?;
+        let relative_close =
+            xml[page_start..]
+                .find("      </draw:page>")
+                .ok_or(OdgImageError::MissingPage {
+                    page_id: placement.page_id,
+                })?;
         let insert_at = page_start + relative_close;
         xml.insert_str(insert_at, &image_frame_xml(placement, &resource_path)?);
     }
 
     package.parts[content_index].content = xml.into_bytes();
     package.parts.extend(resources);
-    package.parts.sort_by(|left, right| left.path.cmp(&right.path));
+    package
+        .parts
+        .sort_by(|left, right| left.path.cmp(&right.path));
     Ok(())
 }
 
@@ -296,7 +319,9 @@ fn image_name(node_id: NodeId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pub_export::{SemanticFeatureRequest, TargetCapabilityManifest, TargetProfile, plan_export};
+    use pub_export::{
+        SemanticFeatureRequest, TargetCapabilityManifest, TargetProfile, plan_export,
+    };
     use pub_model::{CanonicalId, LengthEmu};
     use std::collections::BTreeMap;
 
