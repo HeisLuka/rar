@@ -32,13 +32,11 @@ fn source_story_id() -> StoryId {
 }
 
 fn new_story_id() -> StoryId {
-    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ab\"")
-        .expect("valid UUIDv7 StoryId")
+    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ab\"").expect("valid UUIDv7 StoryId")
 }
 
 fn other_new_story_id() -> StoryId {
-    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ac\"")
-        .expect("valid UUIDv7 StoryId")
+    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ac\"").expect("valid UUIDv7 StoryId")
 }
 
 fn source_hash() -> Sha256Digest {
@@ -223,8 +221,16 @@ fn break_link_splits_topology_without_moving_or_copying_story_text() {
     assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_7);
     assert_eq!(project.operations, vec![operation]);
     let requirements = session.persistence_requirements();
-    assert!(requirements.iter().any(|item| item.feature == "story.linked_frames"));
-    assert!(requirements.iter().any(|item| item.feature == "story.created_identity"));
+    assert!(
+        requirements
+            .iter()
+            .any(|item| item.feature == "story.linked_frames")
+    );
+    assert!(
+        requirements
+            .iter()
+            .any(|item| item.feature == "story.created_identity")
+    );
 }
 
 #[test]
@@ -295,11 +301,15 @@ fn idml_and_odg_exports_serialize_the_split_graph() {
 fn ambiguous_or_non_explicit_topology_fails_closed_without_mutation() {
     let mut ambiguous = graph();
     let d = frame_id(0x34);
-    ambiguous.pages.get_mut(&page_id()).unwrap().children.push(d);
-    ambiguous.nodes.insert(
-        d,
-        text_frame(d, 3, None, None, 3_100_000),
-    );
+    ambiguous
+        .pages
+        .get_mut(&page_id())
+        .unwrap()
+        .children
+        .push(d);
+    ambiguous
+        .nodes
+        .insert(d, text_frame(d, 3, None, None, 3_100_000));
     let baseline = ambiguous.clone();
     let mut session = EditorSession::new(ambiguous).expect("open editor");
 
@@ -326,9 +336,9 @@ fn new_story_identity_must_be_fresh_uuid_v7() {
     assert!(matches!(error, EditorError::NewStoryIdInvalid { .. }));
 
     let mut conflict_graph = graph();
-    conflict_graph
-        .stories
-        .insert(new_story_id(), Story {
+    conflict_graph.stories.insert(
+        new_story_id(),
+        Story {
             id: new_story_id(),
             text: String::new(),
             paragraphs: Vec::new(),
@@ -336,7 +346,8 @@ fn new_story_identity_must_be_fresh_uuid_v7() {
             fields: Vec::new(),
             hyperlinks: Vec::new(),
             source_refs: Vec::new(),
-        });
+        },
+    );
     let mut conflict = EditorSession::new(conflict_graph).expect("open editor");
     let error = conflict
         .break_text_frame_forward_link(frame_id(0x31), frame_id(0x32), new_story_id())
@@ -345,10 +356,6 @@ fn new_story_identity_must_be_fresh_uuid_v7() {
 
     // A different preallocated UUIDv7 remains admissible.
     let mut good = EditorSession::new(graph()).expect("open editor");
-    good.break_text_frame_forward_link(
-        frame_id(0x31),
-        frame_id(0x32),
-        other_new_story_id(),
-    )
-    .expect("fresh UUIDv7");
+    good.break_text_frame_forward_link(frame_id(0x31), frame_id(0x32), other_new_story_id())
+        .expect("fresh UUIDv7");
 }
