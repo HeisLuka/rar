@@ -118,15 +118,13 @@ impl ConfiguredWorkerRuntime {
 
         let run = worker_loop.run();
         tokio::pin!(run);
-        let receipt = tokio::select! {
+        let _receipt = tokio::select! {
             result = &mut run => result?,
             _ = shutdown::signal() => {
                 control.request_drain();
                 run.await?
             }
         };
-        drop(receipt);
-        drop(blob_runtime);
         Ok(())
     }
 }
