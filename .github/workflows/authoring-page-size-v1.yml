@@ -59,8 +59,11 @@ jobs:
           print("page extent intent schema valid")
           PY
       - name: Check task-owned Rust formatting
+        working-directory: vendor/producer-a
         run: cargo fmt -p pub-layout -p pub-idml -p pub-odg -- --check
       - name: Lint task-owned Rust consumers
+        working-directory: vendor/producer-a
         run: cargo clippy -p pub-layout -p pub-idml -p pub-odg --all-targets -- -D warnings
       - name: Prove Scene and editable-export extent consumers
+        working-directory: vendor/producer-a
         run: cargo test -p pub-layout -p pub-idml -p pub-odg
