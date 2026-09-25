@@ -8,6 +8,7 @@ on:
       - "crates/chaptera-scene-instance/**"
       - "vendor/producer-a/**"
       - "packages/product/editor-live-trial/**"
+      - "packages/protocol/editor-agent-control/**"
       - "tools/package_editor_live_trial.py"
       - "tools/build_editor_live_trial_package_receipt.py"
       - "tools/validate_editor_live_trial_package_receipt.py"
@@ -37,6 +38,9 @@ jobs:
 
       - name: Install acceptance validator
         run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Test portable package mechanics
+        run: python -m unittest tools.test_package_editor_live_trial -v
 
       - name: Validate suite product identity
         run: python tools/validate_chaptera_desktop_suite_manifest.py packages/product/desktop-suite/v1/product-manifest.json --editor-cargo apps/chaptera-desktop/Cargo.toml
@@ -159,9 +163,24 @@ jobs:
 
           $exe = Join-Path $clean "Chaptera-Editor.exe"
           if (-not (Test-Path $exe)) { throw "portable ZIP did not contain Chaptera-Editor.exe" }
+          $catalogPath = Join-Path $clean "agent-control-v1.catalog.json"
+          if (-not (Test-Path $catalogPath)) { throw "portable ZIP did not contain Agent V1 catalog" }
           if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "portable ZIP leaked a Cargo checkout" }
 
+          try {
+            $catalog = Get-Content -Raw $catalogPath | ConvertFrom-Json
+          } catch {
+            throw "portable Agent V1 catalog is not valid JSON"
+          }
+          if ($catalog.schema -ne "chaptera.agent-control.catalog.v1") { throw "portable Agent catalog schema mismatch" }
+          if ($catalog.protocol_version -ne "chaptera.agent-control.v1") { throw "portable Agent protocol mismatch" }
+          if ($catalog.executable -ne "chaptera-editor.exe") { throw "portable Agent executable identity mismatch" }
+          if ($catalog.global_laws.native_pub_write -ne $false) { throw "portable Agent catalog widened native PUB write" }
+          if ($catalog.global_laws.source_pub_immutable -ne $true) { throw "portable Agent catalog lost immutable-source law" }
+
           $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $catalogHash = (Get-FileHash $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $catalogBytes = (Get-Item $catalogPath).Length
           $exeBytes = (Get-Item $exe).Length
           $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $exeHash
           $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$exeBytes
@@ -199,6 +218,9 @@ jobs:
           if ($manifest.zip_sha256 -ne $zipHash) { throw "package manifest ZIP hash mismatch" }
           if ([int64]$manifest.binary_size -ne $exeBytes) { throw "package manifest executable byte length mismatch" }
           if ([int64]$manifest.zip_size -ne (Get-Item $zip).Length) { throw "package manifest ZIP byte length mismatch" }
+          if ($manifest.agent_catalog_entry -ne "agent-control-v1.catalog.json") { throw "package manifest Agent catalog entry mismatch" }
+          if ($manifest.agent_catalog_sha256 -ne $catalogHash) { throw "package manifest Agent catalog hash mismatch" }
+          if ([int64]$manifest.agent_catalog_size -ne $catalogBytes) { throw "package manifest Agent catalog byte length mismatch" }
 
       - uses: actions/upload-artifact@v4
         with:
