@@ -40,67 +40,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         .transpose()?;
 
     match cli.command {
-        Command::Serve => {
-            let config = match explicit_config.as_ref() {
-                Some(config) => config.clone(),
-                None => ChapteraConfig::development_from_env()?,
-            };
-            let secrets = config.resolve_required_secrets(&SecretResolver::from_process())?;
-
-            let edge_policy = EdgePolicy::from_config(&config)?;
-            if explicit_config.is_some() {
-                let revision_stream = SqliteRevisionStore::open(
-                    &config.sqlite.path,
-                    config.sqlite.pool_max,
-                    Duration::from_millis(config.sqlite.busy_timeout_ms),
-                )
-                .await?;
-                if config.auth.is_some() {
-                    let auth_runtime = AuthRuntime::open(&config, &secrets).await?;
-                    drop(secrets);
-                    let auth_http = auth_runtime.http_state();
-                    let busy_timeout = Duration::from_millis(config.sqlite.busy_timeout_ms);
-                    let authz = SqliteAuthzAuthority::open(
-                        &config.sqlite.path,
-                        config.sqlite.pool_max,
-                        busy_timeout,
-                    )
-                    .await?;
-                    let jobs = JobsRuntime::open_with_authz(
-                        &config.sqlite.path,
-                        config.sqlite.pool_max,
-                        busy_timeout,
-                        authz.clone(),
-                    )
-                    .await?;
-                    let blob_store = BlobStoreRuntime::open(&config).await?;
-                    let assembled = ports_with_configured_serve(
-                        revision_stream,
-                        auth_runtime,
-                        authz,
-                        jobs,
-                        blob_store,
-                    );
-                    let state = AppState::new(assembled.ports);
-                    serve::run_with_auth(
-                        config.runtime_config(),
-                        edge_policy,
-                        state,
-                        Some(auth_http),
-                    )
-                    .await?;
-                } else {
-                    drop(secrets);
-                    let assembled = ports_with_revision_stream(revision_stream);
-                    let state = AppState::new(assembled.ports);
-                    serve::run(config.runtime_config(), edge_policy, state).await?;
-                }
-            } else {
-                drop(secrets);
-                let state = AppState::new(RuntimePorts::unconfigured());
-                serve::run(config.runtime_config(), edge_policy, state).await?;
-            }
-        }
+        Command::Serve => run_serve(explicit_config.as_ref(), false).await?,
+        Command::Local => run_serve(explicit_config.as_ref(), true).await?,
         Command::Worker => {
             if let Some(config) = explicit_config.as_ref() {
                 // The background worker consumes durable AuthZ grants, not the
@@ -131,6 +72,91 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 drop(secrets);
             }
             doctor::run(&AppState::new(RuntimePorts::unconfigured()))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_serve(
+    explicit_config: Option<&ChapteraConfig>,
+    local_console: bool,
+) -> Result<(), Box<dyn Error>> {
+    let config = match explicit_config {
+        Some(config) => config.clone(),
+        None => ChapteraConfig::development_from_env()?,
+    };
+    let secrets = config.resolve_required_secrets(&SecretResolver::from_process())?;
+    let edge_policy = EdgePolicy::from_config(&config)?;
+
+    if explicit_config.is_some() {
+        let revision_stream = SqliteRevisionStore::open(
+            &config.sqlite.path,
+            config.sqlite.pool_max,
+            Duration::from_millis(config.sqlite.busy_timeout_ms),
+        )
+        .await?;
+        if config.auth.is_some() {
+            let auth_runtime = AuthRuntime::open(&config, &secrets).await?;
+            drop(secrets);
+            let auth_http = auth_runtime.http_state();
+            let busy_timeout = Duration::from_millis(config.sqlite.busy_timeout_ms);
+            let authz = SqliteAuthzAuthority::open(
+                &config.sqlite.path,
+                config.sqlite.pool_max,
+                busy_timeout,
+            )
+            .await?;
+            let jobs = JobsRuntime::open_with_authz(
+                &config.sqlite.path,
+                config.sqlite.pool_max,
+                busy_timeout,
+                authz.clone(),
+            )
+            .await?;
+            let blob_store = BlobStoreRuntime::open(&config).await?;
+            let assembled = ports_with_configured_serve(
+                revision_stream,
+                auth_runtime,
+                authz,
+                jobs,
+                blob_store,
+            );
+            let state = AppState::new(assembled.ports);
+            if local_console {
+                serve::run_local_with_auth(
+                    config.runtime_config(),
+                    edge_policy,
+                    state,
+                    Some(auth_http),
+                )
+                .await?;
+            } else {
+                serve::run_with_auth(
+                    config.runtime_config(),
+                    edge_policy,
+                    state,
+                    Some(auth_http),
+                )
+                .await?;
+            }
+        } else {
+            drop(secrets);
+            let assembled = ports_with_revision_stream(revision_stream);
+            let state = AppState::new(assembled.ports);
+            if local_console {
+                serve::run_local(config.runtime_config(), edge_policy, state).await?;
+            } else {
+                serve::run(config.runtime_config(), edge_policy, state).await?;
+            }
+        }
+    } else {
+        drop(secrets);
+        let state = AppState::new(RuntimePorts::unconfigured());
+        if local_console {
+            serve::run_local(config.runtime_config(), edge_policy, state).await?;
+        } else {
+            serve::run(config.runtime_config(), edge_policy, state).await?;
         }
     }
 
