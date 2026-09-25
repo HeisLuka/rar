@@ -1,0 +1,33 @@
+name: EDITOR-DIAG-FOLDER-SWEEP-01
+
+on:
+  push:
+    branches:
+      - editor-diag-folder-sweep-01
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  editor-diagnostic-sweep:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          components: rustfmt, clippy
+      - name: rustfmt
+        shell: pwsh
+        run: cargo fmt --all --check
+      - name: chaptera desktop check
+        shell: pwsh
+        run: cargo check -p chaptera-desktop --all-targets
+      - name: chaptera desktop tests
+        shell: pwsh
+        run: cargo test -p chaptera-desktop
+      - name: reader-only check
+        shell: pwsh
+        run: cargo check -p chaptera-desktop --features reader-only --all-targets
