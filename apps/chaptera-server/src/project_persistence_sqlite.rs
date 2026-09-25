@@ -11,9 +11,10 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
-use crate::source_ingress::{ConsumeUploadRequest, IngressError, ProjectCreateResult, UploadState};
-
-const AUTHORING_REVISION_SCHEMA_V1: &str = "chaptera.cdm.authoring-revision.v1";
+use crate::{
+    source_ingress::{ConsumeUploadRequest, IngressError, ProjectCreateResult, UploadState},
+    sqlite_store::AUTHORING_REVISION_SCHEMA_V1,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedProjectIdentity {
