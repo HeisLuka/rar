@@ -1,0 +1,128 @@
+name: TEMP PUBWIZ P2002 exact design-asset transition
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-des-p2002-transition-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inert media/MSI tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools iat
+      - name: Rehydrate exact X08-20172 and export Publisher File table
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p2002/container /tmp/p2002/disc out
+          URL='https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z'
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 "$URL" -o /tmp/p2002/source.7z
+          got_sha1="$(sha1sum /tmp/p2002/source.7z | awk '{print $1}')"
+          test "$got_sha1" = '1ebbf5a8c188794e14a5ad2556bb751797034d0c'
+          7z x -y /tmp/p2002/source.7z -o/tmp/p2002/container >/tmp/p2002/unpack.log
+          MDF="$(find /tmp/p2002/container -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF"
+          iat "$MDF" /tmp/p2002/office10.iso >/tmp/p2002/iat.log
+          got_iso_sha256="$(sha256sum /tmp/p2002/office10.iso | awk '{print $1}')"
+          test "$got_iso_sha256" = '2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d'
+          7z x -y /tmp/p2002/office10.iso -o/tmp/p2002/disc >/tmp/p2002/disc.log
+          PUBMSI="$(find /tmp/p2002/disc -type f -iname 'PUB.MSI' | head -n1)"
+          test -n "$PUBMSI"
+          msiinfo export "$PUBMSI" File > /tmp/p2002/pub-file.idt
+          msiinfo export "$PUBMSI" Property > /tmp/p2002/pub-property.idt
+          python3 - <<'PY'
+          import csv, hashlib, json, pathlib, re
+          file_path=pathlib.Path("/tmp/p2002/pub-file.idt")
+          prop_path=pathlib.Path("/tmp/p2002/pub-property.idt")
+          raw=file_path.read_bytes()
+          lines=file_path.read_text(encoding="utf-8",errors="replace").replace("\r","").splitlines()
+          rows=[]
+          # MSI IDT File schema columns are tab-separated; tolerate header/meta rows.
+          for ln in lines:
+              cols=ln.split("\t")
+              if len(cols)<4:
+                  continue
+              file_key=cols[0]
+              file_name=cols[2] if len(cols)>2 else ""
+              size_text=cols[3] if len(cols)>3 else ""
+              if not file_name:
+                  continue
+              try:
+                  size=int(size_text)
+              except Exception:
+                  size=None
+              rows.append({"file_key":file_key,"file_name":file_name,"size":size,"raw_columns":len(cols)})
+          def long_name(name):
+              return name.split("|",1)[-1] if "|" in name else name
+          def ext(name):
+              n=long_name(name).lower()
+              if "." not in n:return ""
+              return "."+n.rsplit(".",1)[-1]
+          des=[r for r in rows if ext(r["file_name"])==".des"]
+          poc=[r for r in rows if ext(r["file_name"])==".poc"]
+          xml=[r for r in rows if ext(r["file_name"])==".xml"]
+          dpv=[r for r in rows if ext(r["file_name"])==".dpv"]
+          dgxml=[r for r in xml if long_name(r["file_name"]).lower().startswith("dg")]
+          targets=[r for r in rows if re.search(r'accsbar|acctbox|dgaccbar|dgaccbox',long_name(r["file_name"]),re.I)]
+          props={}
+          for ln in prop_path.read_text(encoding="utf-8",errors="replace").replace("\r","").splitlines():
+              c=ln.split("\t")
+              if len(c)>=2 and c[0] in ("ProductName","ProductVersion","ProductLanguage"):
+                  props[c[0]]=c[1]
+          result={
+            "schema":"chaptera.pubwiz-des-p2002-transition.v1",
+            "source":{
+              "ia_identifier":"X08-20172",
+              "archive_member":"2001-05_X08-20172_X08-06831_OFFICE10.7z",
+              "transport_sha1":"1ebbf5a8c188794e14a5ad2556bb751797034d0c",
+              "iso_sha256":"2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d"
+            },
+            "publisher_msi":{
+              "properties":props,
+              "file_table_sha256":hashlib.sha256(raw).hexdigest(),
+              "parsed_file_rows":len(rows),
+              "des_count":len(des),
+              "poc_count":len(poc),
+              "xml_count":len(xml),
+              "dg_xml_count":len(dgxml),
+              "dpv_count":len(dpv),
+              "des_rows":des,
+              "target_rows":targets
+            },
+            "source_safe":True,
+            "raw_media_retained":False,
+            "raw_installer_retained":False
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(result,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps({
+            "properties":props,
+            "parsed_file_rows":len(rows),
+            "des_count":len(des),
+            "poc_count":len(poc),
+            "xml_count":len(xml),
+            "dg_xml_count":len(dgxml),
+            "dpv_count":len(dpv),
+            "target_rows":targets
+          },indent=2,ensure_ascii=False))
+          PY
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          test -f out/summary.json
+          if find out -type f \( -iname '*.msi' -o -iname '*.cab' -o -iname '*.des' -o -iname '*.poc' -o -iname '*.iso' -o -iname '*.mdf' -o -iname '*.7z' \) | grep -q .; then
+            echo "raw payload retained" >&2
+            exit 1
+          fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-des-p2002-transition-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
