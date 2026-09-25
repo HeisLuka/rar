@@ -12,6 +12,7 @@ mod rotate_quarter;
 mod shape_paint;
 mod shape_paint_op;
 mod source_identity;
+mod text_preset;
 
 pub use shape_paint::{
     AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, ShapePaintV1,
@@ -51,4 +52,12 @@ pub use source_identity::{
 pub use rotate_quarter::{
     ExactAffineV1, RotateQuarterError, RotateQuarterResultV1, apply_authored_shape_quarter_turn_v1,
     canonical_shape_affine_v1, validate_exact_affine_v1,
+};
+
+pub use text_preset::{
+    AUTHORING_TEXT_PRESET_VERSION_V1, AuthoringCharacterDefaultsV1, AuthoringParagraphAlignmentV1,
+    AuthoringParagraphDefaultsV1, AuthoringTextPresetError, AuthoringTextPresetRecordV1,
+    AuthoringTextPresetV1, AuthoringTextShapingInputV1, authoring_text_preset_id_v1,
+    authoring_text_preset_record_v1, authoring_text_shaping_input_v1, font_fingerprint_v1,
+    validate_font_resource_v1,
 };

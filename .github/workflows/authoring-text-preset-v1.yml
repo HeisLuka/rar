@@ -1,0 +1,33 @@
+name: Authoring Text Preset V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/pub-model/**"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_authoring_text_preset_state.py"
+      - ".github/workflows/authoring-text-preset-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test pub-model
+        run: cargo test -p pub-model
+      - name: Prove EditorProject revision-state participation
+        run: python services/editor-api/test_authoring_text_preset_state.py
