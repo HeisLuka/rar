@@ -1,16 +1,19 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    io::{Cursor, Read},
+};
 
 use pub_editor::{
     AuthoredEntityProvenanceV1, AuthoredShapeKindV1, AuthoredShapePaintV1,
     AuthoredShapeTransformV1, AuthoredSolidFillV1, AuthoredSolidStrokeV1,
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10, EditOperation, EditorError,
-    EditorProject, EditorProjectError, EditorSession, LengthEmu, RectEmu, Srgb8V1,
-    mature_0x2c_pub_persistence_target,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10, EditOperation,
+    EditorEditableTarget, EditorError, EditorProject, EditorProjectError, EditorSession, LengthEmu,
+    RectEmu, Srgb8V1, mature_0x2c_pub_persistence_target,
 };
-use pub_export::{PersistenceCompatibilityState, WriterCapabilityManifest};
+use pub_export::{CapabilityLevel, PersistenceCompatibilityState, WriterCapabilityManifest};
 use pub_model::{
-    Affine2D, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
-    ResolvedGraph, Sha256Digest, Size2D, SourceDescriptor,
+    Affine2D, Document, DocumentId, EMU_PER_POINT, Node, NodeHeader, NodeId, NodeKind, Page,
+    PageId, ResolvedGraph, Sha256Digest, Size2D, SourceDescriptor,
 };
 use pub_reader::{PubExplicitShapePaintSource, PubResolvedGraph, PubResolvedNodePayload};
 
@@ -386,4 +389,133 @@ fn native_pub_persistence_does_not_overclaim_created_shape_support() {
             && item.state == PersistenceCompatibilityState::NotEvaluated
             && item.format.is_none()
     }));
+}
+
+
+fn zip_text(bytes: &[u8], path: &str) -> String {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid editable package zip");
+    let mut entry = archive.by_name(path).expect("expected package part");
+    let mut text = String::new();
+    entry.read_to_string(&mut text).expect("UTF-8 XML part");
+    text
+}
+
+fn zip_first_text_matching(bytes: &[u8], predicate: impl Fn(&str) -> bool) -> String {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid editable package zip");
+    let path = (0..archive.len())
+        .find_map(|index| {
+            let entry = archive.by_index(index).ok()?;
+            predicate(entry.name()).then(|| entry.name().to_owned())
+        })
+        .expect("matching package part");
+    let mut entry = archive.by_name(&path).expect("matching package part");
+    let mut text = String::new();
+    entry.read_to_string(&mut text).expect("UTF-8 XML part");
+    text
+}
+
+#[test]
+fn authored_rectangle_survives_reopen_and_materializes_in_idml_and_odg_with_explicit_order_loss() {
+    let base = graph();
+    let mut session = EditorSession::new(base.clone()).expect("session");
+    let node_id = authored_node_id();
+    let bounds = rect(
+        10 * EMU_PER_POINT,
+        20 * EMU_PER_POINT,
+        30 * EMU_PER_POINT,
+        40 * EMU_PER_POINT,
+    );
+    session
+        .create_shape(node_id, page_id(), bounds, paint())
+        .expect("CreateShape");
+
+    let project = session.project();
+    let mut reopened = EditorSession::new(base.clone()).expect("reopen");
+    reopened.apply_project(&project).expect("replay project");
+    assert_eq!(reopened.graph(), &base, "editable export must not mutate source graph");
+    assert_eq!(reopened.authored_shape(node_id), session.authored_shape(node_id));
+
+    for target in [EditorEditableTarget::Idml, EditorEditableTarget::Odg] {
+        let preview = reopened
+            .preview_editable_export(target, "fixture.pub")
+            .expect("preview authored rectangle export");
+        let export = reopened
+            .export_editable(target, "fixture.pub")
+            .expect("serialize authored rectangle export");
+        assert_eq!(preview.report, export.report);
+        assert!(export.report.can_serialize);
+
+        for feature in [
+            "node.created_identity",
+            "node.geometry.bounds",
+            "shape.paint",
+        ] {
+            let item = export
+                .report
+                .items
+                .iter()
+                .find(|item| {
+                    item.feature == feature && item.origin == Some(node_id.into_canonical())
+                })
+                .expect("authored shape report item");
+            assert_eq!(item.disposition, CapabilityLevel::Preserved);
+            assert!(item.loss_kind.is_none());
+        }
+
+        let order = export
+            .report
+            .items
+            .iter()
+            .find(|item| {
+                item.feature == "page.object_order"
+                    && item.origin == Some(page_id().into_canonical())
+            })
+            .expect("explicit authored ordering loss");
+        assert_ne!(order.disposition, CapabilityLevel::Preserved);
+        assert!(order.loss_kind.is_some());
+
+        match target {
+            EditorEditableTarget::Idml => {
+                let spread = zip_first_text_matching(&export.bytes, |path| {
+                    path.starts_with("Spreads/Spread_") && path.ends_with(".xml")
+                });
+                assert!(spread.contains("01890f470c007abc8def0123456789ab"));
+                assert!(spread.contains("Anchor=\"10 20\""));
+                assert!(spread.contains("Anchor=\"10 60\""));
+                assert!(spread.contains("Anchor=\"40 60\""));
+                assert!(spread.contains("Anchor=\"40 20\""));
+                assert!(spread.contains("FillColor=\"Color/Chaptera_RGB_10_20_30\""));
+                assert!(spread.contains("StrokeColor=\"Color/Chaptera_RGB_40_50_60\""));
+                assert!(spread.contains("StrokeWeight=\"1\""));
+
+                let graphic = zip_text(&export.bytes, "Resources/Graphic.xml");
+                assert!(graphic.contains("ColorValue=\"10 20 30\""));
+                assert!(graphic.contains("ColorValue=\"40 50 60\""));
+                let designmap = zip_text(&export.bytes, "designmap.xml");
+                assert!(designmap.contains("src=\"Resources/Graphic.xml\""));
+            }
+            EditorEditableTarget::Odg => {
+                let content = zip_text(&export.bytes, "content.xml");
+                assert!(content.contains("Shape_01890f470c007abc8def0123456789ab"));
+                assert!(content.contains("svg:x=\"10pt\""));
+                assert!(content.contains("svg:y=\"20pt\""));
+                assert!(content.contains("svg:width=\"30pt\""));
+                assert!(content.contains("svg:height=\"40pt\""));
+                assert!(content.contains("draw:fill-color=\"#0a141e\""));
+                assert!(content.contains("svg:stroke-color=\"#28323c\""));
+                assert!(content.contains("svg:stroke-width=\"1pt\""));
+                let rect_start = content
+                    .find("<draw:rect")
+                    .expect("authored rectangle element");
+                let rect_end = content[rect_start..]
+                    .find("/>")
+                    .map(|offset| rect_start + offset)
+                    .expect("authored rectangle close");
+                assert!(
+                    !content[rect_start..rect_end].contains("draw:z-index"),
+                    "authored ordering remains explicit/unknown, not guessed"
+                );
+            }
+        }
+    }
 }
