@@ -107,6 +107,11 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "project_persistence",
         sql: PROJECT_PERSISTENCE_SQL,
     },
+    MigrationSpec {
+        version: 14,
+        name: "workspace_context",
+        sql: WORKSPACE_CONTEXT_SQL,
+    },
 ];
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 14;
