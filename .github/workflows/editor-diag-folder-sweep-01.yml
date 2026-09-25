@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   editor-diagnostic-sweep:
@@ -23,15 +24,50 @@ jobs:
         with:
           toolchain: 1.94.1
           components: rustfmt, clippy
-      - name: rustfmt
+      - id: fmt
+        name: rustfmt
+        continue-on-error: true
         shell: pwsh
         run: cargo fmt --all --check
-      - name: chaptera desktop check
+      - id: check
+        name: chaptera desktop check
+        continue-on-error: true
         shell: pwsh
         run: cargo check -p chaptera-desktop --all-targets
-      - name: chaptera desktop tests
+      - id: tests
+        name: chaptera desktop tests
+        continue-on-error: true
         shell: pwsh
         run: cargo test -p chaptera-desktop
-      - name: reader-only check
+      - id: reader
+        name: reader-only check
+        continue-on-error: true
         shell: pwsh
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
+      - name: publish diagnostic sweep CI status
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FMT_OUTCOME: ${{ steps.fmt.outcome }}
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          READER_OUTCOME: ${{ steps.reader.outcome }}
+        run: |
+          $outcomes = @(
+            $env:FMT_OUTCOME,
+            $env:CHECK_OUTCOME,
+            $env:TEST_OUTCOME,
+            $env:READER_OUTCOME
+          )
+          $failed = $outcomes -contains "failure"
+          $state = if ($failed) { "failure" } else { "success" }
+          $description = if ($failed) {
+            "fmt=$env:FMT_OUTCOME check=$env:CHECK_OUTCOME tests=$env:TEST_OUTCOME reader=$env:READER_OUTCOME"
+          } else {
+            "chaptera desktop diagnostic sweep validation passed"
+          }
+          gh api --method POST "repos/${{ github.repository }}/statuses/${{ github.sha }}" -f state="$state" -f context="EDITOR-DIAG-FOLDER-SWEEP-01" -f description="$description"
+          if ($failed) {
+            exit 1
+          }
