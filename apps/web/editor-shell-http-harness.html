@@ -25,6 +25,11 @@
   const params = new URLSearchParams(location.search);
   const api = params.get("api");
   if (!api) throw new Error("api query parameter is required");
+  const operationId = params.get("operation_id");
+  const emuPerCssPx = Number(params.get("emu_per_css_px") ?? "9525");
+  if (!Number.isFinite(emuPerCssPx) || !(emuPerCssPx > 0)) {
+    throw new Error("emu_per_css_px must be a positive finite number");
+  }
 
   const runtimeStatus = document.getElementById("runtime-status");
   const fidelityState = document.getElementById("fidelity-state");
@@ -46,6 +51,8 @@
     host,
     service,
     rendererKind: "svg",
+    view: { emu_per_css_px: emuPerCssPx },
+    operationIdFactory: operationId ? (() => operationId) : null,
     onState: (state) => {
       states.push(state);
       runtimeStatus.textContent = JSON.stringify({
