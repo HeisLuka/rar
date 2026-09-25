@@ -1,5 +1,6 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_7, EditOperation, EditorEditableTarget, EditorError, EditorSession,
+    EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EditOperation, EditorEditableTarget,
+    EditorError, EditorSession,
 };
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, LengthEmu, Node, NodeHeader, NodeId, NodeKind,
@@ -251,6 +252,16 @@ fn undo_redo_and_fresh_project_replay_are_exact_and_reuse_story_id() {
     reopened.apply_project(&project).expect("replay project");
     assert_eq!(reopened.graph(), &split_graph);
     assert_eq!(reopened.project(), project);
+
+    let mut v0_8_project = project.clone();
+    v0_8_project.schema_version = EDITOR_PROJECT_VERSION_V0_8.into();
+    let mut v0_8_reopened = EditorSession::new(reopened.graph().clone()).expect("v0.8 editor");
+    v0_8_reopened.undo().ok();
+    v0_8_reopened = EditorSession::new(graph()).expect("fresh v0.8 replay");
+    v0_8_reopened
+        .apply_project(&v0_8_project)
+        .expect("v0.8 must inherit v0.7 BreakLink replay");
+    assert_eq!(v0_8_reopened.graph(), &split_graph);
 
     let EditOperation::BreakTextFrameForwardLink {
         new_story_id: replayed_id,
