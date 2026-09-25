@@ -1,0 +1,28 @@
+name: REVISION-IDENTITY-PORT-01
+
+on:
+  pull_request:
+    paths:
+      - "crates/pub-model/src/revision_identity.rs"
+      - "crates/pub-model/src/lib.rs"
+      - "crates/pub-model/Cargo.toml"
+      - ".github/workflows/revision-identity-port-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revision-identity-port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check pub-model formatting
+        run: cargo fmt -p pub-model -- --check
+      - name: Lint pub-model
+        run: cargo clippy -p pub-model --all-targets -- -D warnings
+      - name: Prove canonical revision identity port
+        run: cargo test -p pub-model revision_identity
