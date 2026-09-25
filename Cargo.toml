@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/chaptera-server",
+  "apps/chaptera-desktop",
   "crates/pub-model",
   "crates/chaptera-layout-projection",
   "crates/chaptera-scene-instance",
