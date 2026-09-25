@@ -462,37 +462,36 @@ pub fn resolve_cmo_slot_flow_v1(
         }
     }
 
-    let (overset, remaining_item_count, remaining_slot_count) =
-        if let Some(first) = first_nonfit {
-            let tail = &items[first.item_index..];
-            (
-                CmoSlotOversetV1 {
-                    story_overset: true,
-                    first_nonfitting_kind: Some(first.kind),
-                    first_nonfitting_slot_index: first.slot_index,
-                    first_nonfitting_scalar_index: Some(first.scalar_index),
-                    failure_reason: first.reason,
-                    remaining_item_count: tail.len(),
-                    remaining_slot_count: tail.iter().filter(|item| item.is_slot()).count(),
-                },
-                tail.len(),
-                tail.iter().filter(|item| item.is_slot()).count(),
-            )
-        } else {
-            (
-                CmoSlotOversetV1 {
-                    story_overset: false,
-                    first_nonfitting_kind: None,
-                    first_nonfitting_slot_index: None,
-                    first_nonfitting_scalar_index: None,
-                    failure_reason: None,
-                    remaining_item_count: 0,
-                    remaining_slot_count: 0,
-                },
-                0,
-                0,
-            )
-        };
+    let (overset, remaining_item_count, remaining_slot_count) = if let Some(first) = first_nonfit {
+        let tail = &items[first.item_index..];
+        (
+            CmoSlotOversetV1 {
+                story_overset: true,
+                first_nonfitting_kind: Some(first.kind),
+                first_nonfitting_slot_index: first.slot_index,
+                first_nonfitting_scalar_index: Some(first.scalar_index),
+                failure_reason: first.reason,
+                remaining_item_count: tail.len(),
+                remaining_slot_count: tail.iter().filter(|item| item.is_slot()).count(),
+            },
+            tail.len(),
+            tail.iter().filter(|item| item.is_slot()).count(),
+        )
+    } else {
+        (
+            CmoSlotOversetV1 {
+                story_overset: false,
+                first_nonfitting_kind: None,
+                first_nonfitting_slot_index: None,
+                first_nonfitting_scalar_index: None,
+                failure_reason: None,
+                remaining_item_count: 0,
+                remaining_slot_count: 0,
+            },
+            0,
+            0,
+        )
+    };
     debug_assert_eq!(overset.remaining_item_count, remaining_item_count);
     debug_assert_eq!(overset.remaining_slot_count, remaining_slot_count);
 
