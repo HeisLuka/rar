@@ -3216,6 +3216,7 @@ mod tests {
         assert!(source.contains("Match details"));
     }
 
+    #[cfg(all(feature = "embedded-fixture-tests", not(feature = "reader-only")))]
     #[test]
     fn headless_wgpu_ux_snapshots_render_current_viewer_app() {
         use egui_kittest::Harness;
@@ -3258,6 +3259,7 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "embedded-fixture-tests", not(feature = "reader-only")))]
     #[test]
     fn gui_only_v0_walkthrough_uses_real_widgets() {
         use egui_kittest::{Harness, kittest::Queryable};
