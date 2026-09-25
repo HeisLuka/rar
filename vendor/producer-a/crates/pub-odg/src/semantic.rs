@@ -968,4 +968,28 @@ mod tests {
             Err(OdgSemanticError::SharedStoryMaterializedWithoutLoss { .. })
         ));
     }
+
+    #[test]
+    fn edited_page_extent_is_written_from_effective_graph() {
+        let mut graph = graph(true);
+        let first_page = graph.document.pages[0];
+        graph.pages.get_mut(&first_page).unwrap().size = Size2D::new(
+            LengthEmu::new(500 * pub_model::EMU_PER_POINT),
+            LengthEmu::new(700 * pub_model::EMU_PER_POINT),
+        );
+
+        let package = project_resolved_graph_to_odg(&plan(&graph, true), &graph, |_, payload| {
+            payload.frame.clone()
+        })
+        .expect("edited page extent should project");
+
+        let styles = package
+            .parts
+            .iter()
+            .find(|part| part.path == ODG_STYLES_PATH)
+            .expect("styles.xml");
+        let xml = String::from_utf8(styles.content.clone()).unwrap();
+        assert!(xml.contains("fo:page-width=\"500pt\" fo:page-height=\"700pt\""));
+    }
+
 }
