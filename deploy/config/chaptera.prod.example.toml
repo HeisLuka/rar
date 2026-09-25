@@ -14,6 +14,9 @@ busy_timeout_ms = 5000
 pool_max = 4
 
 [worker]
+# Legacy/general worker policy knobs retained in the typed config. The current
+# V0 configured Export worker is single-flight; these values do not yet set
+# WorkerLoop parallelism.
 heavy_concurrency = 1
 light_concurrency = 2
 # Explicit deployment policy. Tune from measured capacity; do not infer these
