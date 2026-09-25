@@ -366,9 +366,16 @@
       canvas2d_svg: pairDelta(canvas2d, svg),
       webgl2_svg: pairDelta(webgl2, svg),
     };
-    const available = [canvas2d, webgl2, svg].every((x) => x.available);
-    const maxPairDelta = available
-      ? Math.max(...Object.values(deltas))
+    const requiredAvailable = canvas2d.available && svg.available;
+    const requiredDelta = deltas.canvas2d_svg;
+    const acceleratedPass = !webgl2.available || (
+      webgl2.expected_max_channel_delta <= 1
+      && deltas.canvas2d_webgl2 <= 1
+      && deltas.webgl2_svg <= 1
+    );
+    const availablePairDeltas = Object.values(deltas).filter((value) => value !== null);
+    const maxPairDelta = availablePairDeltas.length
+      ? Math.max(...availablePairDeltas)
       : null;
     return {
       receipt_kind: "chaptera.web-color-surface.v1",
@@ -382,15 +389,18 @@
       expected_samples: EXPECTED,
       surfaces: { canvas2d, webgl2, svg },
       equivalence: {
-        all_current_candidates_available: available,
+        required_v1_surfaces: ["canvas2d", "svg"],
+        accelerated_candidate: "webgl2-hybrid",
+        all_current_candidates_available: requiredAvailable && webgl2.available,
+        accelerated_candidate_available: webgl2.available,
         pair_max_channel_delta: deltas,
         max_pair_channel_delta: maxPairDelta,
         tolerance: 1,
-        pass: available
+        pass: requiredAvailable
           && canvas2d.expected_max_channel_delta <= 1
-          && webgl2.expected_max_channel_delta <= 1
           && svg.expected_max_channel_delta <= 1
-          && maxPairDelta <= 1,
+          && requiredDelta <= 1
+          && acceleratedPass,
       },
       capture_boundary: {
         absolute_monitor_colorimetry_claimed: false,
