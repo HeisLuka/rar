@@ -1,0 +1,118 @@
+name: TEMP live education Publisher batch 02
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-edu-live-batch-02.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install inspection tooling
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Recover exact public education PUB locators
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/pub-batch
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess,olefile,struct
+
+          items=[
+            ("Waggener High School","https://waggenercounseling.weebly.com/","newsletter_whs_feb_2015.pub","https://waggenercounseling.weebly.com/uploads/5/3/9/1/53915493/newsletter_whs_feb_2015.pub"),
+            ("Waggener High School","https://waggenercounseling.weebly.com/","newsletter_whs_dec_2014.pub","https://waggenercounseling.weebly.com/uploads/5/3/9/1/53915493/newsletter_whs_dec_2014.pub"),
+            ("Waggener High School","https://waggenercounseling.weebly.com/","newsletter_whs_nov_2014.pub","https://waggenercounseling.weebly.com/uploads/5/3/9/1/53915493/newsletter_whs_nov_2014.pub"),
+            ("UCC Science Department","https://uccscience.weebly.com/gcse-chemistry.html","c1-the-atomic-structure.pub","https://uccscience.weebly.com/uploads/1/1/6/4/116440893/c1-the-atomic-structure_2.pub"),
+            ("UCC Science Department","https://uccscience.weebly.com/gcse-chemistry.html","c4-chemical-changes.pub","https://uccscience.weebly.com/uploads/1/1/6/4/116440893/c4-chemical-changes_1.pub"),
+            ("UCC Science Department","https://uccscience.weebly.com/gcse-chemistry.html","c4-ko_electrolysis.pub","https://uccscience.weebly.com/uploads/1/1/6/4/116440893/c4-ko_electrolysis_1.pub"),
+            ("Primary Japanese","https://primaryjapanese.weebly.com/numbers.html","playing_cards_numbers_1_to_10.pub","https://primaryjapanese.weebly.com/uploads/2/6/7/3/26730309/playing_cards_numbers_1_to_10.pub"),
+            ("Primary Japanese","https://primaryjapanese.weebly.com/numbers.html","number_hopscotch.pub","https://primaryjapanese.weebly.com/uploads/2/6/7/3/26730309/number_hopscotch.pub"),
+            ("Hebrew Through Movement","https://www.hebrewthroughmovement.org/yom-haatzmaut.html","yom_haatzmaut_-_flag_option_1.pub","https://www.hebrewthroughmovement.org/uploads/1/0/1/2/10120788/yom_haatzmaut_-_flag_option_1.pub"),
+            ("Hebrew Through Movement","https://www.hebrewthroughmovement.org/yom-haatzmaut.html","yom_haatzmaut_-_maps_option_3.pub","https://www.hebrewthroughmovement.org/uploads/1/0/1/2/10120788/yom_haatzmaut_-_maps_option_3.pub"),
+            ("Hebrew Through Movement","https://www.hebrewthroughmovement.org/yom-haatzmaut.html","yom_haatzmaut_-_jerus_tel_aviv_options_2_and_3.pub","https://www.hebrewthroughmovement.org/uploads/1/0/1/2/10120788/yom_haatzmaut_-_jerus_tel_aviv_options_2_and_3.pub"),
+            ("Hebrew Through Movement","https://www.hebrewthroughmovement.org/yom-haatzmaut.html","yom_haatzmaut_-_haifa_eilat_options_2_and_3.pub","https://www.hebrewthroughmovement.org/uploads/1/0/1/2/10120788/yom_haatzmaut_-_haifa_eilat_options_2_and_3.pub"),
+          ]
+
+          rows=[]
+          for idx,(org,page,name,url) in enumerate(items):
+              p=pathlib.Path('/tmp/pub-batch')/f'{idx:02d}.pub'
+              cmd=['curl','-fL','--retry','4','--retry-all-errors','--connect-timeout','30','--max-time','120',
+                   '-A','Mozilla/5.0 (compatible; Chaptera corpus research)','-e',page,'-o',str(p),url]
+              proc=subprocess.run(cmd,text=True,capture_output=True)
+              row={'organization':org,'source_page':page,'observed_filename':name,'direct_url':url,
+                   'fetch_ok':proc.returncode==0,'curl_returncode':proc.returncode,
+                   'fetch_error':None if proc.returncode==0 else (proc.stderr[-1200:] or proc.stdout[-1200:])}
+              if proc.returncode==0 and p.exists():
+                  raw=p.read_bytes()
+                  row['size']=len(raw)
+                  row['sha256']=hashlib.sha256(raw).hexdigest()
+                  row['is_cfb']=raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1')
+                  row['ole_open_ok']=False
+                  row['publisher_stream_signal']=False
+                  row['streams']=[]
+                  row['stream_count']=0
+                  row['contents_size']=None
+                  row['contents_revision_u16_at_2']=None
+                  row['inspection_error']=None
+                  try:
+                      if row['is_cfb']:
+                          ole=olefile.OleFileIO(str(p))
+                          row['ole_open_ok']=True
+                          streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                          row['streams']=streams
+                          row['stream_count']=len(streams)
+                          row['publisher_stream_signal']='Contents' in streams
+                          if ole.exists('Contents'):
+                              data=ole.openstream('Contents').read()
+                              row['contents_size']=len(data)
+                              if len(data)>=4:
+                                  row['contents_revision_u16_at_2']=struct.unpack_from('<H',data,2)[0]
+                          ole.close()
+                  except Exception as exc:
+                      row['inspection_error']=repr(exc)
+              rows.append(row)
+
+          valid=[r for r in rows if r.get('fetch_ok') and r.get('is_cfb') and r.get('ole_open_ok') and r.get('publisher_stream_signal')]
+          summary={
+              'schema':'chaptera.corpus-edu-live-batch-02.v1',
+              'source_safe':True,
+              'raw_pub_retained':False,
+              'attempted':len(rows),
+              'fetch_ok':sum(bool(r.get('fetch_ok')) for r in rows),
+              'valid_publisher_observations':len(valid),
+              'unique_valid_sha256':len({r['sha256'] for r in valid}),
+              'transport_failures':sum(not bool(r.get('fetch_ok')) for r in rows),
+              'strict_validation_failures':sum(bool(r.get('fetch_ok')) and not (r.get('is_cfb') and r.get('ole_open_ok') and r.get('publisher_stream_signal')) for r in rows),
+              'files':rows,
+              'guardrail':'Each locator was observed as a public download link on its source page. Source/page language is provenance only, not creator/writer-version authority.'
+          }
+          pathlib.Path('out/receipt.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into public artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-edu-live-batch-02-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
