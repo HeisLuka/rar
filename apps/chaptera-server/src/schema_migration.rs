@@ -23,6 +23,7 @@ const JOBS_SQL: &str = include_str!("../migrations/0003_jobs.sql");
 const BLOB_GC_SQL: &str = include_str!("../migrations/0004_blob_gc.sql");
 const REVISION_STREAM_SQL: &str = include_str!("../migrations/0005_revision_stream.sql");
 const AUTHN_SQL: &str = include_str!("../migrations/0006_authn.sql");
+const DERIVED_ARTIFACTS_SQL: &str = include_str!("../migrations/0007_derived_artifacts.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -62,9 +63,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "authn",
         sql: AUTHN_SQL,
     },
+    MigrationSpec {
+        version: 7,
+        name: "derived_artifacts",
+        sql: DERIVED_ARTIFACTS_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -477,7 +483,8 @@ async fn known_schema_tables_present(
             'revision_edges',
             'principals',
             'principal_identities',
-            'sessions'
+            'sessions',
+            'derived_artifacts'
           )
         "#,
     )
@@ -564,7 +571,7 @@ mod tests {
         assert_eq!(report.state, "pending");
         assert_eq!(report.current_version, 0);
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7]);
         assert!(!path.exists());
     }
 
