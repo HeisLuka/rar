@@ -90,9 +90,7 @@ pub fn pub_quill_story_object_key_v1(qsid: u32) -> String {
 }
 
 pub fn pub_table_cell_object_key_v1(table_seq_num: u32, stored_record_index: u32) -> String {
-    format!(
-        "contents/0x2c/seq/{table_seq_num}/cells/stored/{stored_record_index}"
-    )
+    format!("contents/0x2c/seq/{table_seq_num}/cells/stored/{stored_record_index}")
 }
 
 pub fn derive_pub_page_id_v1(
