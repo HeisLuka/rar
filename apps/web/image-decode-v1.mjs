@@ -89,7 +89,16 @@ function referenceReceiptV1(receipt, identity, mimeType) {
     );
   }
   const colorRef = requireString(receipt.color_disposition_ref, "color_disposition_ref");
-  if (!colorRef.toLowerCase().includes("srgb")) {
+  const normalizedColorRef = colorRef.toLowerCase();
+  const explicitlyNonSrgb =
+    normalizedColorRef.includes("non-srgb") ||
+    normalizedColorRef.includes("non_srgb") ||
+    normalizedColorRef.includes("display-p3") ||
+    normalizedColorRef.includes("display_p3") ||
+    normalizedColorRef.includes("cmyk") ||
+    normalizedColorRef.includes("unknown");
+  const explicitlySrgb = /(^|[:/_-])srgb($|[:/_-])/.test(normalizedColorRef);
+  if (explicitlyNonSrgb || !explicitlySrgb) {
     throw new BrowserImageDecodeError(
       "non_srgb_exact_unsupported",
       "browser exact V1 admits only explicit sRGB reference disposition",
