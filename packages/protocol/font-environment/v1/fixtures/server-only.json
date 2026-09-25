@@ -1,0 +1,31 @@
+{
+  "protocol_version": "chaptera.font-environment.v1",
+  "document_id": "11111111-1111-4111-8111-111111111111",
+  "revision_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "scene_snapshot_id": "sha256:29f350380d135cfbcb66eb157210d24641f61e441d3db65e56b58bc1ec7dba80",
+  "layout_environment_id": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "font_set_fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "preview_authority": "server_frame_geometry_only",
+  "fonts": [
+    {
+      "font_fingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "content_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+      "face_index": 0,
+      "family": "Example Sans",
+      "style": "Regular",
+      "delivery": "server_render_only",
+      "reason_code": "delivery.not_authorized",
+      "resource_id": null,
+      "fetch_handle": null,
+      "fallback": null
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "font.server_render_only",
+      "message_key": "font.server_render_only",
+      "font_fingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ]
+}
