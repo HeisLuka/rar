@@ -36,10 +36,10 @@ jobs:
         run: cargo test -p chaptera-desktop supporter::tests::
 
       - name: Prove eframe persistence wiring roundtrip
-        run: cargo test -p chaptera-desktop supporter_persistence_wiring_round_trips_through_eframe_storage -- --exact
+        run: cargo test -p chaptera-desktop tests::supporter_persistence_wiring_round_trips_through_eframe_storage -- --exact
 
       - name: Prove malformed and future state fail closed
-        run: cargo test -p chaptera-desktop malformed_supporter_storage_falls_back_to_conservative_default -- --exact
+        run: cargo test -p chaptera-desktop tests::malformed_supporter_storage_falls_back_to_conservative_default -- --exact
 
       - name: Produce source-bound validation receipt
         run: python tools/run_chaptera_vtpe_state_receipt.py
