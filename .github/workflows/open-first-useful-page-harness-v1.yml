@@ -57,8 +57,18 @@ jobs:
           $poiCommit = "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8"
           $candidates = @(
             @{ Name = "Sample.pub"; Bytes = 72192 },
+            @{ Name = "Sample2.pub"; Bytes = 72704 },
+            @{ Name = "Sample3.pub"; Bytes = 72192 },
+            @{ Name = "Sample4.pub"; Bytes = 72192 },
+            @{ Name = "Simple.pub"; Bytes = 65536 },
             @{ Name = "SampleBrochure.pub"; Bytes = 161792 },
-            @{ Name = "SampleNewsletter.pub"; Bytes = 291840 }
+            @{ Name = "SampleNewsletter.pub"; Bytes = 291840 },
+            @{ Name = "Sample_2010.pub"; Bytes = 72704 },
+            @{ Name = "Sample2_2010.pub"; Bytes = 73216 },
+            @{ Name = "Sample3_2010.pub"; Bytes = 72704 },
+            @{ Name = "Sample4_2010.pub"; Bytes = 72704 },
+            @{ Name = "Sample2000.pub"; Bytes = 61440 },
+            @{ Name = "Sample98.pub"; Bytes = 61440 }
           )
 
           $selected = $null
