@@ -2701,9 +2701,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn editor_project_json_reopens_real_authoring_state() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -2932,41 +2930,19 @@ mod tests {
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
-    fn decode_base64_fixture(input: &str) -> Vec<u8> {
-        let mut output = Vec::with_capacity(input.len() * 3 / 4);
-        let mut buffer = 0_u32;
-        let mut bits = 0_u8;
-
-        for byte in input.bytes() {
-            let value = match byte {
-                b'A'..=b'Z' => byte - b'A',
-                b'a'..=b'z' => byte - b'a' + 26,
-                b'0'..=b'9' => byte - b'0' + 52,
-                b'+' => 62,
-                b'/' => 63,
-                b'=' => break,
-                byte if byte.is_ascii_whitespace() => continue,
-                other => panic!("unexpected base64 byte: {other:#04x}"),
-            };
-
-            buffer = (buffer << 6) | u32::from(value);
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                output.push((buffer >> bits) as u8);
-                buffer &= if bits == 0 { 0 } else { (1_u32 << bits) - 1 };
-            }
-        }
-
-        output
+    fn sample_newsletter_fixture() -> Vec<u8> {
+        let path = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        fs::read(&path).unwrap_or_else(|error| {
+            panic!("read pinned SampleNewsletter fixture {}: {error}", path.display())
+        })
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn real_pub_exposes_decodable_exact_image_bound_to_scene_node() {
-        let pub_bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let pub_bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &pub_bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -3004,9 +2980,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn desktop_editor_session_updates_overlay_without_mutating_pub_bytes() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let original_bytes = bytes.clone();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
@@ -3112,9 +3086,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn canvas_drag_commits_exactly_one_move_and_syncs_undo_redo() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -3254,9 +3226,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn replayed_move_project_synchronizes_scene_geometry_by_canonical_node_id() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -3353,9 +3323,7 @@ mod tests {
     fn gui_only_v0_walkthrough_uses_real_widgets() {
         use egui_kittest::{Harness, kittest::Queryable};
 
-        let original = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let original = sample_newsletter_fixture();
         let root = std::env::temp_dir().join(format!(
             "chaptera-gui-v0-walkthrough-{}",
             std::process::id()
