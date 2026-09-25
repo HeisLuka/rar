@@ -4257,6 +4257,582 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
+    #[ignore = "real ReplaceImage UI/export receipt evidence is owned by Windows CI"]
+    fn replace_image_real_receipt_pair_evidence() {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use pub_export::{
+            CapabilityLevel, SemanticFeatureRequest, TargetCapabilityManifest, TargetProfile,
+            plan_export,
+        };
+        use sha2::{Digest, Sha256};
+        use std::io::{Cursor, Read};
+
+        fn hex_sha256(bytes: &[u8]) -> String {
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        fn package_contains_sha256(package: &[u8], expected: &str) -> bool {
+            let mut archive =
+                zip::ZipArchive::new(Cursor::new(package)).expect("editable export is a ZIP");
+            for index in 0..archive.len() {
+                let mut part = archive.by_index(index).expect("read export ZIP entry");
+                if part.is_dir() {
+                    continue;
+                }
+                let mut bytes = Vec::new();
+                part.read_to_end(&mut bytes).expect("read export ZIP payload");
+                if hex_sha256(&bytes) == expected {
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn report_has(
+            report: &pub_export::ExportReport,
+            feature: &str,
+            disposition: CapabilityLevel,
+        ) -> bool {
+            report
+                .items
+                .iter()
+                .any(|item| item.feature == feature && item.disposition == disposition)
+        }
+
+        let ui_receipt_path = std::env::var_os("CHAPTERA_REPLACE_IMAGE_UI_RECEIPT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_REPLACE_IMAGE_UI_RECEIPT is required");
+        let proof_path = std::env::var_os("CHAPTERA_REPLACE_IMAGE_PRIVATE_PROOF")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_REPLACE_IMAGE_PRIVATE_PROOF is required");
+        let binding_id = std::env::var("CHAPTERA_REPLACE_IMAGE_BINDING_ID")
+            .expect("CHAPTERA_REPLACE_IMAGE_BINDING_ID is required");
+        assert!(
+            binding_id.starts_with("rb_")
+                && binding_id.len() == 35
+                && binding_id[3..].chars().all(|ch| ch.is_ascii_hexdigit()),
+            "replacement binding must be one opaque rb_ + 32-hex id"
+        );
+        let build_sha256 = std::env::var("CHAPTERA_REPLACE_IMAGE_BUILD_SHA256")
+            .expect("CHAPTERA_REPLACE_IMAGE_BUILD_SHA256 is required");
+        assert!(
+            build_sha256.len() == 64
+                && build_sha256
+                    .chars()
+                    .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()),
+            "build SHA must be lowercase SHA-256"
+        );
+        let chaptera_version = std::env::var("CHAPTERA_REPLACE_IMAGE_VERSION")
+            .expect("CHAPTERA_REPLACE_IMAGE_VERSION is required");
+
+        let bytes = sample_newsletter_fixture();
+        let original = bytes.clone();
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("SampleNewsletter Viewer open");
+        let source_hash = visual.document.source.source_hash;
+        let editor =
+            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
+
+        let (page_index, instance_id, target, source_asset_sha256, before_bounds, before_crop) =
+            visual
+                .document
+                .pages
+                .iter()
+                .enumerate()
+                .find_map(|(page_index, page)| {
+                    let page_origin = page.id.into_canonical();
+                    let page_id_text = page.id.as_canonical().to_string();
+                    visual
+                        .scene
+                        .nodes
+                        .iter()
+                        .filter(|node| node.parent_origin == page_origin)
+                        .find_map(|scene_node| {
+                            let instance =
+                                direct_scene_instance(&editor, &page_id_text, scene_node.origin)?;
+                            let admission = admit_object_mutation_v1(
+                                &instance,
+                                ObjectMutationKindV1::ReplaceImage,
+                            );
+                            if !admission.admitted {
+                                return None;
+                            }
+                            let authored = editor.graph().nodes.get(&scene_node.origin)?;
+                            if authored.payload.image_slot.is_none()
+                                || authored.payload.explicit_image_crop.is_some()
+                                || authored.header.bounds.width.get() <= 0
+                                || authored.header.bounds.height.get() <= 0
+                            {
+                                return None;
+                            }
+                            let embedded = visual
+                                .images
+                                .iter()
+                                .find(|image| image.node_ids.contains(&scene_node.origin))?;
+                            Some((
+                                page_index,
+                                instance.instance_id,
+                                scene_node.origin,
+                                hex_sha256(&embedded.bytes),
+                                authored.header.bounds,
+                                authored.payload.explicit_image_crop.clone(),
+                            ))
+                        })
+                })
+                .expect("real fixture exposes one direct crop-free image target");
+
+        let replacement_image =
+            ImageBuffer::from_pixel(2, 2, Rgba([17_u8, 91_u8, 203_u8, 255_u8]));
+        let mut replacement_cursor = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(replacement_image)
+            .write_to(&mut replacement_cursor, ImageFormat::Png)
+            .expect("encode deterministic replacement PNG");
+        let replacement_bytes = replacement_cursor.into_inner();
+        let replacement_sha256 = hex_sha256(&replacement_bytes);
+        assert_ne!(
+            source_asset_sha256, replacement_sha256,
+            "replacement must differ from source image bytes"
+        );
+
+        let root = std::env::temp_dir().join(format!(
+            "chaptera-replace-image-real-receipt-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create ReplaceImage receipt temp dir");
+        let replacement_path = root.join("replacement.png");
+        fs::write(&replacement_path, &replacement_bytes).expect("write replacement PNG");
+
+        let mut app = ViewerApp::new(None);
+        app.visual = Some(visual);
+        app.editor = Some(editor);
+        app.selected_page = page_index;
+        app.canvas_selection.select_only(instance_id);
+
+        assert_eq!(
+            app.selected_direct_replace_image_target()
+                .expect("typed direct SceneInstance admission"),
+            target
+        );
+        let operation_count_before = app.editor.as_ref().expect("editor").operations().len();
+        app.replace_selected_image_from_path(&replacement_path)
+            .expect("real desktop ReplaceImage UI command");
+
+        let replacement_asset = app
+            .editor
+            .as_ref()
+            .expect("editor")
+            .image_replacement_for(target)
+            .expect("committed replacement identity");
+        assert_eq!(replacement_asset.to_string(), replacement_sha256);
+        assert_eq!(
+            app.editor.as_ref().expect("editor").operations().len(),
+            operation_count_before + 1
+        );
+
+        let (after_bounds, after_crop) = {
+            let authored = &app.editor.as_ref().expect("editor").graph().nodes[&target];
+            (
+                authored.header.bounds,
+                authored.payload.explicit_image_crop.clone(),
+            )
+        };
+        assert_eq!(after_bounds, before_bounds, "ReplaceImage preserves frame bounds");
+        assert_eq!(after_crop, before_crop, "ReplaceImage preserves crop state");
+
+        // The live canvas prefers a decoded replacement texture over the source
+        // texture whenever the effective replacement identity is present.
+        let texture_context = egui::Context::default();
+        app.ensure_image_textures(&texture_context);
+        let replacement_texture_key = format!("replacement:{:?}", replacement_asset);
+        assert!(
+            app.image_textures.contains_key(&replacement_texture_key),
+            "replacement overlay texture must be available to the real canvas"
+        );
+
+        let (
+            duplicate_same_sha_reused,
+            mime_conflict_rejected,
+            empty_asset_rejected,
+            unsupported_mime_rejected,
+            signature_mismatch_rejected,
+            missing_registered_asset_rejected,
+            same_asset_no_change_rejected,
+        ) = {
+            let editor = app.editor.as_mut().expect("editor");
+            let duplicate = editor
+                .import_replacement_asset("image/png", replacement_bytes.clone())
+                .expect("duplicate replacement import");
+            let mime_conflict = editor
+                .import_replacement_asset("image/jpeg", replacement_bytes.clone())
+                .is_err();
+            let empty = editor
+                .import_replacement_asset("image/png", Vec::new())
+                .is_err();
+            let unsupported = editor
+                .import_replacement_asset("image/gif", vec![1, 2, 3])
+                .is_err();
+            let signature = editor
+                .import_replacement_asset("image/png", vec![1, 2, 3])
+                .is_err();
+            let mut fake_bytes = [0xa5_u8; 32];
+            if pub_editor::Sha256Digest::from_bytes(fake_bytes) == replacement_asset {
+                fake_bytes[0] ^= 0xff;
+            }
+            let missing = editor
+                .can_replace_image(target, pub_editor::Sha256Digest::from_bytes(fake_bytes))
+                .is_err();
+            let no_change = editor.replace_image(target, replacement_asset).is_err();
+            (
+                duplicate == replacement_asset,
+                mime_conflict,
+                empty,
+                unsupported,
+                signature,
+                missing,
+                no_change,
+            )
+        };
+        assert!(duplicate_same_sha_reused);
+        assert!(mime_conflict_rejected);
+        assert!(empty_asset_rejected);
+        assert!(unsupported_mime_rejected);
+        assert!(signature_mismatch_rejected);
+        assert!(missing_registered_asset_rejected);
+        assert!(same_asset_no_change_rejected);
+
+        let base_graph = app.editor.as_ref().expect("editor").graph().clone();
+        let negative_asset = replacement_bytes.clone();
+
+        let missing_image_slot_rejected = {
+            let mut graph = base_graph.clone();
+            graph.nodes.get_mut(&target).expect("target").payload.image_slot = None;
+            let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
+            let asset = candidate
+                .import_replacement_asset("image/png", negative_asset.clone())
+                .expect("negative asset");
+            candidate.can_replace_image(target, asset).is_err()
+        };
+        let crop_bearing_target_rejected = {
+            let mut graph = base_graph.clone();
+            graph
+                .nodes
+                .get_mut(&target)
+                .expect("target")
+                .payload
+                .explicit_image_crop = Some(
+                serde_json::from_value(serde_json::json!({
+                    "top_raw": 1,
+                    "bottom_raw": null,
+                    "left_raw": null,
+                    "right_raw": null,
+                    "ambiguous": false
+                }))
+                .expect("synthetic explicit crop state"),
+            );
+            let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
+            let asset = candidate
+                .import_replacement_asset("image/png", negative_asset.clone())
+                .expect("negative asset");
+            candidate.can_replace_image(target, asset).is_err()
+        };
+        let invalid_bounds_rejected = {
+            let mut graph = base_graph.clone();
+            graph.nodes.get_mut(&target).expect("target").header.bounds.width =
+                pub_editor::LengthEmu::new(0);
+            let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
+            let asset = candidate
+                .import_replacement_asset("image/png", negative_asset.clone())
+                .expect("negative asset");
+            candidate.can_replace_image(target, asset).is_err()
+        };
+        let non_page_owned_rejected = {
+            let mut graph = base_graph;
+            graph.nodes.get_mut(&target).expect("target").header.parent_id =
+                target.into_canonical();
+            let mut candidate = pub_editor::EditorSession::new(graph).expect("candidate");
+            let asset = candidate
+                .import_replacement_asset("image/png", negative_asset)
+                .expect("negative asset");
+            candidate.can_replace_image(target, asset).is_err()
+        };
+        assert!(missing_image_slot_rejected);
+        assert!(crop_bearing_target_rejected);
+        assert!(invalid_bounds_rejected);
+        assert!(non_page_owned_rejected);
+
+        app.editor.as_mut().expect("editor").undo().expect("ReplaceImage undo");
+        let undo_restores_previous_asset = app
+            .editor
+            .as_ref()
+            .expect("editor")
+            .image_replacement_for(target)
+            .is_none();
+        app.editor.as_mut().expect("editor").redo().expect("ReplaceImage redo");
+        let redo_restores_replacement_asset =
+            app.editor.as_ref().expect("editor").image_replacement_for(target)
+                == Some(replacement_asset);
+        assert!(undo_restores_previous_asset);
+        assert!(redo_restores_replacement_asset);
+
+        let project = app.editor.as_ref().expect("editor").project();
+        assert_eq!(project.schema_version, "pub-editor-v0.3");
+        assert_eq!(project.assets.len(), 1);
+        let asset_bytes = app
+            .editor
+            .as_ref()
+            .expect("editor")
+            .replacement_assets()
+            .map(|asset| (asset.sha256, asset.bytes.clone()))
+            .collect::<BTreeMap<_, _>>();
+
+        let mut missing_asset_replay =
+            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("fresh candidate");
+        let empty_state = missing_asset_replay.project();
+        assert!(
+            missing_asset_replay
+                .apply_project_with_assets(&project, &BTreeMap::new())
+                .is_err(),
+            "project replay must require replacement bytes"
+        );
+        assert_eq!(
+            missing_asset_replay.project(),
+            empty_state,
+            "failed replay must be transactional"
+        );
+
+        let mut reopened =
+            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("fresh editor");
+        reopened
+            .apply_project_with_assets(&project, &asset_bytes)
+            .expect("fresh replay with replacement bytes");
+        assert_eq!(
+            reopened.image_replacement_for(target),
+            Some(replacement_asset),
+            "fresh replay preserves replacement identity"
+        );
+
+        let idml_preview = reopened
+            .preview_editable_export(pub_editor::EditorEditableTarget::Idml, "receipt.pub")
+            .expect("IDML loss preview");
+        let odg_preview = reopened
+            .preview_editable_export(pub_editor::EditorEditableTarget::Odg, "receipt.pub")
+            .expect("ODG loss preview");
+        assert!(idml_preview.report.can_serialize);
+        assert!(odg_preview.report.can_serialize);
+        for report in [&idml_preview.report, &odg_preview.report] {
+            assert!(report_has(
+                report,
+                "image.bytes",
+                CapabilityLevel::Preserved
+            ));
+            assert!(report_has(
+                report,
+                "image.frame_geometry",
+                CapabilityLevel::Preserved
+            ));
+            assert!(report_has(
+                report,
+                "image.content_transform",
+                CapabilityLevel::Approximated
+            ));
+        }
+
+        let idml = reopened
+            .export_editable(pub_editor::EditorEditableTarget::Idml, "receipt.pub")
+            .expect("real IDML export");
+        let odg = reopened
+            .export_editable(pub_editor::EditorEditableTarget::Odg, "receipt.pub")
+            .expect("real ODG export");
+        assert!(
+            package_contains_sha256(&idml.bytes, &replacement_sha256),
+            "IDML package must contain exact replacement bytes"
+        );
+        assert!(
+            package_contains_sha256(&odg.bytes, &replacement_sha256),
+            "ODG package must contain exact replacement bytes"
+        );
+
+        // Prove the generic loss-gated exporter blocks an unadvertised target
+        // rather than silently dropping the required replacement bytes.
+        let unsupported_plan = plan_export(
+            &TargetCapabilityManifest {
+                target: TargetProfile {
+                    format: "unsupported-receipt-probe".into(),
+                    adapter_version: "v0".into(),
+                    profile: "bounded".into(),
+                    schema_fence: None,
+                },
+                features: BTreeMap::new(),
+            },
+            vec![SemanticFeatureRequest {
+                feature: "image.bytes".into(),
+                origin: None,
+                property_path: Some("replacement_asset.bytes".into()),
+                require_preserved: true,
+            }],
+        );
+        assert!(!unsupported_plan.can_serialize());
+        assert_eq!(unsupported_plan.blockers.len(), 1);
+        assert_eq!(unsupported_plan.losses.len(), 1);
+
+        let source_after = sample_newsletter_fixture();
+        assert_eq!(
+            source_after, original,
+            "real ReplaceImage evidence must not mutate the source PUB"
+        );
+
+        let ui_receipt = serde_json::json!({
+            "receipt_version": "chaptera.replace-image-ui-producer-receipt.v1",
+            "operation_contract": "chaptera.replace-image.v1",
+            "producer": {
+                "kind": "chaptera_desktop_editor",
+                "integration": "local_private"
+            },
+            "build": {
+                "chaptera_version": chaptera_version,
+                "platform": "windows",
+                "binary_sha256": build_sha256
+            },
+            "fixture_kind": "real_pub_sanitized",
+            "target_gate": {
+                "image_slot_present": true,
+                "explicit_crop_present": false,
+                "direct_page_owned": true,
+                "valid_bounds": true,
+                "target_id_redacted": true
+            },
+            "asset_import": {
+                "mime": "image/png",
+                "non_empty": true,
+                "signature_matches_declared_mime": true,
+                "content_addressed_sha256": true,
+                "duplicate_same_sha_reused": duplicate_same_sha_reused,
+                "mime_conflict_rejected": mime_conflict_rejected,
+                "filename_is_identity": false,
+                "url_is_identity": false,
+                "asset_sha_redacted": true
+            },
+            "commit": {
+                "operation_kind": "ReplaceImage",
+                "operation_count_before": operation_count_before,
+                "operation_count_after": operation_count_before + 1,
+                "registered_asset_required": missing_registered_asset_rejected,
+                "same_asset_no_change_rejected": same_asset_no_change_rejected,
+                "source_pub_unchanged": true
+            },
+            "replacement_binding": {
+                "binding_id": binding_id,
+                "content_derived": false,
+                "import_matches_committed_asset": true,
+                "committed_matches_preview_asset": app.image_textures.contains_key(&replacement_texture_key),
+                "committed_matches_redo_asset": redo_restores_replacement_asset,
+                "committed_matches_fresh_replay_asset": reopened.image_replacement_for(target) == Some(replacement_asset)
+            },
+            "project_replay": {
+                "image_operation_schema_supported": true,
+                "replacement_asset_metadata_persisted": project.assets.len() == 1,
+                "asset_bytes_required_on_replay": true,
+                "undo_restores_previous_asset": undo_restores_previous_asset,
+                "redo_restores_replacement_asset": redo_restores_replacement_asset,
+                "fresh_replay_reproduces_replacement": reopened.image_replacement_for(target) == Some(replacement_asset),
+                "replay_transactional": missing_asset_replay.project() == empty_state
+            },
+            "preview": {
+                "replacement_overlay_preferred": app.image_textures.contains_key(&replacement_texture_key),
+                "source_geometry_unchanged": after_bounds == before_bounds,
+                "source_crop_state_unchanged": after_crop == before_crop
+            },
+            "negative_probes": {
+                "missing_image_slot_rejected": missing_image_slot_rejected,
+                "crop_bearing_target_rejected": crop_bearing_target_rejected,
+                "invalid_bounds_rejected": invalid_bounds_rejected,
+                "non_page_owned_rejected": non_page_owned_rejected,
+                "empty_asset_rejected": empty_asset_rejected,
+                "unsupported_mime_rejected": unsupported_mime_rejected,
+                "signature_mismatch_rejected": signature_mismatch_rejected,
+                "missing_registered_asset_rejected": missing_registered_asset_rejected
+            },
+            "privacy": {
+                "pub_bytes_in_receipt": false,
+                "pub_filename_in_receipt": false,
+                "local_path_in_receipt": false,
+                "source_hash_in_receipt": false,
+                "node_id_in_receipt": false,
+                "asset_sha_in_receipt": false,
+                "replacement_bytes_in_receipt": false,
+                "document_text_in_receipt": false,
+                "customer_identity_in_receipt": false
+            }
+        });
+
+        let private_proof = serde_json::json!({
+            "request": {
+                "action": "export_replace_image",
+                "source_hash": source_hash.to_string(),
+                "replacement_binding_id": ui_receipt["replacement_binding"]["binding_id"],
+                "fixture_kind": "real_pub_sanitized"
+            },
+            "proof": {
+                "replacement_binding_id": ui_receipt["replacement_binding"]["binding_id"],
+                "source_hash_after": source_hash.to_string(),
+                "source_asset_sha256": source_asset_sha256,
+                "committed_asset_sha256": replacement_sha256,
+                "effective_asset_sha256": reopened.image_replacement_for(target)
+                    .expect("effective replacement")
+                    .to_string(),
+                "idml": {
+                    "can_serialize": idml.report.can_serialize,
+                    "embedded_asset_sha256": replacement_sha256,
+                    "frame_geometry": "preserved",
+                    "content_transform": "approximated",
+                    "z_order": "approximated"
+                },
+                "odg": {
+                    "can_serialize": odg.report.can_serialize,
+                    "embedded_asset_sha256": replacement_sha256,
+                    "frame_geometry": "preserved",
+                    "content_transform": "approximated",
+                    "z_order": "preserved"
+                },
+                "unsupported_target": {
+                    "blocked": !unsupported_plan.can_serialize(),
+                    "explicit_loss": unsupported_plan.losses.len() == 1,
+                    "silent_drop": false,
+                    "silent_source_fallback": false
+                },
+                "native_pub_writer_promoted": false
+            }
+        });
+
+        if let Some(parent) = ui_receipt_path.parent() {
+            fs::create_dir_all(parent).expect("create UI receipt directory");
+        }
+        if let Some(parent) = proof_path.parent() {
+            fs::create_dir_all(parent).expect("create private proof directory");
+        }
+        fs::write(
+            &ui_receipt_path,
+            serde_json::to_vec_pretty(&ui_receipt).expect("serialize UI receipt"),
+        )
+        .expect("write sanitized UI receipt");
+        fs::write(
+            &proof_path,
+            serde_json::to_vec_pretty(&private_proof).expect("serialize private proof"),
+        )
+        .expect("write private export proof");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn source_path_argument_is_optional() {
         let path = std::path::Path::new("example.pub");
