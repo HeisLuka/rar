@@ -30,8 +30,7 @@ const REVISION_IDENTITY_BINDINGS_SQL: &str =
 const EXPORT_PUBLICATIONS_SQL: &str = include_str!("../migrations/0010_export_publications.sql");
 const AUTHZ_PRINCIPAL_GRANTS_SQL: &str =
     include_str!("../migrations/0011_authz_principal_grants.sql");
-const BLOB_GC_DELETE_FENCE_SQL: &str =
-    include_str!("../migrations/0012_blob_gc_delete_fence.sql");
+const BLOB_GC_DELETE_FENCE_SQL: &str = include_str!("../migrations/0012_blob_gc_delete_fence.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
