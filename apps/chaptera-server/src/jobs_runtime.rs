@@ -99,12 +99,22 @@ impl JobsRuntime {
         busy_timeout: Duration,
     ) -> Result<Self, JobsRuntimeError> {
         let path = path.as_ref();
-        let queue = SqliteJobQueue::open(path, max_connections, busy_timeout)
-            .await
-            .map_err(queue_error)?;
         let authz = SqliteAuthzAuthority::open(path, max_connections, busy_timeout)
             .await
             .map_err(authz_error)?;
+        Self::open_with_authz(path, max_connections, busy_timeout, authz).await
+    }
+
+    pub async fn open_with_authz(
+        path: impl AsRef<Path>,
+        max_connections: u32,
+        busy_timeout: Duration,
+        authz: SqliteAuthzAuthority,
+    ) -> Result<Self, JobsRuntimeError> {
+        let path = path.as_ref();
+        let queue = SqliteJobQueue::open(path, max_connections, busy_timeout)
+            .await
+            .map_err(queue_error)?;
         let publications = SqliteExportPublicationStore::open(path, max_connections, busy_timeout)
             .await
             .map_err(publication_error)?;
