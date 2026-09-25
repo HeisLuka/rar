@@ -34,18 +34,19 @@ jobs:
           for status in queued in_progress; do
             gh api --paginate --method GET "repos/$GH_REPO/actions/runs" \
               -f status="$status" -f event=pull_request -f per_page=100 \
-              --jq --argjson pr "$PR_NUMBER" '
-                .workflow_runs[]
-                | select(any(.pull_requests[]?; .number == $pr))
-                | [.id, .head_sha, .name]
-                | @tsv
-              ' >>"$runs_file"
+              --jq '.workflow_runs[] | [.id, .head_sha, .name, ([.pull_requests[]?.number | tostring] | join(","))] | @tsv' \
+              >>"$runs_file"
           done
 
           cancelled=0
-          while IFS=$'\t' read -r id head_sha name; do
+          while IFS=$'\t' read -r id head_sha name pr_numbers; do
             [[ -n "$id" ]] || continue
+            case ",$pr_numbers," in
+              *",$PR_NUMBER,"*) ;;
+              *) continue ;;
+            esac
             [[ "$head_sha" != "$CURRENT_SHA" ]] || continue
+
             echo "CANCEL $id  ${head_sha:0:12}  $name"
             if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
               cancelled=$((cancelled + 1))
