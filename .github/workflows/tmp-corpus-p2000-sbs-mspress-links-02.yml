@@ -1,0 +1,115 @@
+name: TEMP Publisher 2000 SBS Microsoft Press page links
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect exact archived Microsoft Press Publisher 2000 page
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import html, json, re, time
+          from pathlib import Path
+          from urllib.parse import urlencode, urljoin
+          from urllib.request import Request, urlopen
+
+          UA="rar-p2000-sbs-mspress-links/1.0"
+          ts="20000817084617"
+          original="http://mspress.microsoft.com:80/office2000/products/publisher2000.htm"
+          replay=f"https://web.archive.org/web/{ts}id_/{original}"
+          attr_re=re.compile(r'''(?is)\b(?:href|src|action)\s*=\s*["']([^"']+)["']''')
+          refresh_re=re.compile(r'''(?is)http-equiv\s*=\s*["']refresh["'][^>]*content\s*=\s*["'][^"']*url\s*=\s*([^"';>\s]+)''')
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|bin|cue|7z|rar)(?:$|[?#])',re.I)
+          relevant_re=re.compile(r'(publisher|practice|exercise|sample|download|lesson|step.?by.?step|activeeducation|office2000|companion|file)',re.I)
+
+          req=Request(replay,headers={"User-Agent":UA,"Accept":"text/html,*/*;q=0.1"})
+          with urlopen(req,timeout=90) as r:
+            body=r.read(1024*1024)
+            ctype=r.headers.get("Content-Type")
+          text=body.decode("utf-8","replace")
+          vals=[m.group(1) for m in attr_re.finditer(text)] + [m.group(1) for m in refresh_re.finditer(text)]
+          links=[]
+          for v in vals:
+            v=html.unescape(v.strip())
+            if not v or v.startswith(("#","javascript:","mailto:")): continue
+            links.append(urljoin(original,v))
+          links=sorted(set(links))
+
+          def cdx(u):
+            params=[
+              ("url",u),("matchType","exact"),("output","json"),
+              ("fl","timestamp,original,mimetype,statuscode,digest,length"),
+              ("filter","statuscode:200"),("collapse","digest"),("limit","100"),("gzip","false")
+            ]
+            endpoint="https://web.archive.org/cdx/search/cdx?"+urlencode(params)
+            last=None
+            for i in range(3):
+              try:
+                q=Request(endpoint,headers={"User-Agent":UA,"Accept":"application/json"})
+                with urlopen(q,timeout=90) as r:
+                  data=json.load(r)
+                return [dict(zip(data[0],x)) for x in data[1:]] if data else []
+              except Exception as e:
+                last=e; time.sleep(1.2*(i+1))
+            raise last
+
+          rows=[]; errors=[]
+          for u in links:
+            carrier=bool(carrier_re.search(u)); relevant=bool(relevant_re.search(u))
+            if not (carrier or relevant): continue
+            item={"url":u,"carrier_like":carrier,"relevant_like":relevant}
+            try: item["captures"]=cdx(u)
+            except Exception as e:
+              item["error"]=f"{type(e).__name__}: {e}"
+              errors.append({"url":u,"error":item["error"]})
+            rows.append(item)
+            time.sleep(.2)
+
+          summary={
+            "schema":"chaptera.corpus-p2000-sbs-mspress-links.v1",
+            "source_safe":True,
+            "raw_binary_retained":False,
+            "timestamp":ts,
+            "original":original,
+            "content_type":ctype,
+            "body_length":len(body),
+            "observed_links":len(links),
+            "interesting_rows":len(rows),
+            "carrier_rows":[x for x in rows if x["carrier_like"]],
+            "interesting":rows,
+            "errors":errors,
+            "body_preview":text[:3500],
+            "guardrail":"Exact proven Microsoft Press HTML snapshot only. Linked carrier bodies are never downloaded or executed."
+          }
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Metadata-only guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.7z' -o -iname '*.rar' \) | grep -q .; then
+            echo 'unexpected carrier bytes in locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-p2000-sbs-mspress-links
+          path: out/**
+          retention-days: 60
+          if-no-files-found: error
