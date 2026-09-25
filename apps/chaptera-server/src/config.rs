@@ -35,6 +35,8 @@ pub struct ChapteraConfig {
     pub limits: LimitsConfig,
     #[serde(default)]
     pub edge: EdgeConfig,
+    #[serde(default)]
+    pub source_ingress: Option<SourceIngressConfig>,
     pub auth: Option<AuthConfig>,
     pub key_ring: Option<KeyRingConfig>,
 }
@@ -98,6 +100,55 @@ impl Default for EdgeConfig {
             request_timeout_ms: 30_000,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceIngressConfig {
+    pub principal_concurrent_cap: i64,
+    pub tenant_concurrent_cap: i64,
+    pub principal_bytes_cap: i64,
+    pub tenant_bytes_cap: i64,
+    pub max_single_upload_bytes: i64,
+    pub admission_lease_seconds: u64,
+    pub admission_retention_seconds: u64,
+    pub upload_ttl_seconds: u64,
+    pub direct_grant_ttl_seconds: u64,
+    pub scanner: SourceScannerConfig,
+    pub baseline: SourceBaselineRuntimeConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceScannerConfig {
+    pub clamd_endpoint: SocketAddr,
+    pub clamd_connect_timeout_ms: u64,
+    pub clamd_io_timeout_ms: u64,
+    pub isolation_python: PathBuf,
+    pub isolation_harness: PathBuf,
+    pub worker_binary: PathBuf,
+    pub worker_wall_timeout_seconds: u64,
+    pub worker_address_space_mb: u64,
+    pub worker_cpu_seconds: u64,
+    pub worker_open_files: u64,
+    pub worker_output_file_mb: u64,
+    pub max_cfb_entries: u64,
+    pub max_declared_stream_bytes: u64,
+    pub temp_root: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceBaselineRuntimeConfig {
+    pub isolation_python: PathBuf,
+    pub isolation_harness: PathBuf,
+    pub worker_binary: PathBuf,
+    pub worker_wall_timeout_seconds: u64,
+    pub worker_address_space_mb: u64,
+    pub worker_cpu_seconds: u64,
+    pub worker_open_files: u64,
+    pub worker_output_file_mb: u64,
+    pub temp_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -246,6 +297,7 @@ impl ChapteraConfig {
                 min_free_disk_bytes: 1024 * 1024 * 1024,
             },
             edge: EdgeConfig::default(),
+            source_ingress: None,
             auth: None,
             key_ring: None,
         };
@@ -359,6 +411,16 @@ impl ChapteraConfig {
             ));
         }
 
+        if let Some(source_ingress) = &self.source_ingress {
+            if self.auth.is_none() {
+                return Err(ConfigError::new(
+                    "source_ingress_auth_required",
+                    "source_ingress requires configured authentication",
+                ));
+            }
+            validate_source_ingress(self.environment, &self.edge, source_ingress)?;
+        }
+
         match (&self.auth, self.environment) {
             (Some(auth), mode) => validate_auth(mode, auth)?,
             (None, EnvironmentMode::Prod) => {
@@ -398,6 +460,212 @@ impl ChapteraConfig {
             key_ring,
         })
     }
+}
+
+fn validate_source_ingress(
+    mode: EnvironmentMode,
+    edge: &EdgeConfig,
+    source: &SourceIngressConfig,
+) -> Result<(), ConfigError> {
+    for (field, value) in [
+        (
+            "source_ingress.principal_concurrent_cap",
+            source.principal_concurrent_cap,
+        ),
+        (
+            "source_ingress.tenant_concurrent_cap",
+            source.tenant_concurrent_cap,
+        ),
+        (
+            "source_ingress.principal_bytes_cap",
+            source.principal_bytes_cap,
+        ),
+        ("source_ingress.tenant_bytes_cap", source.tenant_bytes_cap),
+        (
+            "source_ingress.max_single_upload_bytes",
+            source.max_single_upload_bytes,
+        ),
+    ] {
+        if value <= 0 {
+            return Err(ConfigError::new(
+                "source_ingress_capacity_invalid",
+                format!("{field} must be positive"),
+            ));
+        }
+    }
+    if source.principal_concurrent_cap > source.tenant_concurrent_cap
+        || source.principal_bytes_cap > source.tenant_bytes_cap
+        || source.max_single_upload_bytes > source.principal_bytes_cap
+    {
+        return Err(ConfigError::new(
+            "source_ingress_capacity_invalid",
+            "source_ingress principal/single-upload caps must fit inside tenant/principal caps",
+        ));
+    }
+    if u64::try_from(source.max_single_upload_bytes)
+        .map_or(true, |limit| limit > edge.max_upload_body_bytes)
+    {
+        return Err(ConfigError::new(
+            "source_ingress_edge_limit_mismatch",
+            "source_ingress.max_single_upload_bytes must fit inside edge.max_upload_body_bytes",
+        ));
+    }
+
+    for (field, seconds, max_seconds) in [
+        (
+            "source_ingress.admission_lease_seconds",
+            source.admission_lease_seconds,
+            24 * 60 * 60,
+        ),
+        (
+            "source_ingress.admission_retention_seconds",
+            source.admission_retention_seconds,
+            30 * 24 * 60 * 60,
+        ),
+        (
+            "source_ingress.upload_ttl_seconds",
+            source.upload_ttl_seconds,
+            24 * 60 * 60,
+        ),
+        (
+            "source_ingress.direct_grant_ttl_seconds",
+            source.direct_grant_ttl_seconds,
+            24 * 60 * 60,
+        ),
+    ] {
+        if seconds == 0 || seconds > max_seconds {
+            return Err(ConfigError::new(
+                "source_ingress_ttl_invalid",
+                format!("{field} must be positive and within its bounded maximum"),
+            ));
+        }
+    }
+    if source.upload_ttl_seconds > source.admission_lease_seconds
+        || source.direct_grant_ttl_seconds > source.upload_ttl_seconds
+    {
+        return Err(ConfigError::new(
+            "source_ingress_ttl_order_invalid",
+            "direct grant TTL must fit upload TTL, which must fit admission lease TTL",
+        ));
+    }
+
+    let scanner = &source.scanner;
+    if !scanner.clamd_endpoint.ip().is_loopback() {
+        return Err(ConfigError::new(
+            "source_ingress_clamd_not_loopback",
+            "source_ingress.scanner.clamd_endpoint must be loopback",
+        ));
+    }
+    if scanner.clamd_connect_timeout_ms == 0
+        || scanner.clamd_io_timeout_ms == 0
+        || scanner.worker_wall_timeout_seconds == 0
+    {
+        return Err(ConfigError::new(
+            "source_ingress_scanner_timeout_invalid",
+            "source ingress scanner timeouts must be positive",
+        ));
+    }
+    validate_source_worker_limits(
+        "source_ingress.scanner",
+        scanner.worker_address_space_mb,
+        scanner.worker_cpu_seconds,
+        scanner.worker_open_files,
+        scanner.worker_output_file_mb,
+    )?;
+    if scanner.max_cfb_entries == 0
+        || scanner.max_declared_stream_bytes == 0
+        || scanner.max_declared_stream_bytes
+            > u64::try_from(source.max_single_upload_bytes).unwrap_or(0)
+    {
+        return Err(ConfigError::new(
+            "source_ingress_scan_policy_invalid",
+            "scanner CFB/stream limits must be positive and bounded by the upload byte limit",
+        ));
+    }
+    for (field, path) in [
+        (
+            "source_ingress.scanner.isolation_python",
+            &scanner.isolation_python,
+        ),
+        (
+            "source_ingress.scanner.isolation_harness",
+            &scanner.isolation_harness,
+        ),
+        ("source_ingress.scanner.worker_binary", &scanner.worker_binary),
+        ("source_ingress.scanner.temp_root", &scanner.temp_root),
+    ] {
+        validate_runtime_path(mode, field, path)?;
+    }
+
+    let baseline = &source.baseline;
+    if baseline.worker_wall_timeout_seconds == 0 {
+        return Err(ConfigError::new(
+            "source_ingress_baseline_timeout_invalid",
+            "source ingress baseline worker timeout must be positive",
+        ));
+    }
+    validate_source_worker_limits(
+        "source_ingress.baseline",
+        baseline.worker_address_space_mb,
+        baseline.worker_cpu_seconds,
+        baseline.worker_open_files,
+        baseline.worker_output_file_mb,
+    )?;
+    for (field, path) in [
+        (
+            "source_ingress.baseline.isolation_python",
+            &baseline.isolation_python,
+        ),
+        (
+            "source_ingress.baseline.isolation_harness",
+            &baseline.isolation_harness,
+        ),
+        (
+            "source_ingress.baseline.worker_binary",
+            &baseline.worker_binary,
+        ),
+        ("source_ingress.baseline.temp_root", &baseline.temp_root),
+    ] {
+        validate_runtime_path(mode, field, path)?;
+    }
+
+    Ok(())
+}
+
+fn validate_source_worker_limits(
+    field: &str,
+    address_space_mb: u64,
+    cpu_seconds: u64,
+    open_files: u64,
+    output_file_mb: u64,
+) -> Result<(), ConfigError> {
+    if address_space_mb < 64 || cpu_seconds == 0 || open_files < 16 || output_file_mb == 0 {
+        return Err(ConfigError::new(
+            "source_ingress_worker_limit_invalid",
+            format!("{field} worker limits are outside the admitted range"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_runtime_path(
+    mode: EnvironmentMode,
+    field: &str,
+    path: &Path,
+) -> Result<(), ConfigError> {
+    if path.as_os_str().is_empty() {
+        return Err(ConfigError::new(
+            "source_ingress_path_required",
+            format!("{field} must be configured"),
+        ));
+    }
+    if mode == EnvironmentMode::Prod && !path.is_absolute() {
+        return Err(ConfigError::new(
+            "source_ingress_path_not_absolute",
+            format!("{field} must be absolute in prod"),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_edge(mode: EnvironmentMode, edge: &EdgeConfig) -> Result<(), ConfigError> {
