@@ -1,0 +1,49 @@
+name: Chaptera Rescue isolated worker V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-recovery-worker/**"
+      - "packages/product/rescue-worker/**"
+      - "docs/chaptera-rescue-worker-v1.md"
+      - ".github/workflows/rescue-worker-isolation-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-protocol:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "jsonschema==4.23.0"
+      - name: Validate protocol schemas
+        shell: pwsh
+        run: |
+          python -c "import json; from jsonschema import Draft202012Validator; [Draft202012Validator.check_schema(json.load(open(p, encoding='utf-8'))) for p in ['packages/product/rescue-worker/v1/job.schema.json','packages/product/rescue-worker/v1/event.schema.json','packages/product/rescue-worker/v1/result.schema.json']]"
+      - name: Check worker formatting
+        run: cargo fmt --manifest-path apps/chaptera-recovery-worker/Cargo.toml -- --check
+      - name: Check worker
+        run: cargo check --manifest-path apps/chaptera-recovery-worker/Cargo.toml --all-targets
+      - name: Test worker boundary
+        run: cargo test --manifest-path apps/chaptera-recovery-worker/Cargo.toml
+      - name: Build worker
+        run: cargo build --manifest-path apps/chaptera-recovery-worker/Cargo.toml --release
+      - name: Verify fail-closed executable identity
+        shell: pwsh
+        run: |
+          $exe = "apps/chaptera-recovery-worker/target/release/chaptera-recovery-worker.exe"
+          if (-not (Test-Path $exe)) { throw "recovery worker executable missing" }
+          $check = & $exe --self-check | ConvertFrom-Json
+          if ($check.executable -ne "chaptera-recovery-worker.exe") { throw "wrong worker identity" }
+          if ($check.embedded_recovery_executor) { throw "public worker must not invent a recovery executor" }
+          if ($check.source_mutation_allowed) { throw "worker must forbid source mutation" }
+          if ($check.progress_percent_claimed) { throw "worker must not invent progress percentages" }
