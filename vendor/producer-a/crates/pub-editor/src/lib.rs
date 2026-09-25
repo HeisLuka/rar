@@ -3804,6 +3804,9 @@ fn apply_forward(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::SetImageCrop { .. } => {
+            unreachable!("image crop mutations are applied to editor overlay state")
+        }
         EditOperation::CreateShape { .. } => {
             unreachable!("CreateShape is applied to the authored overlay state")
         }
@@ -4009,6 +4012,9 @@ fn apply_inverse(
         }
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
+        }
+        EditOperation::SetImageCrop { .. } => {
+            unreachable!("image crop mutations are applied to editor overlay state")
         }
         EditOperation::CreateShape { .. } => {
             unreachable!("CreateShape is reverted in the authored overlay state")
