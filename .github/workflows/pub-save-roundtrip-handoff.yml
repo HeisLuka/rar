@@ -88,3 +88,72 @@ jobs:
             out/pub-save-roundtrip-handoff/LOCAL-CODEX.txt
           if-no-files-found: error
           retention-days: 30
+
+  native-roundtrip:
+    if: github.event_name == 'workflow_dispatch'
+    needs: prepare-handoff
+    runs-on:
+      - self-hosted
+      - Windows
+      - pub-research
+      - publisher-2019
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          clean: true
+
+      - name: Verify native runner prerequisites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pwsh --version
+          cargo --version
+          if (-not (Test-Path -LiteralPath ".\tools\windows\pub-runtime\run_story_native_roundtrip.ps1")) {
+            throw "Native roundtrip runner is missing from checkout"
+          }
+
+      - name: Download exact hosted handoff bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: pub-save-roundtrip-handoff-${{ github.run_id }}
+          path: out/pub-save-roundtrip-handoff
+
+      - name: Run Publisher native Story roundtrip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Remove-Item -LiteralPath ".\out\pub-save-roundtrip-native" -Recurse -Force -ErrorAction SilentlyContinue
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\windows\pub-runtime\run_story_native_roundtrip.ps1 \`
+            -BundleDir .\out\pub-save-roundtrip-handoff \`
+            -OutputRoot .\out\pub-save-roundtrip-native \`
+            -ExpectedPublisherVersion "16.0" \`
+            -ExpectedBuildPrefix "12527"
+
+      - name: Upload source-safe native receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-save-roundtrip-native-receipt-${{ github.run_id }}
+          path: out/pub-save-roundtrip-native/native-roundtrip-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize native acceptance
+        if: always()
+        shell: pwsh
+        run: |
+          "## PUB native Story roundtrip" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Runner labels: self-hosted / Windows / pub-research / publisher-2019" >> $env:GITHUB_STEP_SUMMARY
+          "- Hosted bundle run: ${{ github.run_id }}" >> $env:GITHUB_STEP_SUMMARY
+          if (Test-Path -LiteralPath ".\out\pub-save-roundtrip-native\native-roundtrip-receipt.json") {
+            $receipt = Get-Content -LiteralPath ".\out\pub-save-roundtrip-native\native-roundtrip-receipt.json" -Raw | ConvertFrom-Json
+            "- Publisher: $($receipt.publisher.version) build $($receipt.publisher.build)" >> $env:GITHUB_STEP_SUMMARY
+            "- Fresh reopen: $($receipt.lifecycle.fresh_reopen)" >> $env:GITHUB_STEP_SUMMARY
+            "- Current Rar semantic verification: $($receipt.semantic.verified_by_current_rar)" >> $env:GITHUB_STEP_SUMMARY
+            "- Story SHA-256: $($receipt.semantic.story_text_sha256)" >> $env:GITHUB_STEP_SUMMARY
+            "- Story UTF-16 length: $($receipt.semantic.story_utf16_len)" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "- Native receipt was not produced; inspect the failing step. This is not automatically a writer rejection." >> $env:GITHUB_STEP_SUMMARY
+          }
