@@ -123,7 +123,7 @@ test("paste is intercepted only for scene-focused image file items",()=>{
   const calls=[];
   const controller={handleFile(file,args){calls.push([file,args]);return Promise.resolve();}};
   let focus="story";
-  bindCanvasImageDropPasteV1({controller,canvasTarget:canvas,clipboardTarget:clipboard,screenToDocumentPoint:()=>({x_emu:1,y_emu:2}),getFocusOwner:()=>focus});
+  bindCanvasImageDropPasteV1({controller,canvasTarget:canvas,clipboardTarget:clipboard,screenToDocumentPoint:()=>({x_emu:1,y_emu:2}),getFocusOwner:()=>focus,getPasteDocumentPoint:()=>({x_emu:700,y_emu:800})});
   let prevented=false;
   const event={isComposing:false,preventDefault(){prevented=true;},clipboardData:{items:[{kind:"file",getAsFile(){return png();}}]}};
   clipboard.emit("paste",event);
@@ -133,6 +133,7 @@ test("paste is intercepted only for scene-focused image file items",()=>{
   clipboard.emit("paste",event);
   assert.equal(prevented,true);
   assert.equal(calls.length,1);
+  assert.deepEqual(calls[0][1].document_point,{x_emu:700,y_emu:800});
 });
 
 test("drop converts screen point only after exactly one image is admitted",()=>{
