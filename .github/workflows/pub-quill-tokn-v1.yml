@@ -22,7 +22,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Check formatting
-        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml --check -p pub-quill
+        run: |
+          rustfmt --edition 2024 --check \
+            vendor/producer-a/crates/pub-quill/src/lib.rs \
+            vendor/producer-a/crates/pub-quill/src/story.rs \
+            vendor/producer-a/crates/pub-quill/src/tokn.rs \
+            vendor/producer-a/crates/pub-quill/tests/tokn_real_fixtures.rs
       - name: Check pub-quill
         run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-quill
       - name: Test pub-quill
