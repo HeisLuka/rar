@@ -788,6 +788,14 @@ mod tests {
         assert_eq!(planned.document_id, "document:c54c2429d0bf699b890aab84");
     }
 
+    #[test]
+    fn consumption_hash_matches_source_ingress_contract() {
+        assert_eq!(
+            consumption_request_hash(&request("upload-1", "create-1", 3)).unwrap(),
+            "2ad057fed8e6fc5bb8ec842a91ae88dd99fe04dff7619814d1d86ec9f56de6e9"
+        );
+    }
+
     #[tokio::test]
     async fn fresh_validated_upload_atomically_creates_project_document_genesis_and_consumption() {
         let (path, adapter, pool) = setup("fresh").await;
