@@ -1881,8 +1881,8 @@ impl ViewerApp {
         let Some(visual) = &self.visual else {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
-                    ui.heading("Drop a .pub file here");
-                    ui.label("or start with: chaptera FILE.pub");
+                    ui.heading("Open a Publisher file");
+                    ui.label("Use Open PUB… above, or drag and drop a .pub file here.");
                     if let Some(error) = &self.load_error {
                         ui.add_space(12.0);
                         ui.colored_label(ui.visuals().error_fg_color, &error.message);
@@ -2005,6 +2005,13 @@ impl ViewerApp {
                 };
                 let (response, painter) =
                     ui.allocate_painter(egui::vec2(content_width, content_height), canvas_sense);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Other,
+                        !reader_only_mode(),
+                        "Document canvas",
+                    )
+                });
                 let canvas = response.rect;
                 let page_rect = egui::Rect::from_center_size(
                     canvas.center(),
@@ -2103,6 +2110,22 @@ impl ViewerApp {
                     );
                     let size = egui::vec2(width as f32 * scene_scale, height as f32 * scene_scale);
                     let node_rect = egui::Rect::from_min_size(min, size);
+                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+                        && movable_nodes.contains_key(instance_id)
+                    {
+                        let a11y = ui.interact(
+                            node_rect,
+                            ui.id().with(("movable-canvas-object", instance_id)),
+                            egui::Sense::hover(),
+                        );
+                        a11y.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Other,
+                                true,
+                                "Movable canvas object",
+                            )
+                        });
+                    }
                     let node_paint = visual
                         .paints
                         .iter()
@@ -2663,9 +2686,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn editor_project_json_reopens_real_authoring_state() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -2894,41 +2915,19 @@ mod tests {
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
-    fn decode_base64_fixture(input: &str) -> Vec<u8> {
-        let mut output = Vec::with_capacity(input.len() * 3 / 4);
-        let mut buffer = 0_u32;
-        let mut bits = 0_u8;
-
-        for byte in input.bytes() {
-            let value = match byte {
-                b'A'..=b'Z' => byte - b'A',
-                b'a'..=b'z' => byte - b'a' + 26,
-                b'0'..=b'9' => byte - b'0' + 52,
-                b'+' => 62,
-                b'/' => 63,
-                b'=' => break,
-                byte if byte.is_ascii_whitespace() => continue,
-                other => panic!("unexpected base64 byte: {other:#04x}"),
-            };
-
-            buffer = (buffer << 6) | u32::from(value);
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                output.push((buffer >> bits) as u8);
-                buffer &= if bits == 0 { 0 } else { (1_u32 << bits) - 1 };
-            }
-        }
-
-        output
+    fn sample_newsletter_fixture() -> Vec<u8> {
+        let path = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        fs::read(&path).unwrap_or_else(|error| {
+            panic!("read pinned SampleNewsletter fixture {}: {error}", path.display())
+        })
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn real_pub_exposes_decodable_exact_image_bound_to_scene_node() {
-        let pub_bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let pub_bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &pub_bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -2966,9 +2965,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn desktop_editor_session_updates_overlay_without_mutating_pub_bytes() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let original_bytes = bytes.clone();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
@@ -3074,9 +3071,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn canvas_drag_commits_exactly_one_move_and_syncs_undo_redo() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -3216,9 +3211,7 @@ mod tests {
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn replayed_move_project_synchronizes_scene_geometry_by_canonical_node_id() {
-        let bytes = decode_base64_fixture(include_str!(
-            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
-        ));
+        let bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -3294,6 +3287,304 @@ mod tests {
         assert!(source.contains("Reopen never discards unsaved operations."));
         assert!(source.contains("Technical details"));
         assert!(source.contains("Match details"));
+    }
+
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
+    #[ignore = "runtime UX evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER and snapshot output env"]
+    fn headless_wgpu_ux_snapshots_render_current_viewer_app() {
+        use egui_kittest::Harness;
+
+        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let output_dir = std::env::var_os("CHAPTERA_UX_SNAPSHOT_DIR")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_UX_SNAPSHOT_DIR must name the retained screenshot directory");
+        fs::create_dir_all(&output_dir).expect("create UX snapshot output directory");
+
+        for (width, height, name) in [
+            (1280.0_f32, 820.0_f32, "chaptera-editor-ux-1280x820.png"),
+            (900.0_f32, 600.0_f32, "chaptera-editor-ux-900x600.png"),
+        ] {
+            let fixture_for_app = fixture.clone();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .with_pixels_per_point(1.0)
+                .with_max_steps(20)
+                .wgpu()
+                .build_eframe(move |cc| {
+                    ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+                });
+            harness.run_ok();
+
+            let image = harness
+                .render()
+                .expect("headless WGPU render of the current ViewerApp must succeed");
+            assert_eq!(image.width(), width as u32);
+            assert_eq!(image.height(), height as u32);
+
+            let output = output_dir.join(name);
+            image.save(&output).expect("write retained UX PNG");
+            assert!(
+                output.metadata().expect("UX PNG metadata").len() >= 16_384,
+                "UX snapshot is implausibly small"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
+    #[ignore = "runtime GUI evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER"]
+    fn gui_only_v0_walkthrough_uses_real_widgets() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let fixture_source = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let original = fs::read(&fixture_source).unwrap_or_else(|error| {
+            panic!("read pinned SampleNewsletter fixture {}: {error}", fixture_source.display())
+        });
+        let root = std::env::temp_dir().join(format!(
+            "chaptera-gui-v0-walkthrough-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create GUI walkthrough temp directory");
+        let fixture = root.join("SampleNewsletter.pub");
+        fs::write(&fixture, &original).expect("write GUI walkthrough PUB fixture");
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(20)
+            .build_eframe(|cc| ViewerApp::new_with_storage(None, cc.storage));
+
+        {
+            let open = harness.get_by_label("Open PUB…");
+            assert!(!open.is_disabled());
+        }
+
+        harness.input_mut().dropped_files.push(egui::DroppedFile {
+            path: Some(fixture.clone()),
+            ..Default::default()
+        });
+        harness.step();
+        assert!(harness.state().visual.is_some(), "GUI file drop must open the PUB");
+        assert!(harness.state().editor.is_some(), "GUI open must create the EditorSession");
+
+        let (story_id, original_story, search_term) = {
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let editor = app.editor.as_ref().expect("editor loaded");
+            let story = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| {
+                    visual
+                        .story_frames
+                        .iter()
+                        .filter(|frame| frame.story_id == story.id)
+                        .count()
+                        == 1
+                        && editor.can_replace_story_text(story.id).is_ok()
+                        && !story.text.trim().is_empty()
+                })
+                .expect("real fixture exposes a GUI-editable Story");
+            let term = story
+                .text
+                .split_whitespace()
+                .map(|word| {
+                    word.trim_matches(|ch: char| !ch.is_alphanumeric())
+                        .to_owned()
+                })
+                .filter(|word| word.chars().count() >= 6)
+                .find(|word| {
+                    let matches = visual.document.search_text(word);
+                    matches.len() == 1 && matches[0].story_id == story.id
+                })
+                .expect("editable Story exposes one unique search term");
+            (story.id, story.text.clone(), term)
+        };
+
+        {
+            let search = harness.get_by_role(egui::accesskit::Role::TextInput);
+            search.type_text(search_term.clone());
+        }
+        harness.step();
+        let result_label = {
+            let result = harness
+                .state()
+                .search_results
+                .first()
+                .expect("GUI search produces one result");
+            assert_eq!(result.story_id, story_id);
+            format!("1. {}", search_result_preview(&result.text))
+        };
+        harness.get_by_label(&result_label).click();
+        harness.step();
+        assert_eq!(harness.state().edit_buffer, original_story);
+
+        let replacement = "Chaptera GUI-only V0 acceptance text".to_owned();
+        {
+            let editor = harness.get_by_value(&original_story);
+            editor.key_combination(&[
+                egui_kittest::kittest::Key::Control,
+                egui_kittest::kittest::Key::A,
+            ]);
+            editor.type_text(replacement.clone());
+        }
+        harness.step();
+        harness.get_by_label("Apply Story edit").click();
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor present")
+                .operations()
+                .len(),
+            1,
+            "Story edit must be admitted through the real GUI button"
+        );
+
+        let (start, end) = {
+            let object = harness
+                .get_all_by_label("Movable canvas object")
+                .last()
+                .expect("real canvas exposes at least one movable object");
+            let bounds = object.raw_bounds().expect("movable object has screen bounds");
+            let start = egui::pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            );
+            (start, start + egui::vec2(18.0, 12.0))
+        };
+
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(end));
+        harness.step();
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.step();
+        harness.run_ok();
+
+        let (moved_node_id, before_move, after_move) = {
+            let editor = harness.state().editor.as_ref().expect("editor present");
+            assert_eq!(
+                editor.operations().len(),
+                2,
+                "pointer drag release must add exactly one durable MoveNode"
+            );
+            match editor.operations().last().expect("move operation") {
+                pub_editor::EditOperation::MoveNode {
+                    node_id,
+                    before,
+                    after,
+                } => (*node_id, *before, *after),
+                other => panic!("GUI drag emitted unexpected operation: {other:?}"),
+            }
+        };
+
+        harness
+            .get_all_by_label("Undo")
+            .next()
+            .expect("Undo command")
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.state().editor.as_ref().expect("editor").graph().nodes[&moved_node_id]
+                .header
+                .bounds,
+            before_move,
+            "GUI Undo must restore exact pre-drag geometry"
+        );
+
+        harness
+            .get_all_by_label("Redo")
+            .next()
+            .expect("Redo command")
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.state().editor.as_ref().expect("editor").graph().nodes[&moved_node_id]
+                .header
+                .bounds,
+            after_move,
+            "GUI Redo must restore exact moved geometry"
+        );
+
+        harness.get_by_label("Save Project").click();
+        harness.step();
+        let sidecar = editor_project_sidecar_path(&fixture).expect("sidecar path");
+        assert!(sidecar.is_file(), "GUI Save Project must write the sidecar");
+
+        {
+            let reopen = harness.get_by_label("Reopen Project");
+            assert!(!reopen.is_disabled(), "saved clean state enables Reopen Project");
+            reopen.click();
+        }
+        harness.step();
+        {
+            let editor = harness.state().editor.as_ref().expect("fresh reopened editor");
+            assert_eq!(editor.operations().len(), 2);
+            assert_eq!(editor.graph().stories[&story_id].text, replacement);
+            assert_eq!(editor.graph().nodes[&moved_node_id].header.bounds, after_move);
+        }
+
+        harness.get_by_label("Export").click();
+        harness.step();
+        harness.get_by_label("Preview IDML").click();
+        harness.step();
+        assert!(
+            harness
+                .state()
+                .export_preview
+                .as_ref()
+                .is_some_and(|preview| {
+                    preview.target == pub_editor::EditorEditableTarget::Idml
+                        && preview.operation_count == 2
+                        && preview.can_serialize
+                }),
+            "GUI IDML preview must admit the current edited state"
+        );
+        harness.get_by_label("Export").click();
+        harness.step();
+        harness.get_by_label("Export edited IDML copy").click();
+        harness.step();
+
+        let exported =
+            editable_export_path(&fixture, pub_editor::EditorEditableTarget::Idml).expect("IDML path");
+        assert!(exported.is_file(), "GUI export must write edited IDML");
+        assert!(
+            editable_export_report_path(&exported).is_file(),
+            "GUI export must write its loss report"
+        );
+        assert_eq!(
+            fs::read(&fixture).expect("read immutable source after GUI walkthrough"),
+            original,
+            "GUI-only V0 walkthrough must never mutate the source PUB"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
