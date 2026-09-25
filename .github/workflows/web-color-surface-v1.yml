@@ -1,0 +1,146 @@
+name: WEB-COLOR-SURFACE-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/color-surface-real.html"
+      - "tools/run_web_color_surface.mjs"
+      - ".github/workflows/web-color-surface-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-surface:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright browser
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run explicit SDR sRGB surface probe
+        run: node tools/run_web_color_surface.mjs ${{ matrix.browser }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-color-surface-${{ matrix.browser }}
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-color-surface/${{ matrix.browser }}-receipt.json
+
+  cross-browser:
+    needs: browser-surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: web-color-surface-*
+          path: target/web-color-surface-cross/input
+          merge-multiple: true
+
+      - name: Cross-check V1 surface contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/web-color-surface-cross
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("target/web-color-surface-cross/input")
+          paths = sorted(root.glob("*-receipt.json"))
+          assert len(paths) == 2, [str(p) for p in paths]
+          rows = [json.loads(path.read_text()) for path in paths]
+          by_engine = {row["browser"]["engine"]: row for row in rows}
+          assert set(by_engine) == {"chromium", "firefox"}, set(by_engine)
+
+          for row in rows:
+              assert row["receipt_kind"] == "chaptera.web-color-surface.v1"
+              assert row["render_color_target"] == {
+                  "dynamic_range": "sdr",
+                  "color_space": "srgb",
+                  "alpha_semantics": "explicit",
+                  "pixel_format": "rgba8_unorm_readback",
+              }
+              assert row["active_renderer_candidates"] == ["svg", "canvas2d", "webgl2-hybrid"]
+              assert row["equivalence"]["all_current_candidates_available"] is True
+              assert row["equivalence"]["pass"] is True
+              assert row["equivalence"]["max_pair_channel_delta"] <= 1
+              assert row["surfaces"]["canvas2d"]["requested"] == {
+                  "alpha": True,
+                  "colorSpace": "srgb",
+              }
+              assert row["surfaces"]["webgl2"]["requested"]["premultipliedAlpha"] is False
+              assert row["surfaces"]["webgl2"]["requested"]["alpha"] is True
+              assert row["surfaces"]["svg"]["requested"]["bitmapOptions"] == {
+                  "imageOrientation": "none",
+                  "premultiplyAlpha": "none",
+                  "colorSpaceConversion": "none",
+              }
+              assert row["capture_boundary"]["absolute_monitor_colorimetry_claimed"] is False
+              assert row["capture_boundary"]["screenshot_used_as_ground_truth"] is False
+              assert row["optional_capabilities"]["webgpu_active_renderer_candidate"] is False
+              assert row["real_pub"] is False
+              assert row["representative_corpus"] is False
+              assert row["technology_decision_allowed"] is False
+
+          c = by_engine["chromium"]
+          f = by_engine["firefox"]
+          expected = c["expected_samples"]
+          assert f["expected_samples"] == expected
+          for surface in ["canvas2d", "webgl2", "svg"]:
+              cs = c["surfaces"][surface]["samples"]
+              fs = f["surfaces"][surface]["samples"]
+              assert len(cs) == len(fs) == len(expected)
+              max_delta = max(
+                  abs(cs[i][channel] - fs[i][channel])
+                  for i in range(len(expected))
+                  for channel in range(4)
+              )
+              assert max_delta <= 1, (surface, max_delta, cs, fs)
+
+          receipt = {
+              "receipt_kind": "chaptera.web-color-surface-cross-browser.v1",
+              "browser_engines": sorted(by_engine),
+              "v1_target": "sdr_srgb_explicit_alpha",
+              "active_renderer_candidates": ["svg", "canvas2d", "webgl2-hybrid"],
+              "cross_browser_max_channel_delta": {
+                  surface: max(
+                      abs(
+                          c["surfaces"][surface]["samples"][i][channel]
+                          - f["surfaces"][surface]["samples"][i][channel]
+                      )
+                      for i in range(len(expected))
+                      for channel in range(4)
+                  )
+                  for surface in ["canvas2d", "webgl2", "svg"]
+              },
+              "current_candidate_equivalence_pass": True,
+              "wide_gamut_hdr_required": False,
+              "webgpu_active_renderer_candidate": False,
+              "absolute_monitor_colorimetry_claimed": False,
+              "technology_decision_allowed": False,
+          }
+          out = Path("target/web-color-surface-cross/receipt.json")
+          out.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-color-surface-cross-browser
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-color-surface-cross/receipt.json
