@@ -170,10 +170,10 @@ pub fn bridge_line_region_slots_v1(
     let mut output = Vec::new();
 
     for (index, slot) in slots.iter().enumerate() {
-        if let Some(bottom) = previous_bottom {
-            if slot.clipped_top_emu < bottom {
-                return Err(LineRegionFlowBridgeErrorV1::NonMonotonicBandOrder);
-            }
+        if let Some(bottom) = previous_bottom
+            && slot.clipped_top_emu < bottom
+        {
+            return Err(LineRegionFlowBridgeErrorV1::NonMonotonicBandOrder);
         }
         previous_bottom = Some(slot.clipped_bottom_emu);
 
