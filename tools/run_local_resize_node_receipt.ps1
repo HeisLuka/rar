@@ -8,6 +8,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ($env:GITHUB_ACTIONS -eq "true") {
+    throw "ResizeNode local-private receipt must not run inside GitHub Actions"
+}
+
 $fixturePath = (Resolve-Path $Fixture).Path
 $outputPath = [System.IO.Path]::GetFullPath($Output)
 $sourceHash = (Get-FileHash $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
