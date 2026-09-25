@@ -178,7 +178,7 @@ fn canonical_batch_is_one_history_and_project_replay_unit() {
     session
         .apply_project(&project)
         .expect("canonical batch replay");
-    assert_eq!(session.operations(), &[operation.clone()]);
+    assert_eq!(session.operations(), std::slice::from_ref(&operation));
     assert_eq!(session.graph().nodes[&node_a].header.bounds, after_a);
     assert_eq!(session.graph().nodes[&node_b].header.bounds, after_b);
     assert_eq!(session.project(), project);
