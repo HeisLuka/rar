@@ -142,14 +142,9 @@ fn validate_nonnegative(value: i64) -> bool {
 fn interior_rect(frame: &FrameRegionV1) -> Result<RectEmuV1, LineRegionErrorV1> {
     validate_rect(frame.bounds)?;
     let insets = frame.insets;
-    if ![
-        insets.left,
-        insets.top,
-        insets.right,
-        insets.bottom,
-    ]
-    .into_iter()
-    .all(validate_nonnegative)
+    if ![insets.left, insets.top, insets.right, insets.bottom]
+        .into_iter()
+        .all(validate_nonnegative)
     {
         return Err(LineRegionErrorV1::InvalidInsets);
     }
@@ -224,7 +219,11 @@ pub fn resolve_columns_v1(
     let mut x = interior.x;
 
     for index in 0..columns.count {
-        let extra = if index < u32::try_from(remainder).expect("remainder < count") { 1 } else { 0 };
+        let extra = if index < u32::try_from(remainder).expect("remainder < count") {
+            1
+        } else {
+            0
+        };
         let width = base_width + extra;
         let rect = RectEmuV1 {
             x,
@@ -396,11 +395,7 @@ pub fn resolve_line_band_v1(
                 });
             }
             EffectiveWrapModeV1::Rectangle { rect, distances } => {
-                let exclusion = expanded_obstacle(
-                    &obstacle.obstacle_id,
-                    *rect,
-                    *distances,
-                )?;
+                let exclusion = expanded_obstacle(&obstacle.obstacle_id, *rect, *distances)?;
                 if exclusion.y < clipped_bottom && exclusion.bottom()? > clipped_top {
                     let cut_x0 = exclusion.x.max(interior.x);
                     let cut_x1 = exclusion.right()?.min(interior.right()?);
@@ -413,9 +408,7 @@ pub fn resolve_line_band_v1(
     }
 
     intervals.retain(|interval| interval.x1_emu > interval.x0_emu);
-    intervals.sort_by_key(|interval| {
-        (interval.column_index, interval.x0_emu, interval.x1_emu)
-    });
+    intervals.sort_by_key(|interval| (interval.column_index, interval.x0_emu, interval.x1_emu));
 
     Ok(LineBandSlotsV1 {
         requested: band,
@@ -703,7 +696,14 @@ mod tests {
             band(),
         )
         .expect("slots");
-        assert_eq!(vec![0, 1, 2], slots.intervals.iter().map(|v| v.column_index).collect::<Vec<_>>());
+        assert_eq!(
+            vec![0, 1, 2],
+            slots
+                .intervals
+                .iter()
+                .map(|v| v.column_index)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -792,14 +792,9 @@ mod tests {
         )
         .expect("slots");
 
-        let all = select_line_intervals_v1(
-            &slots,
-            IntervalConsumptionPolicyV1::AllIntervalsLeftToRight,
-        );
-        let largest = select_line_intervals_v1(
-            &slots,
-            IntervalConsumptionPolicyV1::LargestOnly,
-        );
+        let all =
+            select_line_intervals_v1(&slots, IntervalConsumptionPolicyV1::AllIntervalsLeftToRight);
+        let largest = select_line_intervals_v1(&slots, IntervalConsumptionPolicyV1::LargestOnly);
         assert_eq!(2, all.len());
         assert_eq!(1, largest.len());
         assert_eq!(650, largest[0].x0_emu);
