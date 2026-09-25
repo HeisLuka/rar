@@ -24,7 +24,7 @@ def main() -> int:
     if args.live_code != 200:
         raise SystemExit(f"/live expected 200, got {args.live_code}")
     if args.ready_code != 503:
-        raise SystemExit(f"/ready expected 503 before producers, got {args.ready_code}")
+        raise SystemExit(f"/ready expected 503 in the no-config shell smoke, got {args.ready_code}")
 
     fail_closed = {
         "doctor": args.doctor_rc,
@@ -69,11 +69,12 @@ def main() -> int:
             "observability",
         ],
         "limitations": [
+            "This receipt covers the no-config runtime shell, whose RuntimePorts remain intentionally unconfigured.",
+            "Configured production producer composition is exercised by the typed production-config acceptance.",
             "No production AuthN/AuthZ adapter is connected.",
-            "No physical durable RevisionStream/SQLite adapter is connected.",
             "No durable async worker adapter is connected.",
             "No production BlobStore adapter is connected.",
-            "A real deployment must remain not-ready until required producers are wired.",
+            "A real deployment must remain not-ready until all required producers are wired.",
         ],
     }
 
