@@ -8,7 +8,7 @@ use std::{
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
 const MIGRATION_VERSION: i64 = 1;
@@ -106,6 +106,7 @@ impl SqliteRevisionStore {
         let options = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(false)
+            .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
             .busy_timeout(busy_timeout);
