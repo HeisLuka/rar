@@ -340,11 +340,9 @@ impl SqliteQuotaAuthority {
                 ));
             }
 
-            let next_generation = expected_generation
-                .checked_add(1)
-                .ok_or_else(|| {
-                    QuotaError::new("quota_generation_overflow", "lease generation overflow")
-                })?;
+            let next_generation = expected_generation.checked_add(1).ok_or_else(|| {
+                QuotaError::new("quota_generation_overflow", "lease generation overflow")
+            })?;
 
             let done = sqlx::query(
                 r#"
@@ -860,13 +858,21 @@ fn validate_lease(lease: Duration) -> Result<i64, QuotaError> {
             "quota lease must be >0 and <=24 hours",
         ));
     }
-    i64::try_from(lease.as_millis())
-        .map_err(|_| QuotaError::new("quota_lease_overflow", "quota lease does not fit i64 millis"))
+    i64::try_from(lease.as_millis()).map_err(|_| {
+        QuotaError::new(
+            "quota_lease_overflow",
+            "quota lease does not fit i64 millis",
+        )
+    })
 }
 
 fn checked_add(left: i64, right: i64) -> Result<i64, QuotaError> {
-    left.checked_add(right)
-        .ok_or_else(|| QuotaError::new("quota_capacity_overflow", "quota capacity arithmetic overflow"))
+    left.checked_add(right).ok_or_else(|| {
+        QuotaError::new(
+            "quota_capacity_overflow",
+            "quota capacity arithmetic overflow",
+        )
+    })
 }
 
 fn sqlite_error(error: impl fmt::Display) -> QuotaError {
@@ -937,10 +943,9 @@ mod tests {
             .migrate_up()
             .await
             .unwrap();
-        let authority =
-            SqliteQuotaAuthority::open(&path, 4, Duration::from_secs(2), config)
-                .await
-                .unwrap();
+        let authority = SqliteQuotaAuthority::open(&path, 4, Duration::from_secs(2), config)
+            .await
+            .unwrap();
         (authority, path)
     }
 
@@ -1171,10 +1176,9 @@ mod tests {
         };
         authority.close().await;
 
-        let reopened =
-            SqliteQuotaAuthority::open(&path, 2, Duration::from_secs(2), config())
-                .await
-                .unwrap();
+        let reopened = SqliteQuotaAuthority::open(&path, 2, Duration::from_secs(2), config())
+            .await
+            .unwrap();
         let usage = reopened.usage("tenant-a", 11).await.unwrap();
         assert_eq!(usage.background, 2);
 
@@ -1198,8 +1202,7 @@ mod tests {
     #[tokio::test]
     async fn open_requires_operator_migration_and_does_not_create_database() {
         let path = temp_db("missing");
-        let result =
-            SqliteQuotaAuthority::open(&path, 1, Duration::from_secs(1), config()).await;
+        let result = SqliteQuotaAuthority::open(&path, 1, Duration::from_secs(1), config()).await;
         let error = result.err().expect("unmigrated quota open must fail");
         assert_eq!(error.code, "quota_database_missing");
         assert!(!path.exists());
