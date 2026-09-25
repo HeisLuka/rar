@@ -1,0 +1,33 @@
+name: Chaptera Web ReScript pilot
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/web-rescript-pilot.yml"
+      - "apps/web/rescript-pilot/**"
+      - "apps/web/pending-chain-v1.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pending-state-differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web/rescript-pilot
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Install pinned ReScript stable
+        run: npm install --no-audit --no-fund
+      - name: Compile ReScript pilot and run differential tests
+        run: npm test
+      - name: Show generated JS size
+        shell: bash
+        run: |
+          wc -c src/*.res src/*.res.mjs
