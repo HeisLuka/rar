@@ -1,0 +1,97 @@
+name: TEMP live institutional Publisher template recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-edu-live-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install inspection tooling
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Download exact public PUB locators
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/t714-live out
+          curl -fL --retry 4 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/t714-live/wichita-business-card.pub \
+            'https://www.wichita.edu/services/printing/_documents/10_up_Publisher_template.pub'
+          curl -fL --retry 4 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/t714-live/wichita-fullbleed-8x11.pub \
+            'https://www.wichita.edu/services/printing/_documents/Publisher_8.5x11_portrait_fullbleed_template.pub'
+          curl -fL --retry 4 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/t714-live/rockwall-senior-ad.pub \
+            'https://www.rockwallorchestra.com/uploads/1/2/1/4/121458904/senior_ad_template__landscape_.pub'
+      - name: Validate and fingerprint Publisher files
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib,olefile,struct
+          items=[
+            ('Wichita State University','https://www.wichita.edu/services/printing/template_businesscards.php','https://www.wichita.edu/services/printing/_documents/10_up_Publisher_template.pub',pathlib.Path('/tmp/t714-live/wichita-business-card.pub')),
+            ('Wichita State University','https://www.wichita.edu/services/printing/template_8x11.php','https://www.wichita.edu/services/printing/_documents/Publisher_8.5x11_portrait_fullbleed_template.pub',pathlib.Path('/tmp/t714-live/wichita-fullbleed-8x11.pub')),
+            ('Rockwall High School Orchestra','https://www.rockwallorchestra.com/2024-senior-ads.html','https://www.rockwallorchestra.com/uploads/1/2/1/4/121458904/senior_ad_template__landscape_.pub',pathlib.Path('/tmp/t714-live/rockwall-senior-ad.pub')),
+          ]
+          rows=[]
+          for org,page,url,p in items:
+              raw=p.read_bytes()
+              is_cfb=raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1')
+              streams=[]; contents_size=None; rev=None; err=None
+              try:
+                  if is_cfb:
+                      ole=olefile.OleFileIO(str(p))
+                      streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                      if ole.exists('Contents'):
+                          data=ole.openstream('Contents').read()
+                          contents_size=len(data)
+                          if len(data)>=4: rev=struct.unpack_from('<H',data,2)[0]
+                      ole.close()
+              except Exception as e:
+                  err=repr(e)
+              sha=hashlib.sha256(raw).hexdigest()
+              rows.append({
+                  'organization':org,'source_page':page,'direct_url':url,
+                  'filename':p.name,'size':len(raw),'sha256':sha,
+                  'is_cfb':is_cfb,'publisher_stream_signal':'Contents' in streams,
+                  'stream_count':len(streams),'streams':streams,
+                  'contents_size':contents_size,'contents_revision_u16_at_2':rev,
+                  'inspection_error':err
+              })
+          if any(not r['is_cfb'] or not r['publisher_stream_signal'] for r in rows):
+              raise SystemExit('strict Publisher validation failed')
+          receipt={
+            'schema':'chaptera.corpus-edu-live-pub.v1',
+            'source_safe':True,'raw_pub_retained':False,
+            'file_count':len(rows),'unique_sha256':len({r['sha256'] for r in rows}),
+            'files':rows,
+            'guardrail':'Live institutional source provenance does not imply exact creator/writer version.'
+          }
+          pathlib.Path('out/receipt.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8')
+          print(json.dumps(receipt,indent=2))
+          PY
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into public artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-edu-live-pub-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
