@@ -1,8 +1,6 @@
 use std::sync::{Arc, RwLock};
 
 use crate::{
-    authn::SqliteAuthnStore,
-    job_queue::SqliteJobQueue,
     sqlite_store::SqliteRevisionStore,
     state::{DependencyFailure, RuntimeDependency},
 };
@@ -61,27 +59,17 @@ pub struct RuntimeDependencyBinding {
     pub readiness: ReadinessHandle,
 }
 
-pub struct LocalSqliteReadiness {
-    pub authn: RuntimeDependencyBinding,
-    pub revision_stream: RuntimeDependencyBinding,
-    pub jobs: RuntimeDependencyBinding,
-}
-
-impl LocalSqliteReadiness {
-    /// Bind readiness to producers that have already completed their real async
-    /// open/schema/profile validation. Holding the producer inside the runtime
-    /// dependency also keeps its underlying pool alive for the binding lifetime.
-    pub fn from_opened(
-        authn: SqliteAuthnStore,
-        revision_stream: SqliteRevisionStore,
-        jobs: SqliteJobQueue,
-    ) -> Self {
-        Self {
-            authn: bind(authn),
-            revision_stream: bind(revision_stream),
-            jobs: bind(jobs),
-        }
-    }
+/// Concrete readiness binding for the physical RevisionStream producer.
+///
+/// Unlike lower-level storage helpers, SqliteRevisionStore is itself the
+/// required RevisionStream producer represented by RuntimePorts. AuthN and jobs
+/// intentionally do not get equivalent constructors here yet: their SQLite
+/// stores alone do not prove that the full AuthN or jobs/admission service is
+/// assembled.
+pub fn revision_stream_dependency(
+    revision_stream: SqliteRevisionStore,
+) -> RuntimeDependencyBinding {
+    bind(revision_stream)
 }
 
 struct OpenedProducerDependency<P> {
@@ -149,50 +137,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn opened_local_producers_start_ready_and_can_fail_closed() {
-        let path = temp_db("local");
+    async fn opened_revision_stream_starts_ready_and_can_fail_closed() {
+        let path = temp_db("revision");
         SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
             .unwrap()
             .migrate_up()
             .await
             .unwrap();
 
-        let authn = SqliteAuthnStore::open(&path, 2, Duration::from_secs(2))
-            .await
-            .unwrap();
         let revision_stream = SqliteRevisionStore::open(&path, 2, Duration::from_secs(2))
             .await
             .unwrap();
-        let jobs = SqliteJobQueue::open(&path, 2, Duration::from_secs(2))
-            .await
-            .unwrap();
 
-        let bindings = LocalSqliteReadiness::from_opened(authn, revision_stream, jobs);
-        bindings.authn.dependency.check().unwrap();
-        bindings.revision_stream.dependency.check().unwrap();
-        bindings.jobs.dependency.check().unwrap();
+        let binding = revision_stream_dependency(revision_stream);
+        binding.dependency.check().unwrap();
 
-        bindings
-            .jobs
+        binding
             .readiness
-            .fail("job_queue_unavailable", "job queue lifecycle degraded")
+            .fail(
+                "revision_stream_unavailable",
+                "revision stream lifecycle degraded",
+            )
             .unwrap();
-        let error = bindings.jobs.dependency.check().unwrap_err();
-        assert_eq!(error.code, "job_queue_unavailable");
-        assert_eq!(error.message, "job queue lifecycle degraded");
+        let error = binding.dependency.check().unwrap_err();
+        assert_eq!(error.code, "revision_stream_unavailable");
+        assert_eq!(error.message, "revision stream lifecycle degraded");
 
-        bindings.jobs.readiness.restore().unwrap();
-        bindings.jobs.dependency.check().unwrap();
+        binding.readiness.restore().unwrap();
+        binding.dependency.check().unwrap();
 
-        drop(bindings);
+        drop(binding);
         cleanup(&path);
     }
 
     #[tokio::test]
-    async fn binding_requires_real_opened_producers_not_an_abstract_ready_flag() {
+    async fn revision_binding_requires_a_real_opened_producer() {
         let path = temp_db("missing");
-        let authn = SqliteAuthnStore::open(&path, 1, Duration::from_secs(1)).await;
-        assert!(authn.is_err());
+        let revision = SqliteRevisionStore::open(&path, 1, Duration::from_secs(1)).await;
+        assert!(revision.is_err());
         assert!(!path.exists());
         cleanup(&path);
     }
