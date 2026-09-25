@@ -1,0 +1,186 @@
+name: TEMP Publisher 2002 textbook companion locator census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-publisher2002-textbook-companion-locators-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Query bounded Publisher 2002 textbook companion surfaces
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re,time,urllib.parse,urllib.request
+          from pathlib import Path
+
+          UA='rar-publisher2002-textbook-locator/1.0'
+          books=[
+            {
+              'key':'gaskin',
+              'title':'Microsoft Publisher 2002',
+              'authors':'Shelley Gaskin',
+              'isbn10':'0131014676','isbn13':'9780131014671',
+              'publisher':'Prentice Hall',
+            },
+            {
+              'key':'shellycashman',
+              'title':'Microsoft Publisher 2002 Complete Concepts and Techniques',
+              'authors':'Gary B. Shelly; Thomas J. Cashman; Joy L. Starks',
+              'isbn10':'0789563533','isbn13':'9780789563538',
+              'publisher':'Course Technology',
+            },
+            {
+              'key':'shellycashman_intro',
+              'title':'Microsoft Publisher 2002 Introductory Concepts and Techniques',
+              'authors':'Gary B. Shelly; Thomas J. Cashman; Joy L. Starks',
+              'isbn10':'078956355X','isbn13':'',
+              'publisher':'Course Technology',
+            },
+          ]
+
+          def get_json(url,cap=16*1024*1024,timeout=60):
+              req=urllib.request.Request(url,headers={'User-Agent':UA,'Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=timeout) as r:
+                  b=r.read(cap+1)
+                  if len(b)>cap: raise ValueError('response cap exceeded')
+                  return json.loads(b.decode('utf-8'))
+
+          errors=[]; ia=[]; ol=[]; cdx_rows=[]
+          # Internet Archive + Open Library by exact ISBN/title.
+          for b in books:
+              queries=[f'isbn:{b["isbn10"]}',f'"{b["title"]}"']
+              if b.get('isbn13'): queries.insert(1,f'isbn:{b["isbn13"]}')
+              for q in queries:
+                  params=[('q',q),('fl[]','identifier'),('fl[]','title'),('fl[]','description'),
+                          ('fl[]','creator'),('fl[]','date'),('fl[]','year'),('fl[]','mediatype'),
+                          ('fl[]','collection'),('rows','100'),('output','json')]
+                  try:
+                      d=get_json('https://archive.org/advancedsearch.php?'+urllib.parse.urlencode(params))
+                      for x in d.get('response',{}).get('docs',[]):
+                          x=dict(x); x['book_key']=b['key']; x['query']=q; ia.append(x)
+                  except Exception as e:
+                      errors.append({'surface':'ia','book':b['key'],'query':q,'error':f'{type(e).__name__}: {e}'})
+                  time.sleep(.3)
+              for isbn in [b['isbn10'],b.get('isbn13')]:
+                  if not isbn: continue
+                  try:
+                      d=get_json(f'https://openlibrary.org/isbn/{urllib.parse.quote(isbn)}.json')
+                      ol.append({'book_key':b['key'],'isbn':isbn,'key':d.get('key'),'title':d.get('title'),
+                                 'publish_date':d.get('publish_date'),'ocaid':d.get('ocaid'),'publishers':d.get('publishers')})
+                  except Exception as e:
+                      ol.append({'book_key':b['key'],'isbn':isbn,'error':f'{type(e).__name__}: {e}'})
+
+          # Historical companion surfaces, deliberately bounded.
+          prefixes=[
+            ('prenhall-gaskin-http','http://www.prenhall.com/gaskin/'),
+            ('prenhall-gaskin-bare','http://prenhall.com/gaskin/'),
+            ('scsite-root','http://www.scsite.com/'),
+            ('scsite-bare','http://scsite.com/'),
+          ]
+          CDX='https://web.archive.org/cdx/search/cdx'
+          for label,prefix in prefixes:
+              params=[('url',prefix),('matchType','prefix'),('output','json'),
+                      ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                      ('filter','statuscode:200'),('collapse','urlkey'),('limit','20000'),('gzip','false')]
+              try:
+                  d=get_json(CDX+'?'+urllib.parse.urlencode(params),cap=32*1024*1024,timeout=90)
+                  if d:
+                      h=d[0]
+                      for row in d[1:]:
+                          if not isinstance(row,list): continue
+                          x={str(k):str(v) for k,v in zip(h,row)}
+                          x['query_label']=label
+                          cdx_rows.append(x)
+              except Exception as e:
+                  errors.append({'surface':'cdx','query':label,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(.5)
+
+          # Keep only rows tied to Publisher/book identifiers, data files, or byte-bearing carriers.
+          needles=['publisher','pub2002','publisher2002','gaskin','0131014676','9780131014671',
+                   '0789563533','9780789563538','078956355','datafile','student','project']
+          carrier=re.compile(r'\.(?:pub|zip|exe|cab|rar|7z)(?:$|[?#])',re.I)
+          candidates=[]
+          for x in cdx_rows:
+              u=x.get('original',''); low=u.lower()
+              if any(n in low for n in needles) or carrier.search(low):
+                  candidates.append(x)
+
+          # De-dup exact original URL; earliest capture is enough for locator census.
+          dd={}
+          for x in sorted(candidates,key=lambda r:r.get('timestamp','')):
+              dd.setdefault(x.get('original','').casefold(),x)
+          candidates=sorted(dd.values(),key=lambda r:(r.get('query_label',''),r.get('original','')))
+
+          # Inventory candidate carrier-like files for IA items, metadata only.
+          ia_items=[]
+          seen=set()
+          for doc in ia:
+              ident=str(doc.get('identifier') or '')
+              if not ident or ident in seen: continue
+              seen.add(ident)
+              item={'identifier':ident,'search_doc':doc,'files':[]}
+              try:
+                  meta=get_json('https://archive.org/metadata/'+urllib.parse.quote(ident,safe=''),cap=32*1024*1024)
+                  for f in meta.get('files',[]):
+                      name=str(f.get('name') or '')
+                      low=name.lower()
+                      if carrier.search(low) or any(n in low for n in ['data','student','project','companion']):
+                          item['files'].append({'name':name,'size':f.get('size'),'format':f.get('format'),
+                                                'md5':f.get('md5'),'sha1':f.get('sha1'),'source':f.get('source')})
+              except Exception as e:
+                  item['metadata_error']=f'{type(e).__name__}: {e}'
+              ia_items.append(item)
+
+          summary={
+            'schema':'chaptera.publisher2002-textbook-companion-locator.v1',
+            'source_safe':True,'raw_payload_retained':False,
+            'books':books,
+            'internet_archive_search_docs':len(ia),
+            'internet_archive_unique_items':len(ia_items),
+            'internet_archive_items_with_candidate_files':sum(bool(x.get('files')) for x in ia_items),
+            'openlibrary':ol,
+            'cdx_raw_rows':len(cdx_rows),
+            'cdx_candidate_rows':len(candidates),
+            'errors':errors,
+            'guardrail':'Textbook/version labels are locator provenance only. Any recovered PUB must be classified independently from file bytes and deduped by exact SHA.'
+          }
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/ia-items.json').write_text(json.dumps(ia_items,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/wayback-candidates.json').write_text(json.dumps(candidates,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          print('--- WAYBACK CANDIDATES ---')
+          for x in candidates[:500]:
+              print(x.get('timestamp',''),x.get('original',''),x.get('mimetype',''),x.get('length',''))
+          print('--- IA FILE INVENTORIES ---')
+          for x in ia_items:
+              if x.get('files'): print(x['identifier'],json.dumps(x['files'],ensure_ascii=False))
+          PY
+
+      - name: Metadata-only artifact guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' \) | grep -q .; then
+            echo 'byte-bearing carrier leaked into locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher2002-textbook-companion-locator
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
