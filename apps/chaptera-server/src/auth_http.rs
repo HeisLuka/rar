@@ -28,6 +28,11 @@ pub const SESSION_COOKIE: &str = "__Host-chaptera_session";
 pub const CSRF_HEADER: &str = "x-csrf-token";
 pub const AUTH_CALLBACK_PATH: &str = "/v1/auth/callback";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedPrincipal {
+    pub principal_id: String,
+}
+
 #[derive(Clone)]
 pub struct AuthHttpState {
     oidc: OidcAuthorizationAdapter,
@@ -57,6 +62,62 @@ impl AuthHttpState {
             session_policy,
             login_ttl,
             origin: OriginPolicy::new(public_origin)?,
+        })
+    }
+
+    pub async fn authenticate_read_request(
+        &self,
+        headers: &HeaderMap,
+        jar: &CookieJar,
+    ) -> Result<AuthenticatedPrincipal, AuthHttpError> {
+        self.authenticate_api_request(headers, jar, false).await
+    }
+
+    pub async fn authenticate_mutation_request(
+        &self,
+        headers: &HeaderMap,
+        jar: &CookieJar,
+    ) -> Result<AuthenticatedPrincipal, AuthHttpError> {
+        self.authenticate_api_request(headers, jar, true).await
+    }
+
+    async fn authenticate_api_request(
+        &self,
+        headers: &HeaderMap,
+        jar: &CookieJar,
+        require_csrf: bool,
+    ) -> Result<AuthenticatedPrincipal, AuthHttpError> {
+        self.origin.require_host(headers)?;
+        if require_csrf {
+            self.origin.require_origin(headers)?;
+        }
+
+        let session_token = session_token(jar)?;
+        let now = now_ms_i64()?;
+        let refresh_idle_expires_at_ms = self
+            .session_policy
+            .refreshed_idle_expiry(now)
+            .map_err(map_authn_error)?;
+        let record = self
+            .store
+            .authenticate_session(session_token.as_bytes(), now, refresh_idle_expires_at_ms)
+            .await
+            .map_err(map_authn_error)?;
+
+        if require_csrf {
+            let csrf = headers
+                .get(CSRF_HEADER)
+                .ok_or_else(|| AuthHttpError::forbidden("csrf_missing"))?
+                .to_str()
+                .map_err(|_| AuthHttpError::forbidden("csrf_invalid"))?;
+            self.store
+                .verify_csrf(session_token.as_bytes(), csrf.as_bytes(), now)
+                .await
+                .map_err(map_authn_error)?;
+        }
+
+        Ok(AuthenticatedPrincipal {
+            principal_id: record.principal_id,
         })
     }
 }
