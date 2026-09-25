@@ -129,10 +129,7 @@ async fn local_dashboard_requires_explicit_local_mode_and_loopback_peer() {
 
 #[tokio::test]
 async fn product_router_is_merged_under_the_same_edge_boundary() {
-    let product = Router::new().route(
-        "/product-probe",
-        get(|| async { StatusCode::NO_CONTENT }),
-    );
+    let product = Router::new().route("/product-probe", get(|| async { StatusCode::NO_CONTENT }));
     let app = serve::router_with_edge_auth_local_and_product(
         ready_state(),
         chaptera_server::edge::EdgePolicy::development(),
@@ -147,9 +144,7 @@ async fn product_router_is_merged_under_the_same_edge_boundary() {
         .body(Body::empty())
         .unwrap();
     request.extensions_mut().insert(ConnectInfo(
-        "127.0.0.1:49000"
-            .parse::<std::net::SocketAddr>()
-            .unwrap(),
+        "127.0.0.1:49000".parse::<std::net::SocketAddr>().unwrap(),
     ));
 
     let response = app.oneshot(request).await.unwrap();
