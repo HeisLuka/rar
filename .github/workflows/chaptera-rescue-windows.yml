@@ -1,0 +1,62 @@
+name: Chaptera Rescue Windows V0
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-rescue/**"
+      - "packages/product/rescue-recovery/**"
+      - ".github/workflows/chaptera-rescue-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-rescue:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check Rescue app
+        run: cargo check --manifest-path apps/chaptera-rescue/Cargo.toml --all-targets
+      - name: Test Rescue app boundary
+        run: cargo test --manifest-path apps/chaptera-rescue/Cargo.toml
+      - name: Build standalone Rescue executable
+        run: cargo build --manifest-path apps/chaptera-rescue/Cargo.toml --release
+      - name: Verify product-qualified executable
+        shell: pwsh
+        run: |
+          $exe = "apps/chaptera-rescue/target/release/chaptera-rescue.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Chaptera Rescue executable was not produced"
+          }
+          $self = & $exe --self-check | ConvertFrom-Json
+          if ($self.product_id -ne "chaptera.rescue") {
+            throw "Unexpected Rescue product identity: $($self.product_id)"
+          }
+          if ($self.canonical_executable -ne "chaptera-rescue.exe") {
+            throw "Unexpected Rescue executable identity: $($self.canonical_executable)"
+          }
+          if ($self.editor_ui_present -or $self.migration_batch_ui_present -or $self.recovery_execution_embedded) {
+            throw "Rescue V0 boundary widened unexpectedly"
+          }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{
+            schema_version = "chaptera.rescue-desktop-build.v1"
+            product_id = "chaptera.rescue"
+            target = "x86_64-pc-windows-msvc"
+            executable = "chaptera-rescue.exe"
+            sha256 = $hash
+            byte_len = (Get-Item $exe).Length
+            source_commit = "${{ github.sha }}"
+          } | ConvertTo-Json | Set-Content -Encoding utf8 apps/chaptera-rescue/target/release/chaptera-rescue.desktop-build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-rescue-windows-x86_64
+          path: |
+            apps/chaptera-rescue/target/release/chaptera-rescue.exe
+            apps/chaptera-rescue/target/release/chaptera-rescue.desktop-build.json
+          if-no-files-found: error
