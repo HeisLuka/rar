@@ -77,6 +77,9 @@ jobs:
       - name: Test canonical desktop Story range wire
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test story_range_v1
 
+      - name: Test ODG replacement image adapter
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-odg
+
       - name: Build Chaptera desktop release
         run: cargo build -p chaptera-desktop --release
 
