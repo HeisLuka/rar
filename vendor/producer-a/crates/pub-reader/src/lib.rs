@@ -342,7 +342,7 @@ pub enum PubBridgeDiagnostic {
     },
     TableMissingRequiredField {
         seq_num: u32,
-        field_id: u8,
+        field_id: u16,
     },
     TableMissingTcd {
         seq_num: u32,
@@ -620,8 +620,8 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
         let mut field_27_matches_in_shape = 0_usize;
         if raw.len() >= 6 {
             for relative in 4..=raw.len() - 6 {
-                let id = raw[relative];
-                let wire = raw[relative + 1];
+                let raw_tag = [raw[relative], raw[relative + 1]];
+                let (id, wire) = pub_contents::decode_packed_field_tag(raw_tag);
                 if !matches!(
                     wire,
                     pub_contents::BLOCK_TYPE_U32
