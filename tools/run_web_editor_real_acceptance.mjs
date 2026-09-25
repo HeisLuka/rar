@@ -211,7 +211,19 @@ async function main() {
       throw new Error("pointermove crossed HTTP commit boundary");
     }
     if (during.selected_node_id !== TARGET_NODE_ID || !sameJson(during.preview, AFTER)) {
-      throw new Error("real DOM drag did not produce canonical transient preview");
+      throw new Error(
+        "real DOM drag did not produce canonical transient preview: " +
+        JSON.stringify({
+          selected_node_id: during.selected_node_id,
+          expected_node_id: TARGET_NODE_ID,
+          preview: during.preview,
+          expected: AFTER,
+          initial_screen: initial.screen,
+          host: initial.host,
+          start: { x: startX, y: startY },
+          end: { x: endX, y: endY },
+        }),
+      );
     }
 
     await page.mouse.up();
