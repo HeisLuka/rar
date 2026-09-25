@@ -981,14 +981,13 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod line_region_bridge_tests {
     use super::*;
     use chaptera_line_region::{
-        ColumnsV1, EffectiveWrapModeV1, EffectiveWrapObstacleV1, FrameRegionV1,
-        InsetsEmuV1, IntervalConsumptionPolicyV1, LineBandRequestV1, RectEmuV1,
-        WrapDistancesV1, resolve_line_bands_v1,
+        ColumnsV1, EffectiveWrapModeV1, EffectiveWrapObstacleV1, FrameRegionV1, InsetsEmuV1,
+        IntervalConsumptionPolicyV1, LineBandRequestV1, RectEmuV1, WrapDistancesV1,
+        resolve_line_bands_v1,
     };
 
     fn slots() -> Vec<chaptera_line_region::LineBandSlotsV1> {
