@@ -1,0 +1,153 @@
+name: TEMP version-labelled Publisher 2010 practice-file recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-version-labelled-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inspection tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y unzip file
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Recover official Microsoft Press companion ZIP
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/t712
+          URL='https://www.microsoftpressstore.com/content/images/9780735626966/downloads/9780735626966_files.zip'
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -A 'Mozilla/5.0' \
+            -e 'https://www.microsoftpressstore.com/store/microsoft-office-professional-2010-step-by-step-9780735626966' \
+            -o /tmp/t712/practice.zip "$URL"
+          sha256sum /tmp/t712/practice.zip
+          unzip -l /tmp/t712/practice.zip > out/zip-listing.txt
+          unzip -q /tmp/t712/practice.zip -d /tmp/t712/extracted
+
+      - name: Inspect Publisher practice files
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, pathlib, olefile, struct
+
+          root=pathlib.Path('/tmp/t712/extracted')
+          expected={'Printing_start.pub','Blank_start.pub'}
+          pubs=sorted([p for p in root.rglob('*') if p.is_file() and p.suffix.lower()=='.pub'])
+          found={p.name for p in pubs}
+          if not expected.issubset(found):
+              raise SystemExit(f'missing expected Publisher practice files: expected={sorted(expected)} found={sorted(found)}')
+
+          def digest(path):
+              h=hashlib.sha256()
+              with path.open('rb') as f:
+                  while True:
+                      b=f.read(1024*1024)
+                      if not b: break
+                      h.update(b)
+              return h.hexdigest()
+
+          rows=[]
+          for p in pubs:
+              raw=p.read_bytes()
+              cfb_magic=raw[:8].hex()
+              is_cfb=(raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1'))
+              streams=[]
+              contents_size=None
+              contents_prefix=None
+              contents_revision_u16_at_2=None
+              ole_ok=False
+              error=None
+              try:
+                  if is_cfb:
+                      ole=olefile.OleFileIO(str(p))
+                      ole_ok=True
+                      streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                      if ole.exists('Contents'):
+                          data=ole.openstream('Contents').read()
+                          contents_size=len(data)
+                          contents_prefix=data[:32].hex()
+                          if len(data)>=4:
+                              contents_revision_u16_at_2=struct.unpack_from('<H',data,2)[0]
+                      ole.close()
+              except Exception as e:
+                  error=repr(e)
+
+              publisher_stream_signal=('Contents' in streams)
+              rows.append({
+                  'source_archive_path':str(p.relative_to(root)).replace('\\','/'),
+                  'filename':p.name,
+                  'size':p.stat().st_size,
+                  'sha256':digest(p),
+                  'cfb_magic':cfb_magic,
+                  'is_cfb':is_cfb,
+                  'ole_open_ok':ole_ok,
+                  'publisher_stream_signal':publisher_stream_signal,
+                  'stream_count':len(streams),
+                  'streams':streams,
+                  'contents_size':contents_size,
+                  'contents_prefix32_hex':contents_prefix,
+                  'contents_revision_u16_at_2':contents_revision_u16_at_2,
+                  'inspection_error':error,
+              })
+
+          if any(not r['is_cfb'] or not r['ole_open_ok'] or not r['publisher_stream_signal'] for r in rows):
+              raise SystemExit('one or more .pub candidates failed strict CFB/Contents validation')
+
+          receipt={
+              'schema':'chaptera.corpus-version-labelled-publisher2010-practice.v1',
+              'source_safe':True,
+              'raw_pub_retained':False,
+              'source_page':'https://www.microsoftpressstore.com/store/microsoft-office-professional-2010-step-by-step-9780735626966',
+              'source_download':'https://www.microsoftpressstore.com/content/images/9780735626966/downloads/9780735626966_files.zip',
+              'source_title':'Microsoft Office Professional 2010 Step by Step',
+              'source_published_date':'2010-08-25',
+              'source_version_wording':'Publisher 2010 practice files; Chapter 29 Printing_start.pub; Chapter 30 Blank_start.pub',
+              'provenance_guardrail':'Source wording is distribution/training provenance only and is not by itself writer-version authority.',
+              'pub_count':len(rows),
+              'expected_filenames':sorted(expected),
+              'files':rows,
+          }
+          pathlib.Path('out/receipt.json').write_text(json.dumps(receipt,indent=2))
+          print(json.dumps(receipt,indent=2))
+          PY
+
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into artifact' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          r=json.load(open('out/receipt.json'))
+          assert r['source_safe'] is True
+          assert r['raw_pub_retained'] is False
+          assert r['pub_count'] >= 2
+          names={x['filename'] for x in r['files']}
+          assert {'Printing_start.pub','Blank_start.pub'} <= names
+          for x in r['files']:
+              assert x['is_cfb'] is True
+              assert x['ole_open_ok'] is True
+              assert x['publisher_stream_signal'] is True
+              assert len(x['sha256'])==64
+          PY
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-version-labelled-publisher2010-practice-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
