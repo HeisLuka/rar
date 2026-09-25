@@ -1,0 +1,34 @@
+name: AUTHORING-TABLE-GRID-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-model/src/entity_id.rs"
+      - "vendor/producer-a/crates/pub-model/src/table.rs"
+      - "vendor/producer-a/crates/pub-model/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-layout/src/lib.rs"
+      - ".github/workflows/authoring-table-grid-v1.yml"
+  push:
+    branches:
+      - authoring-table-grid-01
+
+permissions:
+  contents: read
+
+jobs:
+  effective-table-grid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: |
+          cargo fmt --manifest-path vendor/producer-a/Cargo.toml --check
+      - name: Check affected crates
+        run: |
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-model -p pub-layout -p pub-editor
+      - name: Test affected crates
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-model -p pub-layout -p pub-editor
