@@ -20,6 +20,8 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
+      - name: Check Rescue formatting
+        run: cargo fmt --manifest-path apps/chaptera-rescue/Cargo.toml -- --check
       - name: Check Rescue app
         run: cargo check --manifest-path apps/chaptera-rescue/Cargo.toml --all-targets
       - name: Test Rescue app boundary
