@@ -43,6 +43,9 @@ jobs:
       - name: Test Reader first-run contract
         run: cargo test -p chaptera-desktop --features reader-only reader_first_run -- --nocapture
 
+      - name: Test Reader locale contract
+        run: cargo test -p chaptera-desktop --features reader-only locale::tests -- --nocapture
+
       - name: Build Reader-only desktop source
         run: cargo build -p chaptera-desktop --release --features reader-only
 
@@ -130,6 +133,43 @@ jobs:
           }
           if ($smoke.binary_sha256 -ne $hash) { throw "Reader product smoke executable hash mismatch" }
           if ([int64]$smoke.binary_byte_len -ne $bytes) { throw "Reader product smoke executable size mismatch" }
+          if ($smoke.locale.source -ne "windows_user_locale") { throw "Reader product smoke did not use Windows user locale: $($smoke.locale.source)" }
+          if ([string]::IsNullOrWhiteSpace([string]$smoke.locale.raw)) { throw "Reader product smoke locale is empty" }
+          if ([string]::IsNullOrWhiteSpace([string]$smoke.locale.normalized)) { throw "Reader product smoke normalized locale is empty" }
+          if (@("US", "UK", "Russia", "NeutralEnglish") -notcontains [string]$smoke.locale.market_profile) {
+            throw "Reader product smoke market profile is invalid: $($smoke.locale.market_profile)"
+          }
+          foreach ($field in @("network_lookup_used", "ip_geolocation_used", "timezone_inference_used", "account_identity_used")) {
+            if ($smoke.locale.$field -ne $false) { throw "Reader locale boundary widened unexpectedly: $field" }
+          }
+
+      - name: Validate packaged locale override mapping
+        shell: pwsh
+        run: |
+          $exe = "target/release/chaptera-reader.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $exe).Length
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $hash
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$bytes
+
+          $cases = @(
+            @{ locale = "en-US"; market = "US" },
+            @{ locale = "en-GB"; market = "UK" },
+            @{ locale = "ru-RU"; market = "Russia" },
+            @{ locale = "fr-FR"; market = "NeutralEnglish" }
+          )
+          foreach ($case in $cases) {
+            $env:CHAPTERA_LOCALE = $case.locale
+            $receipt = "target/release/chaptera-reader.locale-$($case.locale).json"
+            $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $receipt) -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Reader locale override smoke failed for $($case.locale)" }
+            $smoke = Get-Content -Raw $receipt | ConvertFrom-Json
+            if ($smoke.locale.source -ne "override") { throw "locale override did not win for $($case.locale)" }
+            if ($smoke.locale.market_profile -ne $case.market) {
+              throw "locale mapping mismatch for $($case.locale): $($smoke.locale.market_profile)"
+            }
+          }
+          Remove-Item Env:CHAPTERA_LOCALE -ErrorAction SilentlyContinue
 
       - name: Build portable Chaptera Reader ZIP
         run: |
@@ -192,6 +232,17 @@ jobs:
           if ($smoke.product -ne "Chaptera PUB Reader" -or $smoke.reader_only -ne $true -or $smoke.editor_controls_enabled -ne $false) {
             throw "clean portable binary is not the compile-time Reader product"
           }
+          if ($smoke.locale.source -ne "windows_user_locale") { throw "clean Reader did not resolve Windows user locale" }
+
+          $env:CHAPTERA_LOCALE = "ru-RU"
+          $localeReceipt = Join-Path $artifact "chaptera-reader.clean-locale-smoke.json"
+          $localeProcess = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $localeReceipt) -Wait -PassThru
+          if ($localeProcess.ExitCode -ne 0) { throw "clean Reader locale override smoke failed" }
+          $localeSmoke = Get-Content -Raw $localeReceipt | ConvertFrom-Json
+          if ($localeSmoke.locale.source -ne "override" -or $localeSmoke.locale.market_profile -ne "Russia") {
+            throw "clean Reader locale override did not map ru-RU to Russia"
+          }
+          Remove-Item Env:CHAPTERA_LOCALE -ErrorAction SilentlyContinue
 
           $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
           if ($manifest.product_id -ne "chaptera.reader") { throw "Reader package product_id mismatch" }
@@ -208,4 +259,5 @@ jobs:
             ${{ runner.temp }}/chaptera-reader-artifact/Chaptera-Reader-Windows-x86_64.zip
             ${{ runner.temp }}/chaptera-reader-artifact/Chaptera-Reader.package.json
             ${{ runner.temp }}/chaptera-reader-artifact/chaptera-reader.clean-smoke.json
+            ${{ runner.temp }}/chaptera-reader-artifact/chaptera-reader.clean-locale-smoke.json
           if-no-files-found: error
