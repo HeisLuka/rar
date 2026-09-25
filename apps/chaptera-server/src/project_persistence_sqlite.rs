@@ -194,8 +194,10 @@ impl SqliteProjectPersistence {
         sqlx::query(
             r#"
             INSERT INTO projects (
-                project_id, tenant_id, workspace_id, name, created_at_ms
-            ) VALUES (?, ?, ?, ?, ?)
+                project_id, tenant_id, workspace_id, name,
+                lifecycle_state, lifecycle_generation, metadata_version, deleted,
+                created_at_ms
+            ) VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?)
             "#,
         )
         .bind(project.project_id.as_bytes())
@@ -707,6 +709,15 @@ mod tests {
 
         assert_eq!(project_count, 1);
         assert_eq!(document_count, 1);
+
+        let lifecycle: (String, i64, i64, i64) = sqlx::query_as(
+            "SELECT lifecycle_state, lifecycle_generation, metadata_version, deleted FROM projects WHERE project_id = ?",
+        )
+        .bind(created.project_id.as_bytes())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(lifecycle, ("active".into(), 0, 0, 0));
         assert_eq!(consumption_count, 1);
         assert_eq!(state, "CONSUMED");
 
