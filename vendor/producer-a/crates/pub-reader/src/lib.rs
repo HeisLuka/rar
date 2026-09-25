@@ -465,6 +465,33 @@ pub fn build_mature_0x2c_source_graph<R: Read + Seek>(
     build_mature_0x2c_from_streams(source_hash, &contents, &quill, &escher)
 }
 
+pub fn build_mature_0x2c_image_resource_catalog<R: Read + Seek>(
+    mut reader: R,
+    graph: &PubSourceGraph,
+) -> Result<Option<PubImageResourceCatalog>> {
+    reader.seek(SeekFrom::Start(0))?;
+    let mut pub_bytes = Vec::new();
+    reader.read_to_end(&mut pub_bytes)?;
+
+    let escher = match pub_cfb::read_stream_reader(
+        Cursor::new(pub_bytes.as_slice()),
+        ESCHER_STREAM_PATH,
+    ) {
+        Ok(stream) => stream,
+        Err(_) => return Ok(None),
+    };
+    let delayed = match pub_cfb::read_stream_reader(
+        Cursor::new(pub_bytes.as_slice()),
+        ESCHER_DELAY_STREAM_PATH,
+    ) {
+        Ok(stream) => stream,
+        Err(_) => return Ok(None),
+    };
+
+    let manifest = build_pub_asset_manifest(graph, &escher, &delayed)?;
+    Ok(Some(build_pub_image_resource_catalog(graph, &manifest)?))
+}
+
 /// Research-only correlation scan for the Story ↔ shape ownership bridge.
 ///
 /// This function does not promote any raw candidate to semantics. It searches
