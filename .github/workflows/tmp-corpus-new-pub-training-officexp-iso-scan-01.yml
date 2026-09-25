@@ -1,0 +1,110 @@
+name: TEMP Office XP training ISO PUB scan
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-officexp-iso-scan-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install static parsers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Download bounded IA ISO and inspect PUB members
+        run: |
+          set -euo pipefail
+          mkdir -p work/extract out
+          python - <<'PY'
+          import urllib.request, pathlib, hashlib
+          URL='https://archive.org/download/OfficeXPTraining/Microsoft%20Office%20XP%20-%20Step%20by%20Step%20Interactive%20Training%20CD.iso'
+          CAP=190*1024*1024
+          req=urllib.request.Request(URL,headers={'User-Agent':'rar-pub-training-officexp-iso-scan/1.0'})
+          with urllib.request.urlopen(req,timeout=180) as r, open('work/source.iso','wb') as f:
+              h=hashlib.sha256(); total=0
+              while True:
+                  b=r.read(1024*1024)
+                  if not b: break
+                  total += len(b)
+                  if total > CAP: raise SystemExit('ISO exceeds cap')
+                  f.write(b); h.update(b)
+              pathlib.Path('work/carrier.txt').write_text(f'{total}\n{h.hexdigest()}\n{r.geturl()}\n',encoding='utf-8')
+          PY
+          7z l -ba work/source.iso > work/listing.txt
+          python - <<'PY'
+          import pathlib,re,subprocess
+          lines=pathlib.Path('work/listing.txt').read_text(errors='replace').splitlines()
+          paths=[]
+          for line in lines:
+              m=re.search(r'\s([^\s].*\.pub)$',line,re.I)
+              if m: paths.append(m.group(1).strip())
+          pathlib.Path('work/pub_paths.txt').write_text('\n'.join(paths),encoding='utf-8')
+          print('pub_paths=',len(paths))
+          for p in paths:
+              subprocess.run(['7z','e','-y','-owork/extract','work/source.iso',p],check=True,stdout=subprocess.DEVNULL)
+          PY
+          python - <<'PY'
+          import hashlib,json,pathlib,olefile,shutil
+          carrier_lines=pathlib.Path('work/carrier.txt').read_text().splitlines()
+          rows=[]
+          for p in sorted(pathlib.Path('work/extract').glob('*')):
+              if not p.is_file() or p.suffix.lower()!='.pub': continue
+              raw=p.read_bytes()
+              rec={'filename':p.name,'size':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'cfb_magic':raw[:8].hex(),'is_cfb':raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1')}
+              if rec['is_cfb']:
+                  try:
+                      ole=olefile.OleFileIO(str(p))
+                      streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                      rec['streams']=streams
+                      cn=next((x for x in ole.listdir(streams=True,storages=False) if x and x[-1]=='Contents'),None)
+                      rec['has_contents']=cn is not None
+                      if cn:
+                          b=ole.openstream(cn).read(64)
+                          rec['contents_prefix_hex']=b.hex()
+                          rec['contents_len']=ole.get_size(cn)
+                      ole.close()
+                  except Exception as e:
+                      rec['ole_error']=f'{type(e).__name__}: {e}'
+              rows.append(rec)
+          summary={
+            'schema':'chaptera.corpus-training-officexp-interactive-iso-scan.v1',
+            'source_safe':True,'raw_pub_retained':False,
+            'ia_identifier':'OfficeXPTraining',
+            'carrier_size':int(carrier_lines[0]),'carrier_sha256':carrier_lines[1],'source_url':carrier_lines[2],
+            'pub_count':len(rows),'unique_pub_sha256':len({r['sha256'] for r in rows}),
+            'files':rows,
+            'guardrail':'Interactive Training CD provenance is not equivalent to Office XP Step by Step book companion provenance. Writer/version inference must come from file bytes.'
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          shutil.rmtree('work',ignore_errors=True)
+          PY
+
+      - name: Source-safe artifact guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' \) | grep -q .; then
+            echo 'unexpected raw payload leaked into artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-officexp-interactive-iso-scan
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
