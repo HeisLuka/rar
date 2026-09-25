@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from __future__ import annotations
-          import difflib, hashlib, json, time, urllib.parse, urllib.request
+          import difflib, hashlib, json, re, time, urllib.parse, urllib.request
           from pathlib import Path
           import olefile
 
