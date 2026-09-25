@@ -591,7 +591,9 @@ jobs:
               "raw_pub_retained": False,
               "target_count": len(TARGETS),
               "long_form_count": len(LONG_FORMS),
-              "classification_counts": class_counts,\n              "pure_style_files": pure_style_files,\n              "invalid_style_files": invalid_style_files,
+              "classification_counts": class_counts,
+              "pure_style_files": pure_style_files,
+              "invalid_style_files": invalid_style_files,
               "all_long_forms_outer_pointer_widen_2_to_4": all(
                   style.get("pointer_widen_2_to_4") is True for style in long_style_pairs
               ),
