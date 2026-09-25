@@ -1,0 +1,286 @@
+{
+  "schema": "chaptera.corpus-version-labelled-training-register-input.v1",
+  "recorded_at": "2026-09-25",
+  "guardrail": "Package/version wording is distribution/training provenance only and is not writer-version authority.",
+  "packages": [
+    {
+      "key": "publisher2007_sbs",
+      "source_page": "https://www.microsoftpressstore.com/store/microsoft-office-publisher-2007-step-by-step-9780735622999",
+      "source_download": "https://www.microsoftpressstore.com/content/images/9780735622999/downloads/9780735622999_files.zip",
+      "source_title": "Microsoft Office Publisher 2007 Step by Step",
+      "source_published_date": "2007-08-15",
+      "source_version_wording": "Publisher 2007 practice files / companion files",
+      "expected_observation_count": 13,
+      "expected_unique_sha_count": 13,
+      "files": [
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/CardsCalendars/FoldedCard.pub",
+          "filename": "FoldedCard.pub",
+          "size": 487424,
+          "sha256": "bba84f40ebc168feb9286b2d09303b5d756a3e69cf00e79dfda4c3b34bb8b4b4",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/CardsCalendars/Postcard.pub",
+          "filename": "Postcard.pub",
+          "size": 292352,
+          "sha256": "eb75902e0c5ac9dbbf54ad005a00d769546832b92994145709d8ae3310374196",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/GettingStarted/Opening.pub",
+          "filename": "Opening.pub",
+          "size": 206848,
+          "sha256": "97d188fe2c3aa80f3be70a3e2081b580dea5d4e3cf9bcd339b24704b027ee992",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/GettingStarted/Printing.pub",
+          "filename": "Printing.pub",
+          "size": 206848,
+          "sha256": "e35fe897cda743efafc06672c66fc216c363b4325952c3e8f9042efe9bec5372",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/MarketingMaterials/Brochure.pub",
+          "filename": "Brochure.pub",
+          "size": 756736,
+          "sha256": "710fd791fdfcb4bd1e6df2f35e4ba4e7323ca315b3a499cdbabc34b2fa42c3a5",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/MarketingMaterials/BusinessCard.pub",
+          "filename": "BusinessCard.pub",
+          "size": 93696,
+          "sha256": "162d180617257815fd474ec379407695c8d13d2c12eb9cce7e227f1d1b84eb51",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/MarketingMaterials/Envelope.pub",
+          "filename": "Envelope.pub",
+          "size": 97280,
+          "sha256": "19d42b8eddae592f40c38f28beab790bddf15e50d55c22a647f97d871a770703",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/MarketingMaterials/Flyer.pub",
+          "filename": "Flyer.pub",
+          "size": 258048,
+          "sha256": "0fef088ae74b8069b03bb3b22be210c72cc70c84cdc621c0a9773fa0fbc31d2f",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/MarketingMaterials/Invoice.pub",
+          "filename": "Invoice.pub",
+          "size": 174080,
+          "sha256": "59d2a3d84605924a5a990914c01caa8c96873f4c199bda13ae7b221885ba1235",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/OnlinePublications/BookSeries.pub",
+          "filename": "BookSeries.pub",
+          "size": 218624,
+          "sha256": "9ff31a55f9c542c0f906d175d6cbf9846696e9290b889c820110cb3d1b7bad6d",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/OnlinePublications/WineTasting.pub",
+          "filename": "WineTasting.pub",
+          "size": 146944,
+          "sha256": "21a5d9f11f999f9367cb1e9d4b918d49b6e99364e10d87148b4831528b9d7380",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/TextPublications/ADatumNews.pub",
+          "filename": "ADatumNews.pub",
+          "size": 471552,
+          "sha256": "b4b005a7e6f662546cf07bdd155a1cf936293e6ceb6ac7f424456fee87051f1b",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735622999_files/Practice Files/TextPublications/ADatumNews_final.pub",
+          "filename": "ADatumNews_final.pub",
+          "size": 476672,
+          "sha256": "3562f0fe51e5e1dbf42f81f574cea831b0734f6d08a9a1a9cc610c84f44caeff",
+          "contents_revision_u16_at_2": 44
+        }
+      ]
+    },
+    {
+      "key": "publisher2010_sbs",
+      "source_page": "https://www.microsoftpressstore.com/store/microsoft-office-professional-2010-step-by-step-9780735626966",
+      "source_download": "https://www.microsoftpressstore.com/content/images/9780735626966/downloads/9780735626966_files.zip",
+      "source_title": "Microsoft Office Professional 2010 Step by Step",
+      "source_published_date": "2010-08-25",
+      "source_version_wording": "Publisher 2010 practice files; Chapter 29 Printing_start.pub; Chapter 30 Blank_start.pub",
+      "expected_observation_count": 2,
+      "expected_unique_sha_count": 2,
+      "files": [
+        {
+          "source_archive_path": "OfficeProf2010SBS/Chapter29/Printing_start.pub",
+          "filename": "Printing_start.pub",
+          "size": 223232,
+          "sha256": "fb5aa8781972bd363375e1cd6adaa288ab239f6382ec70af0e9c3d0f816081f8",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "OfficeProf2010SBS/Chapter30/Blank_start.pub",
+          "filename": "Blank_start.pub",
+          "size": 99840,
+          "sha256": "c2d7a11ddd3bca5b78aca7ddb6fbedfd475d863230cf9e927235b7f3067e3790",
+          "contents_revision_u16_at_2": 44
+        }
+      ]
+    },
+    {
+      "key": "office2013_sbs",
+      "source_page": "https://www.microsoftpressstore.com/store/microsoft-office-professional-2013-step-by-step-9780735669413",
+      "source_download": "https://www.microsoftpressstore.com/content/images/9780735669413/downloads/9780735669413_files.zip",
+      "source_title": "Microsoft Office Professional 2013 Step by Step",
+      "source_published_date": "2013-05-15",
+      "source_version_wording": "Publisher 2013 chapters 41-43 in the official Microsoft Press practice-file package",
+      "expected_observation_count": 11,
+      "expected_unique_sha_count": 9,
+      "files": [
+        {
+          "source_archive_path": "Chapter42/Chapter 42/Fabrikam Employee Newsletter A-Win8Laptop.pub",
+          "filename": "Fabrikam Employee Newsletter A-Win8Laptop.pub",
+          "size": 2556416,
+          "sha256": "c70d8b47a72d36db81db775282a2ea64ac672e82e53df75446c7300da5cf7170",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/Fabrikam Employee Newsletter A.pub",
+          "filename": "Fabrikam Employee Newsletter A.pub",
+          "size": 2556416,
+          "sha256": "c5380f6abc82b3b49f006fce11144bc1b889759e90a1c33c8c471793d9f56a39",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/FabrikamA.pub",
+          "filename": "FabrikamA.pub",
+          "size": 2759680,
+          "sha256": "0e8b6bdf368865c5ccc1d13343f51c71dfa1fb922858176fc24a8954574b638b",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/FabrikamAEnd.pub",
+          "filename": "FabrikamAEnd.pub",
+          "size": 2760192,
+          "sha256": "b0cd171ca5d012818800f61e7526f56ddc1c81cb9a40f6d0cca84478871d3ebc",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/NewsletterEnd.pub",
+          "filename": "NewsletterEnd.pub",
+          "size": 8203264,
+          "sha256": "fc71207b76e33f058c6f5c64d3e3fb2171df09bcbb725d52ae55a8858e51b090",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/NewsletterStart.pub",
+          "filename": "NewsletterStart.pub",
+          "size": 8202752,
+          "sha256": "a42cab11d9cc7f27aa47b4e16565007e536f7fab3d15f1cab584b5474b02559f",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/Travel.pub",
+          "filename": "Travel.pub",
+          "size": 579584,
+          "sha256": "bd8bf9598852316568da92a9dfe34ca7d477fbbcd0a4b177e9e445ce28314dd1",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/TravelA.pub",
+          "filename": "TravelA.pub",
+          "size": 5450752,
+          "sha256": "8f9d6c1eaece9db05ae5469209d3aae16ba1f93a8e1857866f7d8ee3b53223d5",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter42/Chapter 42/TravelB.pub",
+          "filename": "TravelB.pub",
+          "size": 25241088,
+          "sha256": "a0e3044b503bdc3ed46a373cee3fc85d6f234b9dccce60877761f691a5315309",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter43/Chapter 43/FabrikamAEnd.pub",
+          "filename": "FabrikamAEnd.pub",
+          "size": 2760192,
+          "sha256": "b0cd171ca5d012818800f61e7526f56ddc1c81cb9a40f6d0cca84478871d3ebc",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "Chapter43/Chapter 43/Newsletter.pub",
+          "filename": "Newsletter.pub",
+          "size": 2556416,
+          "sha256": "c5380f6abc82b3b49f006fce11144bc1b889759e90a1c33c8c471793d9f56a39",
+          "contents_revision_u16_at_2": 44
+        }
+      ]
+    },
+    {
+      "key": "office2003_sbs",
+      "source_page": "https://www.microsoftpressstore.com/store/microsoft-office-system-step-by-step-2003-edition-9780735615205",
+      "source_download": "https://www.microsoftpressstore.com/content/images/9780735615205/downloads/9780735615205_files.zip",
+      "source_title": "Microsoft Office System Step by Step -- 2003 Edition",
+      "source_published_date": "2003-09-17",
+      "source_version_wording": "Official Office System 2003 Step by Step companion/practice files include Publisher 2003 exercises.",
+      "expected_observation_count": 7,
+      "expected_unique_sha_count": 5,
+      "files": [
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Creating/PrintDoc.pub",
+          "filename": "PrintDoc.pub",
+          "size": 89600,
+          "sha256": "d2e8e2235f529204962ca453a394039f4cabf82d94f03a4544426822f3cc0e2b",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Creating/PrintDoc2.pub",
+          "filename": "PrintDoc2.pub",
+          "size": 317952,
+          "sha256": "cb526263b0165c63ca66758e298a28da9f335a9fabbcd94e31df36200144f751",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Creating/SaleCardTemplate.pub",
+          "filename": "SaleCardTemplate.pub",
+          "size": 96768,
+          "sha256": "7cf349254b9971ce42f7fef93b3a9fa1d86fa409f2f71bc11b2d30f74f1e48cc",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Creating/SalePostcard.pub",
+          "filename": "SalePostcard.pub",
+          "size": 96768,
+          "sha256": "7cf349254b9971ce42f7fef93b3a9fa1d86fa409f2f71bc11b2d30f74f1e48cc",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Email/RoseCare.pub",
+          "filename": "RoseCare.pub",
+          "size": 136192,
+          "sha256": "c2deb6b2e80571592a48fba4fb4b06e343120f79efb91c56a1df1ae296d40033",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Email/TGC-NL2.pub",
+          "filename": "TGC-NL2.pub",
+          "size": 317952,
+          "sha256": "cb526263b0165c63ca66758e298a28da9f335a9fabbcd94e31df36200144f751",
+          "contents_revision_u16_at_2": 44
+        },
+        {
+          "source_archive_path": "9780735615205_files/Setup/SBS/Email/TGC-Web.pub",
+          "filename": "TGC-Web.pub",
+          "size": 336896,
+          "sha256": "c557df53d4d54dcdf84154e37e357cb5a282d37dfc71419f299006d02b9e4604",
+          "contents_revision_u16_at_2": 44
+        }
+      ]
+    }
+  ]
+}
