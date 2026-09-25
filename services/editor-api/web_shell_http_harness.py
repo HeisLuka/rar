@@ -25,6 +25,10 @@ from security.authz_v1 import (
     CAP_VIEW,
 )
 from security.authorized_revision_gateway import AuthorizedRevisionGateway
+from security.web_security_integration_v1 import (
+    browser_security_headers_v1,
+    guard_browser_payload_v1,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "packages" / "protocol" / "scene" / "v1" / "fixtures" / "simple-text.json"
@@ -274,6 +278,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("content-type", content_type)
         self.send_header("cache-control", "no-store")
+        for name, value in browser_security_headers_v1().items():
+            self.send_header(name, value)
         self.send_header("access-control-allow-origin", "*")
         self.send_header("access-control-allow-methods", "GET, POST, OPTIONS")
         self.send_header(
@@ -288,6 +294,10 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, value, status: int = 200) -> None:
         self._headers(status)
         self.wfile.write(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+    def _browser_json(self, value, status: int = 200) -> None:
+        guard_browser_payload_v1(value)
+        self._json(value, status)
 
     def _principal_id(self) -> str:
         value = self.headers.get("x-chaptera-principal-id")
@@ -320,7 +330,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._authorize(CAP_EXPORT)
                 with RECORDER.span("gateway.export_preview", trace_context):
                     preview = STATE.export_preview(target)
-                self._json(preview)
+                self._browser_json(preview)
             except AuthzDenied as exc:
                 self._json({"error": "forbidden", "code": exc.code}, 403)
             except ValueError as exc:
@@ -332,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
                 with RECORDER.span("gateway.scene_current", trace_context):
                     current = STATE.kernel.current_revision(STATE.document_id).revision_id
                     scene = STATE.scenes[current]
-                self._json(scene)
+                self._browser_json(scene)
             except AuthzDenied as exc:
                 self._json({"error": "forbidden", "code": exc.code}, 403)
             return
@@ -355,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
                 if scene is None:
                     self._json({"error": "scene_not_found"}, 404)
                 else:
-                    self._json(scene)
+                    self._browser_json(scene)
             except AuthzDenied as exc:
                 self._json({"error": "forbidden", "code": exc.code}, 403)
             return
