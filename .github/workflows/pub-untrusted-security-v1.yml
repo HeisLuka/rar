@@ -5,6 +5,9 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "apps/chaptera-server/src/source_ingress_async.rs"
+      - "apps/chaptera-server/src/source_ingress_scanner.rs"
+      - "apps/chaptera-server/Cargo.toml"
       - "crates/chaptera-untrusted-pub-scan/**"
       - "tools/migration_pdf_worker_isolation.py"
       - "tools/test_migration_pdf_worker_isolation.py"
