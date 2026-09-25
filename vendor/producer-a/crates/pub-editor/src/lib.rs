@@ -52,6 +52,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Cursor;
+use uuid::Uuid;
 
 pub const EDITOR_PROJECT_VERSION_V0_1: &str = "pub-editor-v0.1";
 pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
@@ -63,7 +64,8 @@ pub const EDITOR_PROJECT_VERSION_V0_7: &str = "pub-editor-v0.7";
 pub const EDITOR_PROJECT_VERSION_V0_8: &str = "pub-editor-v0.8";
 pub const EDITOR_PROJECT_VERSION_V0_9: &str = "pub-editor-v0.9";
 pub const EDITOR_PROJECT_VERSION_V0_10: &str = "pub-editor-v0.10";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_10;
+pub const EDITOR_PROJECT_VERSION_V0_11: &str = "pub-editor-v0.11";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_11;
 pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
@@ -325,15 +327,108 @@ pub struct EditorReplacementAsset {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorProjectForkProvenance {
+    pub project_id: String,
+    pub document_id: String,
+    pub history_id: String,
+    pub state_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorProjectIdentity {
+    pub project_id: String,
+    pub document_id: String,
+    pub history_id: String,
+    pub genesis_revision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<EditorProjectForkProvenance>,
+}
+
+fn new_project_identity() -> EditorProjectIdentity {
+    EditorProjectIdentity {
+        project_id: Uuid::now_v7().to_string(),
+        document_id: Uuid::now_v7().to_string(),
+        history_id: Uuid::now_v7().to_string(),
+        genesis_revision_id: Uuid::now_v7().to_string(),
+        forked_from: None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorProject {
     pub schema_version: String,
     pub source_hash: Sha256Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<EditorProjectIdentity>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<EditorProjectAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub table_grids: Vec<EffectiveTableGridV1>,
     pub operations: Vec<EditOperation>,
 }
+
+impl EditorProject {
+    pub fn state_id_v1(&self) -> String {
+        let payload = serde_json::json!({
+            "protocol_version": "chaptera.editor-project-state.v1",
+            "source_hash": self.source_hash,
+            "assets": self.assets,
+            "table_grids": self.table_grids,
+            "operations": self.operations,
+        });
+        let bytes = serde_json::to_vec(&payload)
+            .expect("canonical EditorProject state JSON serialization cannot fail");
+        let digest = Sha256::digest(bytes);
+        let mut encoded = String::with_capacity(64);
+        for byte in digest {
+            use std::fmt::Write as _;
+            write!(&mut encoded, "{byte:02x}")
+                .expect("writing lowercase hex into String cannot fail");
+        }
+        format!("sha256:{encoded}")
+    }
+
+    pub fn fork_next_issue(&self) -> Result<Self, EditorProjectForkError> {
+        let parent = self
+            .identity
+            .as_ref()
+            .ok_or(EditorProjectForkError::MissingProjectIdentity)?;
+        let state_id = self.state_id_v1();
+        let mut identity = new_project_identity();
+        identity.forked_from = Some(EditorProjectForkProvenance {
+            project_id: parent.project_id.clone(),
+            document_id: parent.document_id.clone(),
+            history_id: parent.history_id.clone(),
+            state_id,
+        });
+
+        Ok(Self {
+            schema_version: EDITOR_PROJECT_VERSION_V0_11.into(),
+            source_hash: self.source_hash,
+            identity: Some(identity),
+            assets: self.assets.clone(),
+            table_grids: self.table_grids.clone(),
+            operations: self.operations.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditorProjectForkError {
+    MissingProjectIdentity,
+}
+
+impl fmt::Display for EditorProjectForkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingProjectIdentity => {
+                formatter.write_str("editor project has no durable project identity")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EditorProjectForkError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorAssetError {
@@ -938,6 +1033,7 @@ pub enum EditorProjectError {
         index: usize,
     },
     LegacyProjectCarriesTableGrids,
+    MissingProjectIdentity,
     TableGridMismatch,
     MissingAssetBytes {
         sha256: Sha256Digest,
@@ -976,7 +1072,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, or {EDITOR_PROJECT_VERSION_V0_10:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, {EDITOR_PROJECT_VERSION_V0_10:?}, or {EDITOR_PROJECT_VERSION_V0_11:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -1018,6 +1114,9 @@ impl fmt::Display for EditorProjectError {
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
+            ),
+            Self::MissingProjectIdentity => formatter.write_str(
+                "pub-editor-v0.11 requires durable project identity",
             ),
             Self::TableGridMismatch => formatter.write_str(
                 "editor project EffectiveTableGridV1 state does not match deterministic replay",
@@ -1204,6 +1303,7 @@ impl std::error::Error for EditorExportError {}
 pub struct EditorSession {
     source_hash: Sha256Digest,
     graph: PubResolvedGraph,
+    project_identity: EditorProjectIdentity,
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
     authored_shapes: BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
@@ -1221,6 +1321,7 @@ impl EditorSession {
         Ok(Self {
             source_hash,
             graph,
+            project_identity: new_project_identity(),
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
             authored_shapes: BTreeMap::new(),
@@ -1286,61 +1387,20 @@ impl EditorSession {
     }
 
     pub fn project(&self) -> EditorProject {
-        let table_grids = effective_table_grids(&self.graph);
-        let schema_version =
-            if self
-                .undo
-                .iter()
-                .any(|operation| matches!(operation, EditOperation::CreateShape { .. }))
-            {
-                EDITOR_PROJECT_VERSION_V0_10
-            } else if self
-                .undo
-                .iter()
-                .any(|operation| matches!(operation, EditOperation::ResizeNodes { .. }))
-            {
-                EDITOR_PROJECT_VERSION_V0_9
-            } else if self
-                .undo
-                .iter()
-                .any(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
-            {
-                EDITOR_PROJECT_VERSION_V0_8
-            } else if self.undo.iter().any(|operation| {
-                matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
-            }) {
-                EDITOR_PROJECT_VERSION_V0_7
-            } else if !table_grids.is_empty() {
-                EDITOR_PROJECT_VERSION_V0_6
-            } else if self
-                .undo
-                .iter()
-                .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
-            {
-                EDITOR_PROJECT_VERSION_V0_5
-            } else if self
-                .undo
-                .iter()
-                .any(|operation| matches!(operation, EditOperation::MoveNode { .. }))
-            {
-                EDITOR_PROJECT_VERSION_V0_4
-            } else if self
-                .undo
-                .iter()
-                .any(|operation| matches!(operation, EditOperation::ReplaceImage { .. }))
-            {
-                EDITOR_PROJECT_VERSION_V0_3
-            } else {
-                EDITOR_PROJECT_VERSION_V0_2
-            };
-
         EditorProject {
-            schema_version: schema_version.into(),
+            schema_version: EDITOR_PROJECT_VERSION_V0_11.into(),
             source_hash: self.source_hash,
+            identity: Some(self.project_identity.clone()),
             assets: self.project_asset_metadata(),
-            table_grids,
+            table_grids: effective_table_grids(&self.graph),
             operations: self.undo.clone(),
         }
+    }
+
+    pub fn fork_project_next_issue(&self) -> EditorProject {
+        self.project()
+            .fork_next_issue()
+            .expect("current EditorSession always carries durable project identity")
     }
 
     pub fn persistence_requirements(&self) -> Vec<PersistenceRequirement> {
@@ -1394,6 +1454,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1420,6 +1481,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
         {
             if let Some(index) = project
                 .operations
@@ -1435,6 +1497,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
         {
             if let Some(index) = project
                 .operations
@@ -1449,6 +1512,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
             && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
@@ -1457,6 +1521,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
         {
             if let Some(index) = project.operations.iter().position(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
@@ -1467,6 +1532,7 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_8
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
         {
             if let Some(index) = project
                 .operations
@@ -1478,6 +1544,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
         {
             if let Some(index) = project
                 .operations
@@ -1487,7 +1554,9 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeNodesOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_10 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_10
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+        {
             if let Some(index) = project
                 .operations
                 .iter()
@@ -1495,6 +1564,9 @@ impl EditorSession {
             {
                 return Err(EditorProjectError::LegacyProjectCarriesCreateShapeOperation { index });
             }
+        }
+        if project.schema_version == EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_none() {
+            return Err(EditorProjectError::MissingProjectIdentity);
         }
         if project.source_hash != self.source_hash {
             return Err(EditorProjectError::SourceHashMismatch {
@@ -1512,6 +1584,9 @@ impl EditorSession {
         }
 
         let mut candidate = self.clone();
+        if let Some(identity) = &project.identity {
+            candidate.project_identity = identity.clone();
+        }
         for (index, metadata) in project.assets.iter().enumerate() {
             let bytes = asset_bytes
                 .get(&metadata.sha256)
@@ -1558,6 +1633,7 @@ impl EditorSession {
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_8
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_9
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_10
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_11
         {
             let actual_grids = effective_table_grids(&candidate.graph);
             if actual_grids != project.table_grids {
