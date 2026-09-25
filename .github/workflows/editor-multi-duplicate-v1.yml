@@ -1,0 +1,36 @@
+name: Editor Multi Duplicate V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/multi_duplicate_v1.py"
+      - "services/editor-api/test_multi_duplicate_v1.py"
+      - "services/editor-api/duplicate_rectangle_v1.py"
+      - "services/editor-api/authoring_fragment_set_v1.py"
+      - "services/editor-api/revision_store.py"
+      - ".github/workflows/editor-multi-duplicate-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run multi Duplicate composition tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_multi_duplicate_v1
+      - name: Re-run single Duplicate and FragmentSet regressions
+        working-directory: services/editor-api
+        run: |
+          python -m unittest -v test_duplicate_rectangle_v1
+          python -m unittest -v test_authoring_fragment_set_v1
+      - name: Re-run revision kernel regression
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store
