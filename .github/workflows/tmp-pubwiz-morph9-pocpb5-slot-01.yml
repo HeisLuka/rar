@@ -1,0 +1,146 @@
+name: TEMP PUBWIZ MORPH9 POCPB5 slot classification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-morph9-pocpb5-slot-01.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inert static tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+      - name: Rehydrate exact MORPH9 and classify pointer slot
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/slot/{src,module} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/slot/source.7z
+          test "$(sha1sum /tmp/slot/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          7z x -y /tmp/slot/source.7z -o/tmp/slot/src >/dev/null
+          MDF="$(find /tmp/slot/src -type f -iname '*.mdf' | head -n1)"
+          iat "$MDF" /tmp/slot/disc.iso >/dev/null
+          test "$(sha256sum /tmp/slot/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z e -y -o/tmp/slot/module /tmp/slot/disc.iso 'PFILES/MSOFFICE/OFFICE/MORPH9.DLL' >/dev/null
+          test "$(sha256sum /tmp/slot/module/MORPH9.DLL | awk '{print $1}')" = 'd154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          python3 - <<'PY'
+          import hashlib,json,pathlib,struct,string
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_32
+          from capstone.x86 import X86_OP_IMM,X86_OP_MEM
+
+          p=pathlib.Path('/tmp/slot/module/MORPH9.DLL')
+          data=p.read_bytes()
+          pe=pefile.PE(data=data,fast_load=False)
+          ib=pe.OPTIONAL_HEADER.ImageBase
+          slot_off=47741
+          slot_rva=pe.get_rva_from_offset(slot_off)
+          slot_va=ib+slot_rva
+          target_va=486864244
+
+          def sec_for_rva(rva):
+            for s in pe.sections:
+              lo=s.VirtualAddress; hi=lo+max(s.Misc_VirtualSize,s.SizeOfRawData)
+              if lo<=rva<hi:return s
+            return None
+          sec=sec_for_rva(slot_rva)
+          if not sec: raise SystemExit('slot section missing')
+          sec_name=sec.Name.rstrip(b'\0').decode('ascii','replace')
+          sec_exec=bool(sec.Characteristics & 0x20000000)
+          sec_data=sec.get_data()
+          sec_base_va=ib+sec.VirtualAddress
+          md=Cs(CS_ARCH_X86,CS_MODE_32); md.detail=True
+          ins=list(md.disasm(sec_data,sec_base_va))
+          covering=[]
+          before=[]; after=[]
+          for i,x in enumerate(ins):
+            lo=x.address; hi=x.address+x.size
+            if lo<=slot_va<hi:
+              covering.append({'rva':lo-ib,'size':x.size,'mnemonic':x.mnemonic,'op_str':x.op_str,'slot_byte_index':slot_va-lo})
+              for z in ins[max(0,i-6):i]: before.append({'rva':z.address-ib,'mnemonic':z.mnemonic,'op_str':z.op_str})
+              for z in ins[i+1:min(len(ins),i+7)]: after.append({'rva':z.address-ib,'mnemonic':z.mnemonic,'op_str':z.op_str})
+              break
+
+          # Bounded aligned descriptor candidates around the slot.
+          bases=sorted(set([(slot_rva//16)*16,(slot_rva//32)*32,(slot_rva//64)*64]))
+          def printable_at_va(va):
+            rva=va-ib
+            try:off=pe.get_offset_from_rva(rva)
+            except:return None
+            if not (0<=off<len(data)):return None
+            b=data[off:off+64]
+            s=[]
+            for x in b:
+              if 32<=x<127:s.append(chr(x))
+              else:break
+            return ''.join(s) if len(s)>=4 else None
+          neighbors=[]
+          start=max(0,slot_off-32); end=min(len(data),slot_off+36)
+          q=start-(start%4)
+          while q+4<=end:
+            v=struct.unpack_from('<I',data,q)[0]
+            rec={'file_offset':q,'rva':pe.get_rva_from_offset(q),'value_u32':v,'is_target_va':v==target_va}
+            if ib<=v<ib+pe.OPTIONAL_HEADER.SizeOfImage:
+              rec['points_into_image']=True
+              rec['target_rva']=v-ib
+              s=printable_at_va(v)
+              if s:rec['printable_target']=s
+            else: rec['points_into_image']=False
+            neighbors.append(rec)
+            q+=4
+
+          candidate_vas={ib+b for b in bases}
+          base_xrefs=[]
+          for x in ins:
+            refs=[]
+            for op in x.operands:
+              if op.type==X86_OP_IMM and (op.imm & 0xffffffff) in candidate_vas:
+                refs.append({'kind':'imm','target_va':op.imm & 0xffffffff})
+              elif op.type==X86_OP_MEM and (op.mem.disp & 0xffffffff) in candidate_vas:
+                refs.append({'kind':'mem-disp','target_va':op.mem.disp & 0xffffffff})
+            if refs:
+              base_xrefs.append({'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str,'refs':refs})
+
+          if covering:
+            classification='instruction-embedded-reference'
+          elif base_xrefs:
+            classification='referenced-descriptor-table'
+          else:
+            classification='unreferenced-descriptor-data-island'
+
+          result={
+            'schema':'chaptera.pubwiz-morph9-pocpb5-slot.v1',
+            'module_sha256':hashlib.sha256(data).hexdigest(),
+            'image_base':ib,
+            'slot':{'file_offset':slot_off,'rva':slot_rva,'va':slot_va,'section':sec_name,'section_executable':sec_exec,'stored_u32':struct.unpack_from('<I',data,slot_off)[0],'expected_target_va':target_va},
+            'instruction_covering_slot':covering,
+            'nearest_instructions_before':before,
+            'nearest_instructions_after':after,
+            'candidate_table_bases':[{'rva':b,'va':ib+b} for b in bases],
+            'candidate_table_base_code_xrefs':base_xrefs,
+            'bounded_neighbor_dwords':neighbors,
+            'classification':classification,
+            'source_safe':True,'raw_module_retained':False
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then exit 1; fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-morph9-pocpb5-slot-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
