@@ -1,0 +1,320 @@
+name: TEMP CORPUS DROPCAP2 95-97 law falsification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-dropcap2-95-97-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parsers
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y libmspub-tools
+      - name: Falsify Publisher95 to 97 laws on DROPCAP2
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import difflib,hashlib,json,subprocess,tempfile,time,urllib.parse,urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-dropcap2-lawcheck/1.0";SECTOR=2048
+          SPECS={
+            "pub95":{
+              "sha256":"32e6e798eedb9eb60cce2d876323626957a6f0cf8d98b956c0a4549276cc8ed5",
+              "member":"PAGEWIZ/DROPCAP2.PUB",
+              "url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+              "root_sha256":"36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a","root_size":47730688,
+              "source_page":"https://archive.org/details/microsoft-home-collection-1993-1995-"
+            },
+            "pub97":{
+              "sha256":"3c4a3c2a277f02e68d21e02cd8859e47d1ae05f29f7bdf49ca677b49ccf224e3",
+              "member":"PAGEWIZ/DROPCAP2.PUB",
+              "url":"https://archive.org/download/PUB40CD/PUB_40_CD.ISO",
+              "root_sha256":"cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59","root_size":138551296,
+              "source_page":"https://archive.org/details/PUB40CD"
+            }
+          }
+          EXPECTED={
+            0x15:"0b225b1bacb39383893c98ecbdc6dd72679adf57362b667f3c1ef37feb949375",
+            0x16:"41c900869a8256f569d8cafc5ed0a23724c319d58d9353551f4aa37cd6c3c737",
+            0x23:"7cba3b282e136c22b9776da81e527b36f0ae62f3de4254b2062221e13ab747f1",
+            0x26:"2e052530e0880adb932def660f8a9b10e498a53430324f9c94d74bb61a99403c",
+            0x2A:"5852d313831f43ae3a7d0a2165bccd7146a6a07e3f8eca434b6a36b90cddf203",
+            0x32:"9f65ad83eb5c5146b2b0d64f40f975224ad60d021f2b57607f9ca67dc772c892"
+          }
+
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              for a in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+              out=[];d=str(m.get("dir") or "")
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError(f"range length {len(d)} != {n}")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              for a in range(4):
+                try:return self.rr(self.delivery,start,n)
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","replace"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              k=(e,s)
+              if k in self.cache:return self.cache[k]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[k]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
+              parts=[x.upper() for x in path.strip("/").split("/") if x]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2:raise ValueError("not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def cfb(pub):
+            with olefile.OleFileIO(pub) as ole:
+              streams={"/"+"/".join(parts):ole.openstream(parts).read() for parts in ole.listdir(streams=True,storages=False)}
+              storages=sorted("/"+"/".join(parts) for parts in ole.listdir(streams=False,storages=True))
+            return streams,storages
+
+          def parse(c):
+            if c[:4]!=b"\xe8\xac\x22\x00":raise ValueError("not old22")
+            sig=c[0x0c:0x0e].hex();cv=u16(c,4)
+            gen={("7d00",300):"Publisher95",("8800",300):"Publisher97"}.get((sig,cv),"unknown")
+            root=u32(c,0x12);m=root+14
+            tm={"root":root,"start":u32(c,m),"end":u32(c,m+4),"char":u16(c,m+8),"para":u16(c,m+10),"cell":u16(c,m+12)}
+            off=u32(c,0x16);n=u16(c,off);rows=[]
+            if not (0<off<len(c)-2) or n>512:raise ValueError("bad directory")
+            for i in range(n):
+              p=off+2+i*10
+              r={"service":u16(c,p),"id":u16(c,p+2),"parent":u16(c,p+4),"offset":u32(c,p+6)}
+              r["marker"]=u16(c,r["offset"]);rows.append(r)
+            offs=sorted(set(r["offset"] for r in rows));chunks={}
+            for r in rows:
+              nxt=[x for x in offs if x>r["offset"]];e=min(nxt) if nxt else len(c);raw=c[r["offset"]:e]
+              chunks[r["id"]]={"raw":raw,"len":len(raw),"sha256":sha(raw)}
+            text=c[tm["start"]:tm["end"]]
+            return {"generation":gen,"sig":sig,"cv":cv,"rows":rows,"by_id":{r["id"]:r for r in rows},"chunks":chunks,"text":tm,"text_bytes":text,"dir_offset":off}
+
+          def page_shape(c,index,kind,text_start):
+            base=index*0x200
+            if base+0x200>len(c):return {"valid":False}
+            page=c[base:base+0x200];n=page[-1]
+            if kind=="char":
+              if 4*(n+1)>511:return {"valid":False}
+              anchor=u32(page,0);positions=[u32(page,4*i)-anchor for i in range(1,n+1)];s0=4*(n+1)
+            else:
+              if 4*n>511:return {"valid":False}
+              positions=[u32(page,4*i)-text_start for i in range(n)];s0=4*n
+            return {"valid":True,"n":n,"positions":positions,"styles":list(page[s0:s0+n]),"page_sha256":sha(page)}
+
+          def normalized_chunk(raw,ids,physical_values):
+            b=bytearray(raw)
+            if len(b)>=2:b[0:2]=b"\x00\x00"
+            for p in range(0,len(b)-1,2):
+              if int.from_bytes(b[p:p+2],"little") in ids:b[p:p+2]=b"\xfe\xff"
+            for p in range(0,max(0,len(b)-3)):
+              if int.from_bytes(b[p:p+4],"little") in physical_values:b[p:p+4]=b"\xfd\xfd\xfd\xfd"
+            return bytes(b)
+
+          def delta_sig(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False);ops=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag!="equal":ops.append((tag,i2-i1,j2-j1,sha(a[i1:i2]),sha(b[j1:j2])))
+            return sha(json.dumps(ops,separators=(",",":")).encode()),[[x[0],x[1],x[2]] for x in ops]
+
+          def ptr_size(chunk,version_num):
+            if len(chunk)<4:return None
+            data_off=chunk[3]
+            if not (4<=data_off<len(chunk)):return None
+            d=chunk[data_off:]
+            if len(d)<10:return None
+            n16=u16(d,0);m16=u16(d,2)
+            if n16>m16:return 4
+            if n16!=0:return 2
+            return 4 if version_num>=5 else 2
+
+          pubs={};deliveries={};streams={};storages={};parsed={}
+          for side,s in SPECS.items():
+            iso=ISO(s["url"]);pub=iso.member(s["member"])
+            if sha(pub)!=s["sha256"]:raise ValueError(side+" exact member SHA drift")
+            pubs[side]=pub;deliveries[side]=iso.delivery
+            streams[side],storages[side]=cfb(pub)
+            parsed[side]=parse(streams[side]["/Contents"])\n          if len(pubs["pub95"])!=len(pubs["pub97"]):raise ValueError("expected zero whole-file length delta")
+
+          if sorted(streams["pub95"])!=sorted(streams["pub97"]):raise ValueError("CFB path drift")
+          changed=[p for p in sorted(streams["pub95"]) if streams["pub95"][p]!=streams["pub97"][p]]
+          if changed!=["/Contents"]:raise ValueError(f"unexpected changed streams {changed}")
+          if storages["pub95"]!=storages["pub97"]:raise ValueError("storage topology drift")
+          L,R=parsed["pub95"],parsed["pub97"]
+          if L["generation"]!="Publisher95" or R["generation"]!="Publisher97":raise ValueError("generation drift")
+
+          l_ids=set(L["by_id"]);r_ids=set(R["by_id"]);common=sorted(l_ids&r_ids)
+          added=sorted(r_ids-l_ids);removed=sorted(l_ids-r_ids)
+          tuple_changed=[]
+          for oid in common:
+            a=L["by_id"][oid];b=R["by_id"][oid]
+            if (a["service"],a["id"],a["parent"],a["marker"])!=(b["service"],b["id"],b["parent"],b["marker"]):
+              tuple_changed.append(oid)
+
+          ids=l_ids|r_ids
+          lphys={L["text"]["root"],L["text"]["start"],L["text"]["end"],L["dir_offset"]}|{x["offset"] for x in L["rows"]}
+          rphys={R["text"]["root"],R["text"]["start"],R["text"]["end"],R["dir_offset"]}|{x["offset"] for x in R["rows"]}
+          laws={}
+          for marker,expected in EXPECTED.items():
+            obs=[]
+            for oid in common:
+              a=L["by_id"][oid];b=R["by_id"][oid]
+              if a["marker"]!=marker or b["marker"]!=marker:continue
+              la=L["chunks"][oid]["raw"];rb=R["chunks"][oid]["raw"]
+              if la==rb:continue
+              na=normalized_chunk(la,ids,lphys);nb=normalized_chunk(rb,ids,rphys)
+              sig,shapes=delta_sig(na,nb)
+              obs.append({"id":oid,"service":a["service"],"parent":a["parent"],"left_len":len(la),"right_len":len(rb),"delta_signature":sig,"delta_op_shapes":shapes,"matches_expected":sig==expected})
+            if not obs:status="absent-or-unchanged"
+            elif any(x["matches_expected"] for x in obs):status="repeated"
+            else:status="falsified"
+            laws[f"0x{marker:02X}"]={"expected_signature":expected,"status":status,"observations":obs}
+
+          added_rows=[R["by_id"][x] for x in added]
+          chain={"status":"not-two-node-extension","added_rows":added_rows}
+          if len(added_rows)==2:
+            aid={x["id"] for x in added_rows}
+            roots=[x for x in added_rows if x["parent"] not in aid]
+            if len(roots)==1:
+              a=roots[0];children=[x for x in added_rows if x["parent"]==a["id"]]
+              parent=R["by_id"].get(a["parent"])
+              if len(children)==1:
+                b=children[0]
+                shape={"root_service":a["service"],"root_marker":a["marker"],"parent_marker":parent["marker"] if parent else None,"child_service":b["service"],"child_marker":b["marker"]}
+                chain={"status":"repeated" if shape=={"root_service":5856,"root_marker":0x31,"parent_marker":0x15,"child_service":5856,"child_marker":0x3A} else "falsified","shape":shape,"parent_service":parent["service"] if parent else None,"added_ids":added}
+
+          printer=[]
+          for oid in common:
+            a=L["by_id"][oid];b=R["by_id"][oid]
+            if a["marker"]==0x29 and b["marker"]==0x29:
+              lp=ptr_size(L["chunks"][oid]["raw"],3);rp=ptr_size(R["chunks"][oid]["raw"],5)
+              printer.append({"id":oid,"left_pointer_size":lp,"right_pointer_size":rp,"matches_2_to_4":lp==2 and rp==4})
+          printer_status="absent-or-unchanged" if not printer else ("repeated" if all(x["matches_2_to_4"] for x in printer) else "falsified")
+
+          text_equal=L["text_bytes"]==R["text_bytes"]
+          shapes={}
+          for side,P in (("pub95",L),("pub97",R)):
+            c=streams[side]["/Contents"];tm=P["text"]
+            shapes[side]={
+              "char":page_shape(c,tm["char"],"char",tm["start"]),
+              "para":page_shape(c,tm["para"],"para",tm["start"]),
+              "cell":page_shape(c,tm["cell"],"cell",tm["start"])
+            }
+          normalized_topology_equal=(
+            shapes["pub95"]["char"]["valid"] and shapes["pub97"]["char"]["valid"] and shapes["pub95"]["char"]["positions"]==shapes["pub97"]["char"]["positions"] and shapes["pub95"]["char"]["styles"]==shapes["pub97"]["char"]["styles"]
+            and shapes["pub95"]["para"]["valid"] and shapes["pub97"]["para"]["valid"] and shapes["pub95"]["para"]["positions"]==shapes["pub97"]["para"]["positions"]
+            and shapes["pub95"]["cell"]["valid"] and shapes["pub97"]["cell"]["valid"] and shapes["pub95"]["cell"]["positions"]==shapes["pub97"]["cell"]["positions"]
+          )
+
+          with tempfile.TemporaryDirectory(prefix="dropcap2-") as td:
+            td=Path(td);render={}
+            for side,pub in pubs.items():
+              p=td/(side+".pub");p.write_bytes(pub)
+              proc=subprocess.run(["pub2xhtml",str(p)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+              render[side]={"returncode":proc.returncode,"stdout_len":len(proc.stdout),"stdout_sha256":sha(proc.stdout),"stderr_len":len(proc.stderr)}
+
+          falsified=[k for k,v in laws.items() if v["status"]=="falsified"]
+          if chain["status"]=="falsified":falsified.append("added-chain")
+          if printer_status=="falsified":falsified.append("printer29")
+          natural=(not removed and not tuple_changed and text_equal and all(v["returncode"]==0 for v in render.values()))
+          classification="third-natural-lineage-laws-repeated" if natural and not falsified else ("natural-lineage-with-law-falsification" if natural else "not-confirmed-natural-lineage")
+
+          summary={
+            "schema":"chaptera.dropcap2-95-97-lawcheck-summary.v1","source_safe":True,"all_exact_members_verified":True,
+            "generations":{"pub95":L["generation"],"pub97":R["generation"]},"changed_streams":changed,
+            "directory_counts":{"pub95":len(l_ids),"pub97":len(r_ids),"common":len(common)},
+            "added_ids":added,"removed_ids":removed,"tuple_changed_ids":tuple_changed,
+            "text_equal":text_equal,"text_len":{"pub95":len(L["text_bytes"]),"pub97":len(R["text_bytes"])},
+            "normalized_text_topology_equal":normalized_topology_equal,
+            "added_chain":chain,"laws":laws,
+            "printer29":{"status":printer_status,"observations":printer},
+            "libmspub":{"returncodes":{k:v["returncode"] for k,v in render.items()},"xhtml_equal":render["pub95"]["stdout_sha256"]==render["pub97"]["stdout_sha256"],"pub95_sha256":render["pub95"]["stdout_sha256"],"pub97_sha256":render["pub97"]["stdout_sha256"]},
+            "falsified_laws":falsified,"classification":classification
+          }
+          receipt={"schema":"chaptera.dropcap2-95-97-lawcheck.v1","files":{k:{"sha256":s["sha256"],"byte_len":len(pubs[k]),"member":s["member"],"source_page":s["source_page"],"root_sha256":s["root_sha256"],"root_size":s["root_size"],"delivery_url":deliveries[k],"additional_exact_media":s.get("additional_exact_media",[])} for k,s in SPECS.items()},"page_shapes":shapes,"summary":summary,"raw_pub_retained":False,"source_safe":True}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["generations"]=={"pub95":"Publisher95","pub97":"Publisher97"}
+          assert s["changed_streams"]==["/Contents"]
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-dropcap2-95-97-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
