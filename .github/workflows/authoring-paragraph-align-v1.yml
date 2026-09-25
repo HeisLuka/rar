@@ -6,6 +6,8 @@ on:
       - "packages/protocol/authoring-paragraph-align/**"
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_paragraph_alignment.py"
+      - "services/editor-api/paragraph_alignment_export_v1.py"
+      - "services/editor-api/test_paragraph_alignment_export_v1.py"
       - ".github/workflows/authoring-paragraph-align-v1.yml"
   workflow_dispatch:
 
@@ -25,6 +27,9 @@ jobs:
       - name: Run paragraph alignment revision-kernel tests
         working-directory: services/editor-api
         run: python -m unittest -v test_paragraph_alignment
+      - name: Run paragraph alignment export/loss tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_paragraph_alignment_export_v1
       - name: Validate public intent schema
         run: |
           python - <<'PY'
