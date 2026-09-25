@@ -25,12 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Test BreakTextFrameForwardLink lifecycle
+      - name: Test full pub-editor suite including BreakTextFrameForwardLink
         run: |
-          cargo test --manifest-path vendor/producer-a/Cargo.toml             -p pub-editor             --test break_text_frame_forward_link_v1
-      - name: Test existing pub-editor regressions
-        run: |
-          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --lib
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
       - name: Prove layout recomputes upstream overset after split
         run: |
           cargo test --manifest-path vendor/producer-a/Cargo.toml \
