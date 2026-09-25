@@ -924,6 +924,13 @@ mod tests {
     }
 
     async fn authority(label: &str) -> (SqliteQuotaAuthority, PathBuf) {
+        authority_with_config(label, config()).await
+    }
+
+    async fn authority_with_config(
+        label: &str,
+        config: QuotaConfig,
+    ) -> (SqliteQuotaAuthority, PathBuf) {
         let path = temp_db(label);
         SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
             .unwrap()
@@ -931,7 +938,7 @@ mod tests {
             .await
             .unwrap();
         let authority =
-            SqliteQuotaAuthority::open(&path, 4, Duration::from_secs(2), config())
+            SqliteQuotaAuthority::open(&path, 4, Duration::from_secs(2), config)
                 .await
                 .unwrap();
         (authority, path)
@@ -983,7 +990,16 @@ mod tests {
 
     #[tokio::test]
     async fn lower_classes_cannot_consume_protected_semantic_headroom() {
-        let (authority, path) = authority("headroom").await;
+        let (authority, path) = authority_with_config(
+            "headroom",
+            QuotaConfig {
+                shared_capacity: 10,
+                semantic_headroom: 5,
+                export_cap: 10,
+                background_cap: 4,
+            },
+        )
+        .await;
 
         authority
             .reserve(
@@ -1010,7 +1026,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(blocked.code, "export_concurrency_quota");
+        assert_eq!(blocked.code, "shared_capacity_exhausted");
 
         authority
             .reserve(
