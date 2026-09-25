@@ -213,15 +213,12 @@ impl AsyncSourceValidationRuntime {
     ) -> Result<UploadRecord, IngressError> {
         let mut next = upload.clone();
         next.state = UploadState::Rejected;
-        next.upload_generation = next
-            .upload_generation
-            .checked_add(1)
-            .ok_or_else(|| {
-                IngressError::new(
-                    "upload_generation_overflow",
-                    "upload generation cannot advance",
-                )
-            })?;
+        next.upload_generation = next.upload_generation.checked_add(1).ok_or_else(|| {
+            IngressError::new(
+                "upload_generation_overflow",
+                "upload generation cannot advance",
+            )
+        })?;
         next.completed_at_ms = Some(now_ms);
         next.terminal_code = Some(code.to_owned());
         self.repo
