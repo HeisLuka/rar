@@ -1,4 +1,4 @@
-name: TEMP CORPUS BOOKMARK 95-97 residual chunk classifier
+name: TEMP CORPUS BOOKMARK 95-97 shared 16-to-26 extension
 
 on:
   pull_request:
@@ -289,7 +289,45 @@ jobs:
           for r in residual:
             key=f'{r["classification"]}|marker0x{r["marker"]:02X}|growth{r["growth"]}'
             cluster_counts[key]=cluster_counts.get(key,0)+1
-          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts}
+          ext10_ids=[257,279,287,288,291]
+          ext10=[]
+          def words16(raw): return [int.from_bytes(raw[i:i+2],"little") for i in range(0,len(raw),2)]
+          def words32(raw): return [int.from_bytes(raw[i:i+4],"little") for i in range(0,len(raw)-3,2)]
+          def marker_normalized(raw):
+            b=bytearray(raw)
+            if len(b)>=2:b[0:2]=b"\x00\x00"
+            return bytes(b)
+          for oid in ext10_ids:
+            lraw=L["dir"]["chunks"][oid]["raw"]; rraw=R["dir"]["chunks"][oid]["raw"]
+            ext10.append({
+              "id":oid,
+              "service":L["dir"]["by_id"][oid]["service"],
+              "parent":L["dir"]["by_id"][oid]["parent"],
+              "marker":L["dir"]["by_id"][oid]["marker"],
+              "left_u16":words16(lraw),
+              "right_u16":words16(rraw),
+              "left_u32_step2":words32(lraw),
+              "right_u32_step2":words32(rraw),
+              "left_marker_normalized_sha256":sha(marker_normalized(lraw)),
+              "right_marker_normalized_sha256":sha(marker_normalized(rraw)),
+              "left_marker_normalized_hex":marker_normalized(lraw).hex(),
+              "right_marker_normalized_hex":marker_normalized(rraw).hex()
+            })
+          right_groups={}
+          left_groups={}
+          for row in ext10:
+            left_groups.setdefault(row["left_marker_normalized_sha256"],[]).append(row["id"])
+            right_groups.setdefault(row["right_marker_normalized_sha256"],[]).append(row["id"])
+          common_right_words=[]
+          for idx in range(13):
+            vals={row["right_u16"][idx] for row in ext10}
+            if len(vals)==1:common_right_words.append({"u16_index":idx,"byte_offset":idx*2,"value":next(iter(vals))})
+          common_left_words=[]
+          for idx in range(8):
+            vals={row["left_u16"][idx] for row in ext10}
+            if len(vals)==1:common_left_words.append({"u16_index":idx,"byte_offset":idx*2,"value":next(iter(vals))})
+          ext10_analysis={"ids":ext10_ids,"rows":ext10,"left_marker_normalized_groups":left_groups,"right_marker_normalized_groups":right_groups,"common_left_u16_words":common_left_words,"common_right_u16_words":common_right_words}
+          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts,"ext10_analysis":ext10_analysis}
 
           # strip raw before retention
           for side in parsed.values():
@@ -321,7 +359,7 @@ jobs:
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: corpus-lineage-bookmark-95-97-residual-receipt
+          name: corpus-lineage-bookmark-95-97-ext10-receipt
           path: out/**
           if-no-files-found: error
           retention-days: 90
