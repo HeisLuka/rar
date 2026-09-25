@@ -1,6 +1,6 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5, EditOperation, EditorError,
-    LengthEmu, NodeId, RectEmu,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
+    EditOperation, EditorError, LengthEmu, NodeId, RectEmu,
 };
 
 fn node_id() -> NodeId {
@@ -18,9 +18,10 @@ fn rect(x: i64, y: i64, width: i64, height: i64) -> RectEmu {
 }
 
 #[test]
-fn resize_node_promotes_current_project_schema_to_v0_5() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5);
+fn resize_node_keeps_v0_5_compatibility_under_current_v0_6() {
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_6);
     assert_eq!(EDITOR_PROJECT_VERSION_V0_5, "pub-editor-v0.5");
+    assert_eq!(EDITOR_PROJECT_VERSION_V0_6, "pub-editor-v0.6");
 }
 
 #[test]
