@@ -1,4 +1,4 @@
-name: TEMP CORPUS BOOKMARK 95-97 generation delta
+name: TEMP CORPUS BOOKMARK 95-97 residual chunk classifier
 
 on:
   pull_request:
@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from __future__ import annotations
-          import hashlib, json, time, urllib.parse, urllib.request
+          import difflib, hashlib, json, time, urllib.parse, urllib.request
           from pathlib import Path
           import olefile
 
@@ -235,6 +235,54 @@ jobs:
           else:
             classification="unexpected-graph-mutation"
 
+          residual_ids=[256,257,261,262,276,277,279,284,287,288,291,295]
+          canonical_ids=set(common)|set(added)|set(removed)
+          def prefix_len(a,b):
+            n=min(len(a),len(b));i=0
+            while i<n and a[i]==b[i]:i+=1
+            return i
+          def suffix_len(a,b,prefix):
+            n=min(len(a),len(b))-prefix;i=0
+            while i<n and a[-1-i]==b[-1-i]:i+=1
+            return i
+          def refs(raw):
+            out=[]
+            for width in (2,4):
+              for off in range(0,max(0,len(raw)-width+1),2):
+                v=int.from_bytes(raw[off:off+width],"little")
+                if v in canonical_ids or v in (300,301):
+                  out.append({"offset":off,"width":width,"value":v})
+            return out
+          residual=[]
+          for oid in residual_ids:
+            lc=L["dir"]["chunks"][oid]["raw"];rc=R["dir"]["chunks"][oid]["raw"]
+            sm=difflib.SequenceMatcher(None,lc,rc,autojunk=False)
+            spans=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag=="equal":continue
+              spans.append({"tag":tag,"left_offset":i1,"left_len":i2-i1,"left_sha256":sha(lc[i1:i2]),"right_offset":j1,"right_len":j2-j1,"right_sha256":sha(rc[j1:j2])})
+            p=prefix_len(lc,rc);s=suffix_len(lc,rc,p)
+            left_refs=refs(lc);right_refs=refs(rc)
+            common_ref_keys={(x["width"],x["value"]) for x in left_refs}&{(x["width"],x["value"]) for x in right_refs}
+            new_refs=[x for x in right_refs if (x["width"],x["value"]) not in common_ref_keys]
+            growth=len(rc)-len(lc)
+            if p==len(lc) and growth>0:
+              cls="pure-generation-append-extension"
+            elif p+s>=min(len(lc),len(rc)) and growth>0:
+              cls="bounded-generation-insert-extension"
+            elif oid==295 and growth==0:
+              cls="same-length-semantic-or-addressing-rewrite"
+            elif new_refs:
+              cls="reference-update-or-extension"
+            else:
+              cls="opaque-residual"
+            residual.append({"id":oid,"service":L["dir"]["by_id"][oid]["service"],"parent":L["dir"]["by_id"][oid]["parent"],"marker":L["dir"]["by_id"][oid]["marker"],"left_len":len(lc),"right_len":len(rc),"growth":growth,"common_prefix":p,"common_suffix":s,"sequence_match_ratio":round(sm.ratio(),6),"delta_span_count":len(spans),"delta_spans":spans,"left_object_refs":left_refs,"right_object_refs":right_refs,"new_right_refs":new_refs,"classification":cls})
+          cluster_counts={}
+          for r in residual:
+            key=f'{r["classification"]}|marker0x{r["marker"]:02X}|growth{r["growth"]}'
+            cluster_counts[key]=cluster_counts.get(key,0)+1
+          summary["residual_chunk_analysis"]={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts}
+
           # strip raw before retention
           for side in parsed.values():
             side.pop("contents",None)
@@ -265,7 +313,7 @@ jobs:
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: corpus-lineage-bookmark-95-97-delta-receipt
+          name: corpus-lineage-bookmark-95-97-residual-receipt
           path: out/**
           if-no-files-found: error
           retention-days: 90
