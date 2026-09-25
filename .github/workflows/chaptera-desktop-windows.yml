@@ -222,19 +222,33 @@ jobs:
           if ($manifest.agent_catalog_sha256 -ne $catalogHash) { throw "package manifest Agent catalog hash mismatch" }
           if ([int64]$manifest.agent_catalog_size -ne $catalogBytes) { throw "package manifest Agent catalog byte length mismatch" }
 
-          $describeRequest = '{"request_id":"portable-describe","command":"protocol.describe"}'
-          $describeLines = $describeRequest | & $exe --agent-v1
-          $agentExit = $LASTEXITCODE
-          if ($agentExit -ne 0) { throw "portable Agent V1 protocol.describe failed with exit code $agentExit" }
-          $describeText = ($describeLines -join "`n").Trim()
-          if (-not $describeText) { throw "portable Agent V1 protocol.describe returned no output" }
-          try {
-            $describeEnvelope = $describeText | ConvertFrom-Json
-          } catch {
-            throw "portable Agent V1 protocol.describe did not return valid JSON"
+          $agentInput = Join-Path $env:RUNNER_TEMP "chaptera-portable-agent-input.ndjson"
+          $agentOutput = Join-Path $env:RUNNER_TEMP "chaptera-portable-agent-output.ndjson"
+          $agentError = Join-Path $env:RUNNER_TEMP "chaptera-portable-agent-stderr.txt"
+          @(
+            '{"request_id":"portable-describe","command":"protocol.describe"}',
+            '{"request_id":"portable-shutdown","command":"shutdown"}'
+          ) | Set-Content -Encoding utf8 $agentInput
+          $agentProcess = Start-Process -FilePath $exe -ArgumentList @("--agent-v1") -RedirectStandardInput $agentInput -RedirectStandardOutput $agentOutput -RedirectStandardError $agentError -Wait -PassThru
+          if ($agentProcess.ExitCode -ne 0) {
+            $stderr = if (Test-Path $agentError) { (Get-Content -Raw $agentError).Trim() } else { "" }
+            throw "portable Agent V1 handshake failed with exit code $($agentProcess.ExitCode): $stderr"
           }
-          if ($describeEnvelope.message_type -ne "result" -or $describeEnvelope.ok -ne $true) {
+          $describeLines = @(Get-Content $agentOutput | Where-Object { $_.Trim() })
+          if ($describeLines.Count -ne 2) {
+            throw "portable Agent V1 handshake expected exactly 2 result envelopes, got $($describeLines.Count)"
+          }
+          try {
+            $describeEnvelope = $describeLines[0] | ConvertFrom-Json
+            $shutdownEnvelope = $describeLines[1] | ConvertFrom-Json
+          } catch {
+            throw "portable Agent V1 handshake did not return valid NDJSON"
+          }
+          if ($describeEnvelope.message_type -ne "result" -or $describeEnvelope.ok -ne $true -or $describeEnvelope.request_id -ne "portable-describe") {
             throw "portable Agent V1 protocol.describe returned a non-success envelope"
+          }
+          if ($shutdownEnvelope.message_type -ne "result" -or $shutdownEnvelope.ok -ne $true -or $shutdownEnvelope.request_id -ne "portable-shutdown" -or $shutdownEnvelope.result.shutdown -ne $true) {
+            throw "portable Agent V1 shutdown returned a non-success envelope"
           }
           $describe = $describeEnvelope.result
           if ($describe.protocol_version -ne "chaptera.agent-control.v1") { throw "portable runtime Agent protocol mismatch" }
