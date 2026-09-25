@@ -10,6 +10,29 @@ class ScenePatchApplyPoisoned(AssertionError):
 def _empty_atom_buckets():
     return {kind:[] for kind in PRIMITIVE_KINDS}
 
+def _diff_table_by_id(base_rows, target_rows, id_key):
+    base = {row[id_key]: row for row in base_rows}
+    target = {row[id_key]: row for row in target_rows}
+    removed = sorted(set(base) - set(target))
+    upserts = [
+        copy.deepcopy(target[row_id])
+        for row_id in sorted(target)
+        if base.get(row_id) != target[row_id]
+    ]
+    if not removed and not upserts:
+        return None
+    return {"removed": removed, "upserts": upserts}
+
+def _apply_table_delta(rows, delta, id_key):
+    if delta is None:
+        return rows
+    removed = set(delta["removed"])
+    upserts = {row[id_key]: copy.deepcopy(row) for row in delta["upserts"]}
+    out = [row for row in rows if row[id_key] not in removed and row[id_key] not in upserts]
+    out.extend(upserts.values())
+    out.sort(key=lambda row: row[id_key])
+    return out
+
 def build_node_atom_index(scene, metrics=None):
     """Build one deterministic NodeId -> primitive ownership index.
 
@@ -72,6 +95,18 @@ def diff_render_scenes(base, target, metrics=None):
         "upsert_nodes":upserts,
         "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
         "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "effect_deltas": {
+            "effects": _diff_table_by_id(
+                base["tables"].get("effects", []),
+                target["tables"].get("effects", []),
+                "effect_id",
+            ),
+            "effect_groups": _diff_table_by_id(
+                base["tables"].get("effect_groups", []),
+                target["tables"].get("effect_groups", []),
+                "effect_group_id",
+            ),
+        },
         "order_deltas": None if (base["order_authority"],base["paint_seq"])==(target["order_authority"],target["paint_seq"]) else {
             "order_authority":target["order_authority"],
             "paint_seq":copy.deepcopy(target["paint_seq"]),
@@ -146,6 +181,18 @@ def _apply_patch_mutating(out, patch, metrics=None):
         out["pages"]=copy.deepcopy(patch["page_deltas"])
     if patch["resource_deltas"]:
         out["tables"]["resources"]=copy.deepcopy(patch["resource_deltas"])
+    effect_deltas = patch.get("effect_deltas")
+    if effect_deltas:
+        out["tables"]["effects"] = _apply_table_delta(
+            out["tables"].get("effects", []),
+            effect_deltas.get("effects"),
+            "effect_id",
+        )
+        out["tables"]["effect_groups"] = _apply_table_delta(
+            out["tables"].get("effect_groups", []),
+            effect_deltas.get("effect_groups"),
+            "effect_group_id",
+        )
     if patch["order_deltas"] is not None:
         out["order_authority"]=patch["order_deltas"]["order_authority"]
         out["paint_seq"]=copy.deepcopy(patch["order_deltas"]["paint_seq"])
