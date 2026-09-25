@@ -6,6 +6,8 @@ on:
       - "vendor/producer-a/crates/pub-quill/src/story.rs"
       - "vendor/producer-a/crates/pub-quill/src/tokn.rs"
       - "vendor/producer-a/crates/pub-quill/src/lib.rs"
+      - "vendor/producer-a/crates/pub-quill/tests/tokn_real_fixtures.rs"
+      - "vendor/producer-a/crates/pub-quill/tests/fixtures/**"
       - ".github/workflows/pub-quill-tokn-v1.yml"
   push:
     branches:
