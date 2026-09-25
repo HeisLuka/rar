@@ -243,14 +243,14 @@ impl SqliteExportPublicationStore {
         .await;
 
         match result {
-            Ok(done) if done.rows_affected() == 1 => Ok(ExportPublicationPrepareOutcomeV1::Prepared(
-                ExportPublicationRecordV1 {
+            Ok(done) if done.rows_affected() == 1 => Ok(
+                ExportPublicationPrepareOutcomeV1::Prepared(ExportPublicationRecordV1 {
                     publication_id,
                     effect_key,
                     input,
                     created_at_ms,
-                },
-            )),
+                }),
+            ),
             Ok(_) => Err(ExportPublicationError::new(
                 "export_publication_no_effect",
                 "export publication insert did not create one row",
@@ -386,14 +386,10 @@ fn decode_record(
         exact_revision_id: blob_text(&row, "exact_revision_id")?,
         canonical_revision_id: row.try_get("canonical_revision_id").map_err(sqlite_error)?,
         target_profile: row.try_get("target_profile").map_err(sqlite_error)?,
-        layout_environment_id: row
-            .try_get("layout_environment_id")
-            .map_err(sqlite_error)?,
+        layout_environment_id: row.try_get("layout_environment_id").map_err(sqlite_error)?,
         fence_id: row.try_get("fence_id").map_err(sqlite_error)?,
         artifact_binding_id: blob_text(&row, "artifact_binding_id")?,
-        artifact_content_hash: row
-            .try_get("artifact_content_hash")
-            .map_err(sqlite_error)?,
+        artifact_content_hash: row.try_get("artifact_content_hash").map_err(sqlite_error)?,
         loss_binding_id: blob_text(&row, "loss_binding_id")?,
         loss_report_hash: row.try_get("loss_report_hash").map_err(sqlite_error)?,
     };
@@ -456,7 +452,10 @@ fn hash_envelope<const N: usize>(
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
-fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, ExportPublicationError> {
+fn blob_text(
+    row: &sqlx::sqlite::SqliteRow,
+    column: &str,
+) -> Result<String, ExportPublicationError> {
     let bytes: Vec<u8> = row.try_get(column).map_err(sqlite_error)?;
     String::from_utf8(bytes).map_err(|_| {
         ExportPublicationError::new(
