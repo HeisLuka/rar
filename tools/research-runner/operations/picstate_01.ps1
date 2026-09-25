@@ -57,6 +57,7 @@ function Get-ExceptionRecord {
 function Close-ComDocument {
     param($Document)
     if ($null -eq $Document) { return }
+    try { $Document.Saved = $true } catch {}
     try { $Document.Close() } catch {}
     try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($Document) } catch {}
 }
