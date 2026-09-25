@@ -215,7 +215,8 @@ impl EditorSession {
 
         for operation in self.operations() {
             match operation {
-                EditOperation::ReplaceStoryRange { .. } | EditOperation::ReplaceStoryText { .. } => {}
+                EditOperation::ReplaceStoryRange { .. }
+                | EditOperation::ReplaceStoryText { .. } => {}
                 EditOperation::ReplaceTableCellText { .. }
                 | EditOperation::ReplaceImage { .. }
                 | EditOperation::MoveNode { .. } => {

@@ -21,8 +21,10 @@ fn replace_story_range_serializes_to_admitted_v0_4_wire() {
         end_scalar: 2,
         expected_before: "x".to_owned(),
         replacement_text: "ChapteraV0".to_owned(),
-        before_story_state_id: "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
-        after_story_state_id: "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
+        before_story_state_id:
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
+        after_story_state_id:
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
     };
     let value = serde_json::to_value(operation).expect("serialize range operation");
     assert_eq!(value["kind"], "replace_story_range");

@@ -4,9 +4,9 @@
 )]
 
 // The cadence API is intentionally staged one PR before its UI consumer (#227).
+mod acceptance;
 #[allow(dead_code)]
 mod supporter;
-mod acceptance;
 
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,

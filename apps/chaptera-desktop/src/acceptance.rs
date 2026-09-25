@@ -3,8 +3,8 @@ use chaptera_scene_instance::{
     admit_object_mutation_v1, direct_page_local_instance_v1, geometry_sync_policy_v1,
 };
 use pub_editor::{
-    EditOperation, EditorEditableTarget, EditorProject, EditorSession, LengthEmu, NodeId,
-    RectEmu, StoryId, story_state_id_v1,
+    EditOperation, EditorEditableTarget, EditorProject, EditorSession, LengthEmu, NodeId, RectEmu,
+    StoryId, story_state_id_v1,
 };
 use pub_interaction::{DocumentPoint, MoveTransaction};
 use serde_json::{Value, json};
@@ -58,12 +58,7 @@ fn select_story_edit(editor: &EditorSession) -> Option<(StoryId, u32, String)> {
         if editor.can_replace_story_text(*story_id).is_err() {
             continue;
         }
-        let Some((index, ch)) = story
-            .text
-            .chars()
-            .enumerate()
-            .find(|(_, ch)| *ch != '\r')
-        else {
+        let Some((index, ch)) = story.text.chars().enumerate().find(|(_, ch)| *ch != '\r') else {
             continue;
         };
         let Ok(start) = u32::try_from(index) else {
@@ -119,10 +114,9 @@ fn select_move(
                 ) else {
                     continue;
                 };
-                let Ok(preview) = drag.update(DocumentPoint::new(
-                    LengthEmu::new(dx),
-                    LengthEmu::new(dy),
-                )) else {
+                let Ok(preview) =
+                    drag.update(DocumentPoint::new(LengthEmu::new(dx), LengthEmu::new(dy)))
+                else {
                     continue;
                 };
                 if editor
@@ -247,8 +241,8 @@ pub fn run(fixture: &Path, project_path: &Path, export_path: &Path) -> Result<Va
     let mut editor = pub_editor::open_mature_0x2c_editor(&source_before, source_hash)
         .map_err(|error| format!("open EditorSession: {error}"))?;
 
-    let (story_id, start_scalar, expected_before) =
-        select_story_edit(&editor).ok_or_else(|| "no capability-approved ordinary Story".to_owned())?;
+    let (story_id, start_scalar, expected_before) = select_story_edit(&editor)
+        .ok_or_else(|| "no capability-approved ordinary Story".to_owned())?;
     let end_scalar = start_scalar
         .checked_add(1)
         .ok_or_else(|| "Story scalar range overflow".to_owned())?;
@@ -272,8 +266,8 @@ pub fn run(fixture: &Path, project_path: &Path, export_path: &Path) -> Result<Va
     let after_story_state_id_effective = state_id(&editor)?;
 
     let operations_before_drag = editor.operations().len();
-    let (instance, moved_node_id, before_rect, mut drag) =
-        select_move(&editor, &visual).ok_or_else(|| "no admitted direct page-local MoveNode target".to_owned())?;
+    let (instance, moved_node_id, before_rect, mut drag) = select_move(&editor, &visual)
+        .ok_or_else(|| "no admitted direct page-local MoveNode target".to_owned())?;
     let after_rect = drag.preview_bounds();
     if editor.operations().len() != operations_before_drag {
         return Err("transient drag emitted a durable editor operation".to_owned());
@@ -291,11 +285,15 @@ pub fn run(fixture: &Path, project_path: &Path, export_path: &Path) -> Result<Va
     let after_move_state_id = state_id(&editor)?;
     let story_state_after_move = story_state(&editor, story_id)?;
 
-    editor.undo().map_err(|error| format!("undo MoveNode: {error}"))?;
+    editor
+        .undo()
+        .map_err(|error| format!("undo MoveNode: {error}"))?;
     let undo_state_id = state_id(&editor)?;
     let story_state_after_undo = story_state(&editor, story_id)?;
 
-    editor.redo().map_err(|error| format!("redo MoveNode: {error}"))?;
+    editor
+        .redo()
+        .map_err(|error| format!("redo MoveNode: {error}"))?;
     let redo_state_id = state_id(&editor)?;
     let story_state_after_redo = story_state(&editor, story_id)?;
 
@@ -333,8 +331,7 @@ pub fn run(fixture: &Path, project_path: &Path, export_path: &Path) -> Result<Va
     fs::write(export_path, &export.bytes)
         .map_err(|error| format!("write {}: {error}", export_path.display()))?;
 
-    let reopened_story_matches =
-        story_state_reopened == after_story_state_id;
+    let reopened_story_matches = story_state_reopened == after_story_state_id;
     let moved_geometry_matches = reopened
         .graph()
         .nodes

@@ -59,8 +59,8 @@ pub fn story_state_id_v1(story_id: StoryId, text: &str) -> String {
         "story_id": story_id.as_canonical().to_string(),
         "text": text,
     });
-    let bytes = serde_json::to_vec(&payload)
-        .expect("canonical Story state JSON serialization cannot fail");
+    let bytes =
+        serde_json::to_vec(&payload).expect("canonical Story state JSON serialization cannot fail");
     let digest = Sha256::digest(bytes);
     let mut encoded = String::with_capacity(64);
     for byte in digest {
@@ -104,7 +104,6 @@ fn replace_scalar_range_text(
     Some(after)
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
@@ -147,11 +146,13 @@ pub enum EditOperation {
 impl PersistenceRequirements for EditOperation {
     fn persistence_requirements(&self) -> Vec<PersistenceRequirement> {
         match self {
-            Self::ReplaceStoryRange { story_id, .. } | Self::ReplaceStoryText { story_id, .. } => vec![PersistenceRequirement {
-                feature: "story.text".into(),
-                origin: Some(story_id.into_canonical()),
-                property_path: Some("story.text".into()),
-            }],
+            Self::ReplaceStoryRange { story_id, .. } | Self::ReplaceStoryText { story_id, .. } => {
+                vec![PersistenceRequirement {
+                    feature: "story.text".into(),
+                    origin: Some(story_id.into_canonical()),
+                    property_path: Some("story.text".into()),
+                }]
+            }
             Self::ReplaceTableCellText {
                 story_id, cell_id, ..
             } => vec![
@@ -1606,10 +1607,8 @@ impl EditorSession {
             .expect("capability check verified story presence")
             .text
             .clone();
-        let scalar_len =
-            u32::try_from(before.chars().count()).map_err(|_| EditorError::StaleOperation {
-                story_id,
-            })?;
+        let scalar_len = u32::try_from(before.chars().count())
+            .map_err(|_| EditorError::StaleOperation { story_id })?;
         self.replace_story_range(story_id, 0, scalar_len, before, replacement)
     }
 
@@ -2084,10 +2083,15 @@ fn apply_inverse(
             }
             let replacement_end = start_scalar
                 .checked_add(
-                    u32::try_from(replacement_text.chars().count())
-                        .map_err(|_| EditorError::StaleOperation { story_id: *story_id })?,
+                    u32::try_from(replacement_text.chars().count()).map_err(|_| {
+                        EditorError::StaleOperation {
+                            story_id: *story_id,
+                        }
+                    })?,
                 )
-                .ok_or(EditorError::StaleOperation { story_id: *story_id })?;
+                .ok_or(EditorError::StaleOperation {
+                    story_id: *story_id,
+                })?;
             let before = replace_scalar_range_text(
                 &story.text,
                 *start_scalar,
