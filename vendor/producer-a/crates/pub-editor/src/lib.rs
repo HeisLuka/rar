@@ -43,6 +43,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const EDITOR_PROJECT_VERSION_V0_1: &str = "pub-editor-v0.1";
 pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
@@ -51,6 +52,39 @@ pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_4;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
+
+static COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_INSTANCES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_EDITABLE_SERIALIZATION_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_EDITABLE_SERIALIZATION_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EditorCopyLedgerSnapshotV1 {
+    pub replacement_image_clone_bytes: u64,
+    pub replacement_image_clone_instances: u64,
+    pub editable_serialization_bytes: u64,
+    pub editable_serialization_instances: u64,
+}
+
+pub fn reset_editor_copy_ledger_v1() {
+    COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_BYTES.store(0, Ordering::Relaxed);
+    COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_INSTANCES.store(0, Ordering::Relaxed);
+    COPY_LEDGER_EDITABLE_SERIALIZATION_BYTES.store(0, Ordering::Relaxed);
+    COPY_LEDGER_EDITABLE_SERIALIZATION_INSTANCES.store(0, Ordering::Relaxed);
+}
+
+pub fn editor_copy_ledger_snapshot_v1() -> EditorCopyLedgerSnapshotV1 {
+    EditorCopyLedgerSnapshotV1 {
+        replacement_image_clone_bytes: COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_BYTES
+            .load(Ordering::Relaxed),
+        replacement_image_clone_instances: COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_INSTANCES
+            .load(Ordering::Relaxed),
+        editable_serialization_bytes: COPY_LEDGER_EDITABLE_SERIALIZATION_BYTES
+            .load(Ordering::Relaxed),
+        editable_serialization_instances: COPY_LEDGER_EDITABLE_SERIALIZATION_INSTANCES
+            .load(Ordering::Relaxed),
+    }
+}
 
 /// Canonical Story-state identity shared with services/editor-api/story_range_v1.py.
 pub fn story_state_id_v1(story_id: StoryId, text: &str) -> String {
@@ -1090,6 +1124,12 @@ impl EditorSession {
             }
         };
 
+        COPY_LEDGER_EDITABLE_SERIALIZATION_BYTES.fetch_add(
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        COPY_LEDGER_EDITABLE_SERIALIZATION_INSTANCES.fetch_add(1, Ordering::Relaxed);
+
         Ok(EditorEditableExport {
             target,
             report,
@@ -1164,7 +1204,15 @@ impl EditorSession {
                 resource_id: replacement_asset_resource_id(*asset_sha),
                 frame_bounds: node.header.bounds,
                 mime: asset.mime.clone(),
-                bytes: asset.bytes.clone(),
+                bytes: {
+                    COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_BYTES.fetch_add(
+                        u64::try_from(asset.bytes.len()).unwrap_or(u64::MAX),
+                        Ordering::Relaxed,
+                    );
+                    COPY_LEDGER_REPLACEMENT_IMAGE_CLONE_INSTANCES
+                        .fetch_add(1, Ordering::Relaxed);
+                    asset.bytes.clone()
+                },
             });
         }
 
