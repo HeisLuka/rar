@@ -43,6 +43,8 @@ pub struct ChapteraConfig {
     pub source_validation: SourceValidationRuntimeConfig,
     #[serde(default)]
     pub edge: EdgeConfig,
+    #[serde(default)]
+    pub source_ingress: Option<SourceIngressHttpRuntimeConfig>,
     pub auth: Option<AuthConfig>,
     pub key_ring: Option<KeyRingConfig>,
 }
@@ -176,6 +178,28 @@ impl SourceValidationRuntimeConfig {
             temp_root: self.temp_root.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceIngressHttpRuntimeConfig {
+    pub upload_ttl_seconds: u64,
+    pub direct_grant_ttl_seconds: u64,
+    pub baseline: SourceBaselineRuntimeConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceBaselineRuntimeConfig {
+    pub isolation_python: PathBuf,
+    pub isolation_harness: PathBuf,
+    pub worker_binary: PathBuf,
+    pub worker_wall_timeout_ms: u64,
+    pub worker_address_space_mb: u64,
+    pub worker_cpu_seconds: u64,
+    pub worker_open_files: u64,
+    pub worker_output_file_mb: u64,
+    pub temp_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -350,6 +374,7 @@ impl ChapteraConfig {
                 temp_root: env::temp_dir(),
             },
             edge: EdgeConfig::default(),
+            source_ingress: None,
             auth: None,
             key_ring: None,
         };
@@ -520,6 +545,16 @@ impl ChapteraConfig {
             }
         }
 
+        if let Some(source) = &self.source_ingress {
+            if self.auth.is_none() {
+                return Err(ConfigError::new(
+                    "source_ingress_auth_required",
+                    "source ingress HTTP routes require configured authentication",
+                ));
+            }
+            validate_source_ingress_http(self.environment, &self.upload_admission, source)?;
+        }
+
         match (&self.auth, self.environment) {
             (Some(auth), mode) => validate_auth(mode, auth)?,
             (None, EnvironmentMode::Prod) => {
@@ -559,6 +594,67 @@ impl ChapteraConfig {
             key_ring,
         })
     }
+}
+
+fn validate_source_ingress_http(
+    mode: EnvironmentMode,
+    admission: &UploadAdmissionRuntimeConfig,
+    source: &SourceIngressHttpRuntimeConfig,
+) -> Result<(), ConfigError> {
+    if source.upload_ttl_seconds == 0
+        || source.direct_grant_ttl_seconds == 0
+        || source.upload_ttl_seconds > admission.lease_seconds
+        || source.direct_grant_ttl_seconds > source.upload_ttl_seconds
+    {
+        return Err(ConfigError::new(
+            "source_ingress_ttl_order_invalid",
+            "direct grant TTL must fit upload TTL, which must fit upload admission lease TTL",
+        ));
+    }
+
+    let baseline = &source.baseline;
+    if baseline.worker_wall_timeout_ms == 0
+        || baseline.worker_address_space_mb < 64
+        || baseline.worker_cpu_seconds == 0
+        || baseline.worker_open_files < 16
+        || baseline.worker_output_file_mb == 0
+    {
+        return Err(ConfigError::new(
+            "source_ingress_baseline_limit_invalid",
+            "source ingress baseline worker limits must be explicit and bounded",
+        ));
+    }
+
+    for (field, path) in [
+        (
+            "source_ingress.baseline.isolation_python",
+            &baseline.isolation_python,
+        ),
+        (
+            "source_ingress.baseline.isolation_harness",
+            &baseline.isolation_harness,
+        ),
+        (
+            "source_ingress.baseline.worker_binary",
+            &baseline.worker_binary,
+        ),
+        ("source_ingress.baseline.temp_root", &baseline.temp_root),
+    ] {
+        if path.as_os_str().is_empty() {
+            return Err(ConfigError::new(
+                "source_ingress_path_required",
+                format!("{field} must be configured"),
+            ));
+        }
+        if mode == EnvironmentMode::Prod && !path.is_absolute() {
+            return Err(ConfigError::new(
+                "source_ingress_path_not_absolute",
+                format!("{field} must be absolute in prod"),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_edge(mode: EnvironmentMode, edge: &EdgeConfig) -> Result<(), ConfigError> {
