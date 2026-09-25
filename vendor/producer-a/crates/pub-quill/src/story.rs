@@ -1,4 +1,4 @@
-use crate::{QuillToknChunk, tokn::parse_tokn_chunks};
+use crate::tokn::{QuillToknChunk, parse_tokn_chunks};
 use pub_core::{Decoded, QuillSyid, RawSpan, StreamPath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
