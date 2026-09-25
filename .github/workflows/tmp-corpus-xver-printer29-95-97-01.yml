@@ -1,0 +1,272 @@
+name: TEMP CORPUS Publisher95-97 Printers 0x29 census
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-xver-printer29-95-97-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Census PAGEWIZ legacy Printers chunks
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib,json,time,urllib.parse,urllib.request
+          from pathlib import Path
+          from collections import Counter,defaultdict
+          import olefile
+
+          UA="rar-printer29-census/1.0"; SECTOR=2048
+          MEDIA={
+            "pub95":{
+              "url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+              "source_page":"https://archive.org/details/microsoft-home-collection-1993-1995-",
+              "root_sha256":"36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a",
+              "expected_sig":"7d00","expected_generation":"Publisher95","version_num":3
+            },
+            "pub97":{
+              "url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+              "source_page":"https://archive.org/details/MSPublisher97-EN",
+              "root_sha256":"41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab",
+              "expected_sig":"8800","expected_generation":"Publisher97","version_num":4
+            }
+          }
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              last=None
+              for a in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception as e:
+                  last=e
+                  if a==3:raise
+                  time.sleep(2**a)
+              out=[];d=str(m.get("dir") or "")
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError(f"range length {len(d)} != {n}")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              last=None
+              for a in range(4):
+                try:return self.rr(self.delivery,start,n)
+                except Exception as e:
+                  last=e
+                  if a==3:raise
+                  time.sleep(2**a)
+              raise last
+            @staticmethod
+            def rec(r):
+              return r[33:33+r[32]].decode("ascii","replace"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              key=(e,s)
+              if key in self.cache:return self.cache[key]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[key]=out;return out
+            def root(self):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156]
+              _,e,s,fl=self.rec(p[156:156+rl]);return e,s,fl
+            def listing(self,path):
+              e,s,fl=self.root()
+              for x in [x.upper() for x in path.strip("/").split("/") if x]:
+                e,s,fl=self.directory(e,s)[x]
+                if not fl&2:raise ValueError(f"{x} is not dir")
+              return self.directory(e,s)
+            def member(self,path):
+              e,s,fl=self.root()
+              parts=[x.upper() for x in path.strip("/").split("/") if x]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2:raise ValueError(f"{x} not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def contents(pub):
+            with olefile.OleFileIO(pub) as ole:
+              if not ole.exists(["Contents"]):raise ValueError("missing Contents")
+              return ole.openstream(["Contents"]).read()
+
+          def directory(c):
+            off=u32(c,0x16)
+            if off+2>len(c):return None
+            n=u16(c,off)
+            if not (1<=n<=256) or off+2+n*10>len(c):return None
+            rows=[]
+            for i in range(n):
+              p=off+2+i*10
+              service=u16(c,p);oid=u16(c,p+2);parent=u16(c,p+4);chunk=u32(c,p+6)
+              if chunk+4>len(c):return None
+              rows.append({"service":service,"id":oid,"parent":parent,"marker":u16(c,chunk),"offset":chunk})
+            return rows
+
+          def ptrlist(chunk,version_num):
+            if len(chunk)<4:return {"valid":False,"reason":"short-chunk"}
+            data_off=chunk[3]
+            if not (4<=data_off<len(chunk)):return {"valid":False,"reason":"bad-data-offset","data_offset":data_off}
+            d=chunk[data_off:]
+            if len(d)<10:return {"valid":False,"reason":"short-list","data_offset":data_off}
+            n16=u16(d,0);m16=u16(d,2)
+            if n16>m16:
+              ptr=4
+            elif n16!=0:
+              ptr=2
+            else:
+              ptr=4 if version_num>=5 else 2
+            need=ptr*3+2+ptr
+            if len(d)<need:return {"valid":False,"reason":"short-header","pointer_size":ptr}
+            if ptr==2:
+              n=u16(d,0);maxn=u16(d,2);last=u16(d,4);f0=u16(d,6);f1=int.from_bytes(d[8:10],"little",signed=True);pos0=10
+            else:
+              n=u32(d,0);maxn=u32(d,4);last=u32(d,8);f0=u16(d,12);f1=int.from_bytes(d[14:18],"little",signed=True);pos0=18
+            if maxn<n or n>256:return {"valid":False,"reason":"bad-counts","pointer_size":ptr,"n":n,"maxn":maxn}
+            if pos0+(n+1)*ptr>len(d):return {"valid":False,"reason":"short-pointers","pointer_size":ptr,"n":n,"maxn":maxn}
+            positions=[]
+            for i in range(n+1):
+              p=pos0+i*ptr
+              positions.append(int.from_bytes(d[p:p+ptr],"little"))
+            mono=all(positions[i]<=positions[i+1] for i in range(len(positions)-1))
+            bounds=all(0<=x<=len(d)-pos0 for x in positions)
+            rec_lens=[positions[i+1]-positions[i] for i in range(n)] if mono else []
+            return {"valid":mono and bounds,"pointer_size":ptr,"n":n,"maxn":maxn,"last_ptr_or_size":last,"value0":f0,"value1":f1,"positions":positions,"record_lengths":rec_lens,"chunk_len":len(chunk),"data_offset":data_off,"data_len":len(d)}
+
+          report={"schema":"chaptera.printer29-media-census.v1","source_safe":True,"raw_pub_retained":False,"media":{},"same_name_pairs":[]}
+          per_name={}
+          for key,spec in MEDIA.items():
+            iso=ISO(spec["url"]);listing=iso.listing("PAGEWIZ")
+            names=sorted(n for n,(e,z,fl) in listing.items() if n.endswith(".PUB") and not (fl&2))
+            rows=[];fail=[]
+            for name in names:
+              try:
+                pub=iso.member("PAGEWIZ/"+name);c=contents(pub)
+                if len(c)<0x18 or c[:4]!=b"\xe8\xac\x22\x00":raise ValueError("not-old22")
+                cv=u16(c,4);sig=c[0x0c:0x0e].hex()
+                generation={("7d00",300):"Publisher95",("8800",300):"Publisher97",("c002",200):"Publisher2.0"}.get((sig,cv),"unknown")
+                dirs=directory(c)
+                if dirs is None:raise ValueError("bad-directory")
+                offsets=sorted(set(r["offset"] for r in dirs))
+                occurrences=[]
+                for r in dirs:
+                  if r["marker"]!=0x29:continue
+                  greater=[x for x in offsets if x>r["offset"]]
+                  end=min(greater) if greater else len(c)
+                  chunk=c[r["offset"]:end]
+                  occurrences.append({"id":r["id"],"service":r["service"],"parent":r["parent"],"analysis":ptrlist(chunk,spec["version_num"])})
+                row={"name":name,"sha256":sha(pub),"byte_len":len(pub),"generation":generation,"secondary_signature":sig,"content_version":cv,"directory_count":len(dirs),"printer29":occurrences}
+                rows.append(row)
+              except Exception as e:
+                fail.append({"name":name,"error":f"{type(e).__name__}:{e}"})
+            expected=[r for r in rows if r["generation"]==spec["expected_generation"]]
+            occ=[o["analysis"] for r in expected for o in r["printer29"] if o["analysis"].get("valid")]
+            ptr_counts=Counter(str(x["pointer_size"]) for x in occ)
+            topology=Counter((x["pointer_size"],x["n"],x["maxn"],x["value0"],x["value1"],tuple(x["record_lengths"])) for x in occ)
+            report["media"][key]={
+              "source_page":spec["source_page"],"root_sha256":spec["root_sha256"],"delivery_url":iso.delivery,
+              "pagewiz_pub_count":len(names),"parsed_count":len(rows),"failure_count":len(fail),
+              "expected_generation_count":len(expected),
+              "expected_generation_with_printer29":sum(bool(r["printer29"]) for r in expected),
+              "valid_printer29_occurrences":len(occ),
+              "pointer_size_counts":dict(ptr_counts),
+              "topology_counts":[{"pointer_size":k[0],"n":k[1],"maxn":k[2],"value0":k[3],"value1":k[4],"record_lengths":list(k[5]),"count":v} for k,v in sorted(topology.items(),key=lambda kv:(-kv[1],kv[0]))],
+              "files":rows,"failures":fail
+            }
+            per_name[key]={r["name"]:r for r in expected}
+
+          common=sorted(set(per_name["pub95"])&set(per_name["pub97"]))
+          for name in common:
+            l=per_name["pub95"][name];r=per_name["pub97"][name]
+            if not l["printer29"] or not r["printer29"]:continue
+            report["same_name_pairs"].append({
+              "name":name,
+              "left_sha256":l["sha256"],"right_sha256":r["sha256"],
+              "left":[x["analysis"] for x in l["printer29"]],
+              "right":[x["analysis"] for x in r["printer29"]]
+            })
+          pairs=report["same_name_pairs"]
+          transitions=Counter()
+          for p in pairs:
+            for a,b in zip(p["left"],p["right"]):
+              if a.get("valid") and b.get("valid"):
+                transitions[f'{a["pointer_size"]}->{b["pointer_size"]}']+=1
+          report["summary"]={
+            "same_name_pair_count_with_printer29":len(pairs),
+            "paired_pointer_transitions":dict(transitions),
+            "bounded_conclusion":(
+              "publisher95-to-97-printer29-pointer-widening-supported"
+              if transitions and set(transitions)=={"2->4"}
+              else "mixed-or-insufficient"
+            )
+          }
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"printer29-census.json").write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"summary.json").write_text(json.dumps(report["summary"],indent=2),encoding="utf-8")
+          print(json.dumps({
+            "pub95":{k:report["media"]["pub95"][k] for k in ("pagewiz_pub_count","expected_generation_count","expected_generation_with_printer29","valid_printer29_occurrences","pointer_size_counts")},
+            "pub97":{k:report["media"]["pub97"][k] for k in ("pagewiz_pub_count","expected_generation_count","expected_generation_with_printer29","valid_printer29_occurrences","pointer_size_counts")},
+            "summary":report["summary"]
+          },indent=2))
+          PY
+      - name: Enforce source-safe census
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("out/printer29-census.json").read_text())
+          assert r["source_safe"] is True and r["raw_pub_retained"] is False
+          assert r["media"]["pub95"]["pagewiz_pub_count"] > 0
+          assert r["media"]["pub97"]["pagewiz_pub_count"] > 0
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-xver-printer29-95-97-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
