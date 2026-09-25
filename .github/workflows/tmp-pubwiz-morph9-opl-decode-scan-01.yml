@@ -1,0 +1,107 @@
+name: TEMP PUBWIZ MORPH9 OPL decode scan
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-morph9-opl-decode-scan-01.yml'
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+      - name: Rehydrate exact MORPH9 and scan decoder arithmetic
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/morph/{src,module} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/morph/source.7z
+          test "$(sha1sum /tmp/morph/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          7z x -y /tmp/morph/source.7z -o/tmp/morph/src >/dev/null
+          MDF="$(find /tmp/morph/src -type f -iname '*.mdf' | head -n1)"
+          iat "$MDF" /tmp/morph/disc.iso >/dev/null
+          test "$(sha256sum /tmp/morph/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z e -y -o/tmp/morph/module /tmp/morph/disc.iso 'PFILES/MSOFFICE/OFFICE/MORPH9.DLL' >/dev/null
+          test "$(sha256sum /tmp/morph/module/MORPH9.DLL | awk '{print $1}')" = 'd154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          python3 - <<'PY'
+          import json,hashlib,pathlib
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_32
+          from capstone.x86 import X86_OP_IMM,X86_OP_REG
+
+          p=pathlib.Path('/tmp/morph/module/MORPH9.DLL'); data=p.read_bytes()
+          pe=pefile.PE(data=data,fast_load=False); ib=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_32); md.detail=True
+          ins=[]
+          for s in pe.sections:
+            if not (s.Characteristics & 0x20000000): continue
+            secname=s.Name.rstrip(b'\0').decode('ascii','replace')
+            for x in md.disasm(s.get_data(),ib+s.VirtualAddress):
+              ins.append((secname,x))
+          masks=[]; shifts=[]; cmps=[]
+          type_consts={1,4,7,16,17,19,24}
+          for idx,(sec,x) in enumerate(ins):
+            imms=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+            regs=[x.reg_name(op.reg) for op in x.operands if op.type==X86_OP_REG]
+            m=x.mnemonic.lower()
+            if m in ('and','test') and any(v in (0x7ff,0xf800,0x1f) for v in imms):
+              masks.append({'idx':idx,'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str,'immediates':imms,'regs':regs})
+            if m in ('shr','sar','shl') and 11 in imms:
+              shifts.append({'idx':idx,'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str,'immediates':imms,'regs':regs})
+            if m in ('cmp','sub') and any(v in type_consts for v in imms):
+              cmps.append({'idx':idx,'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str,'immediates':imms,'regs':regs})
+          clusters=[]
+          for a in masks:
+            for b in shifts:
+              di=abs(a['idx']-b['idx']); dr=abs(a['rva']-b['rva'])
+              if di<=24 and dr<=128:
+                lo=max(0,min(a['idx'],b['idx'])-8); hi=min(len(ins),max(a['idx'],b['idx'])+9)
+                win=[]
+                near_types=[]
+                for j in range(lo,hi):
+                  sec,x=ins[j]
+                  row={'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str}
+                  win.append(row)
+                  if x.mnemonic.lower() in ('cmp','sub'):
+                    vals=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+                    for v in vals:
+                      if v in type_consts: near_types.append(v)
+                same_reg=bool(set(a['regs']) & set(b['regs']))
+                clusters.append({'mask':a,'shift':b,'instruction_distance':di,'rva_distance':dr,'same_register_hint':same_reg,'nearby_wire_type_constants':sorted(set(near_types)),'window':win})
+          clusters.sort(key=lambda c:(not c['same_register_hint'],c['instruction_distance'],c['rva_distance']))
+          strong=[c for c in clusters if c['same_register_hint'] and c['instruction_distance']<=12]
+          classification='strong-decoder-cluster' if strong else ('weak-arithmetic-coincidence' if clusters else 'no-compatible-cluster')
+          out={
+            'schema':'chaptera.pubwiz-morph9-opl-decode-scan.v1',
+            'module_sha256':hashlib.sha256(data).hexdigest(),
+            'mask_instruction_count':len(masks),
+            'shift11_instruction_count':len(shifts),
+            'wire_type_compare_instruction_count':len(cmps),
+            'cluster_count':len(clusters),
+            'strong_cluster_count':len(strong),
+            'classification':classification,
+            'clusters':clusters[:32],
+            'source_safe':True,'raw_module_retained':False
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          print(json.dumps({k:v for k,v in out.items() if k!='clusters'},indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then exit 1; fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-morph9-opl-decode-scan-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
