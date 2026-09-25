@@ -148,19 +148,14 @@ fn scene_bounds_contains(
 
 fn direct_scene_instance(
     editor: &pub_editor::EditorSession,
-    target_page: pub_editor::PageId,
+    target_page_id: &str,
     node_id: pub_editor::NodeId,
 ) -> Option<SceneInstanceV1> {
     let authored = editor.graph().nodes.get(&node_id)?;
-    let target_parent = target_page.into_canonical();
-    if authored.header.parent_id != target_parent {
+    if authored.header.parent_id.to_string() != target_page_id {
         return None;
     }
-    direct_page_local_instance_v1(
-        &node_id.as_canonical().to_string(),
-        &target_page.as_canonical().to_string(),
-    )
-    .ok()
+    direct_page_local_instance_v1(&node_id.as_canonical().to_string(), target_page_id).ok()
 }
 
 fn main() -> eframe::Result<()> {
@@ -1528,6 +1523,7 @@ impl ViewerApp {
         let mut drag_commit = None;
         let mut drag_error = None;
         let page_origin = page.id.into_canonical();
+        let page_id_text = page.id.as_canonical().to_string();
         let page_nodes = visual
             .scene
             .nodes
@@ -1543,7 +1539,7 @@ impl ViewerApp {
                         .iter()
                         .enumerate()
                         .filter_map(|(paint_order, node)| {
-                            let instance = direct_scene_instance(editor, page.id, node.origin)?;
+                            let instance = direct_scene_instance(editor, &page_id_text, node.origin)?;
                             Some(SceneHitEntry {
                                 instance_id: instance.instance_id,
                                 node_id: node.origin,
@@ -1565,12 +1561,12 @@ impl ViewerApp {
                     .entries
                     .iter()
                     .filter_map(|hit| {
-                        let instance = direct_scene_instance(editor, page.id, hit.node_id)?;
+                        let instance = direct_scene_instance(editor, &page_id_text, hit.node_id)?;
                         let admission =
                             admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                        let origin_node_id = hit.node_id.as_canonical().to_string();
                         if !admission.admitted
-                            || admission.origin_node_id.as_deref()
-                                != Some(hit.node_id.as_canonical().to_string().as_str())
+                            || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
                         {
                             return None;
                         }
@@ -2686,7 +2682,18 @@ mod tests {
         let mut app = ViewerApp::new(None);
         app.visual = Some(visual);
         app.editor = Some(editor);
-        app.canvas_selection.select_only(node_id);
+        let target_page_id = app
+            .visual
+            .as_ref()
+            .and_then(|visual| visual.document.pages.first())
+            .map(|page| page.id.as_canonical().to_string())
+            .expect("fixture page");
+        let instance = direct_page_local_instance_v1(
+            &node_id.as_canonical().to_string(),
+            &target_page_id,
+        )
+        .expect("direct test scene instance");
+        app.canvas_selection.select_only(instance.instance_id);
 
         let pointer_start = pub_interaction::DocumentPoint::new(
             pub_editor::LengthEmu::ZERO,
