@@ -13,6 +13,7 @@ use std::fmt;
 mod image;
 mod package_writer;
 mod semantic;
+mod shape;
 mod table;
 
 pub use image::{
@@ -26,6 +27,12 @@ pub use package_writer::{
 pub use semantic::{
     IDML_PACKAGING_NAMESPACE, IDML_SCHEMA_FENCE_LEGACY_DOM_7, IdmlSemanticError, IdmlWireProfile,
     project_resolved_graph_to_idml, project_resolved_graph_to_idml_with_tables,
+};
+pub use shape::{
+    AUTHORED_SHAPE_GEOMETRY_FEATURE, AUTHORED_SHAPE_IDENTITY_FEATURE,
+    AUTHORED_SHAPE_ORDER_FEATURE, AUTHORED_SHAPE_PAINT_FEATURE,
+    IdmlAuthoredRectanglePlacement, IdmlAuthoredShapeError, IdmlRgb8,
+    add_authored_rectangles_to_idml,
 };
 pub use table::{IdmlSimpleTable, IdmlTableCell, IdmlTableError};
 
