@@ -1,5 +1,5 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
+    EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
     EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorEditableTarget, EditorError, EditorSession,
 };
 use pub_model::{
