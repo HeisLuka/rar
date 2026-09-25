@@ -54,7 +54,9 @@ impl AdmissionPermit {
             || !self
                 .reservation_id
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+                .all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
+                })
         {
             return Err(RuntimeError::new(
                 "invalid_admission_reservation",
@@ -381,10 +383,13 @@ impl WorkerLoop {
                             if job.cancel_requested_at_ms.is_some() {
                                 cancellation.cancel();
                             }
-                            let renewed = self
-                                .admission
-                                .renew(&lease.job, &permit)
-                                .await?;
+                            let renewed = match self.admission.renew(&lease.job, &permit).await {
+                                Ok(renewed) => renewed,
+                                Err(error) => {
+                                    cancellation.cancel();
+                                    return Err(error);
+                                }
+                            };
                             renewed.validate()?;
                             if renewed.reservation_id != permit.reservation_id
                                 || renewed.lease_generation <= permit.lease_generation
