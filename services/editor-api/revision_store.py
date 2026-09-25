@@ -1022,6 +1022,134 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_delete_nodes(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        normalized = copy.deepcopy(request)
+        command = normalized.get("command")
+        if isinstance(command, dict) and isinstance(command.get("entries"), list):
+            command["entries"] = sorted(
+                command["entries"],
+                key=lambda entry: entry.get("node_id", "")
+                if isinstance(entry, dict)
+                else "",
+            )
+
+        def bound_executor(base_project: dict, accepted_command: dict):
+            operation, resulting_project, consequences = executor(
+                base_project,
+                accepted_command,
+            )
+            page_id = accepted_command["page_id"]
+            base_pages = base_project.get("pages")
+            base_nodes = base_project.get("nodes")
+            base_operations = base_project.get("operations")
+            result_pages = resulting_project.get("pages")
+            result_nodes = resulting_project.get("nodes")
+            result_operations = resulting_project.get("operations")
+            if (
+                not isinstance(base_pages, dict)
+                or not isinstance(base_nodes, dict)
+                or not isinstance(base_operations, list)
+                or not isinstance(result_pages, dict)
+                or not isinstance(result_nodes, dict)
+                or not isinstance(result_operations, list)
+            ):
+                raise ValueError("DeleteNodesV1 requires canonical page/node/history registries")
+
+            base_page = base_pages.get(page_id)
+            result_page = result_pages.get(page_id)
+            if (
+                not isinstance(base_page, dict)
+                or not isinstance(base_page.get("children"), list)
+                or not isinstance(result_page, dict)
+                or not isinstance(result_page.get("children"), list)
+            ):
+                raise ValueError("DeleteNodesV1 target page state is unavailable")
+
+            if operation.get("base_child_order") != base_page["children"]:
+                raise ValueError(
+                    "canonical DeleteNodesV1 base_child_order differs from base page sequence"
+                )
+
+            members = operation.get("entries")
+            if not isinstance(members, list):
+                raise ValueError("canonical DeleteNodesV1 entries are required")
+            target_ids = {
+                member.get("node_id")
+                for member in members
+                if isinstance(member, dict)
+            }
+            accepted_ids = {
+                entry["node_id"] for entry in accepted_command["entries"]
+            }
+            if target_ids != accepted_ids or None in target_ids:
+                raise ValueError(
+                    "canonical DeleteNodesV1 members differ from accepted target set"
+                )
+
+            expected_children = [
+                child
+                for child in base_page["children"]
+                if child not in target_ids
+            ]
+            expected_result_page = copy.deepcopy(base_page)
+            expected_result_page["children"] = expected_children
+            if result_page != expected_result_page:
+                raise ValueError(
+                    "DeleteNodesV1 may only change target-page child membership"
+                )
+            if set(result_pages) != set(base_pages):
+                raise ValueError(
+                    "DeleteNodesV1 cannot add/remove pages"
+                )
+            for other_page_id, base_page_state in base_pages.items():
+                if (
+                    other_page_id != page_id
+                    and result_pages.get(other_page_id) != base_page_state
+                ):
+                    raise ValueError(
+                        "DeleteNodesV1 modified a non-target page"
+                    )
+            if set(resulting_project) != set(base_project):
+                raise ValueError(
+                    "DeleteNodesV1 cannot add/remove project registries"
+                )
+            for key, base_value in base_project.items():
+                if (
+                    key not in {"pages", "nodes", "operations"}
+                    and resulting_project.get(key) != base_value
+                ):
+                    raise ValueError(
+                        "DeleteNodesV1 modified non-node project state"
+                    )
+            if set(result_nodes) != set(base_nodes) - target_ids:
+                raise ValueError(
+                    "DeleteNodesV1 resulting node registry differs from base minus targets"
+                )
+            for node_id, base_node in base_nodes.items():
+                if node_id not in target_ids and result_nodes.get(node_id) != base_node:
+                    raise ValueError(
+                        "DeleteNodesV1 modified a non-target node"
+                    )
+            if result_operations != list(base_operations) + [operation]:
+                raise ValueError(
+                    "DeleteNodesV1 must append exactly one canonical operation"
+                )
+            return operation, resulting_project, consequences
+
+        return self._commit_command(
+            normalized,
+            bound_executor,
+            request_validator=self._validate_delete_nodes_request_shape,
+            canonical_validator=self._validate_canonical_delete_nodes,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_paragraph_alignment(
         self,
         request: dict,
@@ -1948,6 +2076,137 @@ class RevisionKernel:
             raise ValueError("canonical DeleteNode entity state differs from expected precondition")
         if operation.get("before_state_id") != before_state_id:
             raise ValueError("canonical DeleteNode before_state_id is not bound to before_entity")
+
+    @staticmethod
+    def _validate_delete_nodes_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.delete-nodes-intent.v1":
+            raise ValueError("V1 DeleteNodes protocol_version is required")
+        command = request.get("command")
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "delete_nodes"
+            or set(command) != {"kind", "page_id", "entries"}
+        ):
+            raise ValueError("DeleteNodes contains non-intent/authoritative fields")
+        page_id = command.get("page_id")
+        if not isinstance(page_id, str) or not page_id:
+            raise ValueError("DeleteNodes page_id is required")
+        entries = command.get("entries")
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("DeleteNodes requires a non-empty target set")
+
+        seen_nodes = set()
+        seen_indexes = set()
+        previous_node_id = None
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or set(entry)
+                != {"node_id", "expected_state_id", "expected_child_index"}
+            ):
+                raise ValueError("DeleteNodes entry contains non-intent fields")
+            node_id = entry.get("node_id")
+            if not isinstance(node_id, str) or not node_id:
+                raise ValueError("DeleteNodes entry node_id is required")
+            if node_id in seen_nodes:
+                raise ValueError("DeleteNodes target NodeIds must be unique")
+            if previous_node_id is not None and node_id < previous_node_id:
+                raise ValueError("DeleteNodes entries must be normalized by NodeId")
+            seen_nodes.add(node_id)
+            previous_node_id = node_id
+
+            expected_state_id = entry.get("expected_state_id")
+            if (
+                not isinstance(expected_state_id, str)
+                or not expected_state_id.startswith("sha256:")
+                or len(expected_state_id) != 71
+                or any(
+                    ch not in "0123456789abcdef"
+                    for ch in expected_state_id[7:]
+                )
+            ):
+                raise ValueError(
+                    "DeleteNodes expected_state_id must be sha256:<lowercase hex>"
+                )
+            index = entry.get("expected_child_index")
+            if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+                raise ValueError(
+                    "DeleteNodes expected_child_index must be a non-negative integer"
+                )
+            if index in seen_indexes:
+                raise ValueError(
+                    "DeleteNodes target child indexes must be unique"
+                )
+            seen_indexes.add(index)
+
+    @staticmethod
+    def _validate_canonical_delete_nodes(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "page_id", "entries", "base_child_order"}
+            or operation.get("kind") != "delete_nodes"
+        ):
+            raise ValueError(
+                "authoritative executor returned malformed DeleteNodesV1 operation"
+            )
+        if operation.get("page_id") != command.get("page_id"):
+            raise ValueError("canonical DeleteNodes page differs from accepted page")
+
+        base_child_order = operation.get("base_child_order")
+        if (
+            not isinstance(base_child_order, list)
+            or any(not isinstance(node_id, str) or not node_id for node_id in base_child_order)
+            or len(set(base_child_order)) != len(base_child_order)
+        ):
+            raise ValueError("canonical DeleteNodes base_child_order is invalid")
+
+        members = operation.get("entries")
+        if not isinstance(members, list) or len(members) != len(command["entries"]):
+            raise ValueError("canonical DeleteNodes member count differs from accepted set")
+        expected_by_id = {entry["node_id"]: entry for entry in command["entries"]}
+        member_ids = []
+        for member in members:
+            if (
+                not isinstance(member, dict)
+                or set(member)
+                != {
+                    "node_id",
+                    "before_entity",
+                    "before_state_id",
+                    "parent_id",
+                    "child_index",
+                }
+            ):
+                raise ValueError("canonical DeleteNodes member is malformed")
+            node_id = member.get("node_id")
+            member_ids.append(node_id)
+            expected = expected_by_id.get(node_id)
+            if expected is None:
+                raise ValueError("canonical DeleteNodes contains an unrequested target")
+            if member.get("parent_id") != command["page_id"]:
+                raise ValueError("canonical DeleteNodes member parent differs from accepted page")
+            if member.get("child_index") != expected["expected_child_index"]:
+                raise ValueError("canonical DeleteNodes member child index differs from precondition")
+            index = member["child_index"]
+            if index >= len(base_child_order) or base_child_order[index] != node_id:
+                raise ValueError(
+                    "canonical DeleteNodes child index is not bound to base_child_order"
+                )
+            before_entity = member.get("before_entity")
+            if not isinstance(before_entity, dict):
+                raise ValueError("canonical DeleteNodes before_entity is required")
+            before_state_id = hash_id(before_entity)
+            if before_state_id != expected["expected_state_id"]:
+                raise ValueError(
+                    "canonical DeleteNodes entity state differs from expected precondition"
+                )
+            if member.get("before_state_id") != before_state_id:
+                raise ValueError(
+                    "canonical DeleteNodes before_state_id is not bound to before_entity"
+                )
+
+        if member_ids != sorted(member_ids) or member_ids != sorted(expected_by_id):
+            raise ValueError("canonical DeleteNodes members must be normalized by NodeId")
 
     @staticmethod
     def _validate_text_frame_columns_state(state: dict, label: str) -> None:
