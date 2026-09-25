@@ -611,9 +611,11 @@ impl BlobStoreService {
         let object_locator = object_locator(BlobNamespace::Quarantine, tenant_id, upload_id);
         let mut bounded = HashingBoundedReader::new(input, expected_byte_len);
         let (mut upload_writer, upload_reader) = tokio::io::duplex(COPY_BUFFER_BYTES);
-        let create = self
-            .provider
-            .create_immutable(&object_locator, expected_byte_len, Box::new(upload_reader));
+        let create = self.provider.create_immutable(
+            &object_locator,
+            expected_byte_len,
+            Box::new(upload_reader),
+        );
         let pump = async {
             tokio::io::copy(&mut bounded, &mut upload_writer)
                 .await
