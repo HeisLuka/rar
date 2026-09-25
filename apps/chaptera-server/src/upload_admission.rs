@@ -216,7 +216,7 @@ impl SqliteUploadAdmissionAuthority {
         })?;
 
         let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
-        let mut tx = (&mut *connection)
+        let mut tx = (*connection)
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(sqlite_error)?;
