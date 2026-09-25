@@ -703,10 +703,12 @@ impl BlobGcProcessor {
                     .await?
                 {
                     GcDeleteOutcome::Deleted | GcDeleteOutcome::NotFound => true,
-                    GcDeleteOutcome::UnknownOutcome => !self
-                        .objects
-                        .exists_exact(&object_locator, &storage_generation)
-                        .await?,
+                    GcDeleteOutcome::UnknownOutcome => {
+                        !self
+                            .objects
+                            .exists_exact(&object_locator, &storage_generation)
+                            .await?
+                    }
                 };
 
                 if !deleted {
@@ -719,12 +721,7 @@ impl BlobGcProcessor {
                 }
 
                 self.authority
-                    .commit_deleted(
-                        &lease.candidate,
-                        &storage_generation,
-                        &delete_fence,
-                        now_ms,
-                    )
+                    .commit_deleted(&lease.candidate, &storage_generation, &delete_fence, now_ms)
                     .await?;
                 self.ledger
                     .terminal(&lease, now_ms, GcCandidateState::Completed, None)
