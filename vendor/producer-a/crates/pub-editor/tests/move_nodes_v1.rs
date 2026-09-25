@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_6, EditOperation, EditorError,
-    EditorSession, LengthEmu, MoveNodeBatchEntry, RectEmu,
+    EditorProject, EditorProjectError, EditorSession, LengthEmu, MoveNodeBatchEntry, RectEmu,
 };
 use pub_model::{
     Affine2D, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
@@ -146,33 +146,31 @@ fn entries(base: &PubResolvedGraph) -> Vec<MoveNodeBatchEntry> {
 }
 
 #[test]
-fn canonical_batch_is_one_sorted_history_and_project_unit() {
+fn canonical_batch_is_one_history_and_project_replay_unit() {
     assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_6);
     let base = graph();
     let (page_id, node_a, node_b) = ids();
-    let expected = entries(&base);
-    let mut session = EditorSession::new(base.clone()).expect("session");
-
-    let operation = session
-        .consume_canonical_move_nodes(page_id, expected.clone())
-        .expect("batch");
-    let EditOperation::MoveNodes { entries, .. } = &operation else {
-        panic!("MoveNodes operation");
+    let mut batch = entries(&base);
+    batch.sort_by_key(|entry| entry.node_id);
+    let operation = EditOperation::MoveNodes {
+        page_id,
+        entries: batch.clone(),
     };
-    assert_eq!(
-        entries.iter().map(|entry| entry.node_id).collect::<Vec<_>>(),
-        vec![node_a, node_b]
-    );
-    assert_eq!(session.operations(), &[operation.clone()]);
+    let project = EditorProject {
+        schema_version: EDITOR_PROJECT_VERSION_V0_6.to_owned(),
+        source_hash: source_hash(),
+        assets: Vec::new(),
+        operations: vec![operation.clone()],
+    };
+    let after_a = batch.iter().find(|entry| entry.node_id == node_a).unwrap().after;
+    let after_b = batch.iter().find(|entry| entry.node_id == node_b).unwrap().after;
 
-    let after_a = entries.iter().find(|entry| entry.node_id == node_a).unwrap().after;
-    let after_b = entries.iter().find(|entry| entry.node_id == node_b).unwrap().after;
+    let mut session = EditorSession::new(base.clone()).expect("session");
+    session.apply_project(&project).expect("canonical batch replay");
+    assert_eq!(session.operations(), &[operation.clone()]);
     assert_eq!(session.graph().nodes[&node_a].header.bounds, after_a);
     assert_eq!(session.graph().nodes[&node_b].header.bounds, after_b);
-
-    let project = session.project();
-    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_6);
-    assert_eq!(project.operations, vec![operation.clone()]);
+    assert_eq!(session.project(), project);
     assert_eq!(session.persistence_requirements().len(), 2);
 
     session.undo().expect("one batch undo");
@@ -191,8 +189,8 @@ fn canonical_batch_is_one_sorted_history_and_project_unit() {
     assert_eq!(session.graph().nodes[&node_b].header.bounds, after_b);
 
     let mut reopened = EditorSession::new(base).expect("reopen");
-    reopened.apply_project(&project).expect("project replay");
-    assert_eq!(reopened.operations(), &[operation]);
+    reopened.apply_project(&project).expect("save/reopen replay");
+    assert_eq!(reopened.project(), project);
     assert_eq!(reopened.graph().nodes[&node_a].header.bounds, after_a);
     assert_eq!(reopened.graph().nodes[&node_b].header.bounds, after_b);
 }
@@ -203,14 +201,27 @@ fn stale_later_member_rejects_whole_batch_without_partial_mutation() {
     let (page_id, node_a, node_b) = ids();
     let before_a = base.nodes[&node_a].header.bounds;
     let before_b = base.nodes[&node_b].header.bounds;
-    let mut request = entries(&base);
-    let stale = request.iter_mut().find(|entry| entry.node_id == node_b).unwrap();
+    let mut batch = entries(&base);
+    batch.sort_by_key(|entry| entry.node_id);
+    let stale = batch.iter_mut().find(|entry| entry.node_id == node_b).unwrap();
     stale.before.x = LengthEmu::new(stale.before.x.get() + 1);
+    let project = EditorProject {
+        schema_version: EDITOR_PROJECT_VERSION_V0_6.to_owned(),
+        source_hash: source_hash(),
+        assets: Vec::new(),
+        operations: vec![EditOperation::MoveNodes {
+            page_id,
+            entries: batch,
+        }],
+    };
     let mut session = EditorSession::new(base).expect("session");
 
     assert!(matches!(
-        session.consume_canonical_move_nodes(page_id, request),
-        Err(EditorError::StaleNodeMove { node_id }) if node_id == node_b
+        session.apply_project(&project),
+        Err(EditorProjectError::Operation {
+            index: 0,
+            error: EditorError::StaleNodeMove { node_id }
+        }) if node_id == node_b
     ));
     assert_eq!(session.graph().nodes[&node_a].header.bounds, before_a);
     assert_eq!(session.graph().nodes[&node_b].header.bounds, before_b);
@@ -221,26 +232,54 @@ fn stale_later_member_rejects_whole_batch_without_partial_mutation() {
 fn duplicate_resize_and_wrong_page_fail_closed() {
     let base = graph();
     let (page_id, node_a, _) = ids();
+    let one = entries(&base)
+        .into_iter()
+        .find(|entry| entry.node_id == node_a)
+        .unwrap();
 
-    let one = entries(&base).into_iter().find(|entry| entry.node_id == node_a).unwrap();
-    let mut session = EditorSession::new(base.clone()).expect("session");
-    assert!(matches!(
-        session.consume_canonical_move_nodes(page_id, vec![one.clone(), one.clone()]),
-        Err(EditorError::MoveNodesDuplicate { node_id }) if node_id == node_a
-    ));
-
-    let mut resized = one.clone();
-    resized.after.width = LengthEmu::new(resized.after.width.get() + 1);
-    assert!(matches!(
-        session.consume_canonical_move_nodes(page_id, vec![resized]),
-        Err(EditorError::MoveNodesSizeChanged { node_id }) if node_id == node_a
-    ));
+    for (entries, expected_code) in [
+        (vec![one.clone(), one.clone()], "move_nodes_duplicate"),
+        (
+            vec![{
+                let mut resized = one.clone();
+                resized.after.width = LengthEmu::new(resized.after.width.get() + 1);
+                resized
+            }],
+            "move_nodes_size_changed",
+        ),
+    ] {
+        let project = EditorProject {
+            schema_version: EDITOR_PROJECT_VERSION_V0_6.to_owned(),
+            source_hash: source_hash(),
+            assets: Vec::new(),
+            operations: vec![EditOperation::MoveNodes { page_id, entries }],
+        };
+        let mut session = EditorSession::new(base.clone()).expect("session");
+        let error = session.apply_project(&project).expect_err("reject malformed batch");
+        let EditorProjectError::Operation { index: 0, error } = error else {
+            panic!("operation error");
+        };
+        assert_eq!(error.code(), expected_code);
+        assert!(session.operations().is_empty());
+    }
 
     let other_page: PageId = canonical_id("10000000-0000-4000-8000-000000000099");
+    let project = EditorProject {
+        schema_version: EDITOR_PROJECT_VERSION_V0_6.to_owned(),
+        source_hash: source_hash(),
+        assets: Vec::new(),
+        operations: vec![EditOperation::MoveNodes {
+            page_id: other_page,
+            entries: vec![one],
+        }],
+    };
+    let mut session = EditorSession::new(base).expect("session");
     assert!(matches!(
-        session.consume_canonical_move_nodes(other_page, vec![one]),
-        Err(EditorError::MoveNodesPageMismatch { node_id, page_id: found })
-            if node_id == node_a && found == other_page
+        session.apply_project(&project),
+        Err(EditorProjectError::Operation {
+            index: 0,
+            error: EditorError::MoveNodesPageMismatch { node_id, page_id: found }
+        }) if node_id == node_a && found == other_page
     ));
     assert!(session.operations().is_empty());
 }
