@@ -35,15 +35,30 @@ pub trait JobExecutor: Send + Sync {
     fn execute<'a>(&'a self, job: &'a JobRecord, cancellation: CancellationFlag) -> JobFuture<'a>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub type AdmissionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<AdmissionDecision, RuntimeError>> + Send + 'a>>;
+pub type ReservationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send + 'a>>;
+
+pub trait AdmissionReservation: Send + Sync {
+    fn renew<'a>(&'a self) -> ReservationFuture<'a>;
+    fn release<'a>(&'a self) -> ReservationFuture<'a>;
+}
+
 pub enum AdmissionDecision {
-    Admit,
-    RetryLater { code: &'static str },
-    Reject { code: &'static str },
+    Admit {
+        reservation: Arc<dyn AdmissionReservation>,
+    },
+    RetryLater {
+        code: &'static str,
+    },
+    Reject {
+        code: &'static str,
+    },
 }
 
 pub trait JobAdmission: Send + Sync {
-    fn admit(&self, job: &JobRecord) -> Result<AdmissionDecision, RuntimeError>;
+    fn admit<'a>(&'a self, job: &'a JobRecord) -> AdmissionFuture<'a>;
 }
 
 #[derive(Clone, Default)]
@@ -230,9 +245,10 @@ impl WorkerLoop {
 
             receipt.claimed += 1;
 
-            match self.admission.admit(&lease.job)? {
-                AdmissionDecision::Admit => {
+            let reservation = match self.admission.admit(&lease.job).await? {
+                AdmissionDecision::Admit { reservation } => {
                     receipt.admitted += 1;
+                    reservation
                 }
                 AdmissionDecision::RetryLater { code } => {
                     match self
@@ -260,9 +276,14 @@ impl WorkerLoop {
                     }
                     continue;
                 }
+            };
+
+            let completion = self.execute_lease(&lease, reservation.as_ref()).await?;
+            if completion.releases_reservation() {
+                reservation.release().await?;
             }
 
-            match self.execute_lease(&lease).await? {
+            match completion {
                 ExecutionCompletion::Succeeded {
                     already_published: false,
                 } => receipt.succeeded += 1,
@@ -283,7 +304,11 @@ impl WorkerLoop {
         Ok(receipt)
     }
 
-    async fn execute_lease(&self, lease: &Lease) -> Result<ExecutionCompletion, RuntimeError> {
+    async fn execute_lease(
+        &self,
+        lease: &Lease,
+        reservation: &dyn AdmissionReservation,
+    ) -> Result<ExecutionCompletion, RuntimeError> {
         let cancellation = CancellationFlag::default();
         let execution = self.executor.execute(&lease.job, cancellation.clone());
         tokio::pin!(execution);
@@ -303,6 +328,7 @@ impl WorkerLoop {
                     return self.finish_execution(lease, result).await;
                 }
                 _ = heartbeat.tick() => {
+                    reservation.renew().await?;
                     let now_ms = unix_now_ms()?;
                     match self.queue.heartbeat(
                         &lease.job.job_id,
@@ -396,6 +422,15 @@ enum ExecutionCompletion {
     DrainDeadline,
 }
 
+impl ExecutionCompletion {
+    fn releases_reservation(&self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded { .. } | Self::Requeued | Self::Failed | Self::Cancelled
+        )
+    }
+}
+
 fn duration_ms(duration: Duration, label: &str) -> Result<i64, RuntimeError> {
     i64::try_from(duration.as_millis()).map_err(|_| {
         RuntimeError::new(
@@ -479,20 +514,55 @@ mod tests {
         }
     }
 
-    struct Allow;
+    #[derive(Default)]
+    struct ReservationCounters {
+        renews: AtomicU64,
+        releases: AtomicU64,
+    }
+
+    struct TrackingReservation {
+        counters: Arc<ReservationCounters>,
+    }
+
+    impl AdmissionReservation for TrackingReservation {
+        fn renew<'a>(&'a self) -> ReservationFuture<'a> {
+            Box::pin(async move {
+                self.counters.renews.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+
+        fn release<'a>(&'a self) -> ReservationFuture<'a> {
+            Box::pin(async move {
+                self.counters.releases.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+
+    struct Allow {
+        counters: Arc<ReservationCounters>,
+    }
 
     impl JobAdmission for Allow {
-        fn admit(&self, _job: &JobRecord) -> Result<AdmissionDecision, RuntimeError> {
-            Ok(AdmissionDecision::Admit)
+        fn admit<'a>(&'a self, _job: &'a JobRecord) -> AdmissionFuture<'a> {
+            let counters = self.counters.clone();
+            Box::pin(async move {
+                Ok(AdmissionDecision::Admit {
+                    reservation: Arc::new(TrackingReservation { counters }),
+                })
+            })
         }
     }
 
     struct Reject;
 
     impl JobAdmission for Reject {
-        fn admit(&self, _job: &JobRecord) -> Result<AdmissionDecision, RuntimeError> {
-            Ok(AdmissionDecision::Reject {
-                code: "quota_denied",
+        fn admit<'a>(&'a self, _job: &'a JobRecord) -> AdmissionFuture<'a> {
+            Box::pin(async {
+                Ok(AdmissionDecision::Reject {
+                    code: "quota_denied",
+                })
             })
         }
     }
@@ -507,6 +577,22 @@ mod tests {
         ) -> JobFuture<'a> {
             let effect = format!("effect-{}", job.job_id);
             Box::pin(async move { Ok(JobSuccess { effect_key: effect }) })
+        }
+    }
+
+    struct DelayedSuccess;
+
+    impl JobExecutor for DelayedSuccess {
+        fn execute<'a>(
+            &'a self,
+            job: &'a JobRecord,
+            _cancellation: CancellationFlag,
+        ) -> JobFuture<'a> {
+            let effect = format!("effect-{}", job.job_id);
+            Box::pin(async move {
+                sleep(Duration::from_millis(120)).await;
+                Ok(JobSuccess { effect_key: effect })
+            })
         }
     }
 
@@ -539,12 +625,15 @@ mod tests {
     async fn successful_job_publishes_once_then_worker_drains() {
         let (queue, path) = queue().await;
         enqueue(&queue, "job-success").await;
+        let counters = Arc::new(ReservationCounters::default());
         let control = WorkerControl::default();
         let worker = Arc::new(
             WorkerLoop::new(
                 queue.clone(),
                 Arc::new(ImmediateSuccess),
-                Arc::new(Allow),
+                Arc::new(Allow {
+                    counters: counters.clone(),
+                }),
                 control.clone(),
                 config("worker-success"),
             )
@@ -570,6 +659,7 @@ mod tests {
         assert_eq!(job.status, JobStatus::Succeeded);
         assert_eq!(receipt.claimed, 1);
         assert_eq!(receipt.succeeded, 1);
+        assert_eq!(counters.releases.load(Ordering::SeqCst), 1);
 
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -617,9 +707,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_flight_job_renews_reservation_and_releases_once() {
+        let (queue, path) = queue().await;
+        enqueue(&queue, "job-renew").await;
+        let counters = Arc::new(ReservationCounters::default());
+        let control = WorkerControl::default();
+        let worker = Arc::new(
+            WorkerLoop::new(
+                queue.clone(),
+                Arc::new(DelayedSuccess),
+                Arc::new(Allow {
+                    counters: counters.clone(),
+                }),
+                control.clone(),
+                config("worker-renew"),
+            )
+            .unwrap(),
+        );
+
+        let task = {
+            let worker = worker.clone();
+            tokio::spawn(async move { worker.run().await.unwrap() })
+        };
+
+        for _ in 0..100 {
+            let job = queue.get("job-renew").await.unwrap().unwrap();
+            if job.status == JobStatus::Succeeded {
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        control.request_drain();
+        let receipt = task.await.unwrap();
+
+        assert_eq!(receipt.succeeded, 1);
+        assert!(counters.renews.load(Ordering::SeqCst) >= 1);
+        assert_eq!(counters.releases.load(Ordering::SeqCst), 1);
+
+        queue.close().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn drain_deadline_stops_heartbeat_and_leaves_lease_reclaimable() {
         let (queue, path) = queue().await;
         enqueue(&queue, "job-drain").await;
+        let counters = Arc::new(ReservationCounters::default());
         let started = Arc::new(Notify::new());
         let cancelled_seen = Arc::new(AtomicBool::new(false));
         let control = WorkerControl::default();
@@ -630,7 +763,9 @@ mod tests {
                     started: started.clone(),
                     cancelled_seen: cancelled_seen.clone(),
                 }),
-                Arc::new(Allow),
+                Arc::new(Allow {
+                    counters: counters.clone(),
+                }),
                 control.clone(),
                 config("worker-drain"),
             )
@@ -653,6 +788,7 @@ mod tests {
 
         assert_eq!(receipt.drain_deadline_abandoned, 1);
         assert!(cancelled_seen.load(Ordering::SeqCst));
+        assert_eq!(counters.releases.load(Ordering::SeqCst), 0);
 
         let running = queue.get("job-drain").await.unwrap().unwrap();
         assert_eq!(running.status, JobStatus::Running);
