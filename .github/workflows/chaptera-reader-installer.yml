@@ -1,0 +1,200 @@
+name: Chaptera Reader Windows installer V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/**"
+      - "vendor/producer-a/**"
+      - "packages/product/reader-portable/**"
+      - "installer/windows/chaptera-reader.iss"
+      - ".github/workflows/chaptera-reader-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaptera-reader-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEWSLETTER_SHA256: 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf
+  INNO_SETUP_VERSION: 6.7.1
+  CHAPTERA_VERSION: 0.1.0-preview
+
+jobs:
+  installer-windows:
+    name: Windows install + Open With + uninstall
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Build current Reader-only binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p chaptera-desktop --release --features reader-only
+          if (-not (Test-Path "target/release/chaptera-editor.exe")) { throw "reader-only shared desktop binary missing" }
+
+      - name: Stage product-qualified Reader payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Remove-Item -Recurse -Force stage,dist -ErrorAction SilentlyContinue
+          $stage = "stage/chaptera-reader"
+          New-Item -ItemType Directory -Force -Path $stage,dist | Out-Null
+          Copy-Item "target/release/chaptera-editor.exe" "$stage/Chaptera-Reader.exe"
+          @"
+          # Chaptera PUB Reader — Technical Preview
+
+          Local, read-only Microsoft Publisher document access.
+          This build does not claim full visual fidelity or native PUB editing.
+          "@ | Set-Content -Encoding utf8 "$stage/README.md"
+
+      - name: Acquire pinned real PUB fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:NEWSLETTER_SHA256) { throw "fixture SHA-256 mismatch: $hash" }
+          "CHAPTERA_READER_FIXTURE=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install innosetup --version=$env:INNO_SETUP_VERSION --yes --no-progress --limit-output
+          $candidate = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (Test-Path $candidate) { $iscc = $candidate } else {
+            $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw "ISCC.exe not found after pinned Inno Setup install" }
+            $iscc = $cmd.Source
+          }
+          $packageLine = choco list --exact innosetup --limit-output | Where-Object { $_ -match '^innosetup\|' } | Select-Object -First 1
+          if (-not $packageLine) { throw "Chocolatey did not report installed Inno Setup" }
+          $installedVersion = ($packageLine -split '\|', 2)[1].Trim()
+          if ($installedVersion -ne $env:INNO_SETUP_VERSION) { throw "Unexpected Inno Setup version: $installedVersion" }
+          "ISCC_PATH=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ISCC_PRODUCT_VERSION=$installedVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile Chaptera Reader installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sourceDir = (Resolve-Path "stage/chaptera-reader").Path
+          $outputDir = (Resolve-Path "dist").Path
+          & $env:ISCC_PATH "/DMyAppVersion=$env:CHAPTERA_VERSION" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" "installer/windows/chaptera-reader.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with code $LASTEXITCODE" }
+          $setup = Join-Path $outputDir "Chaptera-Reader-Setup-$env:CHAPTERA_VERSION.exe"
+          if (-not (Test-Path $setup)) { throw "Expected installer missing: $setup" }
+          "CHAPTERA_READER_SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install, validate association, smoke, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pubKey = "Registry::HKEY_CURRENT_USER\Software\Classes\.pub"
+          New-Item -Path $pubKey -Force | Out-Null
+          Set-Item -Path $pubKey -Value "Chaptera.Acceptance.PreExistingHandler"
+          $beforeDefault = (Get-Item $pubKey).GetValue("")
+
+          $install = Start-Process -FilePath $env:CHAPTERA_READER_SETUP -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)" }
+
+          $installed = Join-Path $env:LOCALAPPDATA "Programs\Chaptera PUB Reader\chaptera-reader.exe"
+          if (-not (Test-Path $installed)) { throw "Installed Reader binary not found" }
+          foreach ($forbidden in @("chaptera-editor.exe","chaptera-rescue.exe","chaptera.exe")) {
+            if (Test-Path (Join-Path (Split-Path $installed) $forbidden)) { throw "Reader installer shipped forbidden entry: $forbidden" }
+          }
+
+          $sourceHash = (Get-FileHash "stage/chaptera-reader/Chaptera-Reader.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installedHash = (Get-FileHash $installed -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sourceHash -ne $installedHash) { throw "installed Reader bytes differ from staged Reader" }
+
+          $fixtureBefore = (Get-FileHash $env:CHAPTERA_READER_FIXTURE -Algorithm SHA256).Hash.ToLowerInvariant()
+          $smoke = Start-Process -FilePath $installed -ArgumentList @("--smoke-check", $env:CHAPTERA_READER_FIXTURE) -Wait -PassThru
+          if ($smoke.ExitCode -ne 0) { throw "Installed Reader real-PUB smoke failed: $($smoke.ExitCode)" }
+          $fixtureAfter = (Get-FileHash $env:CHAPTERA_READER_FIXTURE -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($fixtureBefore -ne $fixtureAfter) { throw "installed Reader mutated source PUB" }
+
+          $progId = "Registry::HKEY_CURRENT_USER\Software\Classes\Chaptera.PUB.Reader"
+          if (-not (Test-Path $progId)) { throw "Chaptera ProgID missing" }
+          $openWithPath = "$pubKey\OpenWithProgids"
+          if (-not (Test-Path $openWithPath)) { throw ".pub OpenWithProgids missing" }
+          $openWithKey = Get-Item $openWithPath
+          if (-not ($openWithKey.GetValueNames() -contains "Chaptera.PUB.Reader")) { throw "Chaptera.PUB.Reader missing from .pub Open With" }
+          if ($openWithKey.GetValueKind("Chaptera.PUB.Reader").ToString() -ne "None") { throw "Chaptera.PUB.Reader Open With value is not REG_NONE" }
+
+          $appRegistration = "Registry::HKEY_CURRENT_USER\Software\Classes\Applications\chaptera-reader.exe"
+          $supportedTypes = "$appRegistration\SupportedTypes"
+          if (-not (Test-Path $supportedTypes)) { throw "Reader SupportedTypes missing" }
+          if (-not ((Get-Item $supportedTypes).GetValueNames() -contains ".pub")) { throw "Reader application does not advertise .pub" }
+
+          foreach ($commandPath in @("$progId\shell\open\command", "$appRegistration\shell\open\command")) {
+            if (-not (Test-Path $commandPath)) { throw "open command missing: $commandPath" }
+            $command = (Get-Item $commandPath).GetValue("")
+            if ($command -notlike '*chaptera-reader.exe*%1*') { throw "open command does not route %1 to chaptera-reader.exe: $command" }
+            if ($command -notmatch '"%1"') { throw "open command does not quote %1: $command" }
+          }
+
+          if ((Get-Item $pubKey).GetValue("") -ne $beforeDefault) { throw "installer stole existing .pub default handler" }
+
+          $uninstallRoots = @(Get-ChildItem "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
+            Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq "Chaptera PUB Reader $env:CHAPTERA_VERSION" })
+          if ($uninstallRoots.Count -ne 1) { throw "expected one Chaptera Reader uninstall entry, got $($uninstallRoots.Count)" }
+          $uninstallEntry = Get-ItemProperty $uninstallRoots[0].PSPath
+          $uninstaller = $uninstallEntry.UninstallString.Trim('"')
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART") -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed: $($uninstall.ExitCode)" }
+
+          if (Test-Path $installed) { throw "Reader binary remained after uninstall" }
+          if (Test-Path $progId) { throw "Chaptera ProgID remained after uninstall" }
+          if (Test-Path $appRegistration) { throw "Chaptera application registration remained after uninstall" }
+          if (Test-Path $openWithPath) {
+            if ((Get-Item $openWithPath).GetValueNames() -contains "Chaptera.PUB.Reader") { throw "Chaptera Open With value remained after uninstall" }
+          }
+          if ((Get-Item $pubKey).GetValue("") -ne $beforeDefault) { throw "uninstall changed pre-existing .pub default handler" }
+          "CHAPTERA_READER_SOURCE_SHA=$sourceHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Write installer receipt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setupHash = (Get-FileHash $env:CHAPTERA_READER_SETUP -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$setupHash  $(Split-Path $env:CHAPTERA_READER_SETUP -Leaf)" | Set-Content -Encoding ascii "dist/chaptera-reader-installer.sha256"
+          [ordered]@{
+            schema_version = "chaptera.reader-windows-installer.v1"
+            product_id = "chaptera.reader"
+            version = $env:CHAPTERA_VERSION
+            platform = "windows-x86_64"
+            commit_sha = "${{ github.sha }}"
+            canonical_executable = "chaptera-reader.exe"
+            installer_filename = "Chaptera-Reader-Setup-$env:CHAPTERA_VERSION.exe"
+            installer_tool = "Inno Setup"
+            installer_tool_version = $env:ISCC_PRODUCT_VERSION
+            source_reader_sha256 = $env:CHAPTERA_READER_SOURCE_SHA
+            installer_sha256 = $setupHash
+            install_scope = "current_user"
+            association_prog_id = "Chaptera.PUB.Reader"
+            association_policy = "open_with_only_no_default_steal"
+            installed_real_pub_smoke = "pass"
+            source_pub_unchanged = $true
+            uninstall_cleanup = "pass"
+            authenticode_claimed = $false
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "dist/chaptera-reader-installer.receipt.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-reader-windows-installer
+          path: |
+            dist/Chaptera-Reader-Setup-*.exe
+            dist/chaptera-reader-installer.sha256
+            dist/chaptera-reader-installer.receipt.json
+          if-no-files-found: error
