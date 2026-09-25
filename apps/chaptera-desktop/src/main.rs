@@ -6,6 +6,7 @@
 // The cadence API is intentionally staged one PR before its UI consumer (#227).
 #[allow(dead_code)]
 mod supporter;
+mod acceptance;
 
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
@@ -161,6 +162,40 @@ fn direct_scene_instance(
 fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--desktop-acceptance-v1")) {
+        let Some(fixture) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera --desktop-acceptance-v1 FIXTURE PROJECT EXPORT");
+            std::process::exit(2);
+        };
+        let Some(project) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera --desktop-acceptance-v1 FIXTURE PROJECT EXPORT");
+            std::process::exit(2);
+        };
+        let Some(export) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera --desktop-acceptance-v1 FIXTURE PROJECT EXPORT");
+            std::process::exit(2);
+        };
+        if args.next().is_some() {
+            eprintln!("desktop acceptance mode accepts exactly three path arguments");
+            std::process::exit(2);
+        }
+
+        match acceptance::run(&fixture, &project, &export) {
+            Ok(observation) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&observation)
+                        .expect("desktop acceptance observation is JSON-serializable")
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+    }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         let Some(path) = args.next().map(PathBuf::from) else {
