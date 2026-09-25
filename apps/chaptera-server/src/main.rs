@@ -13,6 +13,7 @@ use chaptera_server::{
     sqlite_store::SqliteRevisionStore,
     state::{AppState, RuntimePorts},
     worker,
+    worker_runtime::ConfiguredWorkerRuntime,
 };
 use clap::Parser;
 
@@ -60,7 +61,16 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             serve::run(config.runtime_config(), edge_policy, state).await?;
         }
         Command::Worker => {
-            worker::run(&UnconfiguredWorkerRuntime)?;
+            if let Some(config) = explicit_config.as_ref() {
+                // The background worker consumes durable AuthZ grants, not the
+                // browser OIDC client secret. Do not resolve web-auth secrets
+                // here merely for symmetry with serve; BlobStore credentials
+                // are owned by the AWS SDK provider credential chain.
+                let runtime = ConfiguredWorkerRuntime::new(config.clone());
+                worker::run(&runtime).await?;
+            } else {
+                worker::run(&UnconfiguredWorkerRuntime).await?;
+            }
         }
         Command::Migrate { action } => {
             if let Some(config) = explicit_config.as_ref() {
