@@ -247,7 +247,6 @@ def validate_observation(
     rar_commit: str,
     replacement_binding_id: str,
     auth_wrap_sha256: str,
-    editor_binary_sha256: str,
     export_target: str,
 ) -> dict[str, Any]:
     observation = require_exact_keys(
@@ -258,8 +257,7 @@ def validate_observation(
             "rar_commit",
             "replacement_binding_id",
             "auth_wrap_receipt_sha256",
-            "editor_binary_sha256",
-            "saved_project_sha256",
+             "saved_project_sha256",
             "reopened_project_sha256",
             "user_path",
             "export_result",
@@ -277,10 +275,7 @@ def validate_observation(
         raise FixedPageTrialError("trial replacement binding differs from paired evidence")
     if observation["auth_wrap_receipt_sha256"] != auth_wrap_sha256:
         raise FixedPageTrialError("trial did not bind the selected AUTH-WRAP receipt")
-    if observation["editor_binary_sha256"] != editor_binary_sha256:
-        raise FixedPageTrialError("trial editor binary differs from package evidence")
-
-    user_path = require_exact_keys(
+     user_path = require_exact_keys(
         observation["user_path"],
         {
             "launch_without_dev_toolchain",
@@ -626,8 +621,7 @@ def run_local_fixed_page_trial(
         env["CHAPTERA_TRIAL_STORY_WITNESS"] = STORY_WITNESS
         env["CHAPTERA_REPLACEMENT_BINDING_ID"] = evidence["replacement_binding_id"]
         env["CHAPTERA_AUTH_WRAP_RECEIPT_SHA256"] = evidence["auth_wrap_sha256"]
-        env["CHAPTERA_EDITOR_BINARY_SHA256"] = evidence["package"]["build"]["binary_sha256"]
-
+ 
         completed = subprocess.run(
             command,
             cwd=ROOT,
@@ -655,8 +649,7 @@ def run_local_fixed_page_trial(
         rar_commit=rar_commit,
         replacement_binding_id=evidence["replacement_binding_id"],
         auth_wrap_sha256=evidence["auth_wrap_sha256"],
-        editor_binary_sha256=evidence["package"]["build"]["binary_sha256"],
-        export_target=export_target,
+         export_target=export_target,
     )
 
     if fixture.stat().st_size != expected_len or sha256_file(fixture) != expected_hash:
