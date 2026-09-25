@@ -727,4 +727,51 @@ mod tests {
         assert!(!json.contains("byte_range"));
         assert!(!json.contains("private_state_ref"));
     }
+
+    #[test]
+    fn edited_page_extent_flows_to_resolved_surface_without_moving_objects() {
+        let mut input = fixture(false);
+        let original_nodes = input.node_geometry.clone();
+        let target = input
+            .pages
+            .iter_mut()
+            .find(|page| page.id == page_id(1))
+            .expect("page 1");
+        target.size = Size2D::new(
+            LengthEmu::new(111 * EMU_PER_MILLIMETER),
+            LengthEmu::new(222 * EMU_PER_MILLIMETER),
+        );
+
+        let projection = project_bounded(input);
+        assert_eq!(projection.node_geometry, original_nodes);
+
+        let scene = resolve_bounded_geometry(
+            &projection,
+            BoundedLayoutEnvironment {
+                engine_revision: "page-extent-v1".into(),
+                font_set_fingerprint: "fonts:none".into(),
+                resource_fingerprint: "resources:none".into(),
+            },
+        )
+        .expect("edited page extent should resolve");
+
+        let surface = scene
+            .surfaces
+            .iter()
+            .find(|surface| surface.origin == page_id(1))
+            .expect("resolved page surface");
+        assert_eq!(
+            surface.size,
+            Size2D::new(
+                LengthEmu::new(111 * EMU_PER_MILLIMETER),
+                LengthEmu::new(222 * EMU_PER_MILLIMETER),
+            )
+        );
+        assert_eq!(scene.nodes.len(), original_nodes.len());
+        for (resolved, authored) in scene.nodes.iter().zip(original_nodes.iter()) {
+            assert_eq!(resolved.bounds, authored.bounds);
+            assert_eq!(resolved.transform, authored.transform);
+        }
+    }
+
 }
