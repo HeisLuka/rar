@@ -50,13 +50,23 @@ baseline_project = {
     "stories": {story_id: before_text},
 }
 operation = {
+    "protocol_version": "chaptera.replace-story-range.v1",
     "kind": "replace_story_range",
     "story_id": story_id,
     "start_scalar": 0,
     "end_scalar": len(before_text),
+    "expected_before": before_text,
     "replacement_text": replacement_text,
+    "inverse": {
+        "start_scalar": 0,
+        "end_scalar": len(replacement_text),
+        "expected_before": replacement_text,
+        "replacement_text": before_text,
+    },
     "before_text_hash": digest(before_text),
     "after_text_hash": digest(after_text),
+    "before_story_state_id": "sha256:" + hashlib.sha256(json.dumps({"protocol_version":"chaptera.story-state.v1","story_id":story_id,"text":before_text}, sort_keys=True, separators=(",",":")).encode()).hexdigest(),
+    "after_story_state_id": "sha256:" + hashlib.sha256(json.dumps({"protocol_version":"chaptera.story-state.v1","story_id":story_id,"text":after_text}, sort_keys=True, separators=(",",":")).encode()).hexdigest(),
 }
 accepted_project = copy.deepcopy(baseline_project)
 accepted_project["operations"] = [copy.deepcopy(operation)]
@@ -73,6 +83,7 @@ if action == "baseline":
         "edit_intent": {
             "start_scalar": 0,
             "end_scalar": len(before_text),
+            "expected_before": before_text,
             "replacement_text": replacement_text,
         },
     }, sys.stdout)
