@@ -275,9 +275,29 @@ def load_t645(t645_dir: Path) -> tuple[list[dict], dict, dict]:
     return rows, logical_rows, dsi_groups
 
 
-def artifact_extract(repo: str, artifact_id: int, token: str, out: Path) -> None:
+def artifact_extract(
+    repo: str,
+    artifact_id: int,
+    token: str,
+    out: Path,
+    max_archive_bytes: int = 512 * 1024 * 1024,
+) -> None:
     archive = out.with_suffix(".zip")
-    novelty.download_artifact(repo, artifact_id, token, archive)
+    env = dict(os.environ)
+    env["GH_TOKEN"] = token
+    with archive.open("wb") as fh:
+        subprocess.run(
+            ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+            stdout=fh,
+            stderr=subprocess.PIPE,
+            check=True,
+            env=env,
+        )
+    size = archive.stat().st_size
+    if size <= 0 or size > max_archive_bytes:
+        raise ValueError(
+            f"artifact {artifact_id} archive size {size} outside bound 1..{max_archive_bytes}"
+        )
     out.mkdir(parents=True, exist_ok=True)
     novelty.safe_extract_zip(archive, out)
 
