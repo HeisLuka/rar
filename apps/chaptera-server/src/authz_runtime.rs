@@ -837,8 +837,7 @@ fn require_ident(value: &str, label: &'static str) -> Result<(), AuthzError> {
     if value.is_empty()
         || value.len() > 192
         || !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(byte, b'.' | b'_' | b':' | b'@' | b'/' | b'-')
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'@' | b'/' | b'-')
         })
     {
         return Err(AuthzError::new(
@@ -890,8 +889,12 @@ fn unix_now_ms() -> Result<i64, AuthzError> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AuthzError::new("clock_before_epoch", "system clock is before UNIX epoch"))?;
-    i64::try_from(elapsed.as_millis())
-        .map_err(|_| AuthzError::new("clock_overflow", "system clock does not fit i64 milliseconds"))
+    i64::try_from(elapsed.as_millis()).map_err(|_| {
+        AuthzError::new(
+            "clock_overflow",
+            "system clock does not fit i64 milliseconds",
+        )
+    })
 }
 
 fn sqlite_error(error: impl fmt::Display) -> AuthzError {
@@ -905,7 +908,6 @@ fn export_error(error: AuthzError) -> ExportExecutorError {
     ExportExecutorError::new(error.code, error.message)
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -915,8 +917,7 @@ mod tests {
 
     use crate::{
         export_executor::{
-            EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExportPublicationCommitter,
-            IDML_BOUNDED_EDITABLE_PROFILE,
+            EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExportPublicationCommitter, IDML_BOUNDED_EDITABLE_PROFILE,
         },
         job_queue::JobStatus,
         schema_migration::SqliteMigrationRuntime,
@@ -940,13 +941,7 @@ mod tests {
         }
     }
 
-    async fn stores(
-        label: &str,
-    ) -> (
-        PathBuf,
-        SqliteAuthzAuthority,
-        SqliteExportPublicationStore,
-    ) {
+    async fn stores(label: &str) -> (PathBuf, SqliteAuthzAuthority, SqliteExportPublicationStore) {
         let path = temp_db(label);
         SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
             .unwrap()
