@@ -1824,7 +1824,7 @@ impl EditorSession {
     /// exact page ownership, stale before-state, translation-only geometry,
     /// canonical ordering/uniqueness and the existing bounded MoveNode
     /// capability before committing the whole batch as one history unit.
-    pub fn consume_canonical_move_nodes(
+    fn consume_canonical_move_nodes(
         &mut self,
         page_id: PageId,
         mut entries: Vec<MoveNodeBatchEntry>,
