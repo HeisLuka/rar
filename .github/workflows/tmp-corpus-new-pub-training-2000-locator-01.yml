@@ -1,0 +1,146 @@
+name: TEMP Office 2000 companion locator census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-2000-locator-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Query bounded historical locator surfaces
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json, re, time
+          from pathlib import Path
+          from urllib.parse import urlencode, urlparse
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError, URLError
+
+          CDX='https://web.archive.org/cdx/search/cdx'
+          UA='rar-pub-training-locator/1.0 (public format research)'
+          queries=[
+              ('mspress-office2000','mspress.microsoft.com/office2000/','prefix',10000),
+              ('microsoft-mspress-office2000','www.microsoft.com/mspress/office2000/','prefix',10000),
+              ('mspress-books','mspress.microsoft.com/office2000/books/','prefix',10000),
+              ('oreilly-1572319844','examples.oreilly.com/9781572319844/','prefix',2000),
+              ('oreilly-0735605084','examples.oreilly.com/9780735605084/','prefix',2000),
+          ]
+          rows=[]
+          errors=[]
+          for label,url,match,limit in queries:
+              params=[
+                  ('url',url),('matchType',match),('output','json'),
+                  ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                  ('filter','statuscode:200'),('collapse','urlkey'),
+                  ('limit',str(limit)),('gzip','false')
+              ]
+              req_url=CDX+'?'+urlencode(params)
+              try:
+                  req=Request(req_url,headers={'User-Agent':UA,'Accept':'application/json'})
+                  with urlopen(req,timeout=60) as resp:
+                      raw=resp.read(64*1024*1024+1)
+                  if len(raw)>64*1024*1024:
+                      raise ValueError('CDX response exceeded 64 MiB')
+                  data=json.loads(raw.decode('utf-8'))
+                  if data:
+                      hdr=data[0]
+                      for item in data[1:]:
+                          if isinstance(item,list):
+                              row={str(k):str(v) for k,v in zip(hdr,item)}
+                              row['query_label']=label
+                              rows.append(row)
+              except Exception as exc:
+                  errors.append({'query':label,'url':url,'error':f'{type(exc).__name__}: {exc}'})
+              time.sleep(1.0)
+
+          # Keep exact ISBN/Publisher/Office-2000 edges plus likely downloadable carriers.
+          isbn_tokens=('1572319844','9781572319844','0735605084','9780735605084','0735610903','9780735610903')
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|iso|img|bin|rar|7z)(?:[?#].*)?$',re.I)
+          keyword_re=re.compile(r'(publisher|office.?2000|step.?by.?step|practice|companion|download|sample|lesson|exercise)',re.I)
+          candidates=[]
+          for r in rows:
+              u=r.get('original','')
+              if any(t in u for t in isbn_tokens) or carrier_re.search(u) or keyword_re.search(u):
+                  candidates.append(r)
+
+          # Deduplicate by original URL, preserving earliest observed capture.
+          dedup={}
+          for r in sorted(candidates,key=lambda x:x.get('timestamp','')):
+              dedup.setdefault(r.get('original','').casefold(),r)
+          candidates=sorted(dedup.values(),key=lambda x:(x.get('query_label',''),x.get('original','')))
+
+          # Bounded live probes for known historical distribution patterns.
+          live=[
+              'https://examples.oreilly.com/9781572319844/',
+              'https://examples.oreilly.com/9780735605084/',
+              'http://examples.oreilly.com/9781572319844/',
+              'http://examples.oreilly.com/9780735605084/',
+          ]
+          live_results=[]
+          for url in live:
+              try:
+                  req=Request(url,method='HEAD',headers={'User-Agent':UA})
+                  with urlopen(req,timeout=30) as resp:
+                      live_results.append({
+                          'url':url,'status':getattr(resp,'status',None),
+                          'final_url':resp.geturl(),
+                          'content_type':resp.headers.get('Content-Type'),
+                          'content_length':resp.headers.get('Content-Length')
+                      })
+              except HTTPError as exc:
+                  live_results.append({'url':url,'status':exc.code,'final_url':getattr(exc,'url',url),'error':str(exc)})
+              except Exception as exc:
+                  live_results.append({'url':url,'status':None,'error':f'{type(exc).__name__}: {exc}'})
+
+          summary={
+              'schema':'chaptera.corpus-training-office2000-locator-census.v1',
+              'source_safe':True,
+              'raw_payload_retained':False,
+              'query_count':len(queries),
+              'raw_cdx_rows':len(rows),
+              'candidate_locator_rows':len(candidates),
+              'query_counts':{},
+              'errors':errors,
+              'live_probes':live_results,
+              'guardrail':'Locator evidence only. No carrier bytes downloaded and no creator/writer version inference.'
+          }
+          for label,*_ in queries:
+              summary['query_counts'][label]=sum(1 for x in rows if x.get('query_label')==label)
+
+          Path('out/candidates.json').write_text(json.dumps(candidates,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          print('--- top candidates ---')
+          for r in candidates[:200]:
+              print(r.get('timestamp',''),r.get('original',''),r.get('mimetype',''),r.get('length',''))
+          PY
+
+      - name: Source-safe artifact guard
+        run: |
+          set -euo pipefail
+          find out -maxdepth 1 -type f -print
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' \) | grep -q .; then
+            echo 'unexpected byte-bearing carrier leaked into locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-office2000-locator-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
