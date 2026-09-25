@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/publisher2019-environment-manifest.v1.json",
+  "title": "Publisher 2019 post-restore EnvironmentManifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "vm_name",
+    "restore_nonce",
+    "publisher_version",
+    "publisher_build",
+    "environment_fingerprint",
+    "captured_at_utc"
+  ],
+  "properties": {
+    "schema_version": {"const": "chaptera.publisher2019-environment-manifest.v1"},
+    "vm_name": {"const": "PUB-LAB-2019"},
+    "restore_nonce": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "publisher_version": {"const": "16.0"},
+    "publisher_build": {"const": "16.0.12527.22145"},
+    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "captured_at_utc": {"type": "string", "format": "date-time"}
+  }
+}
