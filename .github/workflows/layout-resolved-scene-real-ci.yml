@@ -1,0 +1,104 @@
+name: LAYOUT-RESOLVED-SCENE-01 real CI closure
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/layout-resolved-scene-real-ci.yml"
+      - "vendor/producer-a/producer/**"
+      - "tools/build_layout_resolved_scene_receipt.py"
+      - "tools/run_local_layout_resolved_scene_engine.py"
+      - "tools/run_sample_newsletter_resolved_scene_bridge.py"
+      - "tools/resolved_graph_scene_bridge_v1.py"
+      - "tools/projection_context_sidecar_v1.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-resolved-scene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Rar
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install schema validator
+        run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Materialize pinned SampleNewsletter.pub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .web-v0
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            -o .web-v0/SampleNewsletter.pub
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p = Path(".web-v0/SampleNewsletter.pub")
+          raw = p.read_bytes()
+          assert len(raw) == 291840
+          assert hashlib.sha256(raw).hexdigest() == "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          PY
+
+      - name: Build Rar-owned reader producer
+        run: cargo build --manifest-path vendor/producer-a/Cargo.toml -p chaptera-producer-a
+
+      - name: Regenerate canonical resolved graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          vendor/producer-a/target/debug/chaptera-producer-a \
+            resolved-graph .web-v0/SampleNewsletter.pub \
+            > .web-v0/resolved-graph.json
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p = Path(".web-v0/resolved-graph.json")
+          digest = hashlib.sha256(p.read_bytes()).hexdigest()
+          expected = "7c327cd729fc2f9760e59cce1dd7c104c55162f4c3032c132068cfee513b1c4d"
+          print({"resolved_graph_sha256": digest, "bytes": p.stat().st_size})
+          assert digest == expected, (digest, expected)
+          PY
+
+      - name: Build real current-state to Scene lifecycle receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .web-v0/layout-resolved-scene-state
+          python tools/build_layout_resolved_scene_receipt.py \
+            --source-hash 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf \
+            --document-id 9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001 \
+            --output .web-v0/layout-resolved-scene.real.json \
+            --implementation rar-resolved-graph-scene-bridge-v1 \
+            --commit-or-build ci-${{ github.sha }} \
+            -- python tools/run_local_layout_resolved_scene_engine.py \
+              --fixture .web-v0/SampleNewsletter.pub \
+              --source-byte-len 291840 \
+              --state-dir .web-v0/layout-resolved-scene-state \
+              -- python tools/run_sample_newsletter_resolved_scene_bridge.py \
+                --resolved-graph .web-v0/resolved-graph.json \
+                --viewer-receipt apps/web/acceptance/receipts/viewer-geometry.real.json \
+                --expected-resolved-graph-sha256 7c327cd729fc2f9760e59cce1dd7c104c55162f4c3032c132068cfee513b1c4d \
+                --target-node-id 007d9898-568b-5125-b519-8d88243aabfb \
+                --target-page-id 58ffa2e0-896e-5a40-806c-bd0184ea9c85 \
+                --after-x-emu 653710 \
+                --after-y-emu 1445292
+
+      - name: Validate real resolved-scene receipt
+        run: python tools/validate_layout_resolved_scene_receipt.py .web-v0/layout-resolved-scene.real.json
+
+      - name: Upload public closure evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-resolved-scene-real
+          if-no-files-found: error
+          path: .web-v0/layout-resolved-scene.real.json
+          retention-days: 30

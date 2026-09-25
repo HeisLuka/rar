@@ -67,12 +67,21 @@ def invoke_producer(command: list[str], payload: dict[str, Any]) -> dict[str, An
     return result
 
 
-def require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
+def require_exact_keys(
+    value: dict[str, Any],
+    expected: set[str],
+    label: str,
+    *,
+    optional: set[str] | None = None,
+) -> None:
     actual = set(value)
-    if actual != expected:
+    allowed = expected | (optional or set())
+    missing = expected - actual
+    extra = actual - allowed
+    if missing or extra:
         raise RuntimeError(
-            f"{label} fields mismatch: missing={sorted(expected - actual)} "
-            f"extra={sorted(actual - expected)}"
+            f"{label} fields mismatch: missing={sorted(missing)} "
+            f"extra={sorted(extra)}"
         )
 
 
@@ -112,6 +121,7 @@ def build_receipt(
             "adapter_invariants",
         },
         "baseline producer response",
+        optional={"projection_context_state"},
     )
     if baseline_output["source_hash"] != source_hash:
         raise RuntimeError("baseline producer source hash mismatch")
@@ -166,6 +176,7 @@ def build_receipt(
                 "source_reparse_after_edit_count",
             },
             "commit producer response",
+            optional={"projection_context_state"},
         )
         assert_same_source(commit_output, source_hash, "commit producer")
         assert_no_reparse(commit_output, "commit producer")
@@ -204,6 +215,7 @@ def build_receipt(
                 "source_reparse_after_edit_count",
             },
             f"{transition_kind} producer response",
+            optional={"projection_context_state"},
         )
         assert_same_source(output, source_hash, f"{transition_kind} producer")
         assert_no_reparse(output, f"{transition_kind} producer")
@@ -255,6 +267,7 @@ def build_receipt(
             "source_reparse_after_edit_count",
         },
         "replay producer response",
+        optional={"projection_context_state"},
     )
     assert_same_source(replay_output, source_hash, "replay producer")
     assert_no_reparse(replay_output, "replay producer")
@@ -280,7 +293,24 @@ def build_receipt(
             "graph_only_wrapper_is_empty_context",
         },
         "adapter_invariants",
+        optional={
+            "projection_context_carried_outside_editor_project",
+            "unsupported_cmo_layout_deferred",
+        },
     )
+    if invariants.get("projection_context_carried_outside_editor_project") is False:
+        raise RuntimeError("projection context must remain outside EditorProject")
+    if invariants.get("unsupported_cmo_layout_deferred") is False:
+        raise RuntimeError("unsupported Cmo layout must remain deferred")
+
+    public_invariant_keys = {
+        "viewer_private_mapping_used",
+        "browser_layout_authoritative",
+        "second_geometry_model_created",
+        "context_extension_seam_present",
+        "graph_only_wrapper_is_empty_context",
+    }
+    invariants = {key: invariants[key] for key in public_invariant_keys}
 
     receipt = {
         "receipt_version": "chaptera.layout-resolved-scene-receipt.v1",

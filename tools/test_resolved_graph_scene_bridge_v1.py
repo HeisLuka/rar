@@ -249,6 +249,10 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
             self.assertEqual(BEFORE, baseline["move_candidate"]["before"])
             self.assertEqual(AFTER, baseline["move_candidate"]["after"])
             self.assertEqual(
+                "pub-editor-v0.2",
+                baseline["baseline_project"]["schema_version"],
+            )
+            self.assertEqual(
                 1,
                 baseline["projection_context_state"]["cmo_relation_count"],
             )
@@ -273,6 +277,10 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
                 "command": command,
             })
             self.assertEqual(AFTER, committed["scene_state"]["bounds"])
+            self.assertEqual(
+                "pub-editor-v0.4",
+                committed["resulting_project"]["schema_version"],
+            )
             self.assertEqual(0, committed["source_reparse_after_edit_count"])
             self.assertEqual(
                 context_hash,
@@ -288,6 +296,10 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
             })
             self.assertEqual(BEFORE, undone["scene_state"]["bounds"])
             self.assertEqual(
+                baseline["baseline_project"],
+                undone["resulting_project"],
+            )
+            self.assertEqual(
                 context_hash,
                 undone["projection_context_state"]["projection_context_hash"],
             )
@@ -299,6 +311,10 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
                 "base_project": undone["resulting_project"],
             })
             self.assertEqual(AFTER, redone["scene_state"]["bounds"])
+            self.assertEqual(
+                committed["resulting_project"],
+                redone["resulting_project"],
+            )
             self.assertEqual(
                 context_hash,
                 redone["projection_context_state"]["projection_context_hash"],
