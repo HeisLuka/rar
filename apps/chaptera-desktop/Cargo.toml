@@ -13,11 +13,13 @@ path = "src/main.rs"
 [[bin]]
 name = "chaptera-resize-producer"
 path = "src/bin/resize_node_producer.rs"
+required-features = ["resize-producer"]
 
 [features]
 default = []
 reader-only = []
 embedded-fixture-tests = []
+resize-producer = []
 
 [dependencies]
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
