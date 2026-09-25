@@ -8,7 +8,7 @@ use std::{
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous},
 };
 
 const MIGRATION_VERSION: i64 = 1;
@@ -96,10 +96,16 @@ impl SqliteRevisionStore {
             ));
         }
 
+        if !path.exists() {
+            return Err(SqliteStoreError::new(
+                "sqlite_database_missing",
+                "SQLite database must be created by chaptera migrate up before opening RevisionStream",
+            ));
+        }
+
         let options = SqliteConnectOptions::new()
             .filename(&path)
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
+            .create_if_missing(false)
             .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
             .busy_timeout(busy_timeout);
@@ -112,7 +118,7 @@ impl SqliteRevisionStore {
             .map_err(sqlite_open_error)?;
 
         let store = Self { path, pool };
-        store.bootstrap().await?;
+        store.require_schema().await?;
         store.verify_profile().await?;
         Ok(store)
     }
@@ -267,73 +273,36 @@ impl SqliteRevisionStore {
         Ok(edges)
     }
 
-    async fn bootstrap(&self) -> Result<(), SqliteStoreError> {
-        let mut tx = self.pool.begin().await.map_err(sqlite_write_error)?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version       INTEGER PRIMARY KEY,
-                applied_at_ms INTEGER NOT NULL
+    async fn require_schema(&self) -> Result<(), SqliteStoreError> {
+        for table in ["schema_migrations", "revision_edges"] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
             )
-            "#,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(sqlite_write_error)?;
+            .bind(table)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sqlite_read_error)?;
 
-        let current: i64 =
-            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(sqlite_read_error)?;
-        if current > MIGRATION_VERSION {
+            if exists != 1 {
+                return Err(SqliteStoreError::new(
+                    "sqlite_schema_missing",
+                    format!(
+                        "required RevisionStream table {table} is absent; run chaptera migrate up before serving"
+                    ),
+                ));
+            }
+        }
+
+        let current = self.schema_version().await?;
+        if current != MIGRATION_VERSION {
             return Err(SqliteStoreError::new(
-                "schema_version_too_new",
+                "schema_version_mismatch",
                 format!(
-                    "database schema version {current} is newer than supported {MIGRATION_VERSION}"
+                    "RevisionStream schema version {current} does not match supported {MIGRATION_VERSION}; run chaptera migrate up with a compatible binary"
                 ),
             ));
         }
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS revision_edges (
-                document_id              BLOB NOT NULL,
-                parent_revision          BLOB NOT NULL,
-                parent_cursor            INTEGER NOT NULL,
-                operation_id             BLOB NOT NULL,
-                request_hash             BLOB NOT NULL,
-                canonical_event          BLOB NOT NULL,
-                child_revision           BLOB NOT NULL,
-                child_cursor             INTEGER NOT NULL,
-                resulting_state_hash     BLOB NOT NULL,
-                authoring_root_hash      BLOB,
-                semantic_schema_version  INTEGER NOT NULL,
-                committed_at_ms          INTEGER NOT NULL,
-                PRIMARY KEY (document_id, parent_revision),
-                UNIQUE (document_id, child_revision),
-                UNIQUE (document_id, child_cursor),
-                CHECK (child_cursor = parent_cursor + 1),
-                CHECK (semantic_schema_version > 0),
-                CHECK (committed_at_ms >= 0)
-            )
-            "#,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(sqlite_write_error)?;
-
-        sqlx::query(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms) VALUES (?, ?)",
-        )
-        .bind(MIGRATION_VERSION)
-        .bind(0_i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(sqlite_write_error)?;
-
-        tx.commit().await.map_err(sqlite_write_error)
+        Ok(())
     }
 
     async fn verify_profile(&self) -> Result<(), SqliteStoreError> {
@@ -612,6 +581,8 @@ mod tests {
 
     use tokio::sync::Barrier;
 
+    use crate::schema_migration::SqliteMigrationRuntime;
+
     use super::*;
 
     static TEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -654,6 +625,11 @@ mod tests {
     }
 
     async fn store(path: &Path) -> SqliteRevisionStore {
+        SqliteMigrationRuntime::new(path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
         SqliteRevisionStore::open(path, 4, Duration::from_secs(2))
             .await
             .unwrap()
@@ -666,8 +642,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn profile_and_schema_bootstrap_are_bounded() {
+    async fn open_requires_operator_migration_and_preserves_profile() {
         let path = temp_db("profile");
+        let error = SqliteRevisionStore::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "sqlite_database_missing");
+        assert!(!path.exists());
+
         let store = store(&path).await;
         assert_eq!(store.schema_version().await.unwrap(), MIGRATION_VERSION);
         store.close().await;
