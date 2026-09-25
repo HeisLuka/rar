@@ -129,11 +129,16 @@ def main() -> int:
         worker = run(binary, config, "worker")
         worker_isolated = (
             worker.returncode != 0
-            and "worker_runtime_not_configured" in worker.stderr
+            and "sqlite_database_missing" in worker.stderr
             and "credentials_directory_missing" not in worker.stderr
+            and "worker_runtime_not_configured" not in worker.stderr
+            and not database.exists()
         )
         if not worker_isolated:
-            raise SystemExit("worker unexpectedly required the web/OIDC secret")
+            raise SystemExit(
+                "configured worker did not fail closed on unmigrated runtime storage "
+                "without requiring the web/OIDC secret"
+            )
 
         credentials = temp / "credentials"
         credentials.mkdir()
