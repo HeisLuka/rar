@@ -1,0 +1,29 @@
+{
+  "schema_version": "chaptera.pub-lab-2019-reset-receipt.v1",
+  "vm_identity": {
+    "name": "PUB-LAB-2019",
+    "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "snapshot_identity": {
+    "name": "MODERN-2019-12527-GOLDEN-v1",
+    "generation": 1
+  },
+  "vmx_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "environment_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "vmware": {
+    "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "vmware_vmx_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "vdiskmanager_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "restore": {
+    "revert_succeeded": true,
+    "cold_start_succeeded": true,
+    "environment_match": true,
+    "restore_verified": true
+  },
+  "privacy": {
+    "local_paths_serialized": false,
+    "credentials_serialized": false,
+    "licensed_media_serialized": false
+  }
+}
