@@ -314,7 +314,17 @@ def acceptance() -> dict[str, object]:
             run_fenced("sleep", **{**common, "wall_time_ms": 200}),
             run_fenced("cancel", **common, cancel_after_ms=200),
             run_fenced("memory", **common),
-            run_fenced("cpu", **common),
+            # CPU-time enforcement must be tested independently of hosted-runner
+            # scheduling contention. Give the parent a generous wall budget while
+            # keeping the Job Object CPU ceiling deliberately short.
+            run_fenced(
+                "cpu",
+                **{
+                    **common,
+                    "wall_time_ms": 15000,
+                    "cpu_time_ms": 250,
+                },
+            ),
             run_fenced("output", **common),
             run_fenced("crash", **common),
         ]
