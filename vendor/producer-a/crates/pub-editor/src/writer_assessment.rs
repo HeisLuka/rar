@@ -133,6 +133,7 @@ impl EditorSession {
                 }
                 EditOperation::BreakTextFrameForwardLink { .. }
                 | EditOperation::ReplaceImage { .. }
+                | EditOperation::SetImageCrop { .. }
                 | EditOperation::MoveNode { .. }
                 | EditOperation::MoveNodes { .. }
                 | EditOperation::ResizeNode { .. }
@@ -226,6 +227,7 @@ impl EditorSession {
                 EditOperation::BreakTextFrameForwardLink { .. }
                 | EditOperation::ReplaceTableCellText { .. }
                 | EditOperation::ReplaceImage { .. }
+                | EditOperation::SetImageCrop { .. }
                 | EditOperation::MoveNode { .. }
                 | EditOperation::MoveNodes { .. }
                 | EditOperation::ResizeNode { .. }
