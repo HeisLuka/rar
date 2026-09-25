@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod product_smoke;
+mod open_phase;
 #[allow(dead_code)]
 mod supporter;
 
@@ -195,6 +196,90 @@ fn main() -> eframe::Result<()> {
             std::process::exit(2);
         }
         return Ok(());
+    }
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--open-phase-run-v1")) {
+        if !reader_only_mode() {
+            eprintln!("open phase harness is admitted only in the Reader build");
+            std::process::exit(2);
+        }
+        let Some(fixture) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-run-v1 FIXTURE CACHE_STATE OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(cache_state) = args.next().and_then(|value| value.into_string().ok()) else {
+            eprintln!("usage: chaptera-reader --open-phase-run-v1 FIXTURE CACHE_STATE OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(output) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-run-v1 FIXTURE CACHE_STATE OUTPUT.json");
+            std::process::exit(2);
+        };
+        if args.next().is_some() || !matches!(cache_state.as_str(), "cold" | "warm" | "unknown") {
+            eprintln!("open phase run requires one valid cache_state and one output path");
+            std::process::exit(2);
+        }
+        match open_phase::run_one(&fixture, &cache_state) {
+            Ok(run) => {
+                let encoded = serde_json::to_vec_pretty(&run)
+                    .expect("open phase observation is JSON-serializable");
+                if let Err(error) = fs::write(&output, encoded) {
+                    eprintln!("write open phase observation {}: {error}", output.display());
+                    std::process::exit(2);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--open-phase-series-v1")) {
+        if !reader_only_mode() {
+            eprintln!("open phase harness is admitted only in the Reader build");
+            std::process::exit(2);
+        }
+        let Some(fixture) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(cache_state) = args.next().and_then(|value| value.into_string().ok()) else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(count) = args
+            .next()
+            .and_then(|value| value.into_string().ok())
+            .and_then(|value| value.parse::<usize>().ok())
+        else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(output) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        if args.next().is_some() || !matches!(cache_state.as_str(), "cold" | "warm" | "unknown") {
+            eprintln!("open phase series requires valid cache_state/count/output");
+            std::process::exit(2);
+        }
+        match open_phase::run_series(&fixture, &cache_state, count) {
+            Ok(runs) => {
+                let encoded = serde_json::to_vec_pretty(&runs)
+                    .expect("open phase observations are JSON-serializable");
+                if let Err(error) = fs::write(&output, encoded) {
+                    eprintln!("write open phase series {}: {error}", output.display());
+                    std::process::exit(2);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
     }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--product-smoke-v1")) {
@@ -2858,6 +2943,65 @@ fn fitted_scale(page_width_emu: i64, page_height_emu: i64, viewport: egui::Vec2)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "reader-only")]
+    #[test]
+    #[ignore = "requires CHAPTERA_SAMPLE_NEWSLETTER and a WGPU-capable hosted runner"]
+    fn reader_open_phase_wgpu_first_paint_uses_current_viewer_app() {
+        use egui_kittest::Harness;
+        use sha2::{Digest, Sha256};
+
+        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned public PUB fixture");
+        let original = fs::read(&fixture).expect("read first-paint fixture");
+
+        let started = std::time::Instant::now();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(20)
+            .wgpu()
+            .build_eframe({
+                let fixture = fixture.clone();
+                move |cc| ViewerApp::new_with_storage(Some(fixture), cc.storage)
+            });
+        harness.step();
+        let image = harness
+            .render()
+            .expect("Reader first frame must render through the current WGPU test surface");
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let app = harness.state();
+        let visual = app.visual.as_ref().expect("Reader Viewer document loaded");
+        assert!(!visual.document.pages.is_empty());
+        assert!(!visual.scene.nodes.is_empty());
+        assert!(image.width() > 0 && image.height() > 0);
+        assert_eq!(
+            fs::read(&fixture).expect("re-read first-paint fixture"),
+            original,
+            "Reader first paint must not mutate the source PUB"
+        );
+
+        if let Some(path) = std::env::var_os("CHAPTERA_OPEN_FIRST_PAINT_RECEIPT") {
+            let receipt = serde_json::json!({
+                "schema_version": "chaptera.reader-first-paint-wgpu.v1",
+                "fixture_sha256": format!("{:x}", Sha256::digest(&original)),
+                "source_unchanged": true,
+                "viewer_opened": true,
+                "frame_rendered": true,
+                "width": image.width(),
+                "height": image.height(),
+                "elapsed_ms": elapsed_ms,
+                "architecture_decision_allowed": false,
+            });
+            fs::write(
+                PathBuf::from(path),
+                serde_json::to_vec_pretty(&receipt).expect("serialize first-paint receipt"),
+            )
+            .expect("write first-paint receipt");
+        }
+    }
 
     #[test]
     fn canvas_pointer_maps_through_interaction_transform() {
