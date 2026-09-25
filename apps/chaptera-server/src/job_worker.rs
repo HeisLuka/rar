@@ -14,7 +14,10 @@ use tokio::{
 };
 
 use crate::{
-    job_queue::{FailureOutcome, JobKind, JobRecord, Lease, PublishOutcome, SqliteJobQueue},
+    job_queue::{
+        AdmissionDeferOutcome, FailureOutcome, JobKind, JobRecord, Lease, PublishOutcome,
+        SqliteJobQueue,
+    },
     runtime_error::RuntimeError,
 };
 
@@ -253,13 +256,12 @@ impl WorkerLoop {
                 AdmissionDecision::RetryLater { code } => {
                     match self
                         .queue
-                        .fail(&lease, unix_now_ms()?, true, code)
+                        .defer_admission(&lease, unix_now_ms()?, code)
                         .await
                         .map_err(queue_error)?
                     {
-                        FailureOutcome::Requeued(_) => receipt.admission_requeued += 1,
-                        FailureOutcome::Failed(_) => receipt.failed += 1,
-                        FailureOutcome::Cancelled(_) => receipt.cancelled += 1,
+                        AdmissionDeferOutcome::Requeued(_) => receipt.admission_requeued += 1,
+                        AdmissionDeferOutcome::Cancelled(_) => receipt.cancelled += 1,
                     }
                     continue;
                 }
@@ -576,6 +578,18 @@ mod tests {
         }
     }
 
+    struct RetryLater;
+
+    impl JobAdmission for RetryLater {
+        fn admit<'a>(&'a self, _job: &'a JobRecord) -> AdmissionFuture<'a> {
+            Box::pin(async {
+                Ok(AdmissionDecision::RetryLater {
+                    code: "quota_capacity",
+                })
+            })
+        }
+    }
+
     struct Reject;
 
     impl JobAdmission for Reject {
@@ -681,6 +695,53 @@ mod tests {
         assert_eq!(receipt.claimed, 1);
         assert_eq!(receipt.succeeded, 1);
         assert_eq!(counters.releases.load(Ordering::SeqCst), 1);
+
+        queue.close().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn admission_backpressure_does_not_consume_execution_attempt() {
+        let (queue, path) = queue().await;
+        enqueue(&queue, "job-backpressure").await;
+        let control = WorkerControl::default();
+        let worker = Arc::new(
+            WorkerLoop::new(
+                queue.clone(),
+                Arc::new(ImmediateSuccess),
+                Arc::new(RetryLater),
+                control.clone(),
+                config("worker-backpressure"),
+            )
+            .unwrap(),
+        );
+
+        let task = {
+            let worker = worker.clone();
+            tokio::spawn(async move { worker.run().await.unwrap() })
+        };
+
+        let mut deferred = None;
+        for _ in 0..100 {
+            let job = queue.get("job-backpressure").await.unwrap().unwrap();
+            if job.status == JobStatus::Queued
+                && job.terminal_code.as_deref() == Some("quota_capacity")
+            {
+                deferred = Some(job);
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        let deferred = deferred.expect("admission backpressure must requeue the job");
+        control.request_drain();
+        let receipt = task.await.unwrap();
+
+        assert_eq!(deferred.attempt, 0);
+        assert_eq!(deferred.lease_generation, 1);
+        assert!(deferred.started_at_ms.is_none());
+        assert_eq!(receipt.admission_requeued, 1);
+        assert_eq!(receipt.failed, 0);
+        assert_eq!(receipt.succeeded, 0);
 
         queue.close().await;
         let _ = std::fs::remove_file(path);
