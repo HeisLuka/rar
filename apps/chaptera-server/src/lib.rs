@@ -42,3 +42,4 @@ pub mod sqlite_store;
 pub mod state;
 pub mod worker;
 pub mod worker_runtime;
+pub mod workspace_context;
