@@ -1,0 +1,155 @@
+name: TEMP CORPUS version identity accept prior
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-version-identity-accept-prior.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  accept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download immutable source-free prior artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p prior out
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/HeisLuka/rar/actions/artifacts/10839516496/zip" > prior.zip
+          echo "c04fbdc2182aacd012c6f82f95c998df05a08397fd4a488972e056db90c5cded  prior.zip" | sha256sum -c -
+          unzip -q prior.zip -d prior
+
+      - name: Validate final matrix and bounded gap set
+        run: |
+          set -euo pipefail
+          if find prior -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB unexpectedly retained"
+            exit 1
+          fi
+          python - <<'PY'
+          import hashlib, json
+          from collections import Counter
+          from pathlib import Path
+
+          root = Path("prior")
+          summary = json.loads((root / "matrix" / "summary.json").read_text(encoding="utf-8"))
+
+          expected = {
+              "physical_sha_count": 1486,
+              "successful_physical_sha_count": 1474,
+              "logical_identity_count": 1314,
+              "surplus_physical_sha_count": 160,
+              "duplicate_logical_group_count": 115,
+              "physical_sha_in_duplicate_groups": 275,
+              "matrix_cell_count": 13,
+          }
+          for key, value in expected.items():
+              assert summary.get(key) == value, (key, summary.get(key), value)
+
+          assert summary.get("status") == {"ok": 1474, "probe_failed": 12}, summary.get("status")
+          assert summary.get("contents_family_logical_counts") == {
+              "0x22": 768,
+              "0x2c": 542,
+              "unknown": 1,
+              "unknown_due_to_raw_unavailable": 3,
+          }
+          assert summary.get("weighting_law") == (
+              "one evidence vote per exact logical stream-set identity; "
+              "physical SHA remains provenance authority"
+          )
+
+          phase1 = json.loads((root / "phase1" / "fingerprints.json").read_text(encoding="utf-8"))
+          assert len(phase1) == 525
+          by_sha = {row["sha256"]: row for row in phase1}
+          status = Counter(row.get("status") for row in phase1)
+          assert status == Counter({"ok": 513, "probe_failed": 12}), status
+
+          cc_sha = "ffe49f7b0a8ebced082bb30319ac6b12c154565727c17081ecc4c7ff830e1fdb"
+          cc = by_sha[cc_sha]
+          assert cc.get("status") == "ok"
+          assert cc.get("contents_family") == "0x2c"
+          assert cc.get("contents_serialization_revision") == 26
+          assert cc.get("rehydrated_from") == "bounded_repair:common_crawl"
+          assert cc.get("family_projection_status") == "current_raw_verified"
+
+          expected_raw = {
+              "7bbd0a50b896a55f8d1c58fb48cb72982cb898274f49c17fb45021bc0d2c20f0",
+              "eed047711b48e28ceebed1ecb5d4bbba55ab32ec8e753724f9dfca5ae825c22e",
+              "b497a8cc97cb7834f9cd4625492ddba0fa48dec9a86c09883ab0e3eecaf73a95",
+          }
+          actual_raw = {
+              sha for sha, row in by_sha.items()
+              if row.get("contents_family") == "unknown_due_to_raw_unavailable"
+          }
+          assert actual_raw == expected_raw, (actual_raw, expected_raw)
+          for sha in expected_raw:
+              row = by_sha[sha]
+              assert row.get("status") == "ok"
+              assert row.get("contents_serialization_revision") is None
+              assert row.get("rehydrated_from") == "retained_source_free_prior_success"
+              assert row.get("family_projection_status") == (
+                  "raw_unavailable_current; prior_generic_probe_success"
+              )
+              assert row.get("content_topology_fingerprint_sha256")
+
+          logical = json.loads((root / "matrix" / "logical_identities.json").read_text(encoding="utf-8"))
+          assert len(logical) == 1314, len(logical)
+          matrix = json.loads((root / "matrix" / "matrix.json").read_text(encoding="utf-8"))
+          assert len(matrix) == 13, len(matrix)
+
+          source_hashes = {}
+          for rel in [
+              "matrix/summary.json",
+              "matrix/logical_identities.json",
+              "matrix/matrix.json",
+              "matrix/gap_queue.json",
+              "phase1/fingerprints.json",
+          ]:
+              data = (root / rel).read_bytes()
+              source_hashes[rel] = hashlib.sha256(data).hexdigest()
+
+          receipt = {
+              "schema": "chaptera.corpus-version-identity-acceptance.v1",
+              "source_artifact_id": 10839516496,
+              "source_artifact_zip_sha256": "c04fbdc2182aacd012c6f82f95c998df05a08397fd4a488972e056db90c5cded",
+              "accepted": True,
+              "source_safe": True,
+              "physical_sha_count": 1486,
+              "successful_physical_sha_count": 1474,
+              "logical_identity_count": 1314,
+              "surplus_physical_sha_count": 160,
+              "status": {"ok": 1474, "probe_failed": 12, "rehydrate_failed": 0},
+              "raw_unavailable_sha256": sorted(expected_raw),
+              "repaired_common_crawl": {
+                  "sha256": cc_sha,
+                  "contents_family": "0x2c",
+                  "contents_serialization_revision": 26,
+                  "family_projection_status": "current_raw_verified",
+              },
+              "weighting_law": summary["weighting_law"],
+              "source_file_sha256": source_hashes,
+              "raw_pub_retained": False,
+          }
+          out = Path("out")
+          out.mkdir(exist_ok=True)
+          (out / "acceptance.json").write_text(
+              json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(receipt, indent=2, ensure_ascii=False))
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: version-identity-matrix-accepted-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
