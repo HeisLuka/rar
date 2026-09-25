@@ -8,7 +8,10 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header::{CONTENT_LENGTH, RETRY_AFTER}},
+    http::{
+        HeaderMap, HeaderValue, StatusCode,
+        header::{CONTENT_LENGTH, RETRY_AFTER},
+    },
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -145,13 +148,8 @@ struct CreateProjectBody {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum UploadTransportResponse {
-    Direct {
-        grant: String,
-        expires_at_ms: u64,
-    },
-    Streamed {
-        path: String,
-    },
+    Direct { grant: String, expires_at_ms: u64 },
+    Streamed { path: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -221,16 +219,13 @@ async fn issue_upload(
         now_ms,
         expires_at_ms,
     };
-    let max_source_bytes = u64::try_from(state.admission.max_single_upload_bytes()).map_err(|_| {
-        SourceIngressHttpError::internal("upload_admission_max_bytes_invalid")
-    })?;
+    let max_source_bytes = u64::try_from(state.admission.max_single_upload_bytes())
+        .map_err(|_| SourceIngressHttpError::internal("upload_admission_max_bytes_invalid"))?;
     let candidate =
         plan_upload_candidate(max_source_bytes, upload_id, request).map_err(map_ingress_error)?;
-    let reservation_id = upload_admission_reservation_id(
-        &candidate.tenant_id,
-        &candidate.idempotency_key,
-    )
-    .map_err(map_ingress_error)?;
+    let reservation_id =
+        upload_admission_reservation_id(&candidate.tenant_id, &candidate.idempotency_key)
+            .map_err(map_ingress_error)?;
     let expected_bytes = i64::try_from(candidate.expected_byte_len)
         .map_err(|_| SourceIngressHttpError::payload_too_large("upload_bytes_too_large"))?;
     let now_i64 = i64::try_from(now_ms)
@@ -275,8 +270,7 @@ async fn issue_upload(
             && capabilities.hard_exact_or_max_upload_size
             && (upload.declared_content_type.is_none() || capabilities.signed_content_type);
         if direct_safe {
-            let grant_expires_at_ms =
-                checked_add_duration(now_ms, state.config.direct_grant_ttl)?;
+            let grant_expires_at_ms = checked_add_duration(now_ms, state.config.direct_grant_ttl)?;
             let grant = state
                 .blob_store
                 .issue_quarantine_upload_grant(
@@ -431,7 +425,10 @@ async fn complete_upload(
             .map_err(map_ingress_error)?;
     }
 
-    if matches!(upload.state, UploadState::StoredUnverified | UploadState::Validating) {
+    if matches!(
+        upload.state,
+        UploadState::StoredUnverified | UploadState::Validating
+    ) {
         let validation = state
             .validation
             .validate_and_promote(
@@ -580,10 +577,7 @@ fn now_ms_u64() -> Result<u64, SourceIngressHttpError> {
     u64::try_from(millis).map_err(|_| SourceIngressHttpError::internal("clock_out_of_range"))
 }
 
-fn checked_add_duration(
-    now_ms: u64,
-    duration: Duration,
-) -> Result<u64, SourceIngressHttpError> {
+fn checked_add_duration(now_ms: u64, duration: Duration) -> Result<u64, SourceIngressHttpError> {
     let delta = u64::try_from(duration.as_millis())
         .map_err(|_| SourceIngressHttpError::internal("duration_out_of_range"))?;
     now_ms
@@ -673,7 +667,7 @@ impl IntoResponse for SourceIngressHttpError {
                     response.headers_mut().insert(RETRY_AFTER, value);
                 }
                 response
-            },
+            }
         }
     }
 }
@@ -691,10 +685,7 @@ fn retry_after_seconds(retry_at_ms: Option<i64>) -> Option<u64> {
     let seconds = if remaining_ms <= 0 {
         1
     } else {
-        u64::try_from(remaining_ms)
-            .ok()?
-            .saturating_add(999)
-            / 1000
+        u64::try_from(remaining_ms).ok()?.saturating_add(999) / 1000
     };
     Some(seconds.max(1))
 }
