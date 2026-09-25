@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     blob_store::BlobStoreService,
+    revision_identity::SqliteRevisionIdentityStore,
     sqlite_store::{
         RevisionEdge, SqliteRevisionStore, decode_canonical_event, encode_canonical_event,
     },
@@ -219,6 +220,8 @@ pub struct ExactRevisionMaterializationReceipt {
     pub baseline_revision_id: String,
     pub baseline_cursor: i64,
     pub requested_revision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_authoring_revision_id: Option<String>,
     pub replayed_edges: usize,
     pub project_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,10 +229,26 @@ pub struct ExactRevisionMaterializationReceipt {
     pub project: EditorProject,
 }
 
+impl ExactRevisionMaterializationReceipt {
+    pub fn require_canonical_authoring_revision_id(
+        &self,
+    ) -> Result<&str, RevisionMaterializerError> {
+        self.canonical_authoring_revision_id
+            .as_deref()
+            .ok_or_else(|| {
+                RevisionMaterializerError::new(
+                    "canonical_revision_unbound",
+                    "exact materialized service revision has no canonical AuthoringRevisionId binding",
+                )
+            })
+    }
+}
+
 pub struct ExactRevisionMaterializer {
     source_authority: Arc<dyn DocumentSourceAuthority>,
     source_loader: Arc<dyn ExactSourceLoader>,
     revision_store: SqliteRevisionStore,
+    revision_identity_store: Option<SqliteRevisionIdentityStore>,
     editor: Arc<dyn EditorReplayEngine>,
 }
 
@@ -244,8 +263,17 @@ impl ExactRevisionMaterializer {
             source_authority,
             source_loader,
             revision_store,
+            revision_identity_store: None,
             editor,
         }
+    }
+
+    pub fn with_revision_identity_store(
+        mut self,
+        revision_identity_store: SqliteRevisionIdentityStore,
+    ) -> Self {
+        self.revision_identity_store = Some(revision_identity_store);
+        self
     }
 
     pub async fn materialize(
@@ -308,6 +336,16 @@ impl ExactRevisionMaterializer {
         }
 
         let project_sha256 = project_sha256(&current_project)?;
+        let canonical_authoring_revision_id = match &self.revision_identity_store {
+            Some(store) => Some(
+                store
+                    .require_binding(document_id, requested_revision_id)
+                    .await
+                    .map_err(|error| RevisionMaterializerError::new(error.code, error.message))?
+                    .canonical_revision_id,
+            ),
+            None => None,
+        };
         let receipt = ExactRevisionMaterializationReceipt {
             schema_version: MATERIALIZATION_RECEIPT_SCHEMA_V1.to_owned(),
             tenant_id: tenant_id.to_owned(),
@@ -317,6 +355,7 @@ impl ExactRevisionMaterializer {
             baseline_revision_id: source.baseline_revision_id,
             baseline_cursor: source.baseline_cursor,
             requested_revision_id: requested_revision_id.to_owned(),
+            canonical_authoring_revision_id,
             replayed_edges: edges.len(),
             project_sha256,
             authoring_root_hash,
