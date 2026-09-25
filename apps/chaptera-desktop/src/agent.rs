@@ -1993,6 +1993,19 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "before_text_sha256":sha256_hex(before.as_bytes()),
             "after_text_sha256":sha256_hex(after.as_bytes())
         }),
+        EditOperation::BreakTextFrameForwardLink {
+            story_id,
+            upstream_frame_id,
+            downstream_frame_id,
+            new_story_id,
+            ..
+        } => json!({
+            "kind":"break_text_frame_forward_link",
+            "story_id":story_id.as_canonical().to_string(),
+            "upstream_frame_id":upstream_frame_id.as_canonical().to_string(),
+            "downstream_frame_id":downstream_frame_id.as_canonical().to_string(),
+            "new_story_id":new_story_id.as_canonical().to_string()
+        }),
         EditOperation::ReplaceTableCellText { node_id, story_id, cell_id, .. } => json!({
             "kind":"replace_table_cell_text",
             "node_id":node_id.as_canonical().to_string(),
