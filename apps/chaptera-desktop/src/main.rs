@@ -3420,7 +3420,10 @@ mod tests {
         };
 
         {
-            let search = harness.get_by_value("");
+            let search = harness
+                .get_all_by_role(egui::accesskit::Role::TextInput)
+                .next()
+                .expect("document Search TextInput");
             search.type_text(search_term.clone());
         }
         harness.run();
