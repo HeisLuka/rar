@@ -1,0 +1,30 @@
+name: TEMP format PUB-QUILL-TOKN-01
+
+on:
+  push:
+    branches:
+      - pub-quill-tokn-01
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: pub-quill-tokn-01
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format task-owned Rust files
+        run: |
+          rustfmt --edition 2024             vendor/producer-a/crates/pub-quill/src/lib.rs             vendor/producer-a/crates/pub-quill/src/story.rs             vendor/producer-a/crates/pub-quill/src/tokn.rs             vendor/producer-a/crates/pub-quill/tests/tokn_real_fixtures.rs
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add             vendor/producer-a/crates/pub-quill/src/lib.rs             vendor/producer-a/crates/pub-quill/src/story.rs             vendor/producer-a/crates/pub-quill/src/tokn.rs             vendor/producer-a/crates/pub-quill/tests/tokn_real_fixtures.rs
+          git commit -m "PUB-QUILL-TOKN: apply rustfmt"
+          git push origin HEAD:pub-quill-tokn-01
