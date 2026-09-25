@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use pub_model::Sha256Digest;
-use std::{env, fs, io::Cursor};
+use pub_model::{Sha256Digest, to_cdm_debug_json_v0_1};
+use std::{env, fs, io::{self, Cursor, Write}};
 
 fn main() -> Result<()> {
     let path = env::args().nth(1).context("fixture path argument missing")?;
@@ -11,6 +11,8 @@ fn main() -> Result<()> {
         .context("build mature-0x2c source graph")?;
     let resolved = pub_reader::resolve_pub_source_graph(&source.graph)
         .context("resolve mature-0x2c source graph")?;
-    print!("{}", serde_json::to_string(&resolved.graph)?);
+    let canonical = to_cdm_debug_json_v0_1(&resolved.graph)
+        .context("serialize canonical resolved graph")?;
+    io::stdout().write_all(&canonical)?;
     Ok(())
 }
