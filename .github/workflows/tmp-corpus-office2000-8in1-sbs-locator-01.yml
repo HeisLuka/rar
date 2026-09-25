@@ -1,0 +1,141 @@
+name: TEMP Office 2000 8-in-1 SBS companion locator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-office2000-8in1-sbs-locator-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Query exact book/CD locator surfaces
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re,time
+          from pathlib import Path
+          from urllib.parse import urlencode,quote
+          from urllib.request import Request,urlopen
+          from urllib.error import HTTPError
+
+          UA='rar-office2000-8in1-sbs-locator/1.0'
+          ISBN10='1572319844'; ISBN13='9781572319844'
+          TITLE='Microsoft Office 2000 8-in-1 Step by Step'
+          errors=[]
+
+          def get_json(url,timeout=90,cap=64*1024*1024):
+              req=Request(url,headers={'User-Agent':UA,'Accept':'application/json'})
+              with urlopen(req,timeout=timeout) as r:
+                  raw=r.read(cap+1)
+              if len(raw)>cap: raise ValueError('response cap exceeded')
+              return json.loads(raw.decode('utf-8'))
+
+          ia_docs=[]
+          for q in [f'isbn:{ISBN10}',f'isbn:{ISBN13}',f'"{TITLE}"','"Office 2000 8 in 1 Step by Step"']:
+              params=[('q',q),('fl[]','identifier'),('fl[]','title'),('fl[]','description'),('fl[]','date'),('fl[]','year'),('fl[]','mediatype'),('fl[]','collection'),('rows','100'),('page','1'),('output','json')]
+              try:
+                  d=get_json('https://archive.org/advancedsearch.php?'+urlencode(params))
+                  for row in d.get('response',{}).get('docs',[]):
+                      row=dict(row); row['query']=q; ia_docs.append(row)
+              except Exception as e:
+                  errors.append({'surface':'ia_search','query':q,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(.4)
+
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|bin|cue|7z|rar)(?:$|[?#])',re.I)
+          ia_items=[]; seen=set()
+          for d in ia_docs:
+              ident=str(d.get('identifier',''))
+              if not ident or ident in seen: continue
+              seen.add(ident)
+              item={'identifier':ident,'search_doc':d,'candidate_files':[]}
+              try:
+                  meta=get_json('https://archive.org/metadata/'+quote(ident,safe=''))
+                  for f in meta.get('files',[]):
+                      name=str(f.get('name',''))
+                      if carrier_re.search(name):
+                          item['candidate_files'].append({'name':name,'size':f.get('size'),'format':f.get('format'),'md5':f.get('md5'),'sha1':f.get('sha1'),'source':f.get('source')})
+              except Exception as e:
+                  item['metadata_error']=f'{type(e).__name__}: {e}'
+              ia_items.append(item); time.sleep(.25)
+
+          openlibrary=[]
+          for isbn in [ISBN10,ISBN13]:
+              try:
+                  d=get_json(f'https://openlibrary.org/isbn/{isbn}.json')
+                  openlibrary.append({'isbn':isbn,'key':d.get('key'),'title':d.get('title'),'publish_date':d.get('publish_date'),'publishers':d.get('publishers'),'ocaid':d.get('ocaid')})
+              except HTTPError as e:
+                  openlibrary.append({'isbn':isbn,'status':e.code,'error':str(e)})
+              except Exception as e:
+                  openlibrary.append({'isbn':isbn,'error':f'{type(e).__name__}: {e}'})
+
+          cdx='https://web.archive.org/cdx/search/cdx'
+          prefixes=[
+              ('oreilly-isbn13',f'examples.oreilly.com/{ISBN13}/'),
+              ('oreilly-isbn10',f'examples.oreilly.com/{ISBN10}/'),
+              ('mspress-office2000-books','mspress.microsoft.com/office2000/books/'),
+              ('mspress-office2000','mspress.microsoft.com/office2000/'),
+              ('microsoft-mspress-office2000','www.microsoft.com/mspress/office2000/'),
+          ]
+          rows=[]
+          for label,prefix in prefixes:
+              params=[('url',prefix),('matchType','prefix'),('output','json'),('fl','timestamp,original,mimetype,statuscode,digest,length'),('filter','statuscode:200'),('collapse','urlkey'),('limit','30000'),('gzip','false')]
+              try:
+                  d=get_json(cdx+'?'+urlencode(params))
+                  if d:
+                      hdr=d[0]
+                      for x in d[1:]:
+                          if isinstance(x,list):
+                              r={str(k):str(v) for k,v in zip(hdr,x)}; r['query_label']=label; rows.append(r)
+              except Exception as e:
+                  errors.append({'surface':'wayback_cdx','query':label,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(.5)
+
+          likely_re=re.compile(r'(8.?in.?1|1572319844|9781572319844|practice|lesson|publisher|download|companion|step.?by.?step)',re.I)
+          likely=[r for r in rows if carrier_re.search(r.get('original','')) or likely_re.search(r.get('original',''))]
+          dedup={}
+          for r in sorted(likely,key=lambda x:x.get('timestamp','')):
+              dedup.setdefault(r.get('original','').casefold(),r)
+          likely=sorted(dedup.values(),key=lambda x:(x.get('query_label',''),x.get('original','')))
+
+          summary={
+            'schema':'chaptera.corpus-office2000-8in1-sbs-locator.v1',
+            'source_safe':True,'raw_payload_retained':False,
+            'title':TITLE,'isbn10':ISBN10,'isbn13':ISBN13,
+            'official_basis':'Microsoft Press 1999 announcement states the 800-page Office 2000 8-in-1 Step by Step covers Publisher and ships with one CD-ROM; contemporary TOC states Installing/Using the Practice Files.',
+            'ia_search_observations':len(ia_docs),'ia_unique_items':len(ia_items),
+            'ia_items_with_candidate_files':sum(bool(x['candidate_files']) for x in ia_items),
+            'openlibrary':openlibrary,
+            'wayback_rows':len(rows),'wayback_likely_rows':len(likely),
+            'wayback_likely':likely,'errors':errors,
+            'guardrail':'Book/CD provenance is distribution evidence. No carrier bytes downloaded and no writer-version inference.'
+          }
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/internet-archive-items.json').write_text(json.dumps(ia_items,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/wayback-likely.json').write_text(json.dumps(likely,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          for item in ia_items:
+              if item['candidate_files']: print('IA',item['identifier'],json.dumps(item['candidate_files'],ensure_ascii=False))
+          PY
+      - name: Metadata-only guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.iso' \) | grep -q .; then
+            echo 'unexpected carrier bytes in locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-office2000-8in1-sbs-locator
+          path: out/**
+          retention-days: 60
