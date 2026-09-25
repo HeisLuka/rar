@@ -57,7 +57,9 @@ project = {
             "story_id": story,
             "scalar_start": 0,
             "scalar_end": 1,
-            "replacement": "Z"
+            "replacement_text": "ChapteraV0",
+            "before_story_state_id": "sha256:" + "1" * 64,
+            "after_story_state_id": "sha256:" + "2" * 64
         },
         {
             "kind": "move_node",
@@ -71,7 +73,7 @@ project_path.write_text(json.dumps(project, sort_keys=True), encoding="utf-8")
 
 with zipfile.ZipFile(export_path, "w") as archive:
     archive.writestr("designmap.xml", "<Document/>")
-    archive.writestr("Stories/Story_u1.xml", "<Story/>")
+    archive.writestr("Stories/Story_u1.xml", "<Story><Content>ChapteraV0</Content></Story>")
     archive.writestr(
         "Spreads/Spread_u1.xml",
         '<Spread><TextFrame Self="uf20000000000040008000000000000001">'
