@@ -245,7 +245,7 @@ impl SqliteQuotaAuthority {
             return Ok(ReserveOutcome::Existing(existing));
         }
 
-        let usage = usage_in_transaction(conn, &request.tenant_id, now_ms).await?;
+        let usage = usage_in_transaction(conn, &request.tenant_id, now_ms, &self.config).await?;
         self.admit(&usage, request.work_class, request.amount)?;
 
         let lease_expires_at_ms = now_ms
@@ -548,7 +548,7 @@ impl SqliteQuotaAuthority {
         require_ident(tenant_id, "tenant_id")?;
         validate_now(now_ms)?;
         let mut conn = self.pool.acquire().await.map_err(sqlite_error)?;
-        usage_in_transaction(&mut conn, tenant_id, now_ms).await
+        usage_in_transaction(&mut conn, tenant_id, now_ms, &self.config).await
     }
 
     async fn require_schema(&self) -> Result<(), QuotaError> {
@@ -697,6 +697,7 @@ async fn usage_in_transaction(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
     tenant_id: &str,
     now_ms: i64,
+    config: &QuotaConfig,
 ) -> Result<QuotaUsage, QuotaError> {
     let rows = sqlx::query(
         r#"
@@ -724,13 +725,11 @@ async fn usage_in_transaction(
     }
 
     let lower = checked_add(usage.export, usage.background)?;
-    let interactive_shared_available = i64::MAX.min(lower);
-    let shared_for_interactive = usage
-        .interactive
-        .min(i64::MAX.saturating_sub(interactive_shared_available));
+    let interactive_shared_available = config.shared_capacity.saturating_sub(lower);
+    let shared_interactive = usage.interactive.min(interactive_shared_available);
 
-    usage.shared_total = checked_add(lower, shared_for_interactive)?;
-    usage.protected_interactive = usage.interactive.saturating_sub(shared_for_interactive);
+    usage.shared_total = checked_add(lower, shared_interactive)?;
+    usage.protected_interactive = usage.interactive.saturating_sub(shared_interactive);
     Ok(usage)
 }
 
@@ -1185,8 +1184,8 @@ mod tests {
         let path = temp_db("missing");
         let result =
             SqliteQuotaAuthority::open(&path, 1, Duration::from_secs(1), config()).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, "quota_database_missing");
+        let error = result.err().expect("unmigrated quota open must fail");
+        assert_eq!(error.code, "quota_database_missing");
         assert!(!path.exists());
         cleanup(&path);
     }
