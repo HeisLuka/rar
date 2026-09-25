@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/pub-export",
+  "crates/pub-idml",
+  "crates/pub-odg",
+  "crates/pub-writer",
+  "crates/pub-editor",
+  "crates/pub-interaction",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "=0.11.0"
+zip = { version = "=2.4.2", default-features = false }
