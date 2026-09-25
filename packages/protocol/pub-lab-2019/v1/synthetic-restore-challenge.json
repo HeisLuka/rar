@@ -1,0 +1,15 @@
+{
+  "schema_version": "chaptera.pub-lab-2019-restore-challenge.v1",
+  "vm_name": "PUB-LAB-2019",
+  "snapshot_name": "MODERN-2019-12527-GOLDEN-v1",
+  "vmx_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "restore_nonce": "0123456789abcdef0123456789abcdef",
+  "restore_requested_at_utc": "2026-09-25T15:00:00Z",
+  "cold_start_succeeded_at_utc": "2026-09-25T15:00:01Z",
+  "expected_environment_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "vmware": {
+    "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "vmware_vmx_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "vdiskmanager_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  }
+}
