@@ -681,9 +681,8 @@ impl fmt::Display for EditorError {
                 node_id.as_canonical(),
                 page_id.as_canonical()
             ),
-            Self::ResizeNodesNoSizeChange => formatter.write_str(
-                "ResizeNodes must include at least one genuine width or height change"
-            ),
+            Self::ResizeNodesNoSizeChange => formatter
+                .write_str("ResizeNodes must include at least one genuine width or height change"),
             Self::NodeResizeUnsupported { node_id } => write!(
                 formatter,
                 "node {} is outside the bounded directly-page-owned resize slice",
@@ -2113,7 +2112,6 @@ impl EditorSession {
         Ok(operation)
     }
 
-
     /// Consume one already-authorized canonical ResizeNodesV1 operation.
     ///
     /// Author-created provenance admission belongs to the source-neutral
@@ -3082,7 +3080,6 @@ fn validate_move_nodes_transition(
     }
     Ok(())
 }
-
 
 fn validate_resize_nodes_transition(
     graph: &PubResolvedGraph,
