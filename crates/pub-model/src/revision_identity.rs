@@ -75,9 +75,8 @@ impl FromStr for AuthoringRevisionIdV1 {
             let source = index * 2;
             let high = lowercase_hex_value(chunk[0])
                 .ok_or(AuthoringRevisionIdParseError::InvalidHex { index: source })?;
-            let low = lowercase_hex_value(chunk[1]).ok_or(
-                AuthoringRevisionIdParseError::InvalidHex { index: source + 1 },
-            )?;
+            let low = lowercase_hex_value(chunk[1])
+                .ok_or(AuthoringRevisionIdParseError::InvalidHex { index: source + 1 })?;
             bytes[index] = (high << 4) | low;
         }
         Ok(Self(bytes))
@@ -115,7 +114,10 @@ impl fmt::Display for AuthoringRevisionIdentityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Canonicalization(error) => {
-                write!(formatter, "canonical revision serialization failed: {error}")
+                write!(
+                    formatter,
+                    "canonical revision serialization failed: {error}"
+                )
             }
         }
     }
