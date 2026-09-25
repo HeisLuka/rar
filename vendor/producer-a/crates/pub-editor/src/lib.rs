@@ -420,11 +420,10 @@ pub fn mature_0x2c_pub_format_manifest() -> FormatCompatibilityManifest {
         "node.geometry.bounds".into(),
         FormatRepresentability::Lossless,
     );
-    features.insert(
-        "node.created_identity".into(),
-        FormatRepresentability::Lossless,
-    );
-    features.insert("shape.paint".into(), FormatRepresentability::Lossless);
+    // CreateShape now emits explicit requirements for created identity and
+    // authored paint, but mature-0x2C representability for those semantics is
+    // not yet proven. Leaving the feature keys absent deliberately yields
+    // NotEvaluated rather than silently upgrading source-format authority.
 
     FormatCompatibilityManifest {
         target: mature_0x2c_pub_persistence_target(),
