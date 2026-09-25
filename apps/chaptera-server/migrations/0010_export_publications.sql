@@ -7,7 +7,7 @@
 
 CREATE TABLE IF NOT EXISTS export_publications (
     publication_id            TEXT PRIMARY KEY,
-    effect_key                TEXT NOT NULL UNIQUE,
+    effect_key                BLOB NOT NULL UNIQUE,
     tenant_id                 BLOB NOT NULL,
     job_id                    BLOB NOT NULL,
     document_id               BLOB NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS export_publications (
     UNIQUE (tenant_id, job_id),
 
     CHECK (length(publication_id) = 71 AND substr(publication_id, 1, 7) = 'sha256:'),
-    CHECK (length(effect_key) = 71 AND substr(effect_key, 1, 7) = 'sha256:'),
+    CHECK (length(effect_key) = 71),
     CHECK (length(canonical_revision_id) = 64),
     CHECK (length(layout_environment_id) = 71 AND substr(layout_environment_id, 1, 7) = 'sha256:'),
     CHECK (length(fence_id) = 71 AND substr(fence_id, 1, 7) = 'sha256:'),
