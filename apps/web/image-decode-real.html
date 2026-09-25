@@ -73,7 +73,38 @@
     );
     gl.deleteFramebuffer(framebuffer);
     gl.deleteTexture(texture);
-    return [...pixels];
+    return { pixels: [...pixels], method: "webgl", uncertainty: "none_for_explicit_srgb_fixture" };
+  }
+
+  function canvas2dReadbackRgba(bitmap) {
+    const canvas = document.getElementById("surface");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Canvas2D unavailable for alpha oracle fallback");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0);
+    return {
+      pixels: [...context.getImageData(0, 0, bitmap.width, bitmap.height).data],
+      method: "canvas2d_fallback",
+      uncertainty: "canvas_readback_may_round_unpremultiply; explicit_srgb_fixture_only",
+    };
+  }
+
+  function strongestAlphaReadback(bitmap) {
+    try {
+      return webglReadbackRgba(bitmap);
+    } catch (error) {
+      return {
+        ...canvas2dReadbackRgba(bitmap),
+        webgl_unavailable_reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  function samplesCompatible(actual, reference, tolerance) {
+    return actual.length === reference.length &&
+      actual.every((value, index) => Math.abs(value - reference[index]) <= tolerance);
   }
 
   async function decodeInWorker(fixture, identity, referenceReceipt, backendId) {
@@ -91,12 +122,15 @@
           if (message.request_id !== "real-worker") return;
           clearTimeout(timer);
           if (message.kind === "decode_error") {
-            reject(new Error(
-              "worker decode failed: " + message.error_code + ": " + message.detail,
-            ));
+            resolve({
+              error_code: message.error_code,
+              detail: message.detail,
+              receipt: null,
+              bitmap: null,
+            });
             return;
           }
-          resolve({ receipt: message.receipt, bitmap: message.bitmap });
+          resolve({ error_code: null, receipt: message.receipt, bitmap: message.bitmap });
         };
         worker.onerror = (event) => {
           clearTimeout(timer);
@@ -148,6 +182,10 @@
       "real-worker",
     );
 
+    if (worker.error_code !== null) {
+      main.bitmap.close();
+      throw new Error(name + " worker exact decode failed: " + worker.error_code + ": " + worker.detail);
+    }
     const mainNormalized = normalizedBrowserDecodeReceiptV1(main.receipt);
     const workerNormalized = normalizedBrowserDecodeReceiptV1(worker.receipt);
     if (!sameJson(mainNormalized, workerNormalized)) {
@@ -169,13 +207,14 @@
 
     let alphaReadback = null;
     if (alphaOracle) {
-      alphaReadback = webglReadbackRgba(main.bitmap);
-      if (!sameJson(alphaReadback, probe.samples)) {
+      alphaReadback = strongestAlphaReadback(main.bitmap);
+      const tolerance = alphaReadback.method === "webgl" ? 0 : 1;
+      if (!samplesCompatible(alphaReadback.pixels, probe.samples, tolerance)) {
         main.bitmap.close();
         worker.bitmap.close();
         throw new Error(
           "alpha source-exact readback differs from reference samples: " +
-          JSON.stringify({ alphaReadback, reference: probe.samples }),
+          JSON.stringify({ alphaReadback, reference: probe.samples, tolerance }),
         );
       }
     }
@@ -207,9 +246,11 @@
         defaultDimensions === null
           ? null
           : !sameJson(defaultDimensions, reference.decoded_dimensions),
-      alpha_webgl_readback_rgba: alphaReadback,
+      alpha_readback: alphaReadback,
       alpha_reference_samples: alphaOracle ? probe.samples : null,
-      alpha_reference_match: alphaOracle ? sameJson(alphaReadback, probe.samples) : null,
+      alpha_reference_match: alphaOracle
+        ? samplesCompatible(alphaReadback.pixels, probe.samples, alphaReadback.method === "webgl" ? 0 : 1)
+        : null,
       reference_cache_identity_sha256: reference.cache_identity_sha256,
       reference_sample_digest_sha256: reference.sample_digest_sha256,
     };
@@ -217,6 +258,72 @@
     main.bitmap.close();
     worker.bitmap.close();
     return result;
+  }
+
+  async function explicitUnsupportedOrientationCase(name, fixture, probe) {
+    const bytes = bytesFromBase64(fixture.base64);
+    const blob = new Blob([bytes], { type: fixture.mime_type });
+    const reference = probe.receipt;
+    const identity = {
+      resource_id: "fixture:" + name,
+      content_hash: reference.resource_sha256,
+      derivative_id: "original",
+    };
+
+    let mainError = null;
+    try {
+      const decoded = await decodeBrowserBitmapExactV1({
+        blob,
+        identity,
+        reference_receipt: reference,
+        request_generation: 1,
+        backend_generation: 1,
+        policy_generation: 1,
+        placement: "main-thread",
+        backend_id: "real-main",
+      });
+      decoded.bitmap.close();
+      throw new Error("non-normal EXIF unexpectedly admitted as source-exact");
+    } catch (error) {
+      if (error?.code !== "explicit_orientation_policy_ignored") throw error;
+      mainError = { error_code: error.code, detail: error.message };
+    }
+
+    const worker = await decodeInWorker(fixture, identity, reference, "real-worker");
+    if (worker.error_code !== mainError.error_code) {
+      throw new Error(
+        "orientation incompatibility differs main/worker: " +
+        JSON.stringify({ main: mainError, worker }),
+      );
+    }
+
+    const defaultBitmap = await createImageBitmap(blob);
+    const defaultDimensions = [defaultBitmap.width, defaultBitmap.height];
+    defaultBitmap.close();
+
+    return {
+      fixture: name,
+      mime_type: fixture.mime_type,
+      source_sha256: reference.resource_sha256,
+      reference_decoded_dimensions: reference.decoded_dimensions,
+      exact_native_supported: false,
+      exact_native_status: "reference_fallback_required",
+      exact_native_error_code: mainError.error_code,
+      exact_options: structuredClone(EXACT_CREATE_IMAGE_BITMAP_OPTIONS),
+      orientation_policy: "preserve_metadata_do_not_apply",
+      alpha_association: reference.alpha_present ? "straight_unassociated" : "none",
+      color_conversion_policy: "none",
+      resize_policy: "none",
+      main_worker_incompatibility_equal: true,
+      browser_is_semantic_authority: false,
+      default_decode_trusted_as_exact: false,
+      default_decoded_dimensions: defaultDimensions,
+      default_orientation_dimension_difference:
+        !sameJson(defaultDimensions, reference.decoded_dimensions),
+      fallback_contract: "chaptera.image-decode-contract.v1",
+      reference_cache_identity_sha256: reference.cache_identity_sha256,
+      reference_sample_digest_sha256: reference.sample_digest_sha256,
+    };
   }
 
   window.runRealBrowserImageDecodeProbe = async function(input) {
@@ -229,11 +336,10 @@
       input.references["alpha.png"],
       { alphaOracle: true },
     );
-    const orientation = await exactCase(
+    const orientation = await explicitUnsupportedOrientationCase(
       "orientation6.jpg",
       input.fixtures["orientation6.jpg"],
       input.references["orientation6.jpg"],
-      { orientationOracle: true },
     );
 
     if (!sameJson(orientation.reference_decoded_dimensions, [3, 2])) {
