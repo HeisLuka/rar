@@ -80,9 +80,7 @@ pub struct RevisionStreamPorts {
 /// Assemble the first real RuntimePorts component without weakening any other
 /// required dependency. Overall readiness must therefore remain false until the
 /// remaining producers are independently connected.
-pub fn ports_with_revision_stream(
-    revision_stream: SqliteRevisionStore,
-) -> RevisionStreamPorts {
+pub fn ports_with_revision_stream(revision_stream: SqliteRevisionStore) -> RevisionStreamPorts {
     let binding = revision_stream_dependency(revision_stream);
     let mut ports = RuntimePorts::unconfigured();
     ports.revision_stream = binding.dependency;
