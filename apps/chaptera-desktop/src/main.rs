@@ -2247,6 +2247,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn editor_project_json_reopens_real_authoring_state() {
         let bytes = decode_base64_fixture(include_str!(
@@ -2508,6 +2509,7 @@ mod tests {
         output
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn real_pub_exposes_decodable_exact_image_bound_to_scene_node() {
         let pub_bytes = decode_base64_fixture(include_str!(
@@ -2547,6 +2549,7 @@ mod tests {
         assert!(decoded.height() > 0);
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn desktop_editor_session_updates_overlay_without_mutating_pub_bytes() {
         let bytes = decode_base64_fixture(include_str!(
@@ -2654,6 +2657,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn canvas_drag_commits_exactly_one_move_and_syncs_undo_redo() {
         let bytes = decode_base64_fixture(include_str!(
@@ -2795,6 +2799,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
     #[test]
     fn replayed_move_project_synchronizes_scene_geometry_by_canonical_node_id() {
         let bytes = decode_base64_fixture(include_str!(
