@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/operation-blast-radius/v1.schema.json",
+  "title": "OperationBlastRadiusV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "operation",
+    "artifacts",
+    "cfb",
+    "parsed_record_family_delta",
+    "semantic_graph_delta",
+    "parser_outcomes",
+    "second_save_convergence",
+    "classification_counts",
+    "invariants"
+  ],
+  "properties": {
+    "schema_version": { "const": "chaptera.operation-blast-radius.v1" },
+    "operation": { "type": "object" },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "control", "mutation"],
+      "properties": {
+        "source": { "$ref": "#/$defs/artifact" },
+        "control": { "$ref": "#/$defs/artifact" },
+        "mutation": { "$ref": "#/$defs/artifact" }
+      }
+    },
+    "cfb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_control_topology_delta",
+        "control_mutation_topology_delta",
+        "source_control_stream_delta",
+        "control_mutation_stream_delta",
+        "control_mutation_byte_ranges"
+      ],
+      "properties": {
+        "source_control_topology_delta": { "type": "array", "items": { "$ref": "#/$defs/classified" } },
+        "control_mutation_topology_delta": { "type": "array", "items": { "$ref": "#/$defs/classified" } },
+        "source_control_stream_delta": { "type": "array", "items": { "$ref": "#/$defs/classified" } },
+        "control_mutation_stream_delta": { "type": "array", "items": { "$ref": "#/$defs/classified" } },
+        "control_mutation_byte_ranges": { "type": "array", "items": { "$ref": "#/$defs/classified" } }
+      }
+    },
+    "parsed_record_family_delta": { "type": "array", "items": { "$ref": "#/$defs/classified" } },
+    "semantic_graph_delta": { "type": "array", "items": { "$ref": "#/$defs/classified" } },
+    "parser_outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "control", "mutation"],
+      "properties": {
+        "source": { "$ref": "#/$defs/parser" },
+        "control": { "$ref": "#/$defs/parser" },
+        "mutation": { "$ref": "#/$defs/parser" }
+      }
+    },
+    "second_save_convergence": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["unavailable", "converged", "changed"] }
+      }
+    },
+    "classification_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_derived",
+        "requested_semantic",
+        "save_normalization",
+        "unavailable",
+        "unexplained_collateral"
+      ],
+      "properties": {
+        "expected_derived": { "type": "integer", "minimum": 0 },
+        "requested_semantic": { "type": "integer", "minimum": 0 },
+        "save_normalization": { "type": "integer", "minimum": 0 },
+        "unavailable": { "type": "integer", "minimum": 0 },
+        "unexplained_collateral": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_byte_inequality_is_not_semantic_evidence",
+        "matched_noop_control_used",
+        "unexplained_collateral_preserved",
+        "public_receipt_contains_raw_document_bytes",
+        "native_pub_writer_capability_granted"
+      ],
+      "properties": {
+        "raw_byte_inequality_is_not_semantic_evidence": { "const": true },
+        "matched_noop_control_used": { "const": true },
+        "unexplained_collateral_preserved": { "const": true },
+        "public_receipt_contains_raw_document_bytes": { "const": false },
+        "native_pub_writer_capability_granted": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["sha256", "byte_len"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "byte_len": { "type": "integer", "minimum": 0 },
+        "producer": { "type": "object" }
+      }
+    },
+    "classified": {
+      "type": "object",
+      "required": ["classification"],
+      "properties": {
+        "classification": {
+          "enum": [
+            "requested_semantic",
+            "save_normalization",
+            "expected_derived",
+            "unexplained_collateral",
+            "unavailable"
+          ]
+        }
+      }
+    },
+    "parser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "diagnostic_codes"],
+      "properties": {
+        "status": { "enum": ["accepted", "rejected", "unavailable"] },
+        "diagnostic_codes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
