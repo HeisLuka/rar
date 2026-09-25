@@ -1,0 +1,407 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Web Color Surface V1</title>
+<style>
+  html, body { margin: 0; background: #111; color: #eee; font: 14px system-ui, sans-serif; }
+  #surfaces { display: flex; gap: 12px; padding: 12px; }
+  canvas, svg { width: 160px; height: 80px; image-rendering: pixelated; background: transparent; }
+</style>
+<div id="surfaces"></div>
+<script>
+(() => {
+  const WIDTH = 4;
+  const HEIGHT = 2;
+  const EXPECTED = [
+    [255, 0, 0, 255],
+    [0, 255, 0, 255],
+    [0, 0, 255, 255],
+    [255, 128, 128, 255],
+    [128, 0, 128, 255],
+    [0, 64, 0, 255],
+    [200, 100, 50, 128],
+    [255, 255, 255, 255],
+  ];
+
+  function rows(bytes) {
+    const out = [];
+    for (let y = 0; y < HEIGHT; y += 1) {
+      for (let x = 0; x < WIDTH; x += 1) {
+        const i = (y * WIDTH + x) * 4;
+        out.push(Array.from(bytes.slice(i, i + 4)));
+      }
+    }
+    return out;
+  }
+
+  function maxDelta(a, b) {
+    let max = 0;
+    for (let i = 0; i < a.length; i += 1) {
+      for (let c = 0; c < 4; c += 1) {
+        max = Math.max(max, Math.abs(a[i][c] - b[i][c]));
+      }
+    }
+    return max;
+  }
+
+  function paintCanvas2d(ctx) {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    ctx.globalCompositeOperation = "source-over";
+
+    ctx.fillStyle = "rgb(255 0 0)";
+    ctx.fillRect(0, 0, 1, 1);
+    ctx.fillStyle = "rgb(0 255 0)";
+    ctx.fillRect(1, 0, 1, 1);
+    ctx.fillStyle = "rgb(0 0 255)";
+    ctx.fillRect(2, 0, 1, 1);
+
+    ctx.fillStyle = "rgb(255 255 255)";
+    ctx.fillRect(3, 0, 1, 1);
+    ctx.fillStyle = "rgb(255 0 0 / 50%)";
+    ctx.fillRect(3, 0, 1, 1);
+
+    ctx.fillStyle = "rgb(255 0 0)";
+    ctx.fillRect(0, 1, 1, 1);
+    ctx.fillStyle = "rgb(0 0 255 / 50%)";
+    ctx.fillRect(0, 1, 1, 1);
+
+    ctx.fillStyle = "rgb(0 0 0)";
+    ctx.fillRect(1, 1, 1, 1);
+    ctx.fillStyle = "rgb(0 255 0 / 25%)";
+    ctx.fillRect(1, 1, 1, 1);
+
+    ctx.clearRect(2, 1, 1, 1);
+    ctx.fillStyle = "rgb(200 100 50 / 50%)";
+    ctx.fillRect(2, 1, 1, 1);
+
+    ctx.fillStyle = "rgb(255 255 255)";
+    ctx.fillRect(3, 1, 1, 1);
+  }
+
+  function canvasProbe() {
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    canvas.dataset.surface = "canvas2d";
+    document.getElementById("surfaces").append(canvas);
+
+    const requested = { alpha: true, colorSpace: "srgb" };
+    const ctx = canvas.getContext("2d", requested);
+    if (!ctx) {
+      return { available: false, requested, error_code: "canvas2d_context_unavailable" };
+    }
+    paintCanvas2d(ctx);
+    const effective = typeof ctx.getContextAttributes === "function"
+      ? ctx.getContextAttributes()
+      : null;
+    let imageData;
+    let readbackOptionsSupported = true;
+    try {
+      imageData = ctx.getImageData(0, 0, WIDTH, HEIGHT, { colorSpace: "srgb" });
+    } catch {
+      readbackOptionsSupported = false;
+      imageData = ctx.getImageData(0, 0, WIDTH, HEIGHT);
+    }
+    const samples = rows(imageData.data);
+    return {
+      available: true,
+      requested,
+      effective: effective ? {
+        alpha: effective.alpha ?? null,
+        colorSpace: effective.colorSpace ?? null,
+        colorType: effective.colorType ?? null,
+        willReadFrequently: effective.willReadFrequently ?? null,
+      } : null,
+      readback: {
+        api: "CanvasRenderingContext2D.getImageData",
+        requested_color_space: "srgb",
+        option_supported: readbackOptionsSupported,
+        returned_color_space: imageData.colorSpace ?? null,
+        returned_pixel_format: imageData.pixelFormat ?? null,
+      },
+      samples,
+      expected_max_channel_delta: maxDelta(samples, EXPECTED),
+    };
+  }
+
+  function compile(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      throw new Error("shader_compile_failed:" + gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  }
+
+  function webglProbe() {
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    canvas.dataset.surface = "webgl2";
+    document.getElementById("surfaces").append(canvas);
+    const requested = {
+      alpha: true,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: true,
+      antialias: false,
+      depth: false,
+      stencil: false,
+    };
+    const gl = canvas.getContext("webgl2", requested);
+    if (!gl) {
+      return { available: false, requested, error_code: "webgl2_context_unavailable" };
+    }
+
+    let drawingBufferColorSpaceSet = false;
+    if ("drawingBufferColorSpace" in gl) {
+      try {
+        gl.drawingBufferColorSpace = "srgb";
+        drawingBufferColorSpaceSet = gl.drawingBufferColorSpace === "srgb";
+      } catch {}
+    }
+
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, `#version 300 es
+      void main() {
+        vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+        gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+      }`));
+    gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, `#version 300 es
+      precision highp float;
+      uniform vec4 u_color;
+      out vec4 out_color;
+      void main() { out_color = u_color; }
+    `));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error("program_link_failed:" + gl.getProgramInfoLog(program));
+    }
+    gl.useProgram(program);
+    const colorLoc = gl.getUniformLocation(program, "u_color");
+    gl.enable(gl.SCISSOR_TEST);
+
+    const logicalScissor = (x, y) => gl.scissor(x, HEIGHT - 1 - y, 1, 1);
+    const draw = (x, y, rgba, blend = false) => {
+      logicalScissor(x, y);
+      if (blend) {
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      } else {
+        gl.disable(gl.BLEND);
+      }
+      gl.uniform4fv(colorLoc, rgba);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    };
+
+    gl.viewport(0, 0, WIDTH, HEIGHT);
+    gl.disable(gl.DITHER);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    draw(0, 0, [1, 0, 0, 1]);
+    draw(1, 0, [0, 1, 0, 1]);
+    draw(2, 0, [0, 0, 1, 1]);
+    draw(3, 0, [1, 1, 1, 1]);
+    draw(3, 0, [1, 0, 0, 0.5], true);
+
+    draw(0, 1, [1, 0, 0, 1]);
+    draw(0, 1, [0, 0, 1, 0.5], true);
+    draw(1, 1, [0, 0, 0, 1]);
+    draw(1, 1, [0, 1, 0, 0.25], true);
+
+    draw(2, 1, [200 / 255, 100 / 255, 50 / 255, 128 / 255], false);
+    draw(3, 1, [1, 1, 1, 1], false);
+
+    const raw = new Uint8Array(WIDTH * HEIGHT * 4);
+    gl.readPixels(0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+    const normalized = new Uint8Array(raw.length);
+    for (let y = 0; y < HEIGHT; y += 1) {
+      const sourceY = HEIGHT - 1 - y;
+      for (let x = 0; x < WIDTH; x += 1) {
+        const src = (sourceY * WIDTH + x) * 4;
+        const dst = (y * WIDTH + x) * 4;
+        normalized.set(raw.slice(src, src + 4), dst);
+      }
+    }
+    const samples = rows(normalized);
+    const attrs = gl.getContextAttributes();
+    return {
+      available: true,
+      requested,
+      effective: {
+        alpha: attrs?.alpha ?? null,
+        premultipliedAlpha: attrs?.premultipliedAlpha ?? null,
+        preserveDrawingBuffer: attrs?.preserveDrawingBuffer ?? null,
+        antialias: attrs?.antialias ?? null,
+        drawingBufferColorSpace: gl.drawingBufferColorSpace ?? null,
+        drawingBufferColorSpaceSet,
+      },
+      readback: {
+        api: "WebGL2RenderingContext.readPixels",
+        format: "RGBA",
+        type: "UNSIGNED_BYTE",
+        explicit_dither_disabled: true,
+      },
+      samples,
+      expected_max_channel_delta: maxDelta(samples, EXPECTED),
+    };
+  }
+
+  async function svgProbe() {
+    const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2" viewBox="0 0 4 2" shape-rendering="crispEdges">
+      <rect x="0" y="0" width="1" height="1" fill="rgb(255,0,0)"/>
+      <rect x="1" y="0" width="1" height="1" fill="rgb(0,255,0)"/>
+      <rect x="2" y="0" width="1" height="1" fill="rgb(0,0,255)"/>
+      <rect x="3" y="0" width="1" height="1" fill="white"/>
+      <rect x="3" y="0" width="1" height="1" fill="rgb(255,0,0)" fill-opacity=".5"/>
+      <rect x="0" y="1" width="1" height="1" fill="rgb(255,0,0)"/>
+      <rect x="0" y="1" width="1" height="1" fill="rgb(0,0,255)" fill-opacity=".5"/>
+      <rect x="1" y="1" width="1" height="1" fill="black"/>
+      <rect x="1" y="1" width="1" height="1" fill="rgb(0,255,0)" fill-opacity=".25"/>
+      <rect x="2" y="1" width="1" height="1" fill="rgb(200,100,50)" fill-opacity=".5019607843137255"/>
+      <rect x="3" y="1" width="1" height="1" fill="white"/>
+    </svg>`;
+    const blob = new Blob([svgText], { type: "image/svg+xml" });
+    let bitmap;
+    const bitmapOptions = {
+      imageOrientation: "none",
+      premultiplyAlpha: "none",
+      colorSpaceConversion: "none",
+    };
+    try {
+      bitmap = await createImageBitmap(blob, bitmapOptions);
+    } catch (error) {
+      return {
+        available: false,
+        requested: { color_space: "srgb_css_svg", alpha: true, bitmapOptions },
+        error_code: "explicit_svg_raster_readback_unavailable",
+        error_message: String(error),
+      };
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    canvas.dataset.surface = "svg-raster-readback";
+    document.getElementById("surfaces").append(canvas);
+    const ctx = canvas.getContext("2d", { alpha: true, colorSpace: "srgb" });
+    if (!ctx) {
+      bitmap.close();
+      return { available: false, error_code: "svg_readback_canvas_unavailable" };
+    }
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    let imageData;
+    let readbackOptionsSupported = true;
+    try {
+      imageData = ctx.getImageData(0, 0, WIDTH, HEIGHT, { colorSpace: "srgb" });
+    } catch {
+      readbackOptionsSupported = false;
+      imageData = ctx.getImageData(0, 0, WIDTH, HEIGHT);
+    }
+    const samples = rows(imageData.data);
+    return {
+      available: true,
+      requested: {
+        color_space: "srgb_css_svg",
+        alpha: true,
+        bitmapOptions,
+      },
+      effective: {
+        svg_surface_color_control: "css_svg_srgb_semantics_no_context_attribute",
+        readback_canvas: typeof ctx.getContextAttributes === "function"
+          ? ctx.getContextAttributes()
+          : null,
+      },
+      readback: {
+        api: "SVG Blob -> createImageBitmap(explicit no-conversion) -> Canvas2D.getImageData",
+        requested_color_space: "srgb",
+        option_supported: readbackOptionsSupported,
+        conversion_uncertainty:
+          "SVG has no independent pixel readback API; receipt proves same-browser rasterized surface equivalence, not absolute monitor colorimetry.",
+      },
+      samples,
+      expected_max_channel_delta: maxDelta(samples, EXPECTED),
+    };
+  }
+
+  function pairDelta(a, b) {
+    if (!a.available || !b.available) return null;
+    return maxDelta(a.samples, b.samples);
+  }
+
+  async function optionalCapabilities() {
+    let p3 = null;
+    try {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d", { colorSpace: "display-p3" });
+      const attrs = ctx && typeof ctx.getContextAttributes === "function"
+        ? ctx.getContextAttributes()
+        : null;
+      p3 = {
+        requested: true,
+        context_created: !!ctx,
+        effective_color_space: attrs?.colorSpace ?? null,
+      };
+    } catch (error) {
+      p3 = { requested: true, context_created: false, error: String(error) };
+    }
+    return {
+      css_display_p3_syntax: CSS.supports("color", "color(display-p3 1 0 0)"),
+      canvas2d_display_p3_probe: p3,
+      webgpu_api_available: !!navigator.gpu,
+      webgpu_active_renderer_candidate: false,
+    };
+  }
+
+  window.runWebColorSurfaceProbe = async function runWebColorSurfaceProbe() {
+    document.getElementById("surfaces").replaceChildren();
+    const canvas2d = canvasProbe();
+    const webgl2 = webglProbe();
+    const svg = await svgProbe();
+    const deltas = {
+      canvas2d_webgl2: pairDelta(canvas2d, webgl2),
+      canvas2d_svg: pairDelta(canvas2d, svg),
+      webgl2_svg: pairDelta(webgl2, svg),
+    };
+    const available = [canvas2d, webgl2, svg].every((x) => x.available);
+    const maxPairDelta = available
+      ? Math.max(...Object.values(deltas))
+      : null;
+    return {
+      receipt_kind: "chaptera.web-color-surface.v1",
+      render_color_target: {
+        dynamic_range: "sdr",
+        color_space: "srgb",
+        alpha_semantics: "explicit",
+        pixel_format: "rgba8_unorm_readback",
+      },
+      active_renderer_candidates: ["svg", "canvas2d", "webgl2-hybrid"],
+      expected_samples: EXPECTED,
+      surfaces: { canvas2d, webgl2, svg },
+      equivalence: {
+        all_current_candidates_available: available,
+        pair_max_channel_delta: deltas,
+        max_pair_channel_delta: maxPairDelta,
+        tolerance: 1,
+        pass: available
+          && canvas2d.expected_max_channel_delta <= 1
+          && webgl2.expected_max_channel_delta <= 1
+          && svg.expected_max_channel_delta <= 1
+          && maxPairDelta <= 1,
+      },
+      capture_boundary: {
+        absolute_monitor_colorimetry_claimed: false,
+        screenshot_used_as_ground_truth: false,
+        readback_scope: "same-browser SDR sRGB surface equivalence",
+      },
+      optional_capabilities: await optionalCapabilities(),
+      real_pub: false,
+      representative_corpus: false,
+      technology_decision_allowed: false,
+    };
+  };
+})();
+</script>
