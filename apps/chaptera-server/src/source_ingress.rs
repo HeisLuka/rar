@@ -267,6 +267,26 @@ pub struct SourceIngressService {
     projects: Arc<dyn ProjectCreationPort>,
 }
 
+pub fn upload_admission_reservation_id(
+    tenant_id: &str,
+    idempotency_key: &str,
+) -> Result<String, IngressError> {
+    require_ident(tenant_id, "tenant_id")?;
+    require_ident(idempotency_key, "idempotency_key")?;
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        protocol: &'static str,
+        tenant_id: &'a str,
+        idempotency_key: &'a str,
+    }
+    let digest = hash_serialized(&Identity {
+        protocol: "chaptera.upload-admission-reservation.v1",
+        tenant_id,
+        idempotency_key,
+    })?;
+    Ok(format!("upload-admission-{digest}"))
+}
+
 pub fn plan_upload_candidate(
     max_source_bytes: u64,
     upload_id: String,
