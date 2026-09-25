@@ -8,7 +8,6 @@ on:
       - "services/editor-api/text_selection_state_v1.py"
       - "services/editor-api/text_typing_format_state_v1.py"
       - "services/editor-api/text_ingress_v1.py"
-      - "services/editor-api/story_edit_transaction_v1.py"
       - ".github/workflows/text-composition-session-v1.yml"
   workflow_dispatch:
 
