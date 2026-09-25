@@ -1,0 +1,30 @@
+name: TEMP format AUTHORING-TABLE-GRID-01
+
+on:
+  push:
+    branches:
+      - authoring-table-grid-01
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: authoring-table-grid-01
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format task-owned Rust files
+        run: |
+          rustfmt --edition 2024             vendor/producer-a/crates/pub-model/src/entity_id.rs             vendor/producer-a/crates/pub-model/src/table.rs             vendor/producer-a/crates/pub-model/src/lib.rs             vendor/producer-a/crates/pub-layout/src/lib.rs             vendor/producer-a/crates/pub-editor/src/lib.rs             vendor/producer-a/crates/pub-editor/tests/effective_table_grid_v1.rs
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add             vendor/producer-a/crates/pub-model/src/entity_id.rs             vendor/producer-a/crates/pub-model/src/table.rs             vendor/producer-a/crates/pub-model/src/lib.rs             vendor/producer-a/crates/pub-layout/src/lib.rs             vendor/producer-a/crates/pub-editor/src/lib.rs             vendor/producer-a/crates/pub-editor/tests/effective_table_grid_v1.rs
+          git commit -m "AUTHORING-TABLE-GRID: apply rustfmt"
+          git push origin HEAD:authoring-table-grid-01
