@@ -108,7 +108,22 @@ jobs:
                       rec["payload_len"]=cb-4
                       props.append(rec); pos+=2+cb
                   else:
-                      ok=False; error={"kind":"unknown_wire_type","at":base_off+pos,"tag":tag,"type":typ,"opyid":opy}; break
+                      remaining=len(payload)-pos
+                      diag={
+                        "kind":"unknown_wire_type","at":base_off+pos,"tag":tag,"type":typ,"opyid":opy,
+                        "remaining_in_opl":remaining,
+                        "bytes_after_tag":max(0,remaining-2),
+                        "zero_payload_closes_opl": remaining==2,
+                        "fixed_u32_closes_opl": remaining==6,
+                      }
+                      if remaining>=6:
+                          after=u32(payload,pos+2)
+                          diag["u32_after_tag"]=after
+                          diag["length_delimited_closes_opl"]=after>=4 and (2+after)==remaining
+                      else:
+                          diag["u32_after_tag"]=None
+                          diag["length_delimited_closes_opl"]=False
+                      ok=False; error=diag; break
               residual=payload[pos:]
               residual_info=None
               if residual:
@@ -141,8 +156,29 @@ jobs:
                   if cursor!=len(b): framing_ok=False
               pair_counts=collections.Counter()
               type_counts=collections.Counter()
+              unknown_type_counts=collections.Counter()
+              unknown_cases=[]
+              parse_exact_count=0
+              parse_incomplete_count=0
               for blk in [root]+sub:
-                  for p in (blk.get("parse") or {}).get("properties",[]):
+                  parsed=blk.get("parse") or {}
+                  if parsed.get("exact_end"): parse_exact_count+=1
+                  else:
+                      parse_incomplete_count+=1
+                      err=parsed.get("error") or {}
+                      if err.get("kind")=="unknown_wire_type":
+                          unknown_type_counts[err.get("type")]+=1
+                          unknown_cases.append({
+                            "block":blk.get("label"),"block_offset":blk.get("offset"),"block_cb":blk.get("cb"),
+                            "type":err.get("type"),"opyid":err.get("opyid"),"tag_offset":err.get("at"),
+                            "remaining_in_opl":err.get("remaining_in_opl"),"bytes_after_tag":err.get("bytes_after_tag"),
+                            "zero_payload_closes_opl":err.get("zero_payload_closes_opl"),
+                            "fixed_u32_closes_opl":err.get("fixed_u32_closes_opl"),
+                            "length_delimited_closes_opl":err.get("length_delimited_closes_opl"),
+                            "u32_after_tag":err.get("u32_after_tag"),
+                            "residual_sha256":(parsed.get("residual") or {}).get("sha256")
+                          })
+                  for p in parsed.get("properties",[]):
                       type_counts[p["type"]]+=1
                       pair_counts[(p["type"],p["opyid"])]+=1
               return {
@@ -153,6 +189,10 @@ jobs:
                 "sub_opl_count":len(sub),
                 "sub_opls":sub,
                 "framing_exact_to_eof":framing_ok,
+                "inner_parse_exact_count":parse_exact_count,
+                "inner_parse_incomplete_count":parse_incomplete_count,
+                "unknown_type_counts":dict(sorted(unknown_type_counts.items())),
+                "unknown_wire_cases":unknown_cases,
                 "type_counts":dict(sorted(type_counts.items())),
                 "top_type_opy_pairs":[{"type":k[0],"opyid":k[1],"count":v} for k,v in pair_counts.most_common(64)]
               }
@@ -162,7 +202,12 @@ jobs:
           summary={"schema":"chaptera.pubwiz-poc-p2000-structural-summary.v1","files":[
               {"name":x["name"],"size":x["size"],"sha256":x["sha256"],"prefix24_hex":x["prefix24_hex"],"header":x["header"],"root_length_ok":x["root"]["length_ok"],"root_parse_exact":x["root"]["parse_exact"],
                "root_cb":x["root"].get("cb"),"sub_opl_count":x["sub_opl_count"],
-               "framing_exact_to_eof":x["framing_exact_to_eof"],"type_counts":x["type_counts"],
+               "framing_exact_to_eof":x["framing_exact_to_eof"],
+               "inner_parse_exact_count":x["inner_parse_exact_count"],
+               "inner_parse_incomplete_count":x["inner_parse_incomplete_count"],
+               "unknown_type_counts":x["unknown_type_counts"],
+               "unknown_wire_cases":x["unknown_wire_cases"],
+               "type_counts":x["type_counts"],
                "top_pairs":x["top_type_opy_pairs"][:16]} for x in report["files"]]}
           pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
           print(json.dumps(summary,indent=2))
