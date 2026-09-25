@@ -144,7 +144,12 @@ pub fn canonical_table_cell_paint_hash_v1(
 ) -> Result<String, serde_json::Error> {
     let bytes = serde_json::to_vec(paint)?;
     let digest = Sha256::digest(bytes);
-    Ok(format!("sha256:{digest:x}"))
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("write to String cannot fail");
+    }
+    Ok(format!("sha256:{hex}"))
 }
 
 #[cfg(test)]
