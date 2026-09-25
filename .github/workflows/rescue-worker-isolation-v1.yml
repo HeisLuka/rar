@@ -6,6 +6,7 @@ on:
       - "apps/chaptera-recovery-worker/**"
       - "packages/product/rescue-worker/**"
       - "docs/chaptera-rescue-worker-v1.md"
+      - "tools/probe_rescue_worker_v1.py"
       - ".github/workflows/rescue-worker-isolation-v1.yml"
   workflow_dispatch:
 
