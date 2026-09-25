@@ -26,6 +26,7 @@ use crate::{
 
 pub const SESSION_COOKIE: &str = "__Host-chaptera_session";
 pub const CSRF_HEADER: &str = "x-csrf-token";
+pub const AUTH_CALLBACK_PATH: &str = "/v1/auth/callback";
 
 #[derive(Clone)]
 pub struct AuthHttpState {
@@ -63,7 +64,7 @@ impl AuthHttpState {
 pub fn router(state: AuthHttpState) -> Router {
     Router::new()
         .route("/v1/auth/login", get(login))
-        .route("/v1/auth/callback", get(callback))
+        .route(AUTH_CALLBACK_PATH, get(callback))
         .route("/v1/session", get(session))
         .route("/v1/auth/logout", post(logout))
         .with_state(state)
