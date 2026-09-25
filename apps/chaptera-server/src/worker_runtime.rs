@@ -12,7 +12,7 @@ use crate::{
     export_publication::SqliteExportPublicationStore,
     job_executor_registry::JobExecutorRegistry,
     job_queue::{JobKind, SqliteJobQueue},
-    job_worker::{WorkerControl, WorkerLoop, WorkerLoopConfig},
+    job_worker::{JobExecutor, WorkerControl, WorkerLoop, WorkerLoopConfig},
     jobs::{WorkerRuntime, WorkerRuntimeFuture},
     quota_admission::{SqliteQuotaAdmissionConfig, SqliteQuotaJobAdmission},
     quota_store::{QuotaConfig, SqliteQuotaAuthority},
@@ -22,7 +22,12 @@ use crate::{
     runtime_error::RuntimeError,
     shutdown,
     source_authority::SqliteDocumentSourceAuthority,
+    source_ingress_async::{AsyncSourceSecurityScanner, AsyncSourceValidationRuntime},
+    source_ingress_security::ProductionSourceSecurityScanner,
+    source_ingress_sqlite::SqliteSourceIngressRepository,
+    source_validation_job::{SourceValidationJobExecutor, SourceValidationPort},
     sqlite_store::SqliteRevisionStore,
+    upload_admission::SqliteUploadAdmissionAuthority,
 };
 
 #[derive(Clone)]
@@ -74,18 +79,45 @@ impl ConfiguredWorkerRuntime {
                 .map_err(|error| runtime_error(error.code, error.message))?,
         );
 
-        let export_executor = Arc::new(PublishedExportJobExecutor::new(
+        let export_executor: Arc<dyn JobExecutor> = Arc::new(PublishedExportJobExecutor::new(
             producer,
-            blob_store,
+            blob_store.clone(),
             artifacts,
             publication_committer,
             authorizer,
         ));
-        let registry = Arc::new(JobExecutorRegistry::new(vec![(
-            JobKind::Export,
-            export_executor,
-        )])?);
-        registry.require_kinds(&[JobKind::Export])?;
+
+        let source_repo = SqliteSourceIngressRepository::open(path, pool_max, busy_timeout)
+            .await
+            .map_err(|error| runtime_error(error.code, error.message))?;
+        let source_validation: Arc<dyn SourceValidationPort> = Arc::new(
+            AsyncSourceValidationRuntime::new(source_repo.clone(), blob_store.clone()),
+        );
+        let source_scanner: Arc<dyn AsyncSourceSecurityScanner> = Arc::new(
+            ProductionSourceSecurityScanner::new(self.config.source_validation.materialize())
+                .map_err(|error| runtime_error(error.code, error.message))?,
+        );
+        let upload_admission = SqliteUploadAdmissionAuthority::open(
+            path,
+            pool_max,
+            busy_timeout,
+            self.config.upload_admission.materialize(),
+        )
+        .await
+        .map_err(|error| runtime_error(error.code, error.message))?;
+        let source_validation_executor: Arc<dyn JobExecutor> =
+            Arc::new(SourceValidationJobExecutor::new(
+                source_repo,
+                source_validation,
+                source_scanner,
+                upload_admission,
+            ));
+
+        let registry = Arc::new(JobExecutorRegistry::new(vec![
+            (JobKind::Export, export_executor),
+            (JobKind::Parse, source_validation_executor),
+        ])?);
+        registry.require_kinds(&[JobKind::Export, JobKind::Parse])?;
 
         let quota = SqliteQuotaAuthority::open(
             path,
@@ -103,7 +135,7 @@ impl ConfiguredWorkerRuntime {
 
         let loop_config = WorkerLoopConfig::conservative_v0(
             format!("worker:{}", std::process::id()),
-            vec![JobKind::Export],
+            vec![JobKind::Export, JobKind::Parse],
         );
         let admission = Arc::new(SqliteQuotaJobAdmission::new(
             quota,
