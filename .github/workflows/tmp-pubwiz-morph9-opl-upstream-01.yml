@@ -1,0 +1,187 @@
+name: TEMP PUBWIZ MORPH9 OPL upstream slice
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-morph9-opl-upstream-01.yml'
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+      - name: Rehydrate exact MORPH9 and trace immediate upstream callers
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/morph/{src,module} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/morph/source.7z
+          test "$(sha1sum /tmp/morph/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          7z x -y /tmp/morph/source.7z -o/tmp/morph/src >/dev/null
+          MDF="$(find /tmp/morph/src -type f -iname '*.mdf' | head -n1)"
+          iat "$MDF" /tmp/morph/disc.iso >/dev/null
+          test "$(sha256sum /tmp/morph/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z e -y -o/tmp/morph/module /tmp/morph/disc.iso 'PFILES/MSOFFICE/OFFICE/MORPH9.DLL' >/dev/null
+          test "$(sha256sum /tmp/morph/module/MORPH9.DLL | awk '{print $1}')" = 'd154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          python3 - <<'PY'
+          import json,hashlib,pathlib
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_32,CS_GRP_CALL
+          from capstone.x86 import X86_OP_IMM,X86_OP_MEM
+
+          data=pathlib.Path('/tmp/morph/module/MORPH9.DLL').read_bytes()
+          pe=pefile.PE(data=data,fast_load=False); ib=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_32); md.detail=True
+
+          # IAT map.
+          iat={}
+          if hasattr(pe,'DIRECTORY_ENTRY_IMPORT'):
+            for imp in pe.DIRECTORY_ENTRY_IMPORT:
+              dll=imp.dll.decode('ascii','replace')
+              for e in imp.imports:
+                name=(e.name.decode('ascii','replace') if e.name else f'ord{e.ordinal}')
+                iat[e.address]=dll+'!'+name
+
+          # Candidate code region is in the first executable section and is linearly decodable.
+          ins=[]
+          for s in pe.sections:
+            if not (s.Characteristics & 0x20000000): continue
+            sec=s.Name.rstrip(b'\0').decode('ascii','replace')
+            for x in md.disasm(s.get_data(),ib+s.VirtualAddress):
+              ins.append((sec,x))
+
+          pro=[]
+          for i in range(len(ins)-1):
+            a=ins[i][1]; b=ins[i+1][1]
+            if a.mnemonic=='push' and a.op_str=='ebp' and b.mnemonic=='mov' and b.op_str.replace(' ','')=='ebp,esp':
+              pro.append(i)
+
+          call_sites={0x63EB,0x642A}
+          site_idxs={}
+          for i,(sec,x) in enumerate(ins):
+            r=x.address-ib
+            if r in call_sites: site_idxs[r]=i
+          if set(site_idxs)!=call_sites:
+            raise SystemExit(f'missing caller sites: {call_sites-set(site_idxs)}')
+
+          first=min(site_idxs.values())
+          prev=[i for i in pro if i<=first]
+          start_idx=prev[-1] if prev else max(0,first-160)
+          nxt=[i for i in pro if i>max(site_idxs.values())]
+          end_idx=nxt[0] if nxt else min(len(ins),max(site_idxs.values())+320)
+          start_rva=ins[start_idx][1].address-ib
+          end_rva=ins[end_idx][1].address-ib if end_idx<len(ins) else None
+          entry_va=ib+start_rva
+
+          def row(x):
+            return {'rva':x.address-ib,'mnemonic':x.mnemonic,'op_str':x.op_str}
+
+          # Direct callers to upstream function.
+          callers=[]
+          for sec,x in ins:
+            if not x.group(CS_GRP_CALL): continue
+            imms=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+            if imms and imms[0]==entry_va: callers.append(row(x))
+
+          # String helpers.
+          def va_to_off(va):
+            rva=va-ib
+            try:return pe.get_offset_from_rva(rva)
+            except:return None
+          def ascii_at(va):
+            off=va_to_off(va)
+            if off is None or off<0 or off>=len(data): return None
+            b=data[off:off+160]; out=[]
+            for c in b:
+              if 32<=c<127: out.append(chr(c))
+              else: break
+            return ''.join(out) if len(out)>=4 else None
+          def utf16_at(va):
+            off=va_to_off(va)
+            if off is None or off<0 or off+8>len(data): return None
+            chars=[]
+            for j in range(off,min(len(data)-1,off+320),2):
+              lo,hi=data[j],data[j+1]
+              if hi==0 and 32<=lo<127: chars.append(chr(lo))
+              elif lo==0 and hi==0: break
+              else: break
+            return ''.join(chars) if len(chars)>=4 else None
+
+          refs=[]; imports=[]; calls=[]
+          for i in range(start_idx,end_idx):
+            sec,x=ins[i]; rva=x.address-ib
+            if x.group(CS_GRP_CALL):
+              imms=[op.imm & 0xffffffff for op in x.operands if op.type==X86_OP_IMM]
+              calls.append({'rva':rva,'op_str':x.op_str,'target_rva':(imms[0]-ib if imms and ib<=imms[0]<ib+pe.OPTIONAL_HEADER.SizeOfImage else None)})
+            for op in x.operands:
+              va=None
+              if op.type==X86_OP_IMM:
+                v=op.imm & 0xffffffff
+                if ib<=v<ib+pe.OPTIONAL_HEADER.SizeOfImage: va=v
+              elif op.type==X86_OP_MEM and op.mem.base==0 and op.mem.index==0:
+                v=op.mem.disp & 0xffffffff
+                if v in iat:
+                  imports.append({'rva':rva,'mnemonic':x.mnemonic,'op_str':x.op_str,'import':iat[v]})
+                if ib<=v<ib+pe.OPTIONAL_HEADER.SizeOfImage: va=v
+              if va is not None:
+                a=ascii_at(va); u=utf16_at(va)
+                if a or u:
+                  refs.append({'rva':rva,'mnemonic':x.mnemonic,'op_str':x.op_str,'target_rva':va-ib,'ascii':a,'utf16':u})
+
+          windows={}
+          for site,idx in sorted(site_idxs.items()):
+            lo=max(start_idx,idx-24); hi=min(end_idx,idx+8)
+            windows[f'0x{site:X}']=[row(ins[j][1]) for j in range(lo,hi)]
+
+          # Inspect argument-setup signatures: pushes/lea/mov in last 16 instructions before each call.
+          arg_summaries={}
+          for site,idx in sorted(site_idxs.items()):
+            rows=[row(ins[j][1]) for j in range(max(start_idx,idx-16),idx+1)]
+            arg_summaries[f'0x{site:X}']=rows
+
+          # Simple source-edge classification.
+          fileish=('CreateFile','ReadFile','FindResource','LoadResource','LockResource','CreateStreamOnHGlobal','StgOpen','IStream')
+          hit_imports=[x for x in imports if any(k.lower() in x['import'].lower() for k in fileish)]
+          hit_strings=[x for x in refs if any(k in ((x.get('ascii') or '')+(x.get('utf16') or '')).lower() for k in ('poc','pubwiz','.des','.poc'))]
+          if hit_imports or hit_strings:
+            classification='file-resource-stream-backed-candidate'
+          elif imports or refs:
+            classification='in-memory-or-indirect-source'
+          else:
+            classification='unresolved-upstream-source'
+
+          out={
+            'schema':'chaptera.pubwiz-morph9-opl-upstream.v1',
+            'module_sha256':hashlib.sha256(data).hexdigest(),
+            'caller_function':{'start_rva':start_rva,'end_rva_exclusive':end_rva,'direct_callers':callers,'direct_callees':calls},
+            'call_windows':windows,
+            'argument_windows':arg_summaries,
+            'resolved_import_refs':imports,
+            'referenced_strings':refs,
+            'file_resource_stream_import_hits':hit_imports,
+            'poc_pubwiz_string_hits':hit_strings,
+            'classification':classification,
+            'source_safe':True,'raw_module_retained':False
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          print(json.dumps({'caller_start_rva':start_rva,'caller_end_rva':end_rva,'direct_callers':len(callers),'direct_callees':len(calls),'import_refs':len(imports),'string_refs':len(refs),'fileish_hits':len(hit_imports),'poc_string_hits':len(hit_strings),'classification':classification},indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then exit 1; fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-morph9-opl-upstream-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
