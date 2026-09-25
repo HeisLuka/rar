@@ -365,9 +365,7 @@ fn map_port_failure(error: PortError) -> JobFailure {
 fn map_admission_port_error(error: &UploadAdmissionError) -> PortError {
     if matches!(
         error.code,
-        "sqlite_upload_admission_error"
-            | "upload_principal_capacity"
-            | "upload_tenant_capacity"
+        "sqlite_upload_admission_error" | "upload_principal_capacity" | "upload_tenant_capacity"
     ) {
         PortError::retryable()
     } else {
@@ -413,9 +411,9 @@ fn permanent(code: &'static str) -> JobFailure {
 fn bounded_ident(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
 fn lower_hex_64(value: &str) -> bool {
@@ -567,11 +565,8 @@ mod tests {
         let validation = Arc::new(FakeValidation {
             result: Mutex::new(upload(UploadState::ValidatedDurable, 3)),
         });
-        let executor = SourceValidationJobExecutor::with_ports(
-            uploads,
-            admission.clone(),
-            validation,
-        );
+        let executor =
+            SourceValidationJobExecutor::with_ports(uploads, admission.clone(), validation);
 
         let result = executor
             .execute_inner(&job(&payload()), CancellationFlag::default())
@@ -592,11 +587,8 @@ mod tests {
         let validation = Arc::new(FakeValidation {
             result: Mutex::new(upload(UploadState::ValidatedDurable, 3)),
         });
-        let executor = SourceValidationJobExecutor::with_ports(
-            uploads,
-            admission.clone(),
-            validation,
-        );
+        let executor =
+            SourceValidationJobExecutor::with_ports(uploads, admission.clone(), validation);
 
         let result = executor
             .execute_inner(&job(&payload()), CancellationFlag::default())
