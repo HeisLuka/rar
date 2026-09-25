@@ -1,0 +1,48 @@
+name: Editor Insert TextBox UI V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/insert_textbox_ui_v1.py"
+      - "services/editor-api/test_insert_textbox_ui_v1.py"
+      - "services/editor-api/canvas_box_draw_v1.py"
+      - "services/editor-api/canvas_tool_state_v1.py"
+      - "services/editor-api/editor_tool_routing_v1.py"
+      - "services/editor-api/create_textbox_v1.py"
+      - "services/editor-api/story_edit_transaction_v1.py"
+      - "services/editor-api/text_edit_session_v1.py"
+      - ".github/workflows/editor-insert-textbox-ui-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test TextBox draw create focus type loop
+        working-directory: services/editor-api
+        run: python -m unittest -v test_insert_textbox_ui_v1
+      - name: Regression Canvas BoxDraw
+        working-directory: services/editor-api
+        run: python -m unittest -v test_canvas_box_draw_v1
+      - name: Regression Canvas Tool State
+        working-directory: services/editor-api
+        run: python -m unittest -v test_canvas_tool_state_v1
+      - name: Regression Editor Tool Routing
+        working-directory: services/editor-api
+        run: python -m unittest -v test_editor_tool_routing_v1
+      - name: Regression CreateTextBox
+        working-directory: services/editor-api
+        run: python -m unittest -v test_create_textbox_v1
+      - name: Regression StoryEditTransaction
+        working-directory: services/editor-api
+        run: python -m unittest -v test_story_edit_transaction_v1
+      - name: Regression TextEditSession
+        working-directory: services/editor-api
+        run: python -m unittest -v test_text_edit_session_v1
