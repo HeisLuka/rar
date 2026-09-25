@@ -2944,6 +2944,64 @@ fn fitted_scale(page_width_emu: i64, page_height_emu: i64, viewport: egui::Vec2)
 mod tests {
     use super::*;
 
+    #[cfg(feature = "reader-only")]
+    #[test]
+    #[ignore = "requires CHAPTERA_SAMPLE_NEWSLETTER and a WGPU-capable hosted runner"]
+    fn reader_open_phase_wgpu_first_paint_uses_current_viewer_app() {
+        use egui_kittest::Harness;
+
+        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned public PUB fixture");
+        let original = fs::read(&fixture).expect("read first-paint fixture");
+
+        let started = std::time::Instant::now();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(20)
+            .wgpu()
+            .build_eframe({
+                let fixture = fixture.clone();
+                move |cc| ViewerApp::new_with_storage(Some(fixture), cc.storage)
+            });
+        harness.step();
+        let image = harness
+            .render()
+            .expect("Reader first frame must render through the current WGPU test surface");
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let app = harness.state();
+        let visual = app.visual.as_ref().expect("Reader Viewer document loaded");
+        assert!(!visual.document.pages.is_empty());
+        assert!(!visual.scene.nodes.is_empty());
+        assert!(image.width() > 0 && image.height() > 0);
+        assert_eq!(
+            fs::read(&fixture).expect("re-read first-paint fixture"),
+            original,
+            "Reader first paint must not mutate the source PUB"
+        );
+
+        if let Some(path) = std::env::var_os("CHAPTERA_OPEN_FIRST_PAINT_RECEIPT") {
+            let receipt = serde_json::json!({
+                "schema_version": "chaptera.reader-first-paint-wgpu.v1",
+                "fixture_sha256": format!("{:x}", Sha256::digest(&original)),
+                "source_unchanged": true,
+                "viewer_opened": true,
+                "frame_rendered": true,
+                "width": image.width(),
+                "height": image.height(),
+                "elapsed_ms": elapsed_ms,
+                "architecture_decision_allowed": false,
+            });
+            fs::write(
+                PathBuf::from(path),
+                serde_json::to_vec_pretty(&receipt).expect("serialize first-paint receipt"),
+            )
+            .expect("write first-paint receipt");
+        }
+    }
+
     #[test]
     fn canvas_pointer_maps_through_interaction_transform() {
         let page_rect =
