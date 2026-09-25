@@ -29,11 +29,7 @@ impl UploadAdmissionError {
         }
     }
 
-    fn capacity(
-        code: &'static str,
-        message: impl Into<String>,
-        retry_at_ms: Option<i64>,
-    ) -> Self {
+    fn capacity(code: &'static str, message: impl Into<String>, retry_at_ms: Option<i64>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -585,12 +581,15 @@ fn enforce_capacity(
             "upload count overflow",
         )
     })?;
-    let next_bytes = usage.active_bytes.checked_add(requested_bytes).ok_or_else(|| {
-        UploadAdmissionError::new(
-            "upload_admission_capacity_overflow",
-            "upload byte usage overflow",
-        )
-    })?;
+    let next_bytes = usage
+        .active_bytes
+        .checked_add(requested_bytes)
+        .ok_or_else(|| {
+            UploadAdmissionError::new(
+                "upload_admission_capacity_overflow",
+                "upload byte usage overflow",
+            )
+        })?;
     if next_count > concurrent_cap || next_bytes > byte_cap {
         return Err(UploadAdmissionError::capacity(
             code,
