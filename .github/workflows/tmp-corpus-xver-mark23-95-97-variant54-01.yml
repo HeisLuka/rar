@@ -670,8 +670,8 @@ jobs:
           assert summary["target_count"] == 4
           assert summary["long_form_count"] == 3
           counts = summary["classification_counts"]
-          assert sum(counts.values()) == 7, counts
-          assert len(summary["pure_style_files"]) + len(summary["invalid_style_files"]) == 7
+          assert sum(counts.values()) == 4, counts
+          assert len(summary["pure_style_files"]) + len(summary["invalid_style_files"]) == 4
           assert not set(summary["pure_style_files"]) & set(summary["invalid_style_files"])
           # This gate validates a complete source-safe diagnostic receipt.
           # Model closure is decided from the retained classifications, not pre-assumed here.
