@@ -145,7 +145,7 @@ jobs:
 
           def u16(b,o): return int.from_bytes(b[o:o+2],"little")
           def u32(b,o): return int.from_bytes(b[o:o+4],"little")
-          FIXED={1:0,4:4,7:16}
+          FIXED={1:0,4:4,7:16,30:0}
           LEN_TYPES={16,17,19,24}
           def parse_payload(p):
               pos=0; props=[]; stop=None
@@ -265,7 +265,13 @@ jobs:
               }
           common_opys=sorted(set.intersection(*common_sets)) if common_sets and all(common_sets) else []
           families_with_hits=sum(1 for r in results.values() if r["exact_consecutive_opl_value_hits"] or r["exact_consecutive_desID_hits"])
-          if common_opys:
+          coverage_complete=all(
+              v["poc"].get("outer_framing") is True and v["poc"].get("residual_blocks")==0
+              for v in results.values()
+          )
+          if not coverage_complete:
+              verdict="inconclusive_residual_coverage"
+          elif common_opys:
               verdict="common_rule_candidate"
           elif families_with_hits==2:
               verdict="two_family_family_specific_candidates"
@@ -280,6 +286,7 @@ jobs:
             "results":results,
             "common_candidate_opyids":common_opys,
             "families_with_any_exact_hit":families_with_hits,
+            "coverage_complete":coverage_complete,
             "verdict":verdict,
             "guardrail":"Numeric XML key and POC opyid equality alone is not semantic identity. Only predeclared exact consecutive vectors were tested."
           }
@@ -303,6 +310,7 @@ jobs:
             } for k,v in results.items()},
             "common_candidate_opyids":common_opys,
             "families_with_any_exact_hit":families_with_hits,
+            "coverage_complete":coverage_complete,
             "verdict":verdict,
             "guardrail":report["guardrail"],
           }
