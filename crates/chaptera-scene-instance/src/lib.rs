@@ -41,7 +41,8 @@ pub struct SceneInstanceV1 {
     pub projection_kind: SceneProjectionKindV1,
     pub origin_node_id: String,
     pub target_page_id: String,
-    pub source_parent_page_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_parent_origin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub story_authority_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,7 +126,7 @@ pub fn direct_page_local_instance_v1(
         projection_kind: SceneProjectionKindV1::DirectPageLocal,
         origin_node_id: origin_node_id.to_owned(),
         target_page_id: target_page_id.to_owned(),
-        source_parent_page_id: target_page_id.to_owned(),
+        source_parent_origin: Some(target_page_id.to_owned()),
         story_authority_id: None,
         cmo_slot_index: None,
         cmo_scalar_index: None,
@@ -157,7 +158,7 @@ pub fn inherited_master_instance_v1(
         projection_kind: SceneProjectionKindV1::InheritedMaster,
         origin_node_id: origin_node_id.to_owned(),
         target_page_id: target_page_id.to_owned(),
-        source_parent_page_id: source_master_page_id.to_owned(),
+        source_parent_origin: Some(source_master_page_id.to_owned()),
         story_authority_id: None,
         cmo_slot_index: None,
         cmo_scalar_index: None,
@@ -199,7 +200,7 @@ pub fn cmo_story_slot_instance_v1(
         projection_kind: SceneProjectionKindV1::CmoStorySlot,
         origin_node_id: relation.carrier_node_id.clone(),
         target_page_id: target_page_id.to_owned(),
-        source_parent_page_id: relation.carrier_node_id.clone(),
+        source_parent_origin: None,
         story_authority_id: relation.carrier_story_id.clone(),
         cmo_slot_index: Some(slot_index),
         cmo_scalar_index: Some(scalar_index),
