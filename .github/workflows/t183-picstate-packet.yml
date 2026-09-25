@@ -1,0 +1,58 @@
+name: T183 PICSTATE packet self-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/t183-picstate-packet.yml'
+      - 'tools/research-runner/experiments/picstate-01.packet.json'
+      - 'tools/research-runner/operations/picstate_01.ps1'
+      - 'tools/windows/pub-runtime/PICSTATE-01.md'
+  push:
+    branches:
+      - research/picstate-01
+    paths:
+      - '.github/workflows/t183-picstate-packet.yml'
+      - 'tools/research-runner/experiments/picstate-01.packet.json'
+      - 'tools/research-runner/operations/picstate_01.ps1'
+      - 'tools/windows/pub-runtime/PICSTATE-01.md'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate experiment packet
+        run: |
+          python3 tools/research-runner/validate_packet.py \
+            --packet tools/research-runner/experiments/picstate-01.packet.json \
+            --expected-environment publisher-2019
+      - name: Parse native PowerShell without executing Publisher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/research-runner/operations/picstate_01.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            throw 'PowerShell parse failed: picstate_01.ps1'
+          }
+      - name: Enforce four-cell and private-evidence contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'id = "FF"; link = $false; save = $false' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'id = "FT"; link = $false; save = $true' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'id = "TF"; link = $true;  save = $false' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'id = "TT"; link = $true;  save = $true' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'ExpectedSentinelSha256' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'native_pub_outputs_private = $true' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'raw_persistence_semantics_claimed = $false' tools/research-runner/operations/picstate_01.ps1
+          grep -F 'publication_local_sentinel_copy_count' tools/research-runner/operations/picstate_01.ps1
