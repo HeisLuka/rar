@@ -195,7 +195,8 @@ jobs:
             if sha(pub)!=s["sha256"]:raise ValueError(side+" exact member SHA drift")
             pubs[side]=pub;deliveries[side]=iso.delivery
             streams[side],storages[side]=cfb(pub)
-            parsed[side]=parse(streams[side]["/Contents"])\n          if len(pubs["pub95"])!=len(pubs["pub97"]):raise ValueError("expected zero whole-file length delta")
+            parsed[side]=parse(streams[side]["/Contents"])
+          if len(pubs["pub95"])!=len(pubs["pub97"]):raise ValueError("expected zero whole-file length delta")
 
           if sorted(streams["pub95"])!=sorted(streams["pub97"]):raise ValueError("CFB path drift")
           changed=[p for p in sorted(streams["pub95"]) if streams["pub95"][p]!=streams["pub97"][p]]
