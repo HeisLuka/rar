@@ -1,0 +1,33 @@
+name: CLOUD-WORKSPACE-CONTEXT-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0014_workspace_context.sql"
+      - "apps/chaptera-server/src/workspace_context.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "tools/run_cloud_migration_receipt.py"
+      - ".github/workflows/cloud-workspace-context-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workspace-context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --package chaptera-server -- --check
+      - name: Lint server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Test workspace context
+        run: cargo test -p chaptera-server workspace_context
+      - name: Test migrations
+        run: cargo test -p chaptera-server schema_migration
