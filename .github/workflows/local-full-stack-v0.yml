@@ -1,0 +1,36 @@
+name: LOCAL-FULL-STACK-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/serve.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/assets/local-dashboard.html"
+      - "tools/run_local_full_stack.py"
+      - "Start-Chaptera-Local.cmd"
+      - ".github/workflows/local-full-stack-v0.yml"
+      - "deploy/config/chaptera.prod.example.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-full-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check Rust formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint Chaptera server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Test runtime shell
+        run: cargo test -p chaptera-server --test runtime_shell -- --nocapture
+      - name: Check launcher syntax
+        run: python -m py_compile tools/run_local_full_stack.py
+      - name: Smoke exact local launcher without browser
+        run: python tools/run_local_full_stack.py --no-browser --smoke
