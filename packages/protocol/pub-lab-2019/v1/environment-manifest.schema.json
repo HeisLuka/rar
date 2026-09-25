@@ -8,18 +8,52 @@
     "schema_version",
     "vm_name",
     "restore_nonce",
-    "publisher_version",
-    "publisher_build",
-    "environment_fingerprint",
-    "captured_at_utc"
+    "captured_at_utc",
+    "os_build",
+    "system_locale",
+    "user_locale",
+    "code_page",
+    "time_zone",
+    "default_printer",
+    "font_set_sha256",
+    "publisher",
+    "environment_fingerprint"
   ],
   "properties": {
     "schema_version": {"const": "chaptera.publisher2019-environment-manifest.v1"},
     "vm_name": {"const": "PUB-LAB-2019"},
     "restore_nonce": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-    "publisher_version": {"const": "16.0"},
-    "publisher_build": {"const": "16.0.12527.22145"},
-    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "captured_at_utc": {"type": "string", "format": "date-time"}
+    "captured_at_utc": {"type": "string", "format": "date-time"},
+    "os_build": {"type": "string", "minLength": 1, "maxLength": 128},
+    "system_locale": {"type": "string", "minLength": 1, "maxLength": 64},
+    "user_locale": {"type": "string", "minLength": 1, "maxLength": 64},
+    "code_page": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "time_zone": {"type": "string", "minLength": 1, "maxLength": 128},
+    "default_printer": {"type": "string", "minLength": 1, "maxLength": 256},
+    "font_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "build", "bitness", "process_count", "modules"],
+      "properties": {
+        "version": {"const": "16.0"},
+        "build": {"const": "16.0.12527.22145"},
+        "bitness": {"enum": ["x86", "x64"]},
+        "process_count": {"const": 0},
+        "modules": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mspub_exe", "oart_dll", "wwlib_dll", "gfx_dll", "mspub_tlb"],
+          "properties": {
+            "mspub_exe": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "oart_dll": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "wwlib_dll": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "gfx_dll": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "mspub_tlb": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }
 }
