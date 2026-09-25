@@ -83,6 +83,8 @@ jobs:
         run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --all-targets -- -D warnings
       - name: Run CreateShape runtime tests
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test create_shape_runtime_v1
+      - name: Re-run ResizeNode schema inheritance
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test resize_node_v1
       - name: Re-run ResizeNodes schema inheritance
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test resize_nodes_v1
       - name: Re-run MoveNodes schema inheritance
