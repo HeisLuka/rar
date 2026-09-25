@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod product_smoke;
+mod locale;
 #[allow(dead_code)]
 mod supporter;
 
