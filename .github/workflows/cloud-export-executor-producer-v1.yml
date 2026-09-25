@@ -38,4 +38,4 @@ jobs:
           echo "CHAPTERA_EXPORT_FIXTURE=$fixture" >> "$GITHUB_ENV"
 
       - name: Prove exact edited real-PUB producer
-        run: cargo test -p chaptera-server --test export_executor_producer -- --nocapture
+        run: cargo test -p chaptera-server --test export_executor_producer -- --ignored --nocapture
