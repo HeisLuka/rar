@@ -1,4 +1,4 @@
-name: TEMP Office XP ISBN cd_contents tree census
+name: TEMP Office XP ISBN cd_contents CDX census
 
 on:
   pull_request:
@@ -17,111 +17,136 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Traverse exact archived cd_contents directory metadata
+      - name: Query exact cd_contents prefix across all capture timestamps
         run: |
           set -euo pipefail
           mkdir -p out
           python - <<'PY'
-          import json,re
-          from collections import deque
-          from html.parser import HTMLParser
+          import json,re,time
           from pathlib import Path
-          from urllib.parse import urljoin,urlparse,unquote
+          from urllib.parse import urlencode
           from urllib.request import Request,urlopen
 
-          UA='rar-officexp-isbn-cdcontents-tree/1.0'
-          TS='20101018185557'
-          LIVE_ROOT='http://examples.oreilly.com/9780735612945/cd_contents/'
-          ARCH_ROOT=f'https://web.archive.org/web/{TS}id_/{LIVE_ROOT}'
-          MAX_DEPTH=5
-          MAX_PAGES=500
-          MAX_LINKS=10000
-
-          class P(HTMLParser):
-              def __init__(self):
-                  super().__init__(); self.links=[]
-              def handle_starttag(self,tag,attrs):
-                  if tag.lower()=='a':
-                      d=dict(attrs)
-                      if d.get('href'): self.links.append(d['href'].strip())
-
-          def archive_url(live):
-              return f'https://web.archive.org/web/{TS}id_/{live}'
-
-          q=deque([(LIVE_ROOT,0)])
-          seen=set()
-          pages=[]
-          files={}
+          UA='rar-officexp-isbn-cdcontents-cdx/2.0'
+          ROOT='examples.oreilly.com/9780735612945/cd_contents/'
+          CDX='https://web.archive.org/cdx/search/cdx'
           errors=[]
-          total_links=0
-          while q and len(pages)<MAX_PAGES and total_links<MAX_LINKS:
-              live,depth=q.popleft()
-              key=live.casefold()
-              if key in seen: continue
-              seen.add(key)
-              aurl=archive_url(live)
-              try:
-                  req=Request(aurl,headers={'User-Agent':UA,'Accept':'text/html,*/*;q=0.1'})
-                  with urlopen(req,timeout=45) as r:
-                      raw=r.read(2*1024*1024+1)
-                      status=getattr(r,'status',None)
-                      final=r.geturl()
-                      ctype=r.headers.get('Content-Type','')
-                  if len(raw)>2*1024*1024:
-                      raise RuntimeError('directory HTML exceeded 2 MiB cap')
-                  html=raw.decode('utf-8','replace')
-                  p=P(); p.feed(html)
-                  page={'live_url':live,'archived_url':aurl,'depth':depth,'status':status,'final_url':final,'content_type':ctype,'html_len':len(raw),'link_count':len(p.links)}
-                  pages.append(page)
-                  for href in p.links:
-                      total_links+=1
-                      if total_links>MAX_LINKS: break
-                      if href.startswith('?') or href.startswith('#'): continue
-                      child=urljoin(live,href)
-                      u=urlparse(child)
-                      if u.netloc.lower()!='examples.oreilly.com': continue
-                      if not child.lower().startswith(LIVE_ROOT.lower()): continue
-                      # Strip query/fragment for stable path identity.
-                      child=u._replace(query='',fragment='').geturl()
-                      path=unquote(urlparse(child).path)
-                      if child.endswith('/'):
-                          if depth<MAX_DEPTH and child.casefold() not in seen:
-                              q.append((child,depth+1))
-                      else:
-                          ext=Path(path).suffix.lower()
-                          files.setdefault(child.casefold(),{
-                              'live_url':child,
-                              'parent':live,
-                              'depth':depth+1,
-                              'filename':Path(path).name,
-                              'extension':ext
-                          })
-              except Exception as e:
-                  errors.append({'live_url':live,'depth':depth,'archived_url':aurl,'error':f'{type(e).__name__}: {e}'})
 
-          file_rows=sorted(files.values(),key=lambda x:x['live_url'].casefold())
-          pub=[x for x in file_rows if x['extension']=='.pub']
-          carriers=[x for x in file_rows if x['extension'] in {'.pub','.zip','.cab','.exe','.msi','.iso','.img','.bin','.cue','.7z','.rar'}]
+          def get_json(params,timeout=90):
+              req=Request(CDX+'?'+urlencode(params),headers={'User-Agent':UA,'Accept':'application/json'})
+              with urlopen(req,timeout=timeout) as r:
+                  return json.load(r)
+
+          captures=[]
+          # Primary: all unique URLs below the exact child prefix.
+          try:
+              data=get_json([
+                  ('url',ROOT),('matchType','prefix'),('output','json'),
+                  ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                  ('filter','statuscode:200'),('collapse','urlkey'),('limit','50000'),('gzip','false')
+              ])
+              if data:
+                  hdr=data[0]
+                  for x in data[1:]:
+                      if isinstance(x,list):
+                          captures.append({str(k):str(v) for k,v in zip(hdr,x)})
+          except Exception as e:
+              errors.append({'surface':'cdx_prefix','error':f'{type(e).__name__}: {e}'})
+
+          # Secondary: exact directory captures without collapse, to recover own timestamps.
+          directory_captures=[]
+          try:
+              data=get_json([
+                  ('url',ROOT),('matchType','exact'),('output','json'),
+                  ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                  ('filter','statuscode:200'),('limit','10000'),('gzip','false')
+              ])
+              if data:
+                  hdr=data[0]
+                  for x in data[1:]:
+                      if isinstance(x,list):
+                          directory_captures.append({str(k):str(v) for k,v in zip(hdr,x)})
+          except Exception as e:
+              errors.append({'surface':'cdx_exact_dir','error':f'{type(e).__name__}: {e}'})
+
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|bin|cue|7z|rar)(?:$|[?#])',re.I)
+          pub_re=re.compile(r'\.pub(?:$|[?#])',re.I)
+          file_rows=[]
+          for r in captures:
+              u=r.get('original','')
+              if not u.endswith('/'):
+                  file_rows.append(r)
+          carriers=[r for r in file_rows if carrier_re.search(r.get('original',''))]
+          pubs=[r for r in file_rows if pub_re.search(r.get('original',''))]
+
+          # If a directory capture exists, fetch only its HTML listing metadata and href strings,
+          # using the directory's own timestamp rather than the parent's timestamp.
+          listings=[]
+          hrefs=[]
+          if directory_captures:
+              from html.parser import HTMLParser
+              from urllib.parse import urljoin
+              class P(HTMLParser):
+                  def __init__(self): super().__init__(); self.links=[]
+                  def handle_starttag(self,tag,attrs):
+                      if tag.lower()=='a':
+                          d=dict(attrs)
+                          if d.get('href'): self.links.append(d['href'].strip())
+              for d in directory_captures[:10]:
+                  ts=d.get('timestamp','')
+                  live=d.get('original','')
+                  aurl=f'https://web.archive.org/web/{ts}id_/{live}'
+                  try:
+                      req=Request(aurl,headers={'User-Agent':UA,'Accept':'text/html,*/*;q=0.1'})
+                      with urlopen(req,timeout=45) as resp:
+                          raw=resp.read(2*1024*1024+1)
+                          ctype=resp.headers.get('Content-Type','')
+                          status=getattr(resp,'status',None)
+                      if len(raw)>2*1024*1024: raise RuntimeError('listing exceeds 2 MiB cap')
+                      p=P(); p.feed(raw.decode('utf-8','replace'))
+                      listings.append({'timestamp':ts,'live_url':live,'archived_url':aurl,'status':status,'content_type':ctype,'html_len':len(raw),'link_count':len(p.links)})
+                      for h in p.links:
+                          if h.startswith('?') or h.startswith('#'): continue
+                          hrefs.append({'timestamp':ts,'href':h,'absolute':urljoin(live,h)})
+                  except Exception as e:
+                      errors.append({'surface':'directory_listing','timestamp':ts,'url':live,'error':f'{type(e).__name__}: {e}'})
+
+          # Dedup hrefs.
+          seen=set(); href_rows=[]
+          for h in hrefs:
+              k=h['absolute'].casefold()
+              if k not in seen:
+                  seen.add(k); href_rows.append(h)
+          href_carriers=[h for h in href_rows if carrier_re.search(h['absolute'])]
+          href_pubs=[h for h in href_rows if pub_re.search(h['absolute'])]
+
           summary={
-              'schema':'chaptera.corpus-officexp-isbn-cdcontents-tree.v1',
+              'schema':'chaptera.corpus-officexp-isbn-cdcontents-cdx.v2',
               'source_safe':True,
               'raw_payload_retained':False,
               'isbn13':'9780735612945',
-              'root_live_url':LIVE_ROOT,
-              'root_archived_url':ARCH_ROOT,
-              'max_depth':MAX_DEPTH,
-              'pages_visited':len(pages),
-              'files_seen':len(file_rows),
-              'pub_links':len(pub),
-              'carrier_links':len(carriers),
-              'pub':pub,
+              'root':ROOT,
+              'prefix_unique_rows':len(captures),
+              'exact_directory_captures':len(directory_captures),
+              'file_rows':len(file_rows),
+              'carrier_rows':len(carriers),
+              'pub_rows':len(pubs),
+              'directory_listings_fetched':len(listings),
+              'href_rows':len(href_rows),
+              'href_carriers':len(href_carriers),
+              'href_pubs':len(href_pubs),
               'carriers':carriers,
+              'pubs':pubs,
+              'href_carrier_rows':href_carriers,
+              'href_pub_rows':href_pubs,
+              'directory_captures':directory_captures,
+              'listings':listings,
               'errors':errors,
-              'guardrail':'Directory/listing metadata only. No linked file bodies downloaded; exact ISBN distribution provenance is not writer-version authority.'
+              'guardrail':'Archive metadata/listing HTML only. No linked carrier bodies downloaded; exact ISBN provenance is not writer-version authority.'
           }
           Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
-          Path('out/pages.json').write_text(json.dumps(pages,indent=2,ensure_ascii=False),encoding='utf-8')
-          Path('out/files.json').write_text(json.dumps(file_rows,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/cdx-prefix.json').write_text(json.dumps(captures,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/hrefs.json').write_text(json.dumps(href_rows,indent=2,ensure_ascii=False),encoding='utf-8')
           print(json.dumps(summary,indent=2,ensure_ascii=False))
           PY
       - name: Metadata-only guard
@@ -134,6 +159,6 @@ jobs:
           sha256sum out/* | sort > out/sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: corpus-officexp-isbn-cdcontents-tree
+          name: corpus-officexp-isbn-cdcontents-cdx
           path: out/**
           retention-days: 60
