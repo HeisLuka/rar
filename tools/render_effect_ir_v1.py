@@ -203,8 +203,12 @@ def canonical_effect_group_v1(group, known_effect_ids):
         _fail("blend_mode not admitted by V1")
     if composite not in COMPOSITE_MODES:
         _fail("composite_mode not admitted by V1")
+    parent_group_id = group.get("parent_effect_group_id")
+    if parent_group_id is not None and (not isinstance(parent_group_id, str) or not parent_group_id):
+        _fail("parent_effect_group_id must be a non-empty string or null")
     return {
         "effect_group_id": group_id,
+        "parent_effect_group_id": parent_group_id,
         "effect_ids": list(effect_ids),
         "opacity_milli": _safe_int(
             group.get("opacity_milli", 1000),
@@ -232,6 +236,26 @@ def canonical_effect_tables_v1(source):
     group_ids = [value["effect_group_id"] for value in groups]
     if len(group_ids) != len(set(group_ids)):
         _fail("effect_group_id must be unique")
+    known_groups = set(group_ids)
+    parent_by_group = {}
+    for group in groups:
+        group_id = group["effect_group_id"]
+        parent_id = group["parent_effect_group_id"]
+        if parent_id is None:
+            continue
+        if parent_id == group_id:
+            _fail("effect group cannot parent itself")
+        if parent_id not in known_groups:
+            _fail("effect group references unknown parent")
+        parent_by_group[group_id] = parent_id
+    for group_id in group_ids:
+        seen = set()
+        cursor = group_id
+        while cursor in parent_by_group:
+            if cursor in seen:
+                _fail("effect group parent cycle")
+            seen.add(cursor)
+            cursor = parent_by_group[cursor]
     return effects, groups
 
 
