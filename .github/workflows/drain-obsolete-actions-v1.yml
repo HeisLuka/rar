@@ -30,7 +30,8 @@ jobs:
           set -euo pipefail
 
           preserve_file="$(mktemp)"
-          trap 'rm -f "$preserve_file"' EXIT
+          runs_file="$(mktemp)"
+          trap 'rm -f "$preserve_file" "$runs_file"' EXIT
 
           gh api --paginate --method GET "repos/$GH_REPO/pulls" \
             -f state=open -f per_page=100 \
@@ -40,43 +41,31 @@ jobs:
           echo "Preserving current heads of all open PRs:"
           cat "$preserve_file" || true
 
+          : >"$runs_file"
+          for status in queued in_progress; do
+            gh api --paginate --method GET "repos/$GH_REPO/actions/runs" \
+              -f status="$status" -f event=pull_request -f per_page=100 \
+              --jq '.workflow_runs[] | [.id, (.head_branch // ""), .head_sha, .name] | @tsv' \
+              >>"$runs_file"
+          done
+
           cancelled=0
           preserved=0
+          while IFS=$'\t' read -r id head_branch head_sha name; do
+            [[ -n "$id" ]] || continue
+            if grep -Fxq "$head_sha" "$preserve_file"; then
+              echo "KEEP   $id  $head_branch  ${head_sha:0:12}  $name"
+              preserved=$((preserved + 1))
+              continue
+            fi
 
-          for status in queued in_progress; do
-            page=1
-            while :; do
-              payload="$(gh api --method GET "repos/$GH_REPO/actions/runs" \
-                -f status="$status" \
-                -f per_page=100 \
-                -f page="$page")"
-
-              count="$(jq '.workflow_runs | length' <<<"$payload")"
-              [[ "$count" -gt 0 ]] || break
-
-              while IFS=$'\t' read -r id event head_branch head_sha name; do
-                [[ "$event" == "pull_request" ]] || continue
-
-                if grep -Fxq "$head_sha" "$preserve_file"; then
-                  echo "KEEP   $id  $head_branch  ${head_sha:0:12}  $name"
-                  preserved=$((preserved + 1))
-                  continue
-                fi
-
-                echo "CANCEL $id  $head_branch  ${head_sha:0:12}  $name"
-                if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
-                  cancelled=$((cancelled + 1))
-                else
-                  echo "::warning::Could not cancel run $id; it may have completed concurrently."
-                fi
-              done < <(
-                jq -r '.workflow_runs[] | [.id, .event, (.head_branch // ""), .head_sha, .name] | @tsv' <<<"$payload"
-              )
-
-              [[ "$count" -eq 100 ]] || break
-              page=$((page + 1))
-            done
-          done
+            echo "CANCEL $id  $head_branch  ${head_sha:0:12}  $name"
+            if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
+              cancelled=$((cancelled + 1))
+            else
+              echo "::warning::Could not cancel run $id; it may have completed concurrently."
+            fi
+          done <"$runs_file"
 
           echo "Cancelled obsolete PR-head runs: $cancelled"
           echo "Preserved current-head runs: $preserved"
