@@ -10,3 +10,4 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 pub-model = { path = "../pub-model" }
+chaptera-scene-instance = { path = "../chaptera-scene-instance" }
