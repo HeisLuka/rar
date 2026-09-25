@@ -313,6 +313,11 @@ impl EffectiveTableGridV1 {
                     address: cell.address,
                 });
             }
+            if cell.story_id.is_none()
+                && (cell.utf16_start.is_some() || cell.utf16_end.is_some())
+            {
+                return Err(EffectiveTableGridError::StoryRangeWithoutStory { id: cell.id });
+            }
             match (cell.utf16_start, cell.utf16_end) {
                 (None, None) => {}
                 (Some(start), Some(end)) if start <= end => {}
