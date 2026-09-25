@@ -4,7 +4,8 @@ on:
   pull_request:
     paths:
       - "Cargo.toml"
-      - "crates/pub-model/**"
+      - "crates/pub-model/src/shape_paint.rs"
+      - "crates/pub-model/src/shape_paint_op.rs"
       - "crates/pub-paint-bridge/**"
       - ".github/workflows/cdm-shape-paint-v1.yml"
   workflow_dispatch:
