@@ -1,4 +1,5 @@
 pub mod auth_http;
+pub mod auth_runtime;
 pub mod authn;
 pub mod authn_session;
 pub mod authz_runtime;
