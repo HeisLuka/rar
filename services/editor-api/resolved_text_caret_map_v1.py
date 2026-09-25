@@ -157,6 +157,54 @@ def _safe_emu(value: int, label: str) -> int:
     return value
 
 
+GDEF_FORMAT1_AUTHORITY_SOURCE = "opentype_gdef_ligature_caret_format1"
+
+
+def internal_caret_stop_from_shaping_authority_v1(
+    authority_stop: dict,
+    *,
+    page_run_origin_x_emu: int,
+    frame_run_origin_x_emu: int,
+) -> InternalCaretStopV1:
+    """Project one source-neutral shaping authority stop into resolved line space.
+
+    The Rust shaping producer reports caret_x_emu relative to the shaped run
+    origin. This adapter adds only already-resolved run placement; it never
+    invents an internal position.
+    """
+    if not isinstance(authority_stop, dict):
+        _fail("invalid_layout", "internal caret shaping authority must be object")
+    required = {
+        "scalar_boundary",
+        "caret_x_emu",
+        "authority_source",
+    }
+    if not required.issubset(authority_stop):
+        _fail("invalid_layout", "internal caret shaping authority is incomplete")
+    scalar_boundary = authority_stop["scalar_boundary"]
+    if not isinstance(scalar_boundary, int) or isinstance(scalar_boundary, bool):
+        _fail("invalid_layout", "internal caret scalar_boundary must be integer")
+    relative_x = _safe_emu(authority_stop["caret_x_emu"], "authority.caret_x_emu")
+    page_origin = _safe_emu(page_run_origin_x_emu, "page_run_origin_x_emu")
+    frame_origin = _safe_emu(frame_run_origin_x_emu, "frame_run_origin_x_emu")
+    source = authority_stop["authority_source"]
+    if source != GDEF_FORMAT1_AUTHORITY_SOURCE:
+        _fail(
+            "unsupported_internal_caret_authority",
+            "only admitted GDEF Format1 internal caret authority is accepted by V1",
+        )
+    page_x = page_origin + relative_x
+    frame_x = frame_origin + relative_x
+    _safe_emu(page_x, "internal.page_x_emu")
+    _safe_emu(frame_x, "internal.frame_x_emu")
+    return InternalCaretStopV1(
+        scalar_boundary=scalar_boundary,
+        page_x_emu=page_x,
+        frame_x_emu=frame_x,
+        authority_source=source,
+    )
+
+
 def _validate_range(start: int, end: int, story_len: int, label: str) -> None:
     if (
         not isinstance(start, int)
