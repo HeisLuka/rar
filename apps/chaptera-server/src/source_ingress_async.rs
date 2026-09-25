@@ -17,6 +17,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSecurityScanReceipt {
     pub validation_profile: String,
+    pub inspected_sha256: String,
+    pub inspected_byte_len: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +142,7 @@ impl AsyncSourceValidationRuntime {
             SourceSecurityScanOutcome::Accepted(receipt) => {
                 inspected.require_consumed_exact(observed_len)?;
                 require_ident(&receipt.validation_profile, "validation_profile")?;
+                require_sha256(&receipt.inspected_sha256, "inspected_sha256")?;
                 receipt
             }
             SourceSecurityScanOutcome::Rejected { code } => {
@@ -148,6 +151,18 @@ impl AsyncSourceValidationRuntime {
             }
         };
         let canonical_sha256 = inspected.sha256_hex();
+        if scan_receipt.inspected_byte_len != observed_len {
+            return Err(IngressError::new(
+                "scan_receipt_length_mismatch",
+                "security scan receipt byte length differs from exact quarantine object",
+            ));
+        }
+        if scan_receipt.inspected_sha256 != canonical_sha256 {
+            return Err(IngressError::new(
+                "scan_receipt_hash_mismatch",
+                "security scan receipt hash differs from independently inspected bytes",
+            ));
+        }
 
         let second = self
             .blob_store
@@ -241,6 +256,20 @@ fn require_ident(value: &str, label: &'static str) -> Result<(), IngressError> {
         return Err(IngressError::new(
             "invalid_identifier",
             format!("{label} is not a bounded opaque identifier"),
+        ));
+    }
+    Ok(())
+}
+
+fn require_sha256(value: &str, label: &'static str) -> Result<(), IngressError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(IngressError::new(
+            "invalid_sha256",
+            format!("{label} must be 64 lowercase hexadecimal characters"),
         ));
     }
     Ok(())
@@ -396,6 +425,8 @@ mod tests {
                 Ok(SourceSecurityScanOutcome::Accepted(
                     SourceSecurityScanReceipt {
                         validation_profile: "chaptera-untrusted-pub-v1".to_owned(),
+                        inspected_sha256: format!("{:x}", Sha256::digest(b"publisher")),
+                        inspected_byte_len: 9,
                     },
                 ))
             }
