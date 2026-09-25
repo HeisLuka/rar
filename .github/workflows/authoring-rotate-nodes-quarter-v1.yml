@@ -1,0 +1,40 @@
+name: Authoring Rotate Nodes Quarter V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/rotate_quarter_v1.py"
+      - "services/editor-api/rotate_nodes_quarter_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_rotate_quarter_v1.py"
+      - "services/editor-api/test_rotate_nodes_quarter_v1.py"
+      - "packages/protocol/authoring-rotate-nodes-quarter/v1/**"
+      - ".github/workflows/authoring-rotate-nodes-quarter-v1.yml"
+  push:
+    branches:
+      - feature/authoring-rotate-nodes-quarter-01
+
+permissions:
+  contents: read
+
+jobs:
+  rotate-nodes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run batch and single-object quarter-turn tests
+        working-directory: services/editor-api
+        run: |
+          python -m unittest -v \
+            test_rotate_nodes_quarter_v1 \
+            test_rotate_quarter_v1 \
+            test_revision_store
+      - name: Check batch intent schema
+        run: |
+          python -m json.tool \
+            packages/protocol/authoring-rotate-nodes-quarter/v1/rotate-nodes-quarter-intent.schema.json \
+            >/dev/null
