@@ -1,0 +1,140 @@
+name: TEMP Office 2000 archived href extraction
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-2000-hrefs-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch exact archived pages and extract links
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re,time
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import quote,urljoin,urlencode,urlparse
+          from urllib.request import Request,urlopen
+
+          UA='rar-office2000-href/1.0 (public format research)'
+          CDX='https://web.archive.org/cdx/search/cdx'
+          pages=[
+            ('publisher2000','20000817084617','http://mspress.microsoft.com:80/office2000/products/publisher2000.htm'),
+            ('learning','19991128173516','http://mspress.microsoft.com:80/office2000/learning.htm'),
+            ('filelist','20000531053308','http://mspress.microsoft.com:80/office2000/runningoffice/filelist.htm'),
+            ('sample','19991018191745','http://mspress.microsoft.com:80/office2000/runningoffice/sample.htm'),
+            ('books-learning','19991012021553','http://mspress.microsoft.com:80/office2000/books/learning.htm'),
+          ]
+          class P(HTMLParser):
+              def __init__(self): super().__init__(); self.links=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag.lower() not in ('a','area','link'): return
+                  d=dict(attrs)
+                  if d.get('href'): self.links.append(d['href'].strip())
+
+          all_links=[]
+          page_receipts=[]
+          for label,ts,orig in pages:
+              replay=f"https://web.archive.org/web/{ts}id_/{quote(orig,safe=':/?&=%+,$;~*\'()!')}"
+              try:
+                  req=Request(replay,headers={'User-Agent':UA})
+                  with urlopen(req,timeout=60) as resp:
+                      raw=resp.read(4*1024*1024+1)
+                  if len(raw)>4*1024*1024: raise ValueError('page exceeded 4 MiB')
+                  text=raw.decode('latin-1','replace')
+                  p=P(); p.feed(text)
+                  normalized=[]
+                  for href in p.links:
+                      if href.startswith(('javascript:','mailto:','#')): continue
+                      u=urljoin(orig,href)
+                      normalized.append(u)
+                      all_links.append({'page':label,'page_timestamp':ts,'page_original':orig,'href':href,'url':u})
+                  page_receipts.append({'label':label,'timestamp':ts,'original':orig,'replay':replay,'bytes':len(raw),'href_count':len(normalized),'error':None})
+              except Exception as exc:
+                  page_receipts.append({'label':label,'timestamp':ts,'original':orig,'replay':replay,'bytes':None,'href_count':0,'error':f'{type(exc).__name__}: {exc}'})
+              time.sleep(0.5)
+
+          # Candidate links are grounded in hrefs actually observed in archived HTML.
+          ext_re=re.compile(r'\.(?:pub|zip|cab|exe|rar|7z|iso|img)(?:[?#].*)?$',re.I)
+          key_re=re.compile(r'(publisher|practice|exercise|sample|companion|download|lesson|filelist|office.?2000)',re.I)
+          uniq={}
+          for row in all_links:
+              u=row['url']
+              if ext_re.search(u) or key_re.search(u):
+                  uniq.setdefault(u.casefold(),row)
+          candidates=sorted(uniq.values(),key=lambda x:x['url'])
+
+          # Exact CDX checks only for links observed in those pages.
+          hits=[]; errors=[]
+          for row in candidates:
+              params=[
+                ('url',row['url']),('matchType','exact'),('output','json'),
+                ('fl','timestamp,original,mimetype,statuscode,digest,length'),
+                ('filter','statuscode:200'),('collapse','digest'),('limit','20'),('gzip','false')
+              ]
+              try:
+                  req=Request(CDX+'?'+urlencode(params),headers={'User-Agent':UA,'Accept':'application/json'})
+                  with urlopen(req,timeout=45) as resp:
+                      data=json.loads(resp.read(8*1024*1024+1).decode('utf-8'))
+                  if data:
+                      hdr=data[0]
+                      for item in data[1:]:
+                          if isinstance(item,list):
+                              h={str(k):str(v) for k,v in zip(hdr,item)}
+                              h.update({'source_page':row['page'],'observed_url':row['url']})
+                              hits.append(h)
+              except Exception as exc:
+                  errors.append({'url':row['url'],'error':f'{type(exc).__name__}: {exc}'})
+              time.sleep(0.15)
+
+          carrier_hits=[h for h in hits if ext_re.search(h.get('original',''))]
+          summary={
+            'schema':'chaptera.corpus-training-office2000-href-extraction.v1',
+            'source_safe':True,'raw_carrier_retained':False,
+            'pages':page_receipts,
+            'observed_href_rows':len(all_links),
+            'candidate_observed_urls':len(candidates),
+            'exact_cdx_hits':len(hits),
+            'carrier_cdx_hits':len(carrier_hits),
+            'errors':errors,
+            'guardrail':'Every queried candidate URL came from an href observed in an exact archived Microsoft Press page; no filename guessing.'
+          }
+          Path('out/observed-links.json').write_text(json.dumps(all_links,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/candidates.json').write_text(json.dumps(candidates,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/cdx-hits.json').write_text(json.dumps(hits,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/carrier-hits.json').write_text(json.dumps(carrier_hits,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          print('--- carrier hits ---')
+          for h in carrier_hits:
+              print(h.get('timestamp'),h.get('original'),h.get('mimetype'),h.get('length'))
+          print('--- observed candidates ---')
+          for r in candidates[:150]:
+              print(r['page'],r['url'])
+          PY
+      - name: Source-safe guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' \) | grep -q .; then
+            echo 'unexpected carrier leaked' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-office2000-href-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
