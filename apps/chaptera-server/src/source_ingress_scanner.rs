@@ -511,4 +511,56 @@ mod tests {
         assert_eq!(format_seconds(15_250), "15.250");
         assert_eq!(format_seconds(1), "0.001");
     }
+
+    #[tokio::test]
+    #[ignore = "requires the built sandbox worker and pinned PUB fixture"]
+    async fn isolated_scanner_accepts_pinned_pub_through_canonical_guard() {
+        let python_program = PathBuf::from(
+            std::env::var("CHAPTERA_PYTHON_PROGRAM").expect("CHAPTERA_PYTHON_PROGRAM"),
+        );
+        let isolation_script = PathBuf::from(
+            std::env::var("CHAPTERA_ISOLATION_SCRIPT").expect("CHAPTERA_ISOLATION_SCRIPT"),
+        );
+        let worker_program = PathBuf::from(
+            std::env::var("CHAPTERA_UNTRUSTED_WORKER").expect("CHAPTERA_UNTRUSTED_WORKER"),
+        );
+        let fixture = PathBuf::from(
+            std::env::var("CHAPTERA_SCAN_FIXTURE").expect("CHAPTERA_SCAN_FIXTURE"),
+        );
+        let expected_sha =
+            std::env::var("CHAPTERA_SCAN_FIXTURE_SHA256").expect("CHAPTERA_SCAN_FIXTURE_SHA256");
+        let temp_root = PathBuf::from(
+            std::env::var("CHAPTERA_SCAN_TEMP_ROOT").expect("CHAPTERA_SCAN_TEMP_ROOT"),
+        );
+
+        let scanner = IsolatedPubSecurityScanner::new(IsolatedPubScannerConfig {
+            python_program,
+            isolation_script,
+            worker_program,
+            temp_root,
+            policy: IsolatedPubScannerPolicy {
+                max_file_bytes: 256 * MIB,
+                max_cfb_entries: 8_192,
+                max_declared_stream_bytes: 512 * MIB,
+                wall_timeout_ms: 15_000,
+                address_space_mb: 1024,
+                cpu_seconds: 10,
+                open_files: 64,
+                output_file_mb: 4,
+            },
+        })
+        .unwrap();
+
+        let mut input = File::open(&fixture).await.unwrap();
+        let metadata = input.metadata().await.unwrap();
+        let outcome = scanner.scan(&mut input).await.unwrap();
+        let SourceSecurityScanOutcome::Accepted(receipt) = outcome else {
+            panic!("pinned valid PUB was not accepted through isolated scanner");
+        };
+
+        assert_eq!(receipt.validation_profile, SECURITY_PROFILE_V1);
+        assert_eq!(receipt.inspected_sha256, expected_sha);
+        assert_eq!(receipt.inspected_byte_len, metadata.len());
+    }
+
 }
