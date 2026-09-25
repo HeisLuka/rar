@@ -1,5 +1,7 @@
 # rar — disposable public execution workspace
 
+> **Agents and automation:** read [`AGENTS.md`](AGENTS.md) before creating branches, pushing commits, opening PRs, or changing workflows. It is the mandatory execution/CI contract for this repository.
+
 `HeisLuka/rar` is the active public-safe GitHub execution/validation workspace for the PUB / Chaptera program from 2026-09-24 onward.
 
 ## Boundary
