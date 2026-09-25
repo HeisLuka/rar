@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/blob_gc.rs"
+      - "apps/chaptera-server/src/blob_gc_runtime.rs"
       - "apps/chaptera-server/src/blob_store.rs"
       - "apps/chaptera-server/src/sqlite_blob_metadata.rs"
       - "apps/chaptera-server/src/schema_migration.rs"
@@ -33,6 +34,8 @@ jobs:
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run Blob GC tests
         run: cargo test -p chaptera-server blob_gc::
+      - name: Run production GC authority tests
+        run: cargo test -p chaptera-server blob_gc_runtime::
       - name: Run durable blob metadata fence regressions
         run: cargo test -p chaptera-server --test sqlite_blob_metadata -- --nocapture
       - name: Run migration ownership regressions
