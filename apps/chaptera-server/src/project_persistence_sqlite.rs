@@ -1,4 +1,3 @@
-
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -99,12 +98,9 @@ impl SqliteProjectPersistence {
 
         let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
 
-        if let Some(prior) = fetch_consumption_by_key(
-            &mut tx,
-            &request.tenant_id,
-            &request.client_idempotency_id,
-        )
-        .await?
+        if let Some(prior) =
+            fetch_consumption_by_key(&mut tx, &request.tenant_id, &request.client_idempotency_id)
+                .await?
         {
             if prior.upload_id != request.upload_id || prior.request_hash != request_hash {
                 return Err(IngressError::new(
@@ -387,14 +383,13 @@ async fn verify_lifecycle_rows(
     tenant_id: &str,
     project: &ProjectCreateResult,
 ) -> Result<(), IngressError> {
-    let project_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM projects WHERE project_id = ? AND tenant_id = ?",
-    )
-    .bind(project.project_id.as_bytes())
-    .bind(tenant_id.as_bytes())
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(sqlite_error)?;
+    let project_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE project_id = ? AND tenant_id = ?")
+            .bind(project.project_id.as_bytes())
+            .bind(tenant_id.as_bytes())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(sqlite_error)?;
 
     let document_count: i64 = sqlx::query_scalar(
         r#"
@@ -428,7 +423,9 @@ fn validate_request(request: &ConsumeUploadRequest) -> Result<(), IngressError> 
     require_ident(&request.upload_id, "upload_id")?;
     require_ident(&request.client_idempotency_id, "client_idempotency_id")?;
     require_ident(&request.workspace_id, "workspace_id")?;
-    if request.name.is_empty() || request.name.len() > 512 || request.name.chars().any(char::is_control)
+    if request.name.is_empty()
+        || request.name.len() > 512
+        || request.name.chars().any(char::is_control)
     {
         return Err(IngressError::new(
             "invalid_project_name",
@@ -571,8 +568,7 @@ mod tests {
     use sqlx::SqlitePool;
 
     use crate::{
-        schema_migration::SqliteMigrationRuntime,
-        source_authority::SqliteDocumentSourceAuthority,
+        schema_migration::SqliteMigrationRuntime, source_authority::SqliteDocumentSourceAuthority,
     };
 
     use super::*;
@@ -703,12 +699,11 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let state: String =
-            sqlx::query_scalar("SELECT state FROM uploads WHERE upload_id = ?")
-                .bind(b"upload-1".as_slice())
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let state: String = sqlx::query_scalar("SELECT state FROM uploads WHERE upload_id = ?")
+            .bind(b"upload-1".as_slice())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(project_count, 1);
         assert_eq!(document_count, 1);
@@ -734,7 +729,10 @@ mod tests {
         )
         .await;
         let req = request("upload-1", "create-1", 3);
-        let first = adapter.create_project_from_upload(req.clone()).await.unwrap();
+        let first = adapter
+            .create_project_from_upload(req.clone())
+            .await
+            .unwrap();
         adapter.close().await;
 
         let reopened = SqliteProjectPersistence::open(&path, 4, Duration::from_secs(2))
@@ -894,11 +892,10 @@ mod tests {
         assert_eq!(error.code, "injected_before_commit");
 
         for table in ["projects", "documents", "upload_consumptions"] {
-            let count: i64 =
-                sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
             assert_eq!(count, 0, "{table} must stay empty after rollback");
         }
         let state: String = sqlx::query_scalar("SELECT state FROM uploads WHERE upload_id=?")
@@ -927,7 +924,10 @@ mod tests {
         )
         .await;
         let req = request("upload-1", "create-1", 3);
-        let committed = adapter.create_project_from_upload(req.clone()).await.unwrap();
+        let committed = adapter
+            .create_project_from_upload(req.clone())
+            .await
+            .unwrap();
         adapter.close().await;
 
         let reopened = SqliteProjectPersistence::open(&path, 4, Duration::from_secs(2))
