@@ -604,7 +604,7 @@ fn unique_table_scalar(
 ) -> Result<Option<(u32, RawSpan)>> {
     let mut values = Vec::new();
 
-    for field in chunk.fields.iter().filter(|field| field.id == id) {
+    for field in chunk.fields.iter().filter(|field| field.id == u16::from(id)) {
         match &field.body {
             RawContentsBlockBody::U16 {
                 value,
