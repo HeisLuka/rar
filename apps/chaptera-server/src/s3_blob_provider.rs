@@ -329,7 +329,7 @@ fn decode_generation(generation: &str) -> Result<String, ProviderError> {
         return Err(provider_other("invalid_s3_generation"));
     }
     let mut bytes = Vec::with_capacity(encoded.len() / 2);
-    for pair in encoded.as_bytes().chunks_exact(2) {
+    for pair in encoded.as_bytes().as_chunks::<2>().0 {
         let high = from_hex(pair[0]).ok_or_else(|| provider_other("invalid_s3_generation"))?;
         let low = from_hex(pair[1]).ok_or_else(|| provider_other("invalid_s3_generation"))?;
         bytes.push((high << 4) | low);
