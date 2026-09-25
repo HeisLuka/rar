@@ -12,6 +12,9 @@ on:
       - "tools/texture_residency_v1.py"
       - "tools/test_texture_residency_v1.py"
       - "tools/run_texture_residency_bench.py"
+      - "tools/buffer_residency_v1.py"
+      - "tools/test_buffer_residency_v1.py"
+      - "tools/run_buffer_residency_benchmark.py"
       - "docs/render-bench-v1.md"
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
@@ -37,6 +40,11 @@ jobs:
         run: PYTHONPATH=tools python -m unittest tools/test_texture_residency_v1.py
       - name: Run texture residency fake-adapter receipt
         run: mkdir -p target/texture-residency && PYTHONPATH=tools python tools/run_texture_residency_bench.py | tee target/texture-residency/receipt.json
+      - name: Unit-test buffer residency contract
+        working-directory: tools
+        run: python test_buffer_residency_v1.py
+      - name: Run buffer residency benchmark
+        run: mkdir -p target/buffer-residency && PYTHONPATH=tools python tools/run_buffer_residency_benchmark.py | tee target/buffer-residency/receipt.json
       - uses: actions/upload-artifact@v4
         with:
           name: render-bench-v1-receipt
@@ -51,4 +59,9 @@ jobs:
         with:
           name: render-texture-residency-${{ github.run_id }}
           path: target/texture-residency/receipt.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: buffer-residency-${{ github.run_id }}
+          path: target/buffer-residency/receipt.json
           if-no-files-found: error
