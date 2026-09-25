@@ -1,6 +1,6 @@
 name: Rustfmt mainline repair v2
 
-# One-shot compatibility repair for current rustfmt 1.94.1.
+# One-shot compatibility repair for current rustfmt 1.94.1.\n# Trigger commit after workflow exists on the branch.
 on:
   push:
     branches:
