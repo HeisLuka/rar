@@ -462,6 +462,89 @@ impl ViewerApp {
         }
     }
 
+    fn show_command_bar(&mut self, ui: &mut egui::Ui) {
+        let operation_count = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.operations().len())
+            .unwrap_or(0);
+        let editor_available = self.editor.is_some();
+        let document_label = self
+            .source_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+
+        ui.horizontal(|ui| {
+            ui.strong("Chaptera Editor");
+            ui.separator();
+            if let Some(label) = document_label {
+                ui.label(label);
+            } else {
+                ui.weak("Drop a .pub file onto the window to begin");
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let save_clicked = ui
+                    .add_enabled(operation_count > 0, egui::Button::new("Save Project"))
+                    .clicked();
+                let redo_clicked = ui
+                    .add_enabled(editor_available, egui::Button::new("Redo"))
+                    .clicked();
+                let undo_clicked = ui
+                    .add_enabled(editor_available && operation_count > 0, egui::Button::new("Undo"))
+                    .clicked();
+
+                if save_clicked {
+                    match self.save_editor_project_sidecar() {
+                        Ok(path) => {
+                            self.project_status = Some(format!(
+                                "Saved editor project with {operation_count} operations."
+                            ));
+                            self.edit_status = Some(format!(
+                                "Project saved to {}. Source PUB was not overwritten.",
+                                path.display()
+                            ));
+                        }
+                        Err(error) => {
+                            self.edit_status =
+                                Some(format!("Could not save editor project: {error}"));
+                        }
+                    }
+                }
+                if redo_clicked {
+                    self.apply_redo();
+                }
+                if undo_clicked {
+                    self.apply_undo();
+                }
+            });
+        });
+    }
+
+    fn show_workspace_status(&self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            let operation_count = self
+                .editor
+                .as_ref()
+                .map(|editor| editor.operations().len())
+                .unwrap_or(0);
+            if self.visual.is_some() {
+                ui.strong("Source PUB protected");
+                ui.label("·");
+                ui.label(format!("{operation_count} edit operation(s)"));
+                if let Some(fidelity) = self.fidelity_status() {
+                    ui.label("·");
+                    ui.label(format!("Fidelity: {}", fidelity_status_label(fidelity)));
+                }
+            } else {
+                ui.weak("No document open");
+                ui.label("·");
+                ui.label("Source files stay local and are never overwritten.");
+            }
+        });
+    }
+
     fn fidelity_status(&self) -> Option<ViewerFidelityStatus> {
         if let Some(visual) = &self.visual {
             return Some(visual.document.fidelity_status());
@@ -659,13 +742,16 @@ impl ViewerApp {
         ui.separator();
 
         if let Some(path) = &self.source_path {
-            ui.label("Source");
-            ui.monospace(path.display().to_string());
+            ui.label("Document");
+            if let Some(name) = path.file_name() {
+                ui.strong(name.to_string_lossy());
+            }
+            ui.small("The original PUB stays unchanged; edits live in the Chaptera project.");
             ui.add_space(8.0);
         }
 
         if let Some(status) = &self.project_status {
-            ui.label("Editor project");
+            ui.label("Project");
             ui.small(status);
             ui.add_space(8.0);
         }
@@ -736,36 +822,39 @@ impl ViewerApp {
         };
 
         let source = &visual.document.source;
-        ui.label(format!(
-            "Format: {} {}",
-            source.format,
-            source
-                .format_version
-                .as_deref()
-                .unwrap_or("(version unknown)")
-        ));
-        ui.label(format!("Bytes: {}", source.byte_len));
-        ui.label(format!("Pages: {}", visual.document.pages.len()));
-        ui.label(format!("Stories: {}", visual.document.stories.len()));
-        ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
+        ui.label(format!("{} pages · {} stories", visual.document.pages.len(), visual.document.stories.len()));
         if !reader_only_mode() {
-            if let Some(instance_id) = self.canvas_selection.primary() {
-                ui.label(format!(
-                    "Canvas selection: {} visual instance(s)",
-                    self.canvas_selection.len()
-                ));
-                ui.monospace(instance_id);
+            if self.canvas_selection.primary().is_some() {
+                ui.strong(format!("{} object selected", self.canvas_selection.len()));
+                ui.small("Drag to move supported page-local objects. Projected objects stay read-only.");
             } else {
-                ui.label("Canvas selection: none");
+                ui.weak("No object selected");
             }
         }
-        ui.label(format!(
-            "Engine: {}",
-            visual.scene.environment.engine_revision
-        ));
-        ui.add_space(8.0);
-        ui.label("SHA-256");
-        ui.monospace(format!("{:?}", source.source_hash));
+
+        ui.collapsing("Technical details", |ui| {
+            if let Some(path) = &self.source_path {
+                ui.label("Source path");
+                ui.monospace(path.display().to_string());
+            }
+            ui.label(format!(
+                "Format: {} {}",
+                source.format,
+                source
+                    .format_version
+                    .as_deref()
+                    .unwrap_or("(version unknown)")
+            ));
+            ui.label(format!("Bytes: {}", source.byte_len));
+            ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
+            ui.label(format!("Engine: {}", visual.scene.environment.engine_revision));
+            ui.label("Source SHA-256");
+            ui.monospace(format!("{:?}", source.source_hash));
+            if let Some(instance_id) = self.canvas_selection.primary() {
+                ui.label("Selected scene instance");
+                ui.monospace(instance_id);
+            }
+        });
 
         ui.add_space(16.0);
         ui.heading("Fidelity");
@@ -787,14 +876,16 @@ impl ViewerApp {
             ui.separator();
 
             if let Some(result) = self.search_results.get(index) {
-                ui.label("Story reference");
-                ui.monospace(format!("{:?}", result.story_id));
-                ui.label(format!(
-                    "Exact byte range: {}..{}",
-                    result.start_byte, result.end_byte
-                ));
                 ui.strong(&result.text);
-                ui.small("Page: not shown; the current Viewer contract has no proven story-to-page ownership relation.");
+                ui.small("Page ownership is not shown unless the current model proves it.");
+                ui.collapsing("Match details", |ui| {
+                    ui.label("Story reference");
+                    ui.monospace(format!("{:?}", result.story_id));
+                    ui.label(format!(
+                        "Exact byte range: {}..{}",
+                        result.start_byte, result.end_byte
+                    ));
+                });
 
                 ui.horizontal(|ui| {
                     if ui.button("Copy match").clicked() {
@@ -1939,8 +2030,16 @@ impl eframe::App for ViewerApp {
             }
         }
 
+        egui::TopBottomPanel::top("workspace-command-bar").show(ctx, |ui| {
+            self.show_command_bar(ui);
+        });
+
         egui::TopBottomPanel::top("fidelity-status").show(ctx, |ui| {
             self.show_fidelity_status(ui);
+        });
+
+        egui::TopBottomPanel::bottom("workspace-status").show(ctx, |ui| {
+            self.show_workspace_status(ui);
         });
 
         egui::SidePanel::left("pages")
