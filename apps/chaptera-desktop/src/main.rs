@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "reader-only")]
 const APP_TITLE: &str = "Chaptera PUB Reader — Technical Preview";
 #[cfg(not(feature = "reader-only"))]
-const APP_TITLE: &str = "Chaptera Editor — Technical Preview";
+const APP_TITLE: &str = "Chaptera Editor";
 
 fn reader_only_mode() -> bool {
     cfg!(feature = "reader-only")
@@ -475,6 +475,174 @@ impl ViewerApp {
         }
     }
 
+    fn show_command_bar(&mut self, ui: &mut egui::Ui) {
+        let operation_count = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.operations().len())
+            .unwrap_or(0);
+        let editor_available = self.editor.is_some();
+        let saved_operation_count = self.saved_project_operation_count().ok().flatten();
+        let reopen_enabled = operation_count > 0 && saved_operation_count == Some(operation_count);
+        let document_label = self
+            .source_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+
+        ui.horizontal(|ui| {
+            ui.strong("Chaptera Editor");
+            ui.separator();
+
+            if ui.button("Open PUB…").clicked() {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Microsoft Publisher", &["pub"])
+                        .pick_file()
+                    {
+                        self.load_path(path);
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    self.edit_status = Some(
+                        "The native Open dialog is part of Windows Portable V0; drag and drop a PUB file on this platform."
+                            .to_owned(),
+                    );
+                }
+            }
+
+            if let Some(label) = document_label {
+                ui.label(label);
+            } else {
+                ui.weak("Open or drop a .pub file to begin");
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(operation_count > 0, |ui| {
+                    ui.menu_button("Export", |ui| {
+                        if ui.button("Preview IDML").clicked() {
+                            self.refresh_export_preview(pub_editor::EditorEditableTarget::Idml);
+                        }
+                        if ui.button("Preview ODG").clicked() {
+                            self.refresh_export_preview(pub_editor::EditorEditableTarget::Odg);
+                        }
+
+                        if let Some(preview) = self.export_preview.clone() {
+                            ui.separator();
+                            ui.small(&preview.summary);
+                            let preview_is_current = preview.operation_count == operation_count;
+                            if !preview_is_current {
+                                ui.weak("Preview is stale. Preview again before export.");
+                            }
+                            let export_enabled = preview_is_current && preview.can_serialize;
+                            if ui
+                                .add_enabled(
+                                    export_enabled,
+                                    egui::Button::new(format!("Export edited {} copy", preview.target)),
+                                )
+                                .clicked()
+                            {
+                                match self.export_editable_copy(preview.target) {
+                                    Ok((output, report)) => {
+                                        self.edit_status = Some(format!(
+                                            "Exported edited {} copy to {} with report {}. Source PUB was not overwritten.",
+                                            preview.target,
+                                            output.display(),
+                                            report.display()
+                                        ));
+                                    }
+                                    Err(error) => {
+                                        self.edit_status = Some(format!(
+                                            "Could not export {}: {error}",
+                                            preview.target
+                                        ));
+                                    }
+                                }
+                            }
+                        } else {
+                            ui.weak("Preview IDML or ODG to review fidelity/loss before export.");
+                        }
+                    });
+                });
+
+                let reopen_response = ui.add_enabled(
+                    reopen_enabled,
+                    egui::Button::new("Reopen Project"),
+                );
+                let reopen_clicked = reopen_response.clicked();
+                if !reopen_enabled {
+                    reopen_response.on_disabled_hover_text(
+                        "Save the current EditorProject before reopening it. Reopen never discards unsaved operations.",
+                    );
+                }
+
+                let save_clicked = ui
+                    .add_enabled(operation_count > 0, egui::Button::new("Save Project"))
+                    .clicked();
+                let redo_clicked = ui
+                    .add_enabled(editor_available, egui::Button::new("Redo"))
+                    .clicked();
+                let undo_clicked = ui
+                    .add_enabled(editor_available && operation_count > 0, egui::Button::new("Undo"))
+                    .clicked();
+
+                if reopen_clicked {
+                    if let Err(error) = self.reopen_saved_project() {
+                        self.edit_status = Some(format!("Could not reopen saved project: {error}"));
+                    }
+                }
+                if save_clicked {
+                    match self.save_editor_project_sidecar() {
+                        Ok(path) => {
+                            self.project_status = Some(format!(
+                                "Saved editor project with {operation_count} operations."
+                            ));
+                            self.edit_status = Some(format!(
+                                "Project saved to {}. Source PUB was not overwritten.",
+                                path.display()
+                            ));
+                        }
+                        Err(error) => {
+                            self.edit_status =
+                                Some(format!("Could not save editor project: {error}"));
+                        }
+                    }
+                }
+                if redo_clicked {
+                    self.apply_redo();
+                }
+                if undo_clicked {
+                    self.apply_undo();
+                }
+            });
+        });
+    }
+
+    fn show_workspace_status(&self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            let operation_count = self
+                .editor
+                .as_ref()
+                .map(|editor| editor.operations().len())
+                .unwrap_or(0);
+            if self.visual.is_some() {
+                ui.strong("Source PUB protected");
+                ui.label("·");
+                ui.label(format!("{operation_count} edit operation(s)"));
+                if let Some(fidelity) = self.fidelity_status() {
+                    ui.label("·");
+                    ui.label(format!("Fidelity: {}", fidelity_status_label(fidelity)));
+                }
+            } else {
+                ui.weak("No document open");
+                ui.label("·");
+                ui.label("Source files stay local and are never overwritten.");
+            }
+        });
+    }
+
     fn fidelity_status(&self) -> Option<ViewerFidelityStatus> {
         if let Some(visual) = &self.visual {
             return Some(visual.document.fidelity_status());
@@ -672,13 +840,16 @@ impl ViewerApp {
         ui.separator();
 
         if let Some(path) = &self.source_path {
-            ui.label("Source");
-            ui.monospace(path.display().to_string());
+            ui.label("Document");
+            if let Some(name) = path.file_name() {
+                ui.strong(name.to_string_lossy());
+            }
+            ui.small("The original PUB stays unchanged; edits live in the Chaptera project.");
             ui.add_space(8.0);
         }
 
         if let Some(status) = &self.project_status {
-            ui.label("Editor project");
+            ui.label("Project");
             ui.small(status);
             ui.add_space(8.0);
         }
@@ -750,35 +921,42 @@ impl ViewerApp {
 
         let source = &visual.document.source;
         ui.label(format!(
-            "Format: {} {}",
-            source.format,
-            source
-                .format_version
-                .as_deref()
-                .unwrap_or("(version unknown)")
+            "{} pages · {} stories",
+            visual.document.pages.len(),
+            visual.document.stories.len()
         ));
-        ui.label(format!("Bytes: {}", source.byte_len));
-        ui.label(format!("Pages: {}", visual.document.pages.len()));
-        ui.label(format!("Stories: {}", visual.document.stories.len()));
-        ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
         if !reader_only_mode() {
-            if let Some(instance_id) = self.canvas_selection.primary() {
-                ui.label(format!(
-                    "Canvas selection: {} visual instance(s)",
-                    self.canvas_selection.len()
-                ));
-                ui.monospace(instance_id);
+            if self.canvas_selection.primary().is_some() {
+                ui.strong(format!("{} object selected", self.canvas_selection.len()));
+                ui.small("Drag to move supported page-local objects. Projected objects stay read-only.");
             } else {
-                ui.label("Canvas selection: none");
+                ui.weak("No object selected");
             }
         }
-        ui.label(format!(
-            "Engine: {}",
-            visual.scene.environment.engine_revision
-        ));
-        ui.add_space(8.0);
-        ui.label("SHA-256");
-        ui.monospace(format!("{:?}", source.source_hash));
+
+        ui.collapsing("Technical details", |ui| {
+            if let Some(path) = &self.source_path {
+                ui.label("Source path");
+                ui.monospace(path.display().to_string());
+            }
+            ui.label(format!(
+                "Format: {} {}",
+                source.format,
+                source
+                    .format_version
+                    .as_deref()
+                    .unwrap_or("(version unknown)")
+            ));
+            ui.label(format!("Bytes: {}", source.byte_len));
+            ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
+            ui.label(format!("Engine: {}", visual.scene.environment.engine_revision));
+            ui.label("Source SHA-256");
+            ui.monospace(format!("{:?}", source.source_hash));
+            if let Some(instance_id) = self.canvas_selection.primary() {
+                ui.label("Selected scene instance");
+                ui.monospace(instance_id);
+            }
+        });
 
         ui.add_space(16.0);
         ui.heading("Fidelity");
@@ -800,14 +978,16 @@ impl ViewerApp {
             ui.separator();
 
             if let Some(result) = self.search_results.get(index) {
-                ui.label("Story reference");
-                ui.monospace(format!("{:?}", result.story_id));
-                ui.label(format!(
-                    "Exact byte range: {}..{}",
-                    result.start_byte, result.end_byte
-                ));
                 ui.strong(&result.text);
-                ui.small("Page: not shown; the current Viewer contract has no proven story-to-page ownership relation.");
+                ui.small("Page ownership is not shown unless the current model proves it.");
+                ui.collapsing("Match details", |ui| {
+                    ui.label("Story reference");
+                    ui.monospace(format!("{:?}", result.story_id));
+                    ui.label(format!(
+                        "Exact byte range: {}..{}",
+                        result.start_byte, result.end_byte
+                    ));
+                });
 
                 ui.horizontal(|ui| {
                     if ui.button("Copy match").clicked() {
@@ -1294,6 +1474,50 @@ impl ViewerApp {
                 self.edit_status = Some(format!("Redo unavailable: {} ({})", error, error.code()));
             }
         }
+    }
+
+    fn saved_project_operation_count(&self) -> Result<Option<usize>, String> {
+        let Some(source_path) = self.source_path.as_ref() else {
+            return Ok(None);
+        };
+        let sidecar = editor_project_sidecar_path(source_path)
+            .ok_or_else(|| "source path has no file name".to_owned())?;
+        if !sidecar.exists() {
+            return Ok(None);
+        }
+        let bytes =
+            fs::read(&sidecar).map_err(|error| format!("read {}: {error}", sidecar.display()))?;
+        let project: pub_editor::EditorProject = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("parse editor project JSON: {error}"))?;
+        Ok(Some(project.operations.len()))
+    }
+
+    fn reopen_saved_project(&mut self) -> Result<(), String> {
+        let source_path = self
+            .source_path
+            .clone()
+            .ok_or_else(|| "source path is unavailable".to_owned())?;
+        let current_operation_count = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.operations().len())
+            .ok_or_else(|| "editor session is unavailable".to_owned())?;
+        let saved_operation_count = self
+            .saved_project_operation_count()?
+            .ok_or_else(|| "saved EditorProject sidecar is unavailable".to_owned())?;
+        if current_operation_count != saved_operation_count {
+            return Err(
+                "current edits differ from the saved EditorProject; save before reopening".to_owned(),
+            );
+        }
+
+        self.load_path(source_path);
+        if self.editor.is_none() {
+            return Err("fresh editor session could not be opened".to_owned());
+        }
+        self.edit_status =
+            Some("Reopened source and replayed the saved EditorProject in a fresh session.".to_owned());
+        Ok(())
     }
 
     fn refresh_export_preview(&mut self, target: pub_editor::EditorEditableTarget) {
@@ -1952,8 +2176,16 @@ impl eframe::App for ViewerApp {
             }
         }
 
+        egui::TopBottomPanel::top("workspace-command-bar").show(ctx, |ui| {
+            self.show_command_bar(ui);
+        });
+
         egui::TopBottomPanel::top("fidelity-status").show(ctx, |ui| {
             self.show_fidelity_status(ui);
+        });
+
+        egui::TopBottomPanel::bottom("workspace-status").show(ctx, |ui| {
+            self.show_workspace_status(ui);
         });
 
         egui::SidePanel::left("pages")
@@ -2936,6 +3168,19 @@ mod tests {
             expected,
             "sidecar-replayed MoveNode must become visible through canonical scene sync"
         );
+    }
+
+    #[test]
+    fn desktop_v0_command_surface_keeps_reopen_and_export_explicit() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("Open PUB…"));
+        assert!(source.contains("Save Project"));
+        assert!(source.contains("Reopen Project"));
+        assert!(source.contains("Preview IDML"));
+        assert!(source.contains("Preview ODG"));
+        assert!(source.contains("Reopen never discards unsaved operations."));
+        assert!(source.contains("Technical details"));
+        assert!(source.contains("Match details"));
     }
 
     #[test]
