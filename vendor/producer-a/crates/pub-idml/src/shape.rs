@@ -278,12 +278,7 @@ fn ensure_graphic_resource(
         xml,
         "<idPkg:Graphic xmlns:idPkg=\"{}\" DOMVersion=\"{}\">",
         crate::IDML_PACKAGING_NAMESPACE,
-        package
-            .target
-            .schema_fence
-            .as_deref()
-            .map(|_| "7.0")
-            .unwrap_or("7.0")
+        "7.0"
     )
     .unwrap();
     for color in colors {
