@@ -7,12 +7,8 @@ on:
       - "vendor/producer-a/crates/pub-editor/tests/break_text_frame_forward_link_v1.rs"
       - "vendor/producer-a/producer/tests/break_link_layout_v1.rs"
       - ".github/workflows/authoring-textframe-break-link-v1.yml"
-  push:
-    branches:
-      - feature/authoring-textframe-break-link-01
-
 concurrency:
-  group: authoring-textframe-break-link-v1-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: authoring-textframe-break-link-v1-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
 
 permissions:
