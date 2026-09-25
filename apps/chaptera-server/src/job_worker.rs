@@ -512,7 +512,7 @@ mod tests {
         path::PathBuf,
         sync::{
             Arc,
-            atomic::{AtomicU64, Ordering},
+            atomic::{AtomicI64, AtomicU64, Ordering},
         },
     };
 
@@ -569,20 +569,87 @@ mod tests {
         }
     }
 
-    struct Allow;
+    #[derive(Default)]
+    struct TrackingAdmission {
+        renewals: AtomicU64,
+        releases: AtomicU64,
+        last_release_generation: AtomicI64,
+    }
 
-    impl JobAdmission for Allow {
-        fn admit(&self, _job: &JobRecord) -> Result<AdmissionDecision, RuntimeError> {
-            Ok(AdmissionDecision::Admit)
+    impl JobAdmission for TrackingAdmission {
+        fn admit<'a>(&'a self, job: &'a JobRecord) -> AdmissionFuture<'a> {
+            Box::pin(async move {
+                Ok(AdmissionDecision::Admit {
+                    permit: AdmissionPermit {
+                        reservation_id: format!("quota-{}", job.job_id),
+                        lease_generation: 1,
+                    },
+                })
+            })
+        }
+
+        fn renew<'a>(
+            &'a self,
+            _job: &'a JobRecord,
+            permit: &'a AdmissionPermit,
+        ) -> PermitFuture<'a> {
+            Box::pin(async move {
+                self.renewals.fetch_add(1, Ordering::SeqCst);
+                Ok(AdmissionPermit {
+                    reservation_id: permit.reservation_id.clone(),
+                    lease_generation: permit.lease_generation + 1,
+                })
+            })
+        }
+
+        fn release<'a>(
+            &'a self,
+            _job: &'a JobRecord,
+            permit: AdmissionPermit,
+        ) -> PermitReleaseFuture<'a> {
+            Box::pin(async move {
+                self.releases.fetch_add(1, Ordering::SeqCst);
+                self.last_release_generation
+                    .store(permit.lease_generation, Ordering::SeqCst);
+                Ok(())
+            })
         }
     }
 
     struct Reject;
 
     impl JobAdmission for Reject {
-        fn admit(&self, _job: &JobRecord) -> Result<AdmissionDecision, RuntimeError> {
-            Ok(AdmissionDecision::Reject {
-                code: "quota_denied",
+        fn admit<'a>(&'a self, _job: &'a JobRecord) -> AdmissionFuture<'a> {
+            Box::pin(async move {
+                Ok(AdmissionDecision::Reject {
+                    code: "quota_denied",
+                })
+            })
+        }
+
+        fn renew<'a>(
+            &'a self,
+            _job: &'a JobRecord,
+            _permit: &'a AdmissionPermit,
+        ) -> PermitFuture<'a> {
+            Box::pin(async move {
+                Err(RuntimeError::new(
+                    "unexpected_admission_renewal",
+                    "rejected jobs must not renew quota reservations",
+                ))
+            })
+        }
+
+        fn release<'a>(
+            &'a self,
+            _job: &'a JobRecord,
+            _permit: AdmissionPermit,
+        ) -> PermitReleaseFuture<'a> {
+            Box::pin(async move {
+                Err(RuntimeError::new(
+                    "unexpected_admission_release",
+                    "rejected jobs must not release an unacquired reservation",
+                ))
             })
         }
     }
@@ -597,6 +664,25 @@ mod tests {
         ) -> JobFuture<'a> {
             let effect = format!("effect-{}", job.job_id);
             Box::pin(async move { Ok(JobSuccess { effect_key: effect }) })
+        }
+    }
+
+    struct DelayedSuccess {
+        delay: Duration,
+    }
+
+    impl JobExecutor for DelayedSuccess {
+        fn execute<'a>(
+            &'a self,
+            job: &'a JobRecord,
+            _cancellation: CancellationFlag,
+        ) -> JobFuture<'a> {
+            let effect = format!("effect-{}", job.job_id);
+            let delay = self.delay;
+            Box::pin(async move {
+                sleep(delay).await;
+                Ok(JobSuccess { effect_key: effect })
+            })
         }
     }
 
@@ -630,11 +716,12 @@ mod tests {
         let (queue, path) = queue().await;
         enqueue(&queue, "job-success").await;
         let control = WorkerControl::default();
+        let admission = Arc::new(TrackingAdmission::default());
         let worker = Arc::new(
             WorkerLoop::new(
                 queue.clone(),
                 Arc::new(ImmediateSuccess),
-                Arc::new(Allow),
+                admission.clone(),
                 control.clone(),
                 config("worker-success"),
             )
@@ -660,6 +747,7 @@ mod tests {
         assert_eq!(job.status, JobStatus::Succeeded);
         assert_eq!(receipt.claimed, 1);
         assert_eq!(receipt.succeeded, 1);
+        assert_eq!(admission.releases.load(Ordering::SeqCst), 1);
 
         queue.close().await;
         let _ = std::fs::remove_file(path);
@@ -707,12 +795,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drain_deadline_stops_heartbeat_and_leaves_lease_reclaimable() {
+    async fn live_job_heartbeat_renews_quota_permit_and_terminal_success_releases_latest_generation() {
+        let (queue, path) = queue().await;
+        enqueue(&queue, "job-renew").await;
+        let control = WorkerControl::default();
+        let admission = Arc::new(TrackingAdmission::default());
+        let worker = Arc::new(
+            WorkerLoop::new(
+                queue.clone(),
+                Arc::new(DelayedSuccess {
+                    delay: Duration::from_millis(130),
+                }),
+                admission.clone(),
+                control.clone(),
+                config("worker-renew"),
+            )
+            .unwrap(),
+        );
+
+        let task = {
+            let worker = worker.clone();
+            tokio::spawn(async move { worker.run().await.unwrap() })
+        };
+
+        for _ in 0..100 {
+            let job = queue.get("job-renew").await.unwrap().unwrap();
+            if job.status == JobStatus::Succeeded {
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        control.request_drain();
+        let receipt = task.await.unwrap();
+
+        let renewals = admission.renewals.load(Ordering::SeqCst);
+        assert!(renewals >= 2);
+        assert_eq!(admission.releases.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            admission.last_release_generation.load(Ordering::SeqCst),
+            1 + i64::try_from(renewals).unwrap()
+        );
+        assert_eq!(receipt.succeeded, 1);
+
+        queue.close().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn drain_deadline_stops_heartbeat_and_leaves_job_and_quota_leases_reclaimable() {
         let (queue, path) = queue().await;
         enqueue(&queue, "job-drain").await;
         let started = Arc::new(Notify::new());
         let cancelled_seen = Arc::new(AtomicBool::new(false));
         let control = WorkerControl::default();
+        let admission = Arc::new(TrackingAdmission::default());
         let worker = Arc::new(
             WorkerLoop::new(
                 queue.clone(),
@@ -720,7 +856,7 @@ mod tests {
                     started: started.clone(),
                     cancelled_seen: cancelled_seen.clone(),
                 }),
-                Arc::new(Allow),
+                admission.clone(),
                 control.clone(),
                 config("worker-drain"),
             )
@@ -743,6 +879,7 @@ mod tests {
 
         assert_eq!(receipt.drain_deadline_abandoned, 1);
         assert!(cancelled_seen.load(Ordering::SeqCst));
+        assert_eq!(admission.releases.load(Ordering::SeqCst), 0);
 
         let running = queue.get("job-drain").await.unwrap().unwrap();
         assert_eq!(running.status, JobStatus::Running);
