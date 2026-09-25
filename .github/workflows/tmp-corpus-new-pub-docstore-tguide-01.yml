@@ -124,7 +124,7 @@ jobs:
             echo 'byte-bearing payload leaked into public artifact' >&2
             exit 1
           fi
-          sha256sum out/discovery/* out/harvest/* out/summary.json | sort > out/sha256sums.txt
+          find out -type f ! -name 'sha256sums.txt' -print0 | sort -z | xargs -0 sha256sum > out/sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
           name: corpus-docstore-tguide-exact-locator-receipt
