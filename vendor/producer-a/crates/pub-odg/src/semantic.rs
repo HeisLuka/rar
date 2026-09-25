@@ -986,7 +986,7 @@ mod tests {
         let styles = package
             .parts
             .iter()
-            .find(|part| part.path == ODG_STYLES_PATH)
+            .find(|part| part.path == "styles.xml")
             .expect("styles.xml");
         let xml = String::from_utf8(styles.content.clone()).unwrap();
         assert!(xml.contains("fo:page-width=\"500pt\" fo:page-height=\"700pt\""));
