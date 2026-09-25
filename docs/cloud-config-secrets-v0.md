@@ -37,8 +37,15 @@ The parser rejects unknown TOML fields. Production additionally requires:
 - bounded SQLite pool/timeouts;
 - bounded worker concurrency;
 - distinct quarantine/private storage namespaces;
+- explicit AuthN login-flow, idle-session and absolute-session TTLs;
 - OIDC configuration with HTTPS issuer;
 - a secret **reference**, never an inline OIDC client secret.
+
+AuthN TTLs are deployment policy, not hidden Chaptera defaults. Production
+configuration must state all three values explicitly. They must be positive,
+the absolute session TTL must not be shorter than the idle TTL, and all values
+must fit the runtime's millisecond timestamp range. The values in
+`chaptera.prod.example.toml` are examples only, not canonical product policy.
 
 ## Secret references
 
