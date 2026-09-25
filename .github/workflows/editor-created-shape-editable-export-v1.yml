@@ -1,0 +1,38 @@
+name: EDITOR-CREATED-SHAPE-EDITABLE-EXPORT-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/create_shape_runtime_v1.rs"
+      - "vendor/producer-a/crates/pub-idml/src/lib.rs"
+      - "vendor/producer-a/crates/pub-idml/src/shape.rs"
+      - "vendor/producer-a/crates/pub-odg/src/lib.rs"
+      - "vendor/producer-a/crates/pub-odg/src/shape.rs"
+      - ".github/workflows/editor-created-shape-editable-export-v1.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  authored-rectangle-editable-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -p pub-idml -p pub-odg -- --check
+      - name: Lint editable export slice
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -p pub-idml -p pub-odg --all-targets -- -D warnings
+      - name: Test authored rectangle save reopen editable export
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test create_shape_runtime_v1
+      - name: Regress IDML and ODG adapters
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-idml -p pub-odg
