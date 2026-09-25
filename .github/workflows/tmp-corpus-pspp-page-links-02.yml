@@ -1,0 +1,138 @@
+name: TEMP Publisher PSPP archived page links
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect four exact archived PSPP surfaces and exact-CDX observed links
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import html, json, re, time
+          from pathlib import Path
+          from urllib.parse import urlencode, urljoin
+          from urllib.request import Request, urlopen
+
+          UA="rar-pub-pspp-page-links/1.0"
+          pages=[
+            ("20010511190408","http://www.microsoft.com:80/publisher/prepress/"),
+            ("20020421115819","http://www.microsoft.com:80/publisher/prepress/default.htm"),
+            ("20010504171753","http://www.microsoft.com:80/publisher/printers/"),
+            ("20010814023300","http://www.microsoft.com:80/publisher/pspp/"),
+          ]
+          observed=[]
+          page_rows=[]
+          errors=[]
+          attr_re=re.compile(r'''(?is)\b(?:href|src|action)\s*=\s*["']([^"']+)["']''')
+          refresh_re=re.compile(r'''(?is)http-equiv\s*=\s*["']refresh["'][^>]*content\s*=\s*["'][^"']*url\s*=\s*([^"';>\s]+)''')
+          abs_re=re.compile(r'''(?is)https?://[^\s"'<>]+''')
+
+          for ts,original in pages:
+            replay=f"https://web.archive.org/web/{ts}id_/{original}"
+            row={"timestamp":ts,"original":original,"replay":replay}
+            try:
+              req=Request(replay,headers={"User-Agent":UA,"Accept":"text/html,*/*;q=0.1"})
+              with urlopen(req,timeout=90) as r:
+                body=r.read(1024*1024)
+                row["status"]=getattr(r,"status",None)
+                row["final_url"]=r.geturl()
+                row["content_type"]=r.headers.get("Content-Type")
+              text=body.decode("utf-8","replace")
+              row["length"]=len(body)
+              row["preview"]=text[:3000]
+              links=[]
+              for m in attr_re.finditer(text):
+                links.append(m.group(1))
+              for m in refresh_re.finditer(text):
+                links.append(m.group(1))
+              for m in abs_re.finditer(text):
+                links.append(m.group(0))
+              norm=[]
+              for v in links:
+                v=html.unescape(v.strip())
+                if not v or v.startswith(("#","javascript:","mailto:")):
+                  continue
+                u=urljoin(original,v)
+                norm.append(u)
+                observed.append({"source_timestamp":ts,"source_page":original,"url":u})
+              row["links"]=sorted(set(norm))
+            except Exception as e:
+              row["error"]=f"{type(e).__name__}: {e}"
+              errors.append({"timestamp":ts,"url":original,"error":row["error"]})
+            page_rows.append(row)
+            time.sleep(.8)
+
+          # dedupe observed URLs
+          seen=set(); links=[]
+          for r in observed:
+            k=r["url"].casefold()
+            if k in seen: continue
+            seen.add(k); links.append(r)
+
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|bin|cue|7z|rar)(?:$|[?#])',re.I)
+          relevant_re=re.compile(r'(publisher|pspp|prepress|printer|service.?provider|training|download|sample|exercise|kit|resource|support)',re.I)
+          cdx_rows=[]
+          for r in links:
+            u=r["url"]
+            params=[
+              ("url",u),("matchType","exact"),("output","json"),
+              ("fl","timestamp,original,mimetype,statuscode,digest,length"),
+              ("filter","statuscode:200"),("collapse","digest"),("limit","100"),("gzip","false")
+            ]
+            endpoint="https://web.archive.org/cdx/search/cdx?"+urlencode(params)
+            item={**r,"carrier_like":bool(carrier_re.search(u)),"relevant_like":bool(relevant_re.search(u))}
+            try:
+              req=Request(endpoint,headers={"User-Agent":UA,"Accept":"application/json"})
+              with urlopen(req,timeout=90) as resp:
+                data=json.load(resp)
+              item["captures"]=[dict(zip(data[0],x)) for x in data[1:]] if data else []
+            except Exception as e:
+              item["error"]=f"{type(e).__name__}: {e}"
+            cdx_rows.append(item)
+            time.sleep(.25)
+
+          interesting=[x for x in cdx_rows if x["carrier_like"] or x["relevant_like"] or x.get("captures")]
+          summary={
+            "schema":"chaptera.corpus-pspp-page-links.v1",
+            "source_safe":True,
+            "raw_binary_retained":False,
+            "pages":page_rows,
+            "unique_observed_links":len(links),
+            "interesting_rows":len(interesting),
+            "interesting":interesting,
+            "errors":errors,
+            "guardrail":"Only exact archived HTML surfaces and metadata for links actually observed in those surfaces. No linked carrier bytes downloaded or executed."
+          }
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          Path("out/links.json").write_text(json.dumps(cdx_rows,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Metadata-only guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.msi' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.7z' -o -iname '*.rar' \) | grep -q .; then
+            echo 'unexpected carrier bytes in locator artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-pspp-page-links
+          path: out/**
+          retention-days: 60
+          if-no-files-found: error
