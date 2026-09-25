@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "packages/protocol/authoring-delete-node/**"
-      - "services/editor-api/revision_store.py"
       - "services/editor-api/test_delete_node.py"
       - ".github/workflows/authoring-delete-node-v1.yml"
   workflow_dispatch:
