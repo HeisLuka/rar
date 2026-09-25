@@ -121,6 +121,47 @@ async fn exact_retry_survives_restart_without_identity_drift() {
 }
 
 #[tokio::test]
+async fn concurrent_exact_retry_converges_to_one_identity() {
+    let (repo, path) = migrated_repo("concurrent-retry").await;
+    let p = physical("tenant-a", "blob-1", 'f');
+    let b = binding("tenant-a", "binding-1", &p);
+
+    let left_repo = repo.clone();
+    let right_repo = repo.clone();
+    let left_p = p.clone();
+    let right_p = p.clone();
+    let left_b = b.clone();
+    let right_b = b.clone();
+
+    let (left, right) = tokio::join!(
+        async move {
+            left_repo
+                .commit_physical_and_binding(left_p, left_b)
+                .await
+        },
+        async move {
+            right_repo
+                .commit_physical_and_binding(right_p, right_b)
+                .await
+        }
+    );
+
+    assert_eq!(left.unwrap(), b);
+    assert_eq!(right.unwrap(), b);
+    assert_eq!(
+        repo.get_physical("blob-1").await.unwrap(),
+        Some(p)
+    );
+    assert_eq!(
+        repo.get_binding("binding-1").await.unwrap(),
+        Some(b)
+    );
+
+    repo.close().await;
+    cleanup(&path);
+}
+
+#[tokio::test]
 async fn changed_retry_and_cross_tenant_alias_fail_closed() {
     let (repo, path) = migrated_repo("conflict").await;
     let p = physical("tenant-a", "blob-1", 'b');
