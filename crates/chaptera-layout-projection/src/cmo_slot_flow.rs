@@ -195,6 +195,15 @@ enum FlowItemV1 {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FirstNonfitV1 {
+    item_index: usize,
+    kind: String,
+    slot_index: Option<usize>,
+    scalar_index: u32,
+    reason: Option<CmoNonFitReasonV1>,
+}
+
 impl FlowItemV1 {
     fn scalar_key(&self) -> u32 {
         match self {
@@ -367,8 +376,7 @@ pub fn resolve_cmo_slot_flow_v1(
     let mut used_height_emu = 0_i64;
     let mut pending_text_height_emu = 0_i64;
     let mut visible_slots = Vec::new();
-    let mut first_nonfit: Option<(usize, String, Option<usize>, u32, Option<CmoNonFitReasonV1>)> =
-        None;
+    let mut first_nonfit: Option<FirstNonfitV1> = None;
 
     for (item_index, item) in items.iter().enumerate() {
         match item {
@@ -383,13 +391,13 @@ pub fn resolve_cmo_slot_flow_v1(
                     .checked_add(*height_emu)
                     .ok_or(CmoSlotFlowError::ArithmeticOverflow)?;
                 if next > input.host_height_emu {
-                    first_nonfit = Some((
+                    first_nonfit = Some(FirstNonfitV1 {
                         item_index,
-                        "shaped_line".to_owned(),
-                        None,
-                        *scalar_start,
-                        Some(CmoNonFitReasonV1::Height),
-                    ));
+                        kind: "shaped_line".to_owned(),
+                        slot_index: None,
+                        scalar_index: *scalar_start,
+                        reason: Some(CmoNonFitReasonV1::Height),
+                    });
                     break;
                 }
                 used_height_emu = next;
@@ -415,13 +423,13 @@ pub fn resolve_cmo_slot_flow_v1(
                         (true, false) => CmoNonFitReasonV1::Height,
                         (true, true) => unreachable!("nonfit branch"),
                     };
-                    first_nonfit = Some((
+                    first_nonfit = Some(FirstNonfitV1 {
                         item_index,
-                        "object_slot".to_owned(),
-                        Some(*slot_index),
-                        *scalar_index,
-                        Some(reason),
-                    ));
+                        kind: "object_slot".to_owned(),
+                        slot_index: Some(*slot_index),
+                        scalar_index: *scalar_index,
+                        reason: Some(reason),
+                    });
                     break;
                 }
 
@@ -455,15 +463,15 @@ pub fn resolve_cmo_slot_flow_v1(
     }
 
     let (overset, remaining_item_count, remaining_slot_count) =
-        if let Some((index, kind, slot_index, scalar, reason)) = first_nonfit {
-            let tail = &items[index..];
+        if let Some(first) = first_nonfit {
+            let tail = &items[first.item_index..];
             (
                 CmoSlotOversetV1 {
                     story_overset: true,
-                    first_nonfitting_kind: Some(kind),
-                    first_nonfitting_slot_index: slot_index,
-                    first_nonfitting_scalar_index: Some(scalar),
-                    failure_reason: reason,
+                    first_nonfitting_kind: Some(first.kind),
+                    first_nonfitting_slot_index: first.slot_index,
+                    first_nonfitting_scalar_index: Some(first.scalar_index),
+                    failure_reason: first.reason,
                     remaining_item_count: tail.len(),
                     remaining_slot_count: tail.iter().filter(|item| item.is_slot()).count(),
                 },
