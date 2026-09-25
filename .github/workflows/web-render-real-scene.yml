@@ -36,7 +36,34 @@ jobs:
           mkdir -p target/web-render-real
           python tools/validate_viewer_geometry_receipt.py             apps/web/acceptance/receipts/viewer-geometry.real.json
           python tools/adapt_viewer_scene_v1.py             apps/web/acceptance/receipts/viewer-geometry.real.json             target/web-render-real/SampleNewsletter.scene.json             --document-id 9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001             --revision-id sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c
-          python tools/validate_scene_protocol.py             target/web-render-real/SampleNewsletter.scene.json
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+          from jsonschema import Draft202012Validator
+
+          sys.path.insert(0, "tools")
+          from validate_scene_protocol import canonical_json, check_refs, normalize, walk_forbidden
+
+          scene_path = pathlib.Path("target/web-render-real/SampleNewsletter.scene.json")
+          scene = json.loads(scene_path.read_text(encoding="utf-8"))
+          schema = json.loads(pathlib.Path("packages/protocol/scene/v1/snapshot.schema.json").read_text(encoding="utf-8"))
+          errors = sorted(Draft202012Validator(schema).iter_errors(scene), key=lambda e: list(e.path))
+          if errors:
+              detail = "\n".join(f"{list(e.path)}: {e.message}" for e in errors)
+              raise AssertionError("real Scene schema errors\n" + detail)
+          normalized = normalize(scene)
+          if canonical_json(scene) != canonical_json(normalized):
+              raise AssertionError("real Scene is not canonical/normalized")
+          walk_forbidden(scene)
+          check_refs(scene, "SampleNewsletter.real-render")
+          print(json.dumps({
+              "scene_valid": True,
+              "serialized_bytes": scene_path.stat().st_size,
+              "pages": len(scene["pages"]),
+              "nodes": len(scene["nodes"]),
+          }, indent=2))
+          PY
 
       - uses: actions/setup-node@v4
         with:
