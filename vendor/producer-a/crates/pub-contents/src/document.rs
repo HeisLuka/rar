@@ -6,8 +6,8 @@ use pub_core::RawSpan;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub const DOCUMENT_PAGE_LIST_ID: u8 = 0x02;
-pub const DOCUMENT_DW_NEXT_UNIQUE_OID_ID: u8 = 0x23;
+pub const DOCUMENT_PAGE_LIST_ID: u16 = 0x02;
+pub const DOCUMENT_DW_NEXT_UNIQUE_OID_ID: u16 = 0x23;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentPageListEntry {
@@ -47,7 +47,7 @@ pub struct DocumentDwNextUniqueOid {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentDwNextUniqueOidReadError {
-    UnexpectedId { offset: u64, id: u8 },
+    UnexpectedId { offset: u64, id: u16 },
     UnexpectedType { offset: u64, block_type: u8 },
     InconsistentBody { offset: u64 },
 }
@@ -118,10 +118,10 @@ pub enum DocumentPageListReadError {
     Contents(ContentsReadError),
     Block(BlockReadError),
     SpanTooLarge { source: RawSpan },
-    UnexpectedOuterId { offset: u64, id: u8 },
+    UnexpectedOuterId { offset: u64, id: u16 },
     UnexpectedOuterType { offset: u64, block_type: u8 },
     InconsistentOuterBody,
-    UnexpectedEntryId { offset: u64, id: u8 },
+    UnexpectedEntryId { offset: u64, id: u16 },
     UnexpectedEntryType { offset: u64, block_type: u8 },
     InconsistentEntryBody { offset: u64 },
 }
