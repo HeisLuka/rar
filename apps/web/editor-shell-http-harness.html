@@ -4,6 +4,7 @@
 <style>
   html, body { margin: 0; font-family: system-ui, sans-serif; background: #e9e9e9; }
   #status { box-sizing: border-box; min-height: 96px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ccc; font-size: 12px; }
+  #runtime-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #disclosure { display: flex; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
   #disclosure > div { padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; }
   #host { width: 1200px; height: 800px; position: relative; overflow: hidden; touch-action: none; }
@@ -25,6 +26,15 @@
   const params = new URLSearchParams(location.search);
   const api = params.get("api");
   if (!api) throw new Error("api query parameter is required");
+  const operationId = params.get("operation_id");
+  const emuPerCssPx = Number(params.get("emu_per_css_px") ?? "9525");
+  const panYCssPx = Number(params.get("pan_y_css_px") ?? "0");
+  if (!Number.isFinite(emuPerCssPx) || !(emuPerCssPx > 0)) {
+    throw new Error("emu_per_css_px must be a positive finite number");
+  }
+  if (!Number.isFinite(panYCssPx)) {
+    throw new Error("pan_y_css_px must be finite");
+  }
 
   const runtimeStatus = document.getElementById("runtime-status");
   const fidelityState = document.getElementById("fidelity-state");
@@ -46,6 +56,8 @@
     host,
     service,
     rendererKind: "svg",
+    view: { emu_per_css_px: emuPerCssPx, pan_y_css_px: panYCssPx },
+    operationIdFactory: operationId ? (() => operationId) : null,
     onState: (state) => {
       states.push(state);
       runtimeStatus.textContent = JSON.stringify({
