@@ -4397,8 +4397,8 @@ mod tests {
             .expect("encode deterministic replacement PNG");
         let replacement_bytes = replacement_cursor.into_inner();
         let replacement_sha256 = hex_sha256(&replacement_bytes);
-        assert_ne!(
-            source_asset_sha256, replacement_sha256,
+        assert!(
+            source_asset_sha256 != replacement_sha256,
             "replacement must differ from source image bytes"
         );
 
@@ -4417,10 +4417,11 @@ mod tests {
         app.selected_page = page_index;
         app.canvas_selection.select_only(instance_id);
 
-        assert_eq!(
+        assert!(
             app.selected_direct_replace_image_target()
-                .expect("typed direct SceneInstance admission"),
-            target
+                .expect("typed direct SceneInstance admission")
+                == target,
+            "typed SceneInstance admission returned a different private target"
         );
         let operation_count_before = app.editor.as_ref().expect("editor").operations().len();
         app.replace_selected_image_from_path(&replacement_path)
@@ -4432,7 +4433,10 @@ mod tests {
             .expect("editor")
             .image_replacement_for(target)
             .expect("committed replacement identity");
-        assert_eq!(replacement_asset.to_string(), replacement_sha256);
+        assert!(
+            replacement_asset.to_string() == replacement_sha256,
+            "committed replacement identity differs from imported private asset"
+        );
         assert_eq!(
             app.editor.as_ref().expect("editor").operations().len(),
             operation_count_before + 1
@@ -4603,9 +4607,8 @@ mod tests {
                 .is_err(),
             "project replay must require replacement bytes"
         );
-        assert_eq!(
-            missing_asset_replay.project(),
-            empty_state,
+        assert!(
+            missing_asset_replay.project() == empty_state,
             "failed replay must be transactional"
         );
 
@@ -4614,9 +4617,8 @@ mod tests {
         reopened
             .apply_project_with_assets(&project, &asset_bytes)
             .expect("fresh replay with replacement bytes");
-        assert_eq!(
-            reopened.image_replacement_for(target),
-            Some(replacement_asset),
+        assert!(
+            reopened.image_replacement_for(target) == Some(replacement_asset),
             "fresh replay preserves replacement identity"
         );
 
@@ -4685,8 +4687,8 @@ mod tests {
         assert_eq!(unsupported_plan.losses.len(), 1);
 
         let source_after = sample_newsletter_fixture();
-        assert_eq!(
-            source_after, original,
+        assert!(
+            source_after == original,
             "real ReplaceImage evidence must not mutate the source PUB"
         );
 
