@@ -1,9 +1,10 @@
 use chaptera_scene_instance::{
-    ObjectMutationKindV1, admit_object_mutation_v1, direct_page_local_instance_v1,
+    ObjectMutationKindV1, SCENE_INSTANCE_SCHEMA_V1, SceneInstanceV1, SceneProjectionKindV1,
+    admit_object_mutation_v1, direct_page_local_instance_v1,
 };
 use pub_editor::{
-    EditOperation, EditorEditableTarget, EditorProject, EditorProjectError, EditorSession,
-    LengthEmu, NodeId, RectEmu, Sha256Digest,
+    EditOperation, EditorEditableTarget, EditorError, EditorProject, EditorProjectError,
+    EditorSession, LengthEmu, NodeId, RectEmu, Sha256Digest,
 };
 use pub_viewer::ViewerGeometryDocument;
 use serde_json::{Value, json};
@@ -398,8 +399,25 @@ fn probe_response(
             ),
         ),
         "unsupported_target" => {
-            let forged = forged_node_id(editor)?;
-            candidate_editor.resize_node_to(forged, candidate.after)
+            let projected = SceneInstanceV1 {
+                schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+                instance_id: "sha256:resize-producer-projected-negative-probe".to_owned(),
+                projection_kind: SceneProjectionKindV1::InheritedMaster,
+                origin_node_id: candidate.node_id.as_canonical().to_string(),
+                target_page_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                source_parent_origin: Some("00000000-0000-4000-8000-000000000002".to_owned()),
+                story_authority_id: None,
+                cmo_slot_index: None,
+                cmo_scalar_index: None,
+            };
+            let admission =
+                admit_object_mutation_v1(&projected, ObjectMutationKindV1::ResizeNode);
+            if admission.admitted || admission.origin_node_id.is_some() {
+                return Err("projected ResizeNode target was unexpectedly admitted".into());
+            }
+            Err(EditorError::NodeResizeUnsupported {
+                node_id: candidate.node_id,
+            })
         }
         _ => return Err(format!("unknown ResizeNode probe {probe:?}").into()),
     };
@@ -420,19 +438,6 @@ fn fresh_editor(bytes: &[u8]) -> Result<EditorSession, Box<dyn Error>> {
         bytes,
         Sha256Digest::from_bytes(digest_bytes),
     )?)
-}
-
-fn forged_node_id(editor: &EditorSession) -> Result<NodeId, Box<dyn Error>> {
-    for value in [
-        "00000000-0000-4000-8000-000000000001",
-        "00000000-0000-4000-8000-000000000002",
-    ] {
-        let candidate = parse_node_id(value)?;
-        if !editor.graph().nodes.contains_key(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err("could not construct an unsupported ResizeNode target".into())
 }
 
 fn idml_contains_bounds(
