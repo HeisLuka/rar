@@ -510,30 +510,35 @@ pub fn resolve_cmo_slot_flow_v1(
     })
 }
 
+#[derive(Serialize)]
+struct SlotInstanceIdentityV1<'a> {
+    // Field order is deliberately alphabetical to match the already-admitted
+    // Python public contract's canonical JSON (sort_keys=True).
+    carrier_node_id: &'a str,
+    projection_kind: &'static str,
+    scalar_index: u32,
+    source_order: usize,
+    target_frame_node_id: &'a str,
+    target_story_id: &'a str,
+}
+
 fn slot_instance_id_v1(
     target_story_id: &str,
     target_frame_node_id: &str,
     scalar_index: u32,
     relation: &CmoProjectionRelationV1,
 ) -> String {
-    let mut hasher = Sha256::new();
-    hash_part(&mut hasher, b"chaptera.scene-instance.cmo-story-slot.v1");
-    hash_part(&mut hasher, target_story_id.as_bytes());
-    hash_part(&mut hasher, target_frame_node_id.as_bytes());
-    hasher.update(scalar_index.to_be_bytes());
-    hasher.update(
-        u64::try_from(relation.source_order)
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
-    hasher.update(relation.cmo_id.to_be_bytes());
-    hash_part(&mut hasher, relation.carrier_node_id.as_bytes());
-    format!("sha256:{:x}", hasher.finalize())
-}
-
-fn hash_part(hasher: &mut Sha256, bytes: &[u8]) {
-    hasher.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
-    hasher.update(bytes);
+    let identity = SlotInstanceIdentityV1 {
+        carrier_node_id: &relation.carrier_node_id,
+        projection_kind: "cmo_story_slot",
+        scalar_index,
+        source_order: relation.source_order,
+        target_frame_node_id,
+        target_story_id,
+    };
+    let canonical = serde_json::to_vec(&identity)
+        .expect("fixed Cmo slot identity fields must serialize to canonical JSON");
+    format!("sha256:{:x}", Sha256::digest(canonical))
 }
 
 #[cfg(test)]
@@ -686,41 +691,144 @@ mod tests {
     }
 
     #[test]
-    fn carlton_q49_lower_bound_matches_grounded_nonfit() {
-        let nodes = [
-            "10000000-0000-4000-8000-000000000007",
-            "10000000-0000-4000-8000-000000000009",
-            "10000000-0000-4000-8000-000000000012",
-            "10000000-0000-4000-8000-000000000013",
-            "10000000-0000-4000-8000-000000000015",
-            "10000000-0000-4000-8000-000000000016",
-        ];
-        let cmos = [7, 9, 12, 13, 15, 16];
-        let relations = cmos
-            .iter()
-            .zip(nodes.iter())
-            .enumerate()
-            .map(|(index, (&cmo, &node))| relation(index + 3, cmo, node))
-            .collect();
-        let ctx = context(relations);
-        let mut value = input(
-            vec![0, 3, 5, 7, 9, 11],
-            nodes
-                .iter()
-                .enumerate()
-                .map(|(index, node)| {
-                    if index == 0 {
-                        extent(node, 2_002_380, 1_469_908)
-                    } else {
-                        extent(node, 7_626_802, 331_221)
-                    }
-                })
-                .collect(),
+    fn slot_instance_id_matches_admitted_public_contract_law() {
+        let relation = CmoProjectionRelationV1 {
+            source_order: 3,
+            cmo_id: 7,
+            carrier_ohpo: 441,
+            carrier_cmo_id: 7,
+            target_qsid: 49,
+            carrier_node_id: "b98be77a-5dc8-5134-9998-0d2738c1b077".to_owned(),
+            carrier_story_id: Some("86f4e1e1-2d6e-54c4-b732-4ff49dde3737".to_owned()),
+            target_story_id: "9ec067e2-2962-5923-85b9-7470503a2181".to_owned(),
+            target_frame_node_id: Some("4e554b11-a364-5e15-ba52-9d1ecda18b5f".to_owned()),
+        };
+        assert_eq!(
+            slot_instance_id_v1(
+                "9ec067e2-2962-5923-85b9-7470503a2181",
+                "4e554b11-a364-5e15-ba52-9d1ecda18b5f",
+                0,
+                &relation,
+            ),
+            "sha256:c2b4d34997a6f85ded10439f3ce7ff0fd1a71e8b2f829004185ee23d55911f47"
         );
-        value.host_width_emu = 2_145_323;
-        value.host_height_emu = 1_793_030;
+    }
 
-        let output = resolve_cmo_slot_flow_v1(&ctx, &value).expect("Carlton lower bound");
+    fn exact_march_context() -> PubProjectionContextV1 {
+        serde_json::from_str(include_str!(
+            "../../../packages/protocol/pub-projection/v1/cmo-slot-flow-carlton-march-projection-context.json"
+        ))
+        .expect("exact retained March PubProjectionContextV1")
+    }
+
+    #[test]
+    fn exact_carlton_single_slot_witnesses_fit_with_native_relations() {
+        let context = exact_march_context();
+        let cases = [
+            (
+                218,
+                "3e10fd6c-52ab-518e-bc83-6cdc0e288988",
+                "87cee6b6-c769-5649-b929-107fe110ff89",
+                "ac83b8f2-951d-5c76-a407-f3a17fa25698",
+                4_411_989,
+                2_170_073,
+                1_947_077,
+                1_710_156,
+                1,
+            ),
+            (
+                216,
+                "8b9de215-423f-54a7-93b8-89e5ae97e2ef",
+                "2528df06-d811-5bd2-9ec9-77f3fb5ce9ce",
+                "60d2817b-ef22-5e6f-af74-4b99b0bd90fd",
+                2_518_890,
+                1_099_091,
+                2_473_777,
+                987_695,
+                5,
+            ),
+            (
+                120,
+                "060e02ec-c5e3-521d-a86a-55bbfdf16e86",
+                "67d5c123-7ab5-51ed-bcf2-9e9ef6902722",
+                "f11f251e-8fae-5f04-877e-d9efbf7ebb17",
+                3_199_116,
+                1_430_873,
+                3_041_690,
+                1_281_563,
+                6,
+            ),
+        ];
+
+        for (
+            target_qsid,
+            target_story_id,
+            target_frame_node_id,
+            carrier_node_id,
+            host_width_emu,
+            host_height_emu,
+            carrier_width_emu,
+            carrier_height_emu,
+            cmo_id,
+        ) in cases
+        {
+            let output = resolve_cmo_slot_flow_v1(
+                &context,
+                &CmoStorySlotFlowInputV1 {
+                    target_qsid,
+                    target_story_id: target_story_id.to_owned(),
+                    target_frame_node_id: target_frame_node_id.to_owned(),
+                    frame_count: 1,
+                    host_width_emu,
+                    host_height_emu,
+                    object_marker_scalars: vec![0],
+                    text_lines: Vec::new(),
+                    carrier_extents: vec![extent(
+                        carrier_node_id,
+                        carrier_width_emu,
+                        carrier_height_emu,
+                    )],
+                },
+            )
+            .expect("exact single-slot Carlton witness");
+
+            assert_eq!(output.visible_slots.len(), 1);
+            assert_eq!(output.visible_slots[0].cmo_id, cmo_id);
+            assert_eq!(output.visible_slots[0].carrier_node_id, carrier_node_id);
+            assert!(!output.overset.story_overset);
+        }
+    }
+
+    #[test]
+    fn carlton_q49_lower_bound_uses_exact_retained_context_and_witness_ids() {
+        let context = exact_march_context();
+        assert_eq!(context.cmo_relations.len(), 9);
+
+        let carriers = [
+            ("b98be77a-5dc8-5134-9998-0d2738c1b077", 2_002_380, 1_469_908),
+            ("a6672853-7405-5712-8fc0-b08e5c0481c3", 7_626_802, 331_221),
+            ("68dc2777-89fd-532d-995b-f0b78b3e5424", 7_626_802, 331_221),
+            ("85110268-e6b9-5512-aed8-8b8f654024e5", 7_626_802, 331_221),
+            ("e31c5b86-ecd2-51e5-8cc0-ef34a86281c2", 7_626_802, 331_221),
+            ("84606b44-693d-5c23-bff1-84239779d9ab", 7_626_802, 331_221),
+        ];
+
+        let value = CmoStorySlotFlowInputV1 {
+            target_qsid: 49,
+            target_story_id: "9ec067e2-2962-5923-85b9-7470503a2181".to_owned(),
+            target_frame_node_id: "4e554b11-a364-5e15-ba52-9d1ecda18b5f".to_owned(),
+            frame_count: 1,
+            host_width_emu: 2_145_323,
+            host_height_emu: 1_793_030,
+            object_marker_scalars: vec![0, 3, 5, 7, 9, 11],
+            text_lines: Vec::new(),
+            carrier_extents: carriers
+                .into_iter()
+                .map(|(node, width, height)| extent(node, width, height))
+                .collect(),
+        };
+
+        let output = resolve_cmo_slot_flow_v1(&context, &value).expect("Carlton lower bound");
         assert_eq!(
             output
                 .visible_slots
@@ -728,6 +836,18 @@ mod tests {
                 .map(|slot| slot.cmo_id)
                 .collect::<Vec<_>>(),
             vec![7]
+        );
+        assert_eq!(
+            output.visible_slots[0].carrier_node_id,
+            "b98be77a-5dc8-5134-9998-0d2738c1b077"
+        );
+        assert_eq!(
+            output.visible_slots[0].carrier_story_id.as_deref(),
+            Some("86f4e1e1-2d6e-54c4-b732-4ff49dde3737")
+        );
+        assert_eq!(
+            output.visible_slots[0].instance_id,
+            "sha256:c2b4d34997a6f85ded10439f3ce7ff0fd1a71e8b2f829004185ee23d55911f47"
         );
         assert_eq!(output.visible_slots[0].used_height_after_emu, 1_469_908);
         assert_eq!(value.host_height_emu - 1_469_908, 323_122);
