@@ -4288,6 +4288,195 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
+    #[ignore = "runtime GUI evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER"]
+    fn gui_resize_handle_commits_one_resize_node() {
+        use egui_kittest::Harness;
+
+        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let original = fs::read(&fixture).expect("read pinned SampleNewsletter fixture");
+
+        let fixture_for_app = fixture.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(24)
+            .build_eframe(move |cc| {
+                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+            });
+        harness.step();
+
+        let page_label = {
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let editor = app.editor.as_ref().expect("editor loaded");
+            visual
+                .document
+                .pages
+                .iter()
+                .find_map(|page| {
+                    let page_origin = page.id.into_canonical();
+                    let page_id_text = page.id.as_canonical().to_string();
+                    let has_resizable = visual
+                        .scene
+                        .nodes
+                        .iter()
+                        .filter(|node| node.parent_origin == page_origin)
+                        .any(|node| {
+                            let Some(instance) =
+                                direct_scene_instance(editor, &page_id_text, node.origin)
+                            else {
+                                return false;
+                            };
+                            let admission =
+                                admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
+                            admission.admitted
+                                && admission.origin_node_id.as_deref()
+                                    == Some(node.origin.as_canonical().to_string().as_str())
+                                && editor.can_resize_node(node.origin).is_ok()
+                        });
+                    has_resizable.then(|| format!("Page {}", page.index))
+                })
+                .expect("real fixture exposes a ResizeNode-admitted page")
+        };
+
+        harness.get_by_label(&page_label).click();
+        harness.step();
+
+        let object_bounds = harness
+            .get_all_by_label("Resizable canvas object")
+            .last()
+            .expect("selected page exposes a resizable canvas object")
+            .raw_bounds()
+            .expect("resizable object has screen bounds");
+        let object_center = egui::pos2(
+            ((object_bounds.x0 + object_bounds.x1) / 2.0) as f32,
+            ((object_bounds.y0 + object_bounds.y1) / 2.0) as f32,
+        );
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(object_center),
+            egui::Event::PointerButton {
+                pos: object_center,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+            egui::Event::PointerButton {
+                pos: object_center,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        harness.step();
+
+        let handle_bounds = harness
+            .get_by_label("Resize bottom-right handle")
+            .raw_bounds()
+            .expect("selected resizable object exposes bottom-right handle");
+        let start = egui::pos2(
+            ((handle_bounds.x0 + handle_bounds.x1) / 2.0) as f32,
+            ((handle_bounds.y0 + handle_bounds.y1) / 2.0) as f32,
+        );
+        let end = start + egui::vec2(18.0, 12.0);
+
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .operations()
+                .len(),
+            0,
+            "resize pointer-down/preview must not emit an Editor operation"
+        );
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(end));
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .operations()
+                .len(),
+            0,
+            "resize pointer motion must remain transient"
+        );
+
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.step();
+        harness.step();
+
+        let (node_id, before, after) = {
+            let editor = harness.state().editor.as_ref().expect("editor");
+            assert_eq!(
+                editor.operations().len(),
+                1,
+                "handle release must emit exactly one ResizeNode"
+            );
+            match editor.operations().last().expect("resize operation") {
+                pub_editor::EditOperation::ResizeNode {
+                    node_id,
+                    before,
+                    after,
+                } => (*node_id, *before, *after),
+                other => panic!("resize handle emitted unexpected operation: {other:?}"),
+            }
+        };
+        assert_ne!(before.width, after.width);
+        assert_ne!(before.height, after.height);
+
+        harness.get_by_label("Undo").click();
+        harness.step();
+        assert_eq!(
+            harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
+                .header
+                .bounds,
+            before,
+            "GUI Undo restores exact pre-resize bounds"
+        );
+
+        harness.get_by_label("Redo").click();
+        harness.step();
+        assert_eq!(
+            harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
+                .header
+                .bounds,
+            after,
+            "GUI Redo restores exact resized bounds"
+        );
+        assert_eq!(
+            fs::read(&fixture).expect("read immutable source after resize"),
+            original,
+            "GUI resize must not mutate source PUB bytes"
+        );
+    }
+
     #[test]
     fn replacement_image_mime_is_bounded_to_png_and_jpeg() {
         assert_eq!(
