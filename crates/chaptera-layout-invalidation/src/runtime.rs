@@ -882,6 +882,35 @@ mod tests {
     }
 
     #[test]
+    fn non_materializing_probe_and_materialized_flow_share_break_decisions() {
+        let prepared = vec![
+            unit("u1", 0, &[20, 20, 20], &["A", "B ", "C"]),
+            unit("u2", 3, &[20, 20, 20], &["D", "E ", "F"]),
+        ];
+        let region = resolve_line_regions_v1(&frame(60), &[]).expect("region");
+
+        let probe =
+            probe_story_flow_v1(&prepared, &region, IntervalPolicyV1::LargestOnly)
+                .expect("probe");
+        let materialized =
+            resolve_story_flow_v1("s1", &prepared, &region, IntervalPolicyV1::LargestOnly)
+                .expect("materialized");
+
+        assert_eq!(probe.line_count, materialized.lines.len());
+        assert_eq!(probe.next_scalar, materialized.next_scalar);
+        assert_eq!(probe.overset, materialized.overset);
+        assert_eq!(probe.fits, !materialized.overset);
+        assert_eq!(
+            materialized
+                .lines
+                .iter()
+                .map(|line| (line.scalar_start, line.scalar_end))
+                .collect::<Vec<_>>(),
+            vec![(0, 2), (2, 5)]
+        );
+    }
+
+    #[test]
     fn incremental_resize_equals_clean_recompute() {
         let prepared = vec![
             unit("u1", 0, &[20, 20, 20], &["A", "B ", "C"]),
