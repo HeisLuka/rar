@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.local/protocol/authoring-table-cell-paint/v1/set-table-cell-fill-intent.schema.json",
+  "title": "Chaptera SetTableCellFill intent V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "document_id", "source_hash", "base_revision_id", "client_operation_id", "command"],
+  "properties": {
+    "protocol_version": {"const": "chaptera.table-cell-fill-intent.v1"},
+    "document_id": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "client_operation_id": {"type": "string", "minLength": 1},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "table_cell_id", "expected_before", "after"],
+      "properties": {
+        "kind": {"const": "set_table_cell_fill"},
+        "table_cell_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+        "expected_before": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/fill"}]},
+        "after": {"$ref": "#/$defs/fill"}
+      }
+    }
+  },
+  "$defs": {
+    "color": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["r", "g", "b"],
+        "properties": {
+          "r": {"type": "integer", "minimum": 0, "maximum": 255},
+          "g": {"type": "integer", "minimum": 0, "maximum": 255},
+          "b": {"type": "integer", "minimum": 0, "maximum": 255}
+        }
+      },
+    "fill": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["visible", "color"],
+        "properties": {
+          "visible": {"type": "boolean"},
+          "color": {"$ref": "#/$defs/color"}
+        }
+      }
+  }
+}
