@@ -165,17 +165,23 @@ fn main() -> eframe::Result<()> {
     let first_arg = args.next();
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--product-smoke-v1")) {
+        let output = args.next().map(PathBuf::from);
         if args.next().is_some() {
-            eprintln!("product smoke mode accepts no path arguments");
+            eprintln!("usage: chaptera --product-smoke-v1 [OUTPUT.json]");
             std::process::exit(2);
         }
         match product_smoke::run() {
             Ok(receipt) => {
-                println!(
-                    "{}",
-                    serde_json::to_string(&receipt)
-                        .expect("product smoke receipt is JSON-serializable")
-                );
+                let encoded = serde_json::to_string(&receipt)
+                    .expect("product smoke receipt is JSON-serializable");
+                if let Some(output) = output {
+                    if let Err(error) = fs::write(&output, format!("{encoded}\n")) {
+                        eprintln!("write product smoke receipt {}: {error}", output.display());
+                        std::process::exit(2);
+                    }
+                } else {
+                    println!("{encoded}");
+                }
                 return Ok(());
             }
             Err(error) => {
