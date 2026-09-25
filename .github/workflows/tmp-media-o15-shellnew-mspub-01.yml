@@ -252,12 +252,24 @@ jobs:
                   p for p in iso_paths
                   if pathlib.PurePosixPath(p.replace("\\\\","/")).name.lower()==cabinet.lower()
               ]
-              if len(cab_paths) != 1:
+              msi_parts=pathlib.PurePosixPath(m["msi"].replace("\\\\","/")).parts
+              msi_arch=msi_parts[0].lower() if msi_parts else ""
+              arch_paths=[
+                  p for p in cab_paths
+                  if pathlib.PurePosixPath(p.replace("\\\\","/")).parts
+                  and pathlib.PurePosixPath(p.replace("\\\\","/")).parts[0].lower()==msi_arch
+              ]
+              if len(arch_paths)==1:
+                  cab_path=arch_paths[0]
+              elif len(cab_paths)==1:
+                  cab_path=cab_paths[0]
+              else:
                   row["extraction_state"]="cabinet_path_ambiguous_or_missing"
+                  row["msi_arch"]=msi_arch
                   row["cabinet_iso_candidates"]=cab_paths
+                  row["cabinet_arch_candidates"]=arch_paths
                   results.append(row)
                   continue
-              cab_path=cab_paths[0]
               r=subprocess.run(
                   ["7z","x","-y",f"-o{cabroot}",iso,cab_path],
                   stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
