@@ -268,7 +268,6 @@ fn v0_8_inherits_table_grid_replay_integrity() {
     assert!(matches!(error, EditorProjectError::TableGridMismatch));
 }
 
-
 #[test]
 fn v0_9_inherits_table_grid_replay_integrity() {
     let baseline_session = EditorSession::new(graph()).unwrap();
