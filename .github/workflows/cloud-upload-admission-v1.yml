@@ -1,0 +1,33 @@
+name: CLOUD-UPLOAD-ADMISSION-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0015_upload_admission.sql"
+      - "apps/chaptera-server/src/upload_admission.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "tools/run_cloud_migration_receipt.py"
+      - ".github/workflows/cloud-upload-admission-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upload-admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --package chaptera-server -- --check
+      - name: Lint server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Test upload admission
+        run: cargo test -p chaptera-server upload_admission
+      - name: Test migrations
+        run: cargo test -p chaptera-server schema_migration
