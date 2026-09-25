@@ -883,6 +883,21 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_page_extent(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_page_extent_request_shape,
+            canonical_validator=self._validate_canonical_page_extent,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_delete_node(
         self,
         request: dict,
@@ -1771,6 +1786,71 @@ class RevisionKernel:
                 raise ValueError("canonical paragraph override normalization mismatch")
             if after == before:
                 raise ValueError("canonical paragraph alignment operation contains a no-op target")
+
+    @staticmethod
+    def _validate_page_extent_state(state: dict, label: str) -> None:
+        if not isinstance(state, dict) or set(state) != {"width_emu", "height_emu"}:
+            raise ValueError(f"{label} must contain exactly width_emu/height_emu")
+        for field in ("width_emu", "height_emu"):
+            value = state.get(field)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+                or value > MAX_SAFE_EMU
+            ):
+                raise ValueError(
+                    f"{label}.{field} must be a positive JavaScript-safe EMU integer"
+                )
+
+    @staticmethod
+    def _validate_page_extent_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.page-extent-intent.v1":
+            raise ValueError("V1 page extent protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "page_id", "expected_before", "after", "semantics"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "set_page_extent"
+            or set(command) != allowed
+        ):
+            raise ValueError("SetPageExtent contains non-intent/authoritative fields")
+        page_id = command.get("page_id")
+        if not isinstance(page_id, str) or not page_id:
+            raise ValueError("SetPageExtent page_id is required")
+        if command.get("semantics") != "keep_objects_fixed":
+            raise ValueError("SetPageExtent V1 requires keep_objects_fixed semantics")
+        RevisionKernel._validate_page_extent_state(
+            command.get("expected_before"), "expected_before page extent"
+        )
+        RevisionKernel._validate_page_extent_state(
+            command.get("after"), "after page extent"
+        )
+        if command["expected_before"] == command["after"]:
+            raise ValueError("SetPageExtent no-op is not a durable edit")
+
+    @staticmethod
+    def _validate_canonical_page_extent(command: dict, operation: dict) -> None:
+        if operation.get("kind") != "set_page_extent":
+            raise ValueError("authoritative executor returned non-SetPageExtent operation")
+        if operation.get("page_id") != command.get("page_id"):
+            raise ValueError("canonical SetPageExtent targets a different page")
+        if operation.get("semantics") != "keep_objects_fixed":
+            raise ValueError("canonical SetPageExtent changed KeepObjectsFixed semantics")
+        before = operation.get("before")
+        after = operation.get("after")
+        RevisionKernel._validate_page_extent_state(before, "canonical before page extent")
+        RevisionKernel._validate_page_extent_state(after, "canonical after page extent")
+        if before != command.get("expected_before"):
+            raise ValueError(
+                "canonical SetPageExtent before-state differs from expected precondition"
+            )
+        if after != command.get("after"):
+            raise ValueError(
+                "canonical SetPageExtent after-state differs from accepted intent"
+            )
+        if before == after:
+            raise ValueError("canonical SetPageExtent must change page extent")
 
     @staticmethod
     def _validate_delete_node_request_shape(request: dict) -> None:
