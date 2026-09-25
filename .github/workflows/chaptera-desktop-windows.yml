@@ -95,29 +95,14 @@ jobs:
       - name: Test GUI-only Desktop V0 walkthrough
         run: cargo test -p chaptera-desktop --features embedded-fixture-tests gui_only_v0_walkthrough_uses_real_widgets -- --nocapture
 
-      - name: Capture real Chaptera UX snapshots
+      - name: Capture headless Chaptera UX snapshots
         shell: pwsh
-        timeout-minutes: 4
         run: |
-          $default = "target/release/chaptera-editor-ux-1280x820.png"
-          $minimum = "target/release/chaptera-editor-ux-900x600.png"
-          $exe = (Resolve-Path "target/release/chaptera-editor.exe").Path
-
-          $p = Start-Process -FilePath $exe -ArgumentList @("--ux-snapshot-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $default, "1280", "820") -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            $errorFile = [System.IO.Path]::ChangeExtension($default, "error.txt")
-            if (Test-Path $errorFile) { Get-Content $errorFile | Write-Host }
-            throw "1280x820 UX snapshot failed with exit code $($p.ExitCode)"
-          }
-
-          $p = Start-Process -FilePath $exe -ArgumentList @("--ux-snapshot-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $minimum, "900", "600") -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            $errorFile = [System.IO.Path]::ChangeExtension($minimum, "error.txt")
-            if (Test-Path $errorFile) { Get-Content $errorFile | Write-Host }
-            throw "900x600 UX snapshot failed with exit code $($p.ExitCode)"
-          }
-
-          python tools/validate_editor_desktop_ux_snapshots.py --default $default --minimum $minimum --output target/release/editor-desktop-ux-snapshots.real.json
+          $snapshotDir = (Resolve-Path "target/release").Path
+          "CHAPTERA_UX_SNAPSHOT_DIR=$snapshotDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:CHAPTERA_UX_SNAPSHOT_DIR = $snapshotDir
+          cargo test -p chaptera-desktop --features embedded-fixture-tests headless_wgpu_ux_snapshots_render_current_viewer_app -- --nocapture
+          python tools/validate_editor_desktop_ux_snapshots.py --default target/release/chaptera-editor-ux-1280x820.png --minimum target/release/chaptera-editor-ux-900x600.png --output target/release/editor-desktop-ux-snapshots.real.json
 
       - name: Run real Desktop V0 continuity receipt
         shell: pwsh
