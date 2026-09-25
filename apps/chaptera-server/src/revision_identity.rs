@@ -174,10 +174,7 @@ impl SqliteRevisionIdentityStore {
         require_ident(document_id, "document_id")?;
         require_ident(service_parent_revision_id, "service_parent_revision_id")?;
         require_ident(service_revision_id, "service_revision_id")?;
-        require_canonical_revision(
-            canonical_parent_revision_id,
-            "canonical_parent_revision_id",
-        )?;
+        require_canonical_revision(canonical_parent_revision_id, "canonical_parent_revision_id")?;
         require_canonical_revision(canonical_revision_id, "canonical_revision_id")?;
         require_time(created_at_ms)?;
 
@@ -352,10 +349,7 @@ impl SqliteRevisionIdentityStore {
                 }
 
                 if let Some(existing) = self
-                    .resolve_service_revision(
-                        &binding.document_id,
-                        &binding.canonical_revision_id,
-                    )
+                    .resolve_service_revision(&binding.document_id, &binding.canonical_revision_id)
                     .await?
                 {
                     return Err(RevisionIdentityError::new(
@@ -394,7 +388,8 @@ impl SqliteRevisionIdentityStore {
         .await
         .map_err(sqlite_error)?;
 
-        row.map(|row| blob_text(&row, "parent_revision")).transpose()
+        row.map(|row| blob_text(&row, "parent_revision"))
+            .transpose()
     }
 
     async fn require_schema(&self) -> Result<(), RevisionIdentityError> {
@@ -497,9 +492,7 @@ fn decode_binding(
     let binding = RevisionIdentityBinding {
         document_id: blob_text(&row, "document_id")?,
         service_revision_id: blob_text(&row, "service_revision_id")?,
-        canonical_revision_id: row
-            .try_get("canonical_revision_id")
-            .map_err(sqlite_error)?,
+        canonical_revision_id: row.try_get("canonical_revision_id").map_err(sqlite_error)?,
         service_parent_revision_id: optional_blob_text(&row, "service_parent_revision_id")?,
         canonical_parent_revision_id: row
             .try_get("canonical_parent_revision_id")
@@ -510,14 +503,14 @@ fn decode_binding(
     Ok(binding)
 }
 
-fn blob_text(
-    row: &sqlx::sqlite::SqliteRow,
-    column: &str,
-) -> Result<String, RevisionIdentityError> {
+fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, RevisionIdentityError> {
     let bytes: Vec<u8> = row.try_get(column).map_err(sqlite_error)?;
-    str::from_utf8(&bytes)
-        .map(str::to_owned)
-        .map_err(|_| RevisionIdentityError::new("revision_identity_row_corrupt", format!("{column} is not UTF-8")))
+    str::from_utf8(&bytes).map(str::to_owned).map_err(|_| {
+        RevisionIdentityError::new(
+            "revision_identity_row_corrupt",
+            format!("{column} is not UTF-8"),
+        )
+    })
 }
 
 fn optional_blob_text(
@@ -636,10 +629,9 @@ mod tests {
             .migrate_up()
             .await
             .unwrap();
-        let identity =
-            SqliteRevisionIdentityStore::open(&path, 4, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let identity = SqliteRevisionIdentityStore::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         let revisions = SqliteRevisionStore::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
