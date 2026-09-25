@@ -1,5 +1,5 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_6, EditOperation, EditorEditableTarget, EditorError, EditorSession,
+    EDITOR_PROJECT_VERSION_V0_7, EditOperation, EditorEditableTarget, EditorError, EditorSession,
 };
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, LengthEmu, Node, NodeHeader, NodeId, NodeKind,
@@ -219,7 +219,7 @@ fn break_link_splits_topology_without_moving_or_copying_story_text() {
     }
 
     let project = session.project();
-    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_6);
+    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_7);
     assert_eq!(project.operations, vec![operation]);
     let requirements = session.persistence_requirements();
     assert!(requirements.iter().any(|item| item.feature == "story.linked_frames"));
