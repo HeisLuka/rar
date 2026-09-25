@@ -31,17 +31,17 @@ pub use shape_paint_op::{
 pub use table_cell_id::{TableCellId, TableCellIdError};
 
 pub use table_cell_paint::{
-    PUBLISHER16_TABLE_CELL_PAINT_AUTHORITY_V1, TABLE_CELL_PAINT_SCHEMA_V1,
-    Publisher16TableCellPaintImportError, Publisher16TableCellPaintObservationV1,
-    TableCellBorderSideV1, TableCellBordersV1, TableCellClassV1, TableCellPaintV1,
-    TableCellPaintValidationError, canonical_table_cell_paint_hash_v1,
-    promote_publisher16_table_cell_paint_v1, validate_table_cell_paint_v1,
+    PUBLISHER16_TABLE_CELL_PAINT_AUTHORITY_V1, Publisher16TableCellPaintImportError,
+    Publisher16TableCellPaintObservationV1, TABLE_CELL_PAINT_SCHEMA_V1, TableCellBorderSideV1,
+    TableCellBordersV1, TableCellClassV1, TableCellPaintV1, TableCellPaintValidationError,
+    canonical_table_cell_paint_hash_v1, promote_publisher16_table_cell_paint_v1,
+    validate_table_cell_paint_v1,
 };
 
 pub use table_cell_paint_op::{
-    ClearTableCellBorderSideV1, ClearTableCellFillV1, SetTableCellBorderSideV1,
-    SetTableCellFillV1, TableCellPaintOperationError, TableCellPaintOperationV1,
-    apply_table_cell_paint_operation_v1, inverse_table_cell_paint_operation_v1,
+    ClearTableCellBorderSideV1, ClearTableCellFillV1, SetTableCellBorderSideV1, SetTableCellFillV1,
+    TableCellPaintOperationError, TableCellPaintOperationV1, apply_table_cell_paint_operation_v1,
+    inverse_table_cell_paint_operation_v1,
 };
 
 pub use create_shape::{
