@@ -501,6 +501,107 @@ def story_edit_core_state_id_v1(state: StoryEditCoreStateV1) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
+def _validate_author_created_story_graph_v1(
+    project: dict,
+    state: StoryEditCoreStateV1,
+) -> None:
+    """Prove that chaptera_created provenance is backed by the authored graph."""
+    if state.provenance != "chaptera_created":
+        return
+
+    def fail(message: str) -> None:
+        _reject("author_created_story_unproven", message)
+
+    # Import lazily: CreateTextBox itself consumes StoryEditCoreStateV1, so the
+    # canonical creation validators cannot be imported while this module loads.
+    from create_shape_v1 import validate_uuid7_node_id_v1
+    from create_textbox_v1 import (
+        authoring_text_preset_id_v1,
+        validate_text_preset_v1,
+    )
+
+    story_id = state.story_id
+    try:
+        validate_uuid7_node_id_v1(story_id)
+    except ValueError as exc:
+        fail(f"author-created StoryId is not canonical UUIDv7: {exc}")
+
+    stories = project.get("stories")
+    story_text = state.paragraph_state.story_text
+    if not isinstance(stories, dict) or stories.get(story_id) != story_text:
+        fail("author-created Story mirror does not match canonical Story model")
+
+    text_frames = project.get("text_frames")
+    if not isinstance(text_frames, dict):
+        fail("author-created Story requires canonical text_frames registry")
+    owners = [
+        (frame_id, frame)
+        for frame_id, frame in text_frames.items()
+        if isinstance(frame, dict) and frame.get("story_id") == story_id
+    ]
+    if len(owners) != 1:
+        fail("author-created Story must be owned by exactly one TextFrame in V1")
+    frame_id, frame = owners[0]
+
+    try:
+        validate_uuid7_node_id_v1(frame_id)
+    except ValueError as exc:
+        fail(f"author-created TextFrame NodeId is not canonical UUIDv7: {exc}")
+    if frame.get("node_id") != frame_id or frame.get("kind") != "text_frame":
+        fail("author-created TextFrame identity/kind is inconsistent")
+    if frame.get("provenance") != {"kind": "author_created"}:
+        fail("author-created TextFrame provenance is missing or inconsistent")
+
+    page_id = frame.get("page_id")
+    if (
+        not isinstance(page_id, str)
+        or not page_id
+        or frame.get("parent_id") != page_id
+    ):
+        fail("author-created TextFrame must remain directly page-owned in V1")
+
+    pages = project.get("pages")
+    if not isinstance(pages, dict) or not isinstance(pages.get(page_id), dict):
+        fail("author-created TextFrame page is missing")
+    page_children = pages[page_id].get("children")
+    if not isinstance(page_children, list) or page_children.count(frame_id) != 1:
+        fail("author-created TextFrame must appear exactly once in its page children")
+    membership_count = 0
+    for page in pages.values():
+        if not isinstance(page, dict):
+            continue
+        children = page.get("children")
+        if isinstance(children, list):
+            membership_count += children.count(frame_id)
+    if membership_count != 1:
+        fail("author-created TextFrame has inconsistent page-child ownership")
+
+    preset_id = frame.get("text_preset_id")
+    if not isinstance(preset_id, str) or not preset_id:
+        fail("author-created TextFrame requires explicit AuthoringTextPresetV1 identity")
+    text_presets = project.get("text_presets")
+    preset_record = (
+        text_presets.get(preset_id)
+        if isinstance(text_presets, dict)
+        else None
+    )
+    if (
+        not isinstance(preset_record, dict)
+        or set(preset_record) != {"preset_id", "preset"}
+        or preset_record.get("preset_id") != preset_id
+        or not isinstance(preset_record.get("preset"), dict)
+    ):
+        fail("author-created TextFrame preset relation is missing or malformed")
+    preset = preset_record["preset"]
+    try:
+        validate_text_preset_v1(preset)
+        canonical_preset_id = authoring_text_preset_id_v1(preset)
+    except ValueError as exc:
+        fail(f"author-created TextFrame preset is invalid: {exc}")
+    if canonical_preset_id != preset_id:
+        fail("author-created TextFrame preset identity does not match preset payload")
+
+
 def _paragraph_properties_from_command(value: dict | None) -> ParagraphPropertiesV1 | None:
     if value is None:
         return None
@@ -649,6 +750,7 @@ def execute_story_edit_transaction_v1(
     if not isinstance(raw_state, dict):
         _reject("invalid_story_state", "requested Story model is missing")
     before = story_edit_core_state_from_dict(raw_state)
+    _validate_author_created_story_graph_v1(base_project, before)
 
     if before.unsupported_anchored_semantics or command["incoming_semantic_kinds"]:
         _reject(
