@@ -4,6 +4,7 @@ pub mod authn;
 pub mod authn_session;
 pub mod authz_runtime;
 pub mod blob_gc;
+pub mod blob_gc_runtime;
 pub mod blob_runtime;
 pub mod blob_store;
 pub mod build_info;
