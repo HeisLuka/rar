@@ -132,6 +132,10 @@ impl SqliteRevisionStore {
         self.pool.close().await;
     }
 
+    pub fn is_open(&self) -> bool {
+        !self.pool.is_closed()
+    }
+
     pub async fn schema_version(&self) -> Result<i64, SqliteStoreError> {
         sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
             .fetch_one(&self.pool)
