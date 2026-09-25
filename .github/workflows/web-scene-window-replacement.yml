@@ -4,7 +4,11 @@ on:
   pull_request:
     paths:
       - "apps/web/render-v1.mjs"
+      - "apps/web/interaction-v1.mjs"
+      - "apps/web/spatial-lifecycle-v1.mjs"
+      - "apps/web/spatial-lifecycle-v1.test.mjs"
       - "tools/run_web_scene_window_replacement.mjs"
+      - "tools/run_spatial_lifecycle_benchmark.mjs"
       - ".github/workflows/web-scene-window-replacement.yml"
   workflow_dispatch:
 
@@ -36,4 +40,23 @@ jobs:
         with:
           name: web-scene-window-replacement-${{ matrix.browser }}
           path: target/web-scene-window-replace/${{ matrix.browser }}-receipt.json
+          if-no-files-found: error
+
+
+  spatial-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Unit-test current-generation geometry lifecycle
+        run: node --test apps/web/spatial-lifecycle-v1.test.mjs
+      - name: Benchmark equal active windows over 100 vs 500 page documents
+        run: node tools/run_spatial_lifecycle_benchmark.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: interaction-spatial-lifecycle-${{ github.run_id }}
+          path: target/spatial-lifecycle/receipt.json
           if-no-files-found: error
