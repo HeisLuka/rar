@@ -24,8 +24,9 @@ jobs:
           mkdir -p out
           python - <<'PY'
           import json, re, time
+          from html.parser import HTMLParser
           from pathlib import Path
-          from urllib.parse import urlencode, quote
+          from urllib.parse import urlencode, quote, urljoin
           from urllib.request import Request, urlopen
           from urllib.error import HTTPError
 
@@ -46,6 +47,54 @@ jobs:
                   return json.loads(raw.decode('utf-8'))
 
           errors=[]
+          intuit_pages=[
+              'https://intuit.ru/personal/program/workpublisherxp1053/empty/sozdanie_dokumenta_228/',
+              'https://intuit.ru/personal/program/workpublisherxp1053/empty/pechat_publikatsiy_228/',
+          ]
+          intuit_links=[]
+          class LinkParser(HTMLParser):
+              def __init__(self):
+                  super().__init__(); self.links=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag.lower()!='a': return
+                  d=dict(attrs)
+                  if d.get('href'): self.links.append(d['href'].strip())
+
+          for page in intuit_pages:
+              try:
+                  req=Request(page,headers={'User-Agent':UA,'Accept':'text/html,*/*;q=0.1'})
+                  with urlopen(req,timeout=45) as resp:
+                      raw=resp.read(4*1024*1024+1)
+                  if len(raw)>4*1024*1024:
+                      raise ValueError('INTUIT HTML exceeded 4 MiB')
+                  html=raw.decode('utf-8','replace')
+                  p=LinkParser(); p.feed(html)
+                  for href in p.links:
+                      u=urljoin(page,href)
+                      if re.search(r'(download|file|upload|material|exercise|practice|publisher|workpublisherxp1053|\.(?:zip|rar|7z|exe|cab|pub)(?:[?#].*)?$)',u,re.I):
+                          intuit_links.append({'source_page':page,'href':href,'url':u})
+              except Exception as exc:
+                  errors.append({'surface':'intuit_html','query':page,'error':f'{type(exc).__name__}: {exc}'})
+
+          # Deduplicate observed INTUIT links; do not fetch their bodies.
+          idedup={}
+          for x in intuit_links:
+              idedup.setdefault(x['url'].casefold(),x)
+          intuit_links=sorted(idedup.values(),key=lambda x:x['url'].casefold())
+          for x in intuit_links:
+              try:
+                  req=Request(x['url'],method='HEAD',headers={'User-Agent':UA})
+                  with urlopen(req,timeout=30) as resp:
+                      x['head_status']=getattr(resp,'status',None)
+                      x['head_final_url']=resp.geturl()
+                      x['content_type']=resp.headers.get('Content-Type')
+                      x['content_length']=resp.headers.get('Content-Length')
+              except HTTPError as exc:
+                  x['head_status']=exc.code
+                  x['head_error']=str(exc)
+              except Exception as exc:
+                  x['head_error']=f'{type(exc).__name__}: {exc}'
+
           ia_docs=[]
           ia_queries=[
               f'isbn:{ISBN10}',
@@ -170,6 +219,7 @@ jobs:
               'isbn10':ISBN10,
               'isbn13':ISBN13,
               'known_publisher_practice_paths':exact_paths,
+              'intuit_candidate_links':intuit_links,
               'internet_archive_search_docs':len(ia_docs),
               'internet_archive_unique_items':len(ia_items),
               'internet_archive_items_with_candidate_files':sum(bool(x.get('files')) for x in ia_items),
@@ -180,6 +230,7 @@ jobs:
               'guardrail':'Book/CD provenance and archive metadata are locator evidence. No carrier bytes downloaded; no writer-version inference.'
           }
           Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/intuit-links.json').write_text(json.dumps(intuit_links,indent=2,ensure_ascii=False),encoding='utf-8')
           Path('out/internet-archive-items.json').write_text(json.dumps(ia_items,indent=2,ensure_ascii=False),encoding='utf-8')
           Path('out/wayback-candidates.json').write_text(json.dumps(cdx_candidates,indent=2,ensure_ascii=False),encoding='utf-8')
           print(json.dumps(summary,indent=2,ensure_ascii=False))
