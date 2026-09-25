@@ -284,11 +284,28 @@ pub struct StoryFlowV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoryFlowProbeV1 {
+    pub line_count: usize,
+    pub next_scalar: u32,
+    pub fits: bool,
+    pub overset: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlowErrorV1 {
     MissingPreparedUnits,
     NonContiguousPreparedUnits,
     NoUsableInterval { row_index: u32 },
     UnbreakableAt { scalar_start: u32 },
+}
+
+pub fn probe_story_flow_v1(
+    prepared_units: &[PreparedMetricsUnitV1],
+    regions: &LineRegionV1,
+    policy: IntervalPolicyV1,
+) -> Result<StoryFlowProbeV1, FlowErrorV1> {
+    let (_units, scalars) = normalized_flow_inputs_v1(prepared_units)?;
+    scan_story_flow_v1(&scalars, regions, policy, |_| {})
 }
 
 pub fn resolve_story_flow_v1(
@@ -297,77 +314,9 @@ pub fn resolve_story_flow_v1(
     regions: &LineRegionV1,
     policy: IntervalPolicyV1,
 ) -> Result<StoryFlowV1, FlowErrorV1> {
-    if prepared_units.is_empty() {
-        return Err(FlowErrorV1::MissingPreparedUnits);
-    }
-
-    let mut units = prepared_units.to_vec();
-    units.sort_by_key(|unit| unit.scalar_start);
-    for pair in units.windows(2) {
-        if pair[0].scalar_end != pair[1].scalar_start {
-            return Err(FlowErrorV1::NonContiguousPreparedUnits);
-        }
-    }
-
-    let scalars = units
-        .iter()
-        .flat_map(|unit| unit.scalars.iter().cloned())
-        .collect::<Vec<_>>();
-
-    for pair in scalars.windows(2) {
-        if pair[0].scalar_end != pair[1].scalar_start {
-            return Err(FlowErrorV1::NonContiguousPreparedUnits);
-        }
-    }
-
+    let (units, scalars) = normalized_flow_inputs_v1(prepared_units)?;
     let mut lines = Vec::new();
-    let mut cursor = 0usize;
-
-    for band in &regions.bands {
-        if cursor == scalars.len() {
-            break;
-        }
-
-        let interval =
-            choose_interval(&band.intervals, policy).ok_or(FlowErrorV1::NoUsableInterval {
-                row_index: band.row_index,
-            })?;
-        let capacity = interval.width_emu();
-
-        let decision = match probe_line_break_v1(
-            &scalars,
-            cursor,
-            capacity,
-            |metric| metric.advance_emu,
-            |metric| metric.break_after,
-        ) {
-            LineBreakProbeV1::Selected(decision) => decision,
-            LineBreakProbeV1::Unbreakable => {
-                return Err(FlowErrorV1::UnbreakableAt {
-                    scalar_start: scalars[cursor].scalar_start,
-                });
-            }
-        };
-        let end = decision.end_index;
-        let measured_width_emu = decision.measured_width_emu;
-
-        lines.push(FlowLineV1 {
-            row_index: band.row_index,
-            x0_emu: interval.x0_emu,
-            x1_emu: interval.x1_emu,
-            scalar_start: scalars[cursor].scalar_start,
-            scalar_end: scalars[end - 1].scalar_end,
-            measured_width_emu,
-        });
-        cursor = end;
-    }
-
-    let next_scalar = if cursor < scalars.len() {
-        scalars[cursor].scalar_start
-    } else {
-        scalars.last().expect("non-empty").scalar_end
-    };
-    let overset = cursor < scalars.len();
+    let probe = scan_story_flow_v1(&scalars, regions, policy, |line| lines.push(line))?;
 
     let mut dependency = Vec::new();
     for unit in &units {
@@ -392,8 +341,8 @@ pub fn resolve_story_flow_v1(
             output.extend_from_slice(&scalar.semantic_fingerprint);
         }
     }
-    push_u32(&mut output, next_scalar);
-    output.push(u8::from(overset));
+    push_u32(&mut output, probe.next_scalar);
+    output.push(u8::from(probe.overset));
 
     Ok(StoryFlowV1 {
         story_id: story_id.to_owned(),
@@ -401,7 +350,101 @@ pub fn resolve_story_flow_v1(
         dependency_fingerprint: fingerprint_v1(STORY_FLOW_STAGE_V1, &[&dependency]),
         output_fingerprint: fingerprint_v1("story-flow-output-v1", &[&output]),
         lines,
+        next_scalar: probe.next_scalar,
+        overset: probe.overset,
+    })
+}
+
+fn normalized_flow_inputs_v1(
+    prepared_units: &[PreparedMetricsUnitV1],
+) -> Result<(Vec<PreparedMetricsUnitV1>, Vec<ResolvedScalarMetricV1>), FlowErrorV1> {
+    if prepared_units.is_empty() {
+        return Err(FlowErrorV1::MissingPreparedUnits);
+    }
+
+    let mut units = prepared_units.to_vec();
+    units.sort_by_key(|unit| unit.scalar_start);
+    for pair in units.windows(2) {
+        if pair[0].scalar_end != pair[1].scalar_start {
+            return Err(FlowErrorV1::NonContiguousPreparedUnits);
+        }
+    }
+
+    let scalars = units
+        .iter()
+        .flat_map(|unit| unit.scalars.iter().cloned())
+        .collect::<Vec<_>>();
+
+    for pair in scalars.windows(2) {
+        if pair[0].scalar_end != pair[1].scalar_start {
+            return Err(FlowErrorV1::NonContiguousPreparedUnits);
+        }
+    }
+
+    Ok((units, scalars))
+}
+
+fn scan_story_flow_v1<OnLine>(
+    scalars: &[ResolvedScalarMetricV1],
+    regions: &LineRegionV1,
+    policy: IntervalPolicyV1,
+    mut on_line: OnLine,
+) -> Result<StoryFlowProbeV1, FlowErrorV1>
+where
+    OnLine: FnMut(FlowLineV1),
+{
+    let mut cursor = 0usize;
+    let mut line_count = 0usize;
+
+    for band in &regions.bands {
+        if cursor == scalars.len() {
+            break;
+        }
+
+        let interval =
+            choose_interval(&band.intervals, policy).ok_or(FlowErrorV1::NoUsableInterval {
+                row_index: band.row_index,
+            })?;
+        let capacity = interval.width_emu();
+
+        let decision = match probe_line_break_v1(
+            scalars,
+            cursor,
+            capacity,
+            |metric| metric.advance_emu,
+            |metric| metric.break_after,
+        ) {
+            LineBreakProbeV1::Selected(decision) => decision,
+            LineBreakProbeV1::Unbreakable => {
+                return Err(FlowErrorV1::UnbreakableAt {
+                    scalar_start: scalars[cursor].scalar_start,
+                });
+            }
+        };
+        let end = decision.end_index;
+        on_line(FlowLineV1 {
+            row_index: band.row_index,
+            x0_emu: interval.x0_emu,
+            x1_emu: interval.x1_emu,
+            scalar_start: scalars[cursor].scalar_start,
+            scalar_end: scalars[end - 1].scalar_end,
+            measured_width_emu: decision.measured_width_emu,
+        });
+        line_count += 1;
+        cursor = end;
+    }
+
+    let next_scalar = if cursor < scalars.len() {
+        scalars[cursor].scalar_start
+    } else {
+        scalars.last().expect("prepared units are non-empty").scalar_end
+    };
+    let overset = cursor < scalars.len();
+
+    Ok(StoryFlowProbeV1 {
+        line_count,
         next_scalar,
+        fits: !overset,
         overset,
     })
 }
