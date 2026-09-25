@@ -110,6 +110,19 @@ impl SqliteBlobBindingRepository {
                 "blob metadata migration v2 is not recorded",
             ));
         }
+
+        let gc_fence_migration: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM chaptera_schema_migrations WHERE version = 12 AND name = 'blob_gc_delete_fence'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(sqlite_error)?;
+        if gc_fence_migration != 1 {
+            return Err(BlobStoreError::new(
+                "sqlite_schema_missing",
+                "blob GC delete-fence migration v12 is not recorded",
+            ));
+        }
         Ok(())
     }
 
@@ -234,7 +247,7 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
         let byte_len = to_i64(byte_len, "byte_len")?;
         let sql = format!(
             "SELECT {PHYSICAL_COLUMNS} FROM physical_blobs \
-             WHERE tenant_id = ? AND content_sha256 = ? AND byte_len = ? AND deleted = 0"
+             WHERE tenant_id = ? AND content_sha256 = ? AND byte_len = ?                AND deleted = 0 AND gc_delete_fence IS NULL"
         );
         let row = sqlx::query(&sql)
             .bind(tenant_id.as_bytes())
@@ -285,6 +298,7 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
                 insert_physical_tx(&mut tx, &physical).await?;
             }
         }
+        require_gc_fence_clear_tx(&mut tx, &physical.physical_blob_id).await?;
 
         let existing_binding = fetch_binding_tx(&mut tx, &binding.binding_id).await?;
         let outcome = match existing_binding {
@@ -324,6 +338,7 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
                 )
             })?;
         require_binding_matches_physical(&binding, &physical)?;
+        require_gc_fence_clear_tx(&mut tx, &binding.physical_blob_id).await?;
 
         let outcome = match fetch_binding_tx(&mut tx, &binding.binding_id).await? {
             Some(existing) if existing == binding => existing,
@@ -515,6 +530,29 @@ async fn fetch_physical_tx(
         .await
         .map_err(sqlite_error)?;
     row.map(decode_physical).transpose()
+}
+
+async fn require_gc_fence_clear_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    physical_blob_id: &str,
+) -> Result<(), BlobStoreError> {
+    let row = sqlx::query(
+        "SELECT gc_delete_fence FROM physical_blobs WHERE physical_blob_id = ?",
+    )
+    .bind(physical_blob_id.as_bytes())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(sqlite_error)?
+    .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
+
+    let fence: Option<Vec<u8>> = row.try_get("gc_delete_fence").map_err(sqlite_error)?;
+    if fence.is_some() {
+        return Err(BlobStoreError::new(
+            "physical_blob_gc_fenced",
+            "physical blob is fenced for GC and cannot accept new bindings",
+        ));
+    }
+    Ok(())
 }
 
 async fn fetch_binding_tx(
