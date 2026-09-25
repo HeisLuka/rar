@@ -165,8 +165,8 @@ class RenderSubmitRuntimeV1Tests(unittest.TestCase):
         self.assertEqual(pipeline_builds, runtime.backend.pipeline_builds)
 
     def test_stale_device_generation_binding_fails_closed(self):
-        _, segments, _, texture, bindings, runtime = setup_runtime()
-        texture.reset_device()
+        _, segments, _, _, bindings, runtime = setup_runtime()
+        runtime.reset_device()
         with self.assertRaises(StaleSubmitGeneration):
             runtime.build_submit_plan(
                 segments, bindings_by_atom=bindings, view_state=VIEW, target=TARGET
