@@ -260,7 +260,10 @@ class CmoSlotRuntimeBridgeTests(unittest.TestCase):
         result = build(g, ctx, shaped_flow(lines))
         slot = result["receipts"][0]["visible_slots"][0]
         self.assertEqual(10, slot["preceding_text_height_emu"])
-        self.assertEqual(20, result["receipts"][0]["overset"]["remaining_item_count"] if False else 20)
+        self.assertEqual(10, slot["used_height_before_emu"])
+        self.assertEqual(70, slot["used_height_after_emu"])
+        self.assertFalse(result["story_overset"])
+        self.assertEqual(210, result["scene_instances"][0]["bounds"]["y"])
 
     def test_shaped_line_cannot_cross_object_marker(self):
         g = graph("A\uFFFC")
