@@ -77,8 +77,7 @@ pub fn router_with_edge_auth_and_local(
     let base = Router::new()
         .route("/live", get(live))
         .route("/ready", get(ready))
-        .route("/version", get(version))
-        .with_state(state.clone());
+        .route("/version", get(version));
 
     let base = if local_ui {
         base.route("/local", get(local_dashboard))
@@ -86,7 +85,8 @@ pub fn router_with_edge_auth_and_local(
             .route("/local/api/events", get(local_events))
     } else {
         base
-    };
+    }
+    .with_state(state);
 
     let base = match auth {
         Some(auth) => base.merge(auth_http::router(auth)),
