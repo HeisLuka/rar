@@ -2341,36 +2341,110 @@ impl ViewerApp {
                 let pointer_document = response
                     .interact_pointer_pos()
                     .and_then(|pointer| canvas_document_point(page_rect, scene_scale, pointer));
-                let press_document = ui
-                    .ctx()
-                    .input(|input| input.pointer.press_origin())
+                let press_screen = ui.ctx().input(|input| input.pointer.press_origin());
+                let press_document = press_screen
                     .and_then(|pointer| canvas_document_point(page_rect, scene_scale, pointer));
 
                 if !reader_only_mode()
                     && response.drag_started_by(egui::PointerButton::Primary)
                     && let (Some(pointer_start), Some(pointer_current)) =
                         (press_document, pointer_document)
-                    && let Some(hit) = hit_index.topmost_at(pointer_start)
                 {
-                    canvas_hit = Some(hit.instance_id.clone());
-                    if let Some((node_id, before)) = movable_nodes.get(&hit.instance_id).copied() {
-                        match MoveTransaction::begin(node_id, before, pointer_start).and_then(
-                            |mut drag| {
-                                drag.update(pointer_current)?;
-                                Ok(drag)
-                            },
-                        ) {
-                            Ok(drag) => next_canvas_drag = Some(drag),
-                            Err(error) => {
-                                next_canvas_drag = None;
-                                drag_error = Some(format!("Object move cancelled: {error}"));
+                    let mut resize_started = false;
+                    if let (Some(selected_instance), Some(pointer_start_screen)) =
+                        (selected_canvas_instance.as_deref(), press_screen)
+                        && let Some((node_id, before)) =
+                            resizable_nodes.get(selected_instance).copied()
+                    {
+                        let selected_screen_bounds = ScreenRect::new(
+                            f64::from(
+                                page_rect.left() + before.x.get() as f32 * scene_scale,
+                            ),
+                            f64::from(
+                                page_rect.top() + before.y.get() as f32 * scene_scale,
+                            ),
+                            f64::from(before.width.get() as f32 * scene_scale),
+                            f64::from(before.height.get() as f32 * scene_scale),
+                        );
+                        if let Ok(selected_screen_bounds) = selected_screen_bounds
+                            && let Ok(ResizePointerDown::Handle(handle)) =
+                                classify_resize_pointer_down(
+                                    selected_screen_bounds,
+                                    ScreenPoint::new(
+                                        f64::from(pointer_start_screen.x),
+                                        f64::from(pointer_start_screen.y),
+                                    ),
+                                    6.0,
+                                )
+                        {
+                            resize_started = true;
+                            canvas_hit = Some(selected_instance.to_owned());
+                            next_canvas_drag = None;
+                            match ResizeTransaction::begin(node_id, before, handle, pointer_start) {
+                                Ok(mut resize) => match resize.update(pointer_current) {
+                                    Ok(ResizeUpdate::Preview(_))
+                                    | Ok(ResizeUpdate::Invalid { .. }) => {
+                                        next_canvas_resize = Some(resize);
+                                    }
+                                    Err(error) => {
+                                        next_canvas_resize = None;
+                                        resize_error =
+                                            Some(format!("Object resize cancelled: {error}"));
+                                    }
+                                },
+                                Err(error) => {
+                                    next_canvas_resize = None;
+                                    resize_error =
+                                        Some(format!("Object resize cancelled: {error}"));
+                                }
+                            }
+                        }
+                    }
+
+                    if !resize_started
+                        && let Some(hit) = hit_index.topmost_at(pointer_start)
+                    {
+                        canvas_hit = Some(hit.instance_id.clone());
+                        next_canvas_resize = None;
+                        if let Some((node_id, before)) =
+                            movable_nodes.get(&hit.instance_id).copied()
+                        {
+                            match MoveTransaction::begin(node_id, before, pointer_start).and_then(
+                                |mut drag| {
+                                    drag.update(pointer_current)?;
+                                    Ok(drag)
+                                },
+                            ) {
+                                Ok(drag) => next_canvas_drag = Some(drag),
+                                Err(error) => {
+                                    next_canvas_drag = None;
+                                    drag_error = Some(format!("Object move cancelled: {error}"));
+                                }
                             }
                         }
                     }
                 } else if !reader_only_mode()
                     && response.drag_stopped_by(egui::PointerButton::Primary)
                 {
-                    if let (Some(mut drag), Some(point)) = (next_canvas_drag, pointer_document) {
+                    if let (Some(mut resize), Some(point)) =
+                        (next_canvas_resize.take(), pointer_document)
+                    {
+                        match resize.update(point) {
+                            Ok(ResizeUpdate::Preview(_))
+                            | Ok(ResizeUpdate::Invalid { .. }) => match resize.commit() {
+                                Ok(commit) => resize_commit = Some(commit),
+                                Err(error) => {
+                                    resize_error =
+                                        Some(format!("Object resize cancelled: {error}"));
+                                }
+                            },
+                            Err(error) => {
+                                resize_error = Some(format!("Object resize cancelled: {error}"));
+                            }
+                        }
+                    } else if let (Some(mut drag), Some(point)) =
+                        (next_canvas_drag, pointer_document)
+                    {
                         match drag.update(point) {
                             Ok(_) => drag_commit = Some(drag),
                             Err(error) => {
@@ -2380,16 +2454,31 @@ impl ViewerApp {
                         }
                     } else {
                         next_canvas_drag = None;
+                        next_canvas_resize = None;
                     }
                 } else if !reader_only_mode()
                     && response.dragged_by(egui::PointerButton::Primary)
-                    && let (Some(mut drag), Some(point)) = (next_canvas_drag, pointer_document)
+                    && let Some(point) = pointer_document
                 {
-                    match drag.update(point) {
-                        Ok(_) => next_canvas_drag = Some(drag),
-                        Err(error) => {
-                            next_canvas_drag = None;
-                            drag_error = Some(format!("Object move cancelled: {error}"));
+                    if let Some(mut resize) = next_canvas_resize {
+                        match resize.update(point) {
+                            Ok(ResizeUpdate::Preview(_))
+                            | Ok(ResizeUpdate::Invalid { .. }) => {
+                                next_canvas_resize = Some(resize);
+                            }
+                            Err(error) => {
+                                next_canvas_resize = None;
+                                resize_error =
+                                    Some(format!("Object resize cancelled: {error}"));
+                            }
+                        }
+                    } else if let Some(mut drag) = next_canvas_drag {
+                        match drag.update(point) {
+                            Ok(_) => next_canvas_drag = Some(drag),
+                            Err(error) => {
+                                next_canvas_drag = None;
+                                drag_error = Some(format!("Object move cancelled: {error}"));
+                            }
                         }
                     }
                 }
