@@ -3222,7 +3222,7 @@ mod tests {
     #[cfg(not(feature = "reader-only"))]
     #[test]
     fn gui_only_v0_walkthrough_uses_real_widgets() {
-        use egui_kittest::{Harness, kittest::Queryable};
+        use egui_kittest::{Harness, kittest::{NodeT, Queryable}};
 
         let fixture_source = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
             .map(PathBuf::from)
@@ -3294,7 +3294,10 @@ mod tests {
         };
 
         {
-            let search = harness.get_by_value("");
+            let search = harness
+                .get_all_by_value("")
+                .find(|node| node.accesskit_node().role() == egui::accesskit::Role::TextInput)
+                .expect("Search TextInput must be exposed through AccessKit");
             search.type_text(search_term.clone());
         }
         harness.run();
