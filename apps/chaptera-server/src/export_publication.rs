@@ -385,15 +385,12 @@ impl SqliteExportPublicationStore {
                 .await
                 .map_err(sqlite_error)?;
 
-                let existing = row
-                    .map(decode_record)
-                    .transpose()?
-                    .ok_or_else(|| {
-                        ExportPublicationError::new(
-                            "export_publication_conflict",
-                            "logical publication conflicted without a readable row",
-                        )
-                    })?;
+                let existing = row.map(decode_record).transpose()?.ok_or_else(|| {
+                    ExportPublicationError::new(
+                        "export_publication_conflict",
+                        "logical publication conflicted without a readable row",
+                    )
+                })?;
 
                 if equivalent_retry(&existing.input, &input)
                     && existing.effect_key == effect_key
