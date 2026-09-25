@@ -274,7 +274,7 @@ pub fn run_one(path: &Path, cache_state: &str) -> Result<OpenPhaseRun, String> {
         &mut cursor,
         paint_ms,
         "first_page_only",
-        (0, 0, 1, u64::from(has_text_layout), resource_count),
+        (0, 0, 1, if has_text_layout { 1 } else { 0 }, resource_count),
         "hosted headless paint-readiness boundary; separate reader-only WGPU acceptance proves an actual rendered first frame",
     ));
     let first_useful_page_ms = cursor;
