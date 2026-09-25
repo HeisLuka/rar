@@ -222,9 +222,9 @@ def main() -> int:
                     raise SystemExit(f"runtime-smoke /live expected 200, got {live}")
 
                 ready = http_code("http://127.0.0.1:18082/ready")
-                if ready != 503:
+                if ready != 200:
                     raise SystemExit(
-                        f"runtime-smoke /ready expected 503 before all producers, got {ready}"
+                        f"configured runtime-smoke /ready expected 200, got {ready}"
                     )
             finally:
                 server.terminate()
@@ -256,7 +256,8 @@ def main() -> int:
         "prod_config_validated_without_external_idp": True,
         "runtime_smoke_uses_local_oidc_fixture": True,
         "runtime_smoke_live_code": live,
-        "runtime_smoke_ready_without_all_producers": ready,
+        "runtime_smoke_ready_code": ready,
+        "configured_runtime_all_required_ports_ready": ready == 200,
         "secret_present_in_output": False,
         "secret_sources": ["env", "file", "systemd"],
         "short_lived_key_ring_supported": True,
