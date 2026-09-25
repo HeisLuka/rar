@@ -107,8 +107,8 @@ pub async fn record_requests(
         .extensions()
         .get::<MatchedPath>()
         .map(MatchedPath::as_str)
-        .unwrap_or_else(|| request.uri().path())
-        .to_owned();
+        .map(str::to_owned)
+        .unwrap_or_else(|| "<unmatched>".to_owned());
     let skip_console_poll = matches!(
         request.uri().path(),
         "/__chaptera/events" | "/live" | "/ready" | "/version"
