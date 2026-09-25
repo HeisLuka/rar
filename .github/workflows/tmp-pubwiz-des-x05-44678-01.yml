@@ -1,0 +1,279 @@
+name: TEMP PUBWIZ DES X05-44678 acquisition
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-des-x05-44678-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install archive/MSI tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full msitools
+      - name: Resolve exact IA original
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/x05
+          python - <<'PY'
+          import json, urllib.request, urllib.parse
+          meta_url="https://archive.org/metadata/X05-44678"
+          req=urllib.request.Request(meta_url,headers={"User-Agent":"rar-pubwiz-des/1.0"})
+          with urllib.request.urlopen(req,timeout=60) as r:
+              meta=json.load(r)
+          files=[]
+          for f in meta.get("files",[]):
+              name=str(f.get("name") or "")
+              if str(f.get("source") or "")=="original" and name.lower().endswith(".7z"):
+                  files.append(f)
+          if not files:
+              raise SystemExit("no original 7z in IA metadata")
+          files.sort(key=lambda f:int(f.get("size") or 0),reverse=True)
+          f=files[0]
+          name=f["name"]
+          url="https://archive.org/download/X05-44678/"+urllib.parse.quote(name,safe="/")
+          sel={
+              "identifier":"X05-44678",
+              "name":name,
+              "size":int(f.get("size") or 0),
+              "md5":f.get("md5"),
+              "sha1":f.get("sha1"),
+              "url":url,
+          }
+          open("/tmp/x05/source.json","w").write(json.dumps(sel,indent=2))
+          open("/tmp/x05/source_url.txt","w").write(url)
+          open("out/source-selection.json","w").write(json.dumps({k:v for k,v in sel.items() if k!="url"},indent=2))
+          print(json.dumps({k:v for k,v in sel.items() if k!="url"},indent=2))
+          PY
+      - name: Download and verify exact transport
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/x05/source.7z "$(cat /tmp/x05/source_url.txt)"
+          python - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path("/tmp/x05/source.7z")
+          sel=json.load(open("/tmp/x05/source.json"))
+          data_size=p.stat().st_size
+          h1=hashlib.sha1(); hm=hashlib.md5(); h256=hashlib.sha256()
+          with p.open("rb") as f:
+              while True:
+                  b=f.read(1024*1024)
+                  if not b: break
+                  hm.update(b); h1.update(b); h256.update(b)
+          got={"size":data_size,"md5":hm.hexdigest(),"sha1":h1.hexdigest(),"sha256":h256.hexdigest()}
+          if sel.get("size") and got["size"]!=sel["size"]: raise SystemExit("transport size mismatch")
+          if sel.get("md5") and got["md5"].lower()!=sel["md5"].lower(): raise SystemExit("transport md5 mismatch")
+          if sel.get("sha1") and got["sha1"].lower()!=sel["sha1"].lower(): raise SystemExit("transport sha1 mismatch")
+          open("out/transport.json","w").write(json.dumps(got,indent=2))
+          print(json.dumps(got,indent=2))
+          PY
+      - name: Extract exact disc image
+        run: |
+          set -euo pipefail
+          7z l -slt /tmp/x05/source.7z > /tmp/x05/archive.slt
+          python - <<'PY'
+          import pathlib,re
+          text=pathlib.Path("/tmp/x05/archive.slt").read_text(errors="replace")
+          rows=[]; cur={}
+          for line in text.splitlines():
+              if " = " in line:
+                  k,v=line.split(" = ",1)
+                  if k=="Path" and cur:
+                      rows.append(cur); cur={}
+                  cur[k]=v
+          if cur: rows.append(cur)
+          c=[]
+          for r in rows:
+              p=r.get("Path","")
+              if p.lower().endswith((".iso",".img",".bin")):
+                  try:s=int(r.get("Size","0"))
+                  except:s=0
+                  c.append((s,p))
+          if not c: raise SystemExit("no disc image member found")
+          c.sort(reverse=True)
+          pathlib.Path("/tmp/x05/image_member.txt").write_text(c[0][1])
+          print("selected image:",c[0])
+          PY
+          mkdir -p /tmp/x05/image
+          7z x -y -o/tmp/x05/image /tmp/x05/source.7z "$(cat /tmp/x05/image_member.txt)" >/tmp/x05/image-extract.log
+          IMAGE="$(find /tmp/x05/image -type f | head -n1)"
+          test -n "$IMAGE"
+          printf '%s' "$IMAGE" > /tmp/x05/image_path.txt
+          python - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path(open("/tmp/x05/image_path.txt").read())
+          h=hashlib.sha256()
+          with p.open("rb") as f:
+              while True:
+                  b=f.read(1024*1024)
+                  if not b: break
+                  h.update(b)
+          o={"member":open("/tmp/x05/image_member.txt").read(),"size":p.stat().st_size,"sha256":h.hexdigest()}
+          open("out/disc-image.json","w").write(json.dumps(o,indent=2))
+          print(json.dumps(o,indent=2))
+          PY
+      - name: Inventory DES POC and install containers
+        run: |
+          set -euo pipefail
+          IMAGE="$(cat /tmp/x05/image_path.txt)"
+          7z l -slt "$IMAGE" > /tmp/x05/image.slt
+          python - <<'PY'
+          import json,pathlib
+          text=pathlib.Path("/tmp/x05/image.slt").read_text(errors="replace")
+          rows=[]; cur={}
+          for line in text.splitlines():
+              if " = " in line:
+                  k,v=line.split(" = ",1)
+                  if k=="Path" and cur:
+                      rows.append(cur); cur={}
+                  cur[k]=v
+          if cur: rows.append(cur)
+          files=[]
+          for r in rows:
+              p=r.get("Path","")
+              try:s=int(r.get("Size","0"))
+              except:s=0
+              if p: files.append({"path":p,"size":s})
+          def filt(exts=(),terms=()):
+              out=[]
+              for x in files:
+                  lp=x["path"].lower()
+                  if (exts and lp.endswith(exts)) or any(t in lp for t in terms):
+                      out.append(x)
+              return out
+          direct=filt(exts=(".des",".poc"),terms=("pubwiz","accsbar","acctbox"))
+          containers=filt(exts=(".msi",".cab"))
+          summary={
+              "file_count":len(files),
+              "direct_des_poc_or_pubwiz_matches":direct,
+              "msi_cab_count":len(containers),
+              "msi_count":sum(1 for x in containers if x["path"].lower().endswith(".msi")),
+              "cab_count":sum(1 for x in containers if x["path"].lower().endswith(".cab")),
+              "container_paths":containers,
+          }
+          open("out/disc-inventory.json","w").write(json.dumps(summary,indent=2))
+          print(json.dumps({k:v for k,v in summary.items() if k!="container_paths"},indent=2))
+          PY
+      - name: Extract install containers and inspect MSI/CAB payloads
+        run: |
+          set -euo pipefail
+          IMAGE="$(cat /tmp/x05/image_path.txt)"
+          mkdir -p /tmp/x05/install
+          7z x -y -o/tmp/x05/install "$IMAGE" -r '*.MSI' '*.msi' '*.CAB' '*.cab' '*.DES' '*.des' '*.POC' '*.poc' >/tmp/x05/install-extract.log || true
+          python - <<'PY'
+          import json, pathlib, subprocess, re, hashlib, math, collections, os
+          root=pathlib.Path("/tmp/x05/install")
+          out=pathlib.Path("out")
+          msi_hits=[]
+          msi_errors=[]
+          extracted_roots=[]
+          for msi in root.rglob("*"):
+              if not msi.is_file() or msi.suffix.lower()!=".msi": continue
+              try:
+                  p=subprocess.run(["msiinfo","export",str(msi),"File"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+                  txt=p.stdout.decode("utf-8","replace")
+              except Exception as e:
+                  msi_errors.append({"msi":msi.name,"error":type(e).__name__})
+                  continue
+              hits=[ln for ln in txt.splitlines() if re.search(r"\.(?:des|poc)(?:\||\t|$)",ln,re.I) or re.search(r"accsbar|acctbox|pubwiz",ln,re.I)]
+              if hits:
+                  msi_hits.append({"msi":msi.name,"hit_count":len(hits),"hit_lines":hits[:100]})
+                  dest=pathlib.Path("/tmp/x05/msiout")/str(len(msi_hits))
+                  dest.mkdir(parents=True,exist_ok=True)
+                  q=subprocess.run(["msiextract","-C",str(dest),str(msi)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  extracted_roots.append(dest)
+          cab_hits=[]
+          for cab in root.rglob("*"):
+              if not cab.is_file() or cab.suffix.lower()!=".cab": continue
+              try:
+                  p=subprocess.run(["7z","l","-slt",str(cab)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+                  txt=p.stdout.decode("utf-8","replace")
+              except Exception:
+                  continue
+              paths=[]
+              for ln in txt.splitlines():
+                  if ln.startswith("Path = "):
+                      x=ln[7:]
+                      if re.search(r"\.(des|poc)$",x,re.I) or re.search(r"accsbar|acctbox|pubwiz",x,re.I):
+                          paths.append(x)
+              if paths:
+                  cab_hits.append({"cab":cab.name,"paths":paths[:200]})
+                  dest=pathlib.Path("/tmp/x05/cabout")/str(len(cab_hits))
+                  dest.mkdir(parents=True,exist_ok=True)
+                  subprocess.run(["7z","x","-y",f"-o{dest}",str(cab),"*.DES","*.des","*.POC","*.poc"],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  extracted_roots.append(dest)
+          extracted_roots.append(root)
+          seen={}
+          def entropy(data):
+              if not data:return 0.0
+              c=collections.Counter(data); n=len(data)
+              return -sum((v/n)*math.log2(v/n) for v in c.values())
+          for rr in extracted_roots:
+              for p in rr.rglob("*"):
+                  if not p.is_file() or p.suffix.lower() not in (".des",".poc"): continue
+                  data=p.read_bytes()
+                  h=hashlib.sha256(data).hexdigest()
+                  if h in seen: continue
+                  strs=[]
+                  for m in re.finditer(rb"[\x20-\x7e]{4,}",data):
+                      strs.append(m.group(0).decode("ascii","replace"))
+                  seen[h]={
+                      "name":p.name,
+                      "size":len(data),
+                      "sha256":h,
+                      "prefix16_hex":data[:16].hex(),
+                      "suffix16_hex":data[-16:].hex() if data else "",
+                      "ascii_strings":strs[:50],
+                      "entropy":round(entropy(data),6),
+                  }
+          result={"msi_hits":msi_hits,"msi_errors":msi_errors,"cab_hits":cab_hits,"recovered_des_poc":list(seen.values())}
+          out.joinpath("nested-scan.json").write_text(json.dumps(result,indent=2))
+          print(json.dumps({"msi_hit_count":len(msi_hits),"cab_hit_count":len(cab_hits),"recovered_count":len(seen),"recovered":[{"name":x["name"],"size":x["size"],"sha256":x["sha256"]} for x in seen.values()]},indent=2))
+          PY
+      - name: Build source-safe closure
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,pathlib
+          out=pathlib.Path("out")
+          src=json.loads((out/"source-selection.json").read_text())
+          trans=json.loads((out/"transport.json").read_text())
+          img=json.loads((out/"disc-image.json").read_text())
+          inv=json.loads((out/"disc-inventory.json").read_text())
+          nested=json.loads((out/"nested-scan.json").read_text())
+          rec=nested["recovered_des_poc"]
+          targets=[x for x in rec if x["name"].lower() in ("accsbar.des","acctbox.des")]
+          status="targets_recovered" if targets else ("other_des_poc_recovered" if rec else "no_des_poc_recovered")
+          summary={
+              "schema":"chaptera.pubwiz-des-x05-44678.v1",
+              "media_identifier":"X05-44678",
+              "transport":trans,
+              "disc_image":img,
+              "direct_match_count":len(inv["direct_des_poc_or_pubwiz_matches"]),
+              "msi_count":inv["msi_count"],
+              "cab_count":inv["cab_count"],
+              "msi_hit_count":len(nested["msi_hits"]),
+              "cab_hit_count":len(nested["cab_hits"]),
+              "recovered_des_poc_count":len(rec),
+              "target_files":targets,
+              "status":status,
+              "raw_media_retained":False,
+              "raw_des_poc_retained":False,
+          }
+          (out/"summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          find out -type f -print0 | xargs -0 sha256sum | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-des-x05-44678-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
