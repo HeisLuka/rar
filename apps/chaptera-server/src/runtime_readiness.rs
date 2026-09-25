@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::{
     sqlite_store::SqliteRevisionStore,
-    state::{DependencyFailure, RuntimeDependency},
+    state::{DependencyFailure, RuntimeDependency, RuntimePorts},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +70,26 @@ pub fn revision_stream_dependency(
     revision_stream: SqliteRevisionStore,
 ) -> RuntimeDependencyBinding {
     bind(revision_stream)
+}
+
+pub struct RevisionStreamPorts {
+    pub ports: RuntimePorts,
+    pub readiness: ReadinessHandle,
+}
+
+/// Assemble the first real RuntimePorts component without weakening any other
+/// required dependency. Overall readiness must therefore remain false until the
+/// remaining producers are independently connected.
+pub fn ports_with_revision_stream(
+    revision_stream: SqliteRevisionStore,
+) -> RevisionStreamPorts {
+    let binding = revision_stream_dependency(revision_stream);
+    let mut ports = RuntimePorts::unconfigured();
+    ports.revision_stream = binding.dependency;
+    RevisionStreamPorts {
+        ports,
+        readiness: binding.readiness,
+    }
 }
 
 struct OpenedProducerDependency<P> {
@@ -167,6 +187,50 @@ mod tests {
         binding.dependency.check().unwrap();
 
         drop(binding);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn partial_ports_expose_revision_stream_without_claiming_server_ready() {
+        let path = temp_db("ports");
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+
+        let revision_stream = SqliteRevisionStore::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let assembled = ports_with_revision_stream(revision_stream);
+
+        let report = assembled.ports.readiness_report();
+        assert!(!report.ready);
+        assert_eq!(report.status, "not_ready");
+        assert!(report.components["revision_stream"].ready);
+        for component in ["authn", "authz", "jobs", "blob_store"] {
+            assert!(!report.components[component].ready);
+            assert_eq!(
+                report.components[component].code.as_deref(),
+                Some("not_configured")
+            );
+        }
+
+        assembled
+            .readiness
+            .fail(
+                "revision_stream_unavailable",
+                "revision stream lifecycle degraded",
+            )
+            .unwrap();
+        let degraded = assembled.ports.readiness_report();
+        assert!(!degraded.components["revision_stream"].ready);
+        assert_eq!(
+            degraded.components["revision_stream"].code.as_deref(),
+            Some("revision_stream_unavailable")
+        );
+
+        drop(assembled);
         cleanup(&path);
     }
 
