@@ -4511,7 +4511,11 @@ mod tests {
         assert_ne!(before.width, after.width);
         assert_ne!(before.height, after.height);
 
-        harness.get_by_label("Undo").click();
+        harness
+            .get_all_by_label("Undo")
+            .next()
+            .expect("Undo command")
+            .click();
         harness.step();
         assert_eq!(
             harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
@@ -4521,7 +4525,11 @@ mod tests {
             "GUI Undo restores exact pre-resize bounds"
         );
 
-        harness.get_by_label("Redo").click();
+        harness
+            .get_all_by_label("Redo")
+            .next()
+            .expect("Redo command")
+            .click();
         harness.step();
         assert_eq!(
             harness.state().editor.as_ref().expect("editor").graph().nodes[&node_id]
