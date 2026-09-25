@@ -646,10 +646,8 @@ impl SqliteJobQueue {
         }
 
         let restored_attempt = current.attempt - 1;
-        let available_at_ms = now_ms.saturating_add(retry_delay_ms(
-            &current.job_id,
-            current.lease_generation,
-        ));
+        let available_at_ms =
+            now_ms.saturating_add(retry_delay_ms(&current.job_id, current.lease_generation));
 
         let done = sqlx::query(
             r#"
