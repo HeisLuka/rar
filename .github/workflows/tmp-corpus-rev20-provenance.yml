@@ -48,6 +48,10 @@ jobs:
           assert s["controls"]["publisher2002_control"]["revision"] == 14
           assert s["controls"]["publisher2003_control"]["revision"] == 19
           assert s["controls"]["publisher2007_control"]["revision"] == 21
+          assert s["controls"]["publisher2003_control"]["host_recinstances"] == [19]
+          assert s["controls"]["publisher2007_control"]["host_recinstances"] == [21]
+          assert s["target_host_recinstances"] == [20]
+          assert s["target_host_revision_consistent"] is True
           PY
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
