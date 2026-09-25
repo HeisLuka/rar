@@ -3930,6 +3930,106 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
+    fn desktop_replace_image_ui_uses_scene_instance_gate() {
+        let bytes = decode_base64_fixture(include_str!(
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+        ));
+        let original = bytes.clone();
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("SampleNewsletter Viewer open");
+        let source_hash = visual.document.source.source_hash;
+        let editor =
+            pub_editor::open_mature_0x2c_editor(&bytes, source_hash).expect("editor open");
+
+        let (page_index, instance_id, mime, replacement_bytes) = visual
+            .document
+            .pages
+            .iter()
+            .enumerate()
+            .find_map(|(page_index, page)| {
+                let page_origin = page.id.into_canonical();
+                let page_id_text = page.id.as_canonical().to_string();
+                visual
+                    .scene
+                    .nodes
+                    .iter()
+                    .filter(|node| node.parent_origin == page_origin)
+                    .find_map(|scene_node| {
+                        let instance =
+                            direct_scene_instance(&editor, &page_id_text, scene_node.origin)?;
+                        let admission = admit_object_mutation_v1(
+                            &instance,
+                            ObjectMutationKindV1::ReplaceImage,
+                        );
+                        if !admission.admitted {
+                            return None;
+                        }
+                        let authored = editor.graph().nodes.get(&scene_node.origin)?;
+                        if authored.payload.image_slot.is_none()
+                            || authored.payload.explicit_image_crop.is_some()
+                        {
+                            return None;
+                        }
+                        let embedded = visual
+                            .images
+                            .iter()
+                            .find(|image| image.node_ids.contains(&scene_node.origin))?;
+                        if !matches!(embedded.mime.as_str(), "image/png" | "image/jpeg") {
+                            return None;
+                        }
+                        Some((
+                            page_index,
+                            instance.instance_id,
+                            embedded.mime.clone(),
+                            embedded.bytes.clone(),
+                        ))
+                    })
+            })
+            .expect("fixture exposes one direct image placement");
+
+        let root = std::env::temp_dir().join(format!(
+            "chaptera-replace-image-ui-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create replacement temp directory");
+        let extension = if mime == "image/png" { "png" } else { "jpg" };
+        let replacement_path = root.join(format!("replacement.{extension}"));
+        fs::write(&replacement_path, replacement_bytes).expect("write replacement image");
+
+        let mut app = ViewerApp::new(None);
+        app.visual = Some(visual);
+        app.editor = Some(editor);
+        app.selected_page = page_index;
+        app.canvas_selection.select_only(instance_id);
+
+        let target = app
+            .selected_direct_replace_image_target()
+            .expect("selected visual instance passes ReplaceImage admission");
+        let before_count = app
+            .editor
+            .as_ref()
+            .expect("editor")
+            .operations()
+            .len();
+
+        app.replace_selected_image_from_path(&replacement_path)
+            .expect("desktop ReplaceImage command");
+
+        let editor = app.editor.as_ref().expect("editor remains available");
+        assert_eq!(editor.operations().len(), before_count + 1);
+        assert!(editor.image_replacement_for(target).is_some());
+        assert_eq!(bytes, original, "desktop ReplaceImage must not mutate source PUB bytes");
+        assert_eq!(editor.project().assets.len(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn source_path_argument_is_optional() {
         let path = std::path::Path::new("example.pub");
