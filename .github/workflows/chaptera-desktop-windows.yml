@@ -132,10 +132,12 @@ jobs:
           if (-not (Test-Path $exe)) { throw "portable ZIP did not contain Chaptera.exe" }
           if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "portable ZIP leaked a Cargo checkout" }
 
-          $raw = & $exe --product-smoke-v1
+          $receipt = Join-Path $artifact "chaptera.desktop-source-free-smoke.json"
+          & $exe --product-smoke-v1 $receipt
           if ($LASTEXITCODE -ne 0) { throw "source-free Chaptera product smoke failed" }
+          if (-not (Test-Path $receipt)) { throw "source-free product smoke receipt is missing" }
           try {
-            $smoke = $raw | ConvertFrom-Json
+            $smoke = Get-Content -Raw $receipt | ConvertFrom-Json
           } catch {
             throw "source-free product smoke did not emit valid JSON"
           }
@@ -163,9 +165,6 @@ jobs:
           if ($manifest.zip_sha256 -ne $zipHash) { throw "package manifest ZIP hash mismatch" }
           if ([int64]$manifest.binary_size -ne $exeBytes) { throw "package manifest executable byte length mismatch" }
           if ([int64]$manifest.zip_size -ne (Get-Item $zip).Length) { throw "package manifest ZIP byte length mismatch" }
-
-          $receipt = Join-Path $artifact "chaptera.desktop-source-free-smoke.json"
-          $smoke | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $receipt
 
       - uses: actions/upload-artifact@v4
         with:
