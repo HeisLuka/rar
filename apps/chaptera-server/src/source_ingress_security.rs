@@ -162,10 +162,7 @@ impl StructuralScanRunner for IsolatedPubWorkerRunner {
             .worker_wall_timeout
             .checked_add(Duration::from_secs(5))
             .ok_or_else(|| {
-                IngressError::new(
-                    "source_scanner_config_invalid",
-                    "worker timeout overflow",
-                )
+                IngressError::new("source_scanner_config_invalid", "worker timeout overflow")
             })?;
 
         let output = timeout(process_timeout, child)
@@ -503,12 +500,7 @@ async fn read_clamd_reply(
         Ok::<Vec<u8>, std::io::Error>(bytes)
     })
     .await
-    .map_err(|_| {
-        IngressError::new(
-            "source_malware_scanner_timeout",
-            "clamd reply timed out",
-        )
-    })?
+    .map_err(|_| IngressError::new("source_malware_scanner_timeout", "clamd reply timed out"))?
     .map_err(|_| {
         IngressError::new(
             "source_malware_scanner_failed",
@@ -551,10 +543,7 @@ impl ScanTempDir {
         for _ in 0..8 {
             let mut random = [0_u8; 16];
             rand::thread_rng().fill_bytes(&mut random);
-            let name = format!(
-                "chaptera-source-scan-{:032x}",
-                u128::from_be_bytes(random)
-            );
+            let name = format!("chaptera-source-scan-{:032x}", u128::from_be_bytes(random));
             let path = root.join(name);
             match fs::create_dir(&path).await {
                 Ok(()) => {
@@ -737,8 +726,7 @@ mod tests {
     #[tokio::test]
     async fn malware_detection_rejects_before_structural_worker() {
         let bytes = b"eicar-like-test-payload".to_vec();
-        let endpoint =
-            spawn_clamd(b"stream: Eicar-Test-Signature FOUND\0", bytes.clone()).await;
+        let endpoint = spawn_clamd(b"stream: Eicar-Test-Signature FOUND\0", bytes.clone()).await;
         let runner = Arc::new(FakeStructuralRunner {
             status: PubScanStatusV1::AcceptedCfb,
             calls: AtomicUsize::new(0),
