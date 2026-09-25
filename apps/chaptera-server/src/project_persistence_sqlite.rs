@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use rand::{RngCore, rngs::OsRng};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -13,6 +12,31 @@ use sqlx::{
 };
 
 use crate::source_ingress::{ConsumeUploadRequest, IngressError, ProjectCreateResult, UploadState};
+
+const AUTHORING_REVISION_SCHEMA_V1: &str = "chaptera.cdm.authoring-revision.v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedProjectIdentity {
+    pub project_id: String,
+    pub document_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectBaselineIdentity {
+    pub service_revision_id: String,
+    pub canonical_schema_version: String,
+    pub canonical_authoring_revision_id: String,
+}
+
+pub fn plan_project_identity(
+    request: &ConsumeUploadRequest,
+) -> Result<PlannedProjectIdentity, IngressError> {
+    validate_request(request)?;
+    Ok(PlannedProjectIdentity {
+        project_id: stable_id("project", &request.tenant_id, &request.client_idempotency_id)?,
+        document_id: stable_id("document", &request.tenant_id, &request.client_idempotency_id)?,
+    })
+}
 
 #[derive(Clone)]
 pub struct SqliteProjectPersistence {
@@ -83,18 +107,22 @@ impl SqliteProjectPersistence {
     pub async fn create_project_from_upload(
         &self,
         request: ConsumeUploadRequest,
+        baseline: ProjectBaselineIdentity,
     ) -> Result<ProjectCreateResult, IngressError> {
-        self.create_project_from_upload_inner(request, CommitFailpoint::None)
+        self.create_project_from_upload_inner(request, baseline, CommitFailpoint::None)
             .await
     }
 
     async fn create_project_from_upload_inner(
         &self,
         request: ConsumeUploadRequest,
+        baseline: ProjectBaselineIdentity,
         failpoint: CommitFailpoint,
     ) -> Result<ProjectCreateResult, IngressError> {
         validate_request(&request)?;
-        let request_hash = consumption_request_hash(&request)?;
+        validate_baseline_identity(&baseline)?;
+        let planned = plan_project_identity(&request)?;
+        let request_hash = consumption_request_hash(&request, &baseline)?;
 
         let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
 
@@ -108,7 +136,13 @@ impl SqliteProjectPersistence {
                     "project creation idempotency key was reused with different input",
                 ));
             }
-            verify_lifecycle_rows(&mut tx, &request.tenant_id, &prior.project).await?;
+            verify_lifecycle_rows(
+                &mut tx,
+                &request.tenant_id,
+                &prior.project,
+                &baseline,
+            )
+            .await?;
             tx.commit().await.map_err(sqlite_error)?;
             return Ok(prior.project);
         }
@@ -186,9 +220,9 @@ impl SqliteProjectPersistence {
         require_ident(&durable_binding_id, "durable_binding_id")?;
 
         let project = ProjectCreateResult {
-            project_id: fresh_id("project")?,
-            document_id: fresh_id("document")?,
-            genesis_revision_id: fresh_id("revision-genesis")?,
+            project_id: planned.project_id,
+            document_id: planned.document_id,
+            genesis_revision_id: baseline.service_revision_id.clone(),
         };
 
         sqlx::query(
@@ -228,6 +262,32 @@ impl SqliteProjectPersistence {
         .execute(&mut *tx)
         .await
         .map_err(sqlite_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO revision_identity_bindings (
+                document_id, service_revision_id, canonical_schema_version,
+                canonical_revision_id, bound_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(project.document_id.as_bytes())
+        .bind(baseline.service_revision_id.as_bytes())
+        .bind(&baseline.canonical_schema_version)
+        .bind(&baseline.canonical_authoring_revision_id)
+        .bind(to_i64(request.now_ms, "now_ms")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| {
+            if is_unique_violation(&error) {
+                IngressError::new(
+                    "revision_identity_conflict",
+                    "baseline revision identity is already bound differently",
+                )
+            } else {
+                sqlite_error(error)
+            }
+        })?;
 
         sqlx::query(
             r#"
@@ -313,7 +373,13 @@ impl SqliteProjectPersistence {
     }
 
     async fn require_schema(&self) -> Result<(), IngressError> {
-        for table in ["uploads", "upload_consumptions", "projects", "documents"] {
+        for table in [
+            "uploads",
+            "upload_consumptions",
+            "projects",
+            "documents",
+            "revision_identity_bindings",
+        ] {
             let count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?",
             )
@@ -384,6 +450,7 @@ async fn verify_lifecycle_rows(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     tenant_id: &str,
     project: &ProjectCreateResult,
+    baseline: &ProjectBaselineIdentity,
 ) -> Result<(), IngressError> {
     let project_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE project_id = ? AND tenant_id = ?")
@@ -411,12 +478,47 @@ async fn verify_lifecycle_rows(
     .await
     .map_err(sqlite_error)?;
 
-    if project_count != 1 || document_count != 1 {
+    let identity_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM revision_identity_bindings
+        WHERE document_id = ?
+          AND service_revision_id = ?
+          AND canonical_schema_version = ?
+          AND canonical_revision_id = ?
+        "#,
+    )
+    .bind(project.document_id.as_bytes())
+    .bind(project.genesis_revision_id.as_bytes())
+    .bind(&baseline.canonical_schema_version)
+    .bind(&baseline.canonical_authoring_revision_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(sqlite_error)?;
+
+    if project_count != 1 || document_count != 1 || identity_count != 1 {
         return Err(IngressError::new(
             "project_persistence_corrupt",
-            "persisted consumption is missing its exact project/document lifecycle rows",
+            "persisted consumption is missing exact project/document/revision-identity rows",
         ));
     }
+    Ok(())
+}
+
+fn validate_baseline_identity(baseline: &ProjectBaselineIdentity) -> Result<(), IngressError> {
+    require_ident(&baseline.service_revision_id, "service_revision_id")?;
+    if baseline.canonical_schema_version != AUTHORING_REVISION_SCHEMA_V1 {
+        return Err(IngressError::new(
+            "canonical_revision_schema_mismatch",
+            "baseline canonical revision schema is not REVISION-MODEL-01 V1",
+        ));
+    }
+    require_sha256(&baseline.canonical_authoring_revision_id).map_err(|_| {
+        IngressError::new(
+            "canonical_revision_id_invalid",
+            "canonical AuthoringRevisionId must be 64 lowercase SHA-256 hex characters",
+        )
+    })?;
     Ok(())
 }
 
@@ -437,7 +539,10 @@ fn validate_request(request: &ConsumeUploadRequest) -> Result<(), IngressError> 
     Ok(())
 }
 
-fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, IngressError> {
+fn consumption_request_hash(
+    request: &ConsumeUploadRequest,
+    baseline: &ProjectBaselineIdentity,
+) -> Result<String, IngressError> {
     #[derive(Serialize)]
     struct Fingerprint<'a> {
         protocol: &'static str,
@@ -446,6 +551,9 @@ fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, In
         expected_upload_generation: u64,
         workspace_id: &'a str,
         name: &'a str,
+        service_revision_id: &'a str,
+        canonical_schema_version: &'a str,
+        canonical_authoring_revision_id: &'a str,
     }
 
     let bytes = serde_json::to_vec(&Fingerprint {
@@ -455,6 +563,9 @@ fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, In
         expected_upload_generation: request.expected_upload_generation,
         workspace_id: &request.workspace_id,
         name: &request.name,
+        service_revision_id: &baseline.service_revision_id,
+        canonical_schema_version: &baseline.canonical_schema_version,
+        canonical_authoring_revision_id: &baseline.canonical_authoring_revision_id,
     })
     .map_err(|error| IngressError::new("request_hash_failed", error.to_string()))?;
 
@@ -462,12 +573,15 @@ fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, In
     Ok(hex_lower(&digest))
 }
 
-fn fresh_id(prefix: &str) -> Result<String, IngressError> {
-    let mut bytes = [0_u8; 16];
-    OsRng
-        .try_fill_bytes(&mut bytes)
+fn stable_id(
+    prefix: &str,
+    tenant_id: &str,
+    request_id: &str,
+) -> Result<String, IngressError> {
+    let bytes = serde_json::to_vec(&(tenant_id, request_id))
         .map_err(|error| IngressError::new("identity_generation_failed", error.to_string()))?;
-    Ok(format!("{prefix}-{}", hex_lower(&bytes)))
+    let digest = Sha256::digest(bytes);
+    Ok(format!("{prefix}:{}", &hex_lower(&digest)[..24]))
 }
 
 fn hex_lower(bytes: impl AsRef<[u8]>) -> String {
