@@ -527,7 +527,10 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use crate::schema_migration::SqliteMigrationRuntime;
+    use crate::{
+        job_queue::{EnqueueRequest, JobKind, SqliteJobQueue},
+        schema_migration::SqliteMigrationRuntime,
+    };
 
     use super::*;
 
@@ -600,6 +603,62 @@ mod tests {
         assert_eq!(retry.publication_id, first.publication_id);
         assert_eq!(retry.created_at_ms, 100);
 
+        store.close().await;
+        cleanup(&db);
+    }
+
+    #[tokio::test]
+    async fn prepared_publication_is_invisible_until_matching_job_effect_commits() {
+        let db = path("visibility");
+        let store = store(&db).await;
+        let queue = SqliteJobQueue::open(&db, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
+        queue
+            .enqueue(EnqueueRequest {
+                job_id: "job-export-1".into(),
+                tenant_id: "tenant-a".into(),
+                job_kind: JobKind::Export,
+                payload_schema_version: 1,
+                payload: br#"{"bounded":true}"#.to_vec(),
+                idempotency_key: "idem-export-1".into(),
+                max_attempts: 3,
+                now_ms: 10,
+            })
+            .await
+            .unwrap();
+
+        let prepared = store.prepare(input('a', 'b'), 20).await.unwrap();
+        let effect_key = match prepared {
+            ExportPublicationPrepareOutcomeV1::Prepared(record)
+            | ExportPublicationPrepareOutcomeV1::AlreadyPrepared(record) => record.effect_key,
+        };
+        assert!(
+            store
+                .get_visible_by_job("tenant-a", "job-export-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let lease = queue
+            .claim_one("worker-a", 30, 1_000, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
+        queue
+            .publish_success(&lease, 40, &effect_key)
+            .await
+            .unwrap();
+
+        let visible = store
+            .get_visible_by_job("tenant-a", "job-export-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(visible.effect_key, effect_key);
+
+        queue.close().await;
         store.close().await;
         cleanup(&db);
     }
