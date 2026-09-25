@@ -1,0 +1,89 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Local</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:#111317;color:#eef1f5}
+main{max-width:1180px;margin:0 auto;padding:28px}
+h1{margin:0 0 6px;font-size:28px}.muted{color:#9aa4b2}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:22px 0}
+.card{background:#1a1e24;border:1px solid #2a313b;border-radius:10px;padding:14px}
+.label{font-size:12px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.06em}
+.value{font-size:20px;font-weight:700;margin-top:6px}.ok{color:#6ee7a8}.bad{color:#ff7b7b}.warn{color:#ffd166}
+section{background:#1a1e24;border:1px solid #2a313b;border-radius:10px;margin:14px 0;overflow:hidden}
+section h2{font-size:16px;margin:0;padding:14px 16px;border-bottom:1px solid #2a313b}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:9px 12px;text-align:left;border-bottom:1px solid #252b33;vertical-align:top}
+th{color:#9aa4b2;font-weight:600}.toolbar{display:flex;gap:10px;align-items:center;padding:10px 14px;flex-wrap:wrap}
+button{background:#2b64f0;color:white;border:0;border-radius:7px;padding:8px 12px;cursor:pointer}button.secondary{background:#303641}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#c7d2fe}
+.pill{display:inline-block;padding:2px 7px;border-radius:999px;background:#303641;font-size:11px}
+#fatal{white-space:pre-wrap;color:#ff9b9b;padding:12px 14px;display:none}
+</style>
+<main>
+  <h1>Chaptera Local</h1>
+  <div class="muted">Локальный full-stack контроль: здоровье, компоненты и последние HTTP-события.</div>
+  <div class="grid">
+    <div class="card"><div class="label">Process</div><div id="live" class="value">…</div></div>
+    <div class="card"><div class="label">Runtime</div><div id="ready" class="value">…</div></div>
+    <div class="card"><div class="label">Build</div><div id="build" class="value" style="font-size:14px">…</div></div>
+    <div class="card"><div class="label">Editor</div><div class="value warn" style="font-size:14px">API wiring next</div><div class="muted" style="margin-top:6px;font-size:12px">Не synthetic harness: сюда подключим реальный browser→server editor flow.</div></div>
+  </div>
+
+  <section>
+    <h2>Runtime components</h2>
+    <table><thead><tr><th>Component</th><th>Required</th><th>Status</th><th>Code / message</th></tr></thead><tbody id="components"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Recent requests / errors</h2>
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+      <button class="secondary" id="copy">Copy diagnostics</button>
+      <label><input id="errorsOnly" type="checkbox"> errors/warnings only</label>
+      <span class="muted">server: <code>.chaptera-local/logs/server.log</code></span>
+      <span class="muted">worker: <code>.chaptera-local/logs/worker.log</code></span>
+    </div>
+    <div id="fatal"></div>
+    <table><thead><tr><th>#</th><th>Level</th><th>Request</th><th>Status</th><th>ms</th><th>Trace</th></tr></thead><tbody id="events"></tbody></table>
+  </section>
+</main>
+<script type="module">
+let lastStatus=null,lastEvents=[];
+const esc=(v)=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function setClass(el,ok){el.className="value "+(ok?"ok":"bad")}
+async function load(){
+  const fatal=document.querySelector("#fatal");
+  try{
+    const [s,e]=await Promise.all([
+      fetch("/local/api/status",{cache:"no-store"}).then(r=>{if(!r.ok)throw new Error("status HTTP "+r.status);return r.json()}),
+      fetch("/local/api/events",{cache:"no-store"}).then(r=>{if(!r.ok)throw new Error("events HTTP "+r.status);return r.json()})
+    ]);
+    lastStatus=s;lastEvents=e.events??[];
+    const live=document.querySelector("#live"); live.textContent="LIVE"; setClass(live,true);
+    const ready=document.querySelector("#ready"); ready.textContent=s.readiness.ready?"READY":"NOT READY"; setClass(ready,s.readiness.ready);
+    document.querySelector("#build").innerHTML="<code>"+esc(s.version.git_sha)+"</code>";
+    document.querySelector("#components").innerHTML=Object.entries(s.readiness.components).map(([name,c])=>
+      "<tr><td><code>"+esc(name)+"</code></td><td>"+(c.required?"yes":"no")+"</td><td class='"+(c.ready?"ok":"bad")+"'>"+(c.ready?"ready":"not ready")+"</td><td>"+esc(c.code??"")+(c.message?" — "+esc(c.message):"")+"</td></tr>"
+    ).join("");
+    renderEvents();
+    fatal.style.display="none";
+  }catch(err){
+    document.querySelector("#live").textContent="OFFLINE"; setClass(document.querySelector("#live"),false);
+    fatal.textContent=String(err?.stack??err);fatal.style.display="block";
+  }
+}
+function renderEvents(){
+  const only=document.querySelector("#errorsOnly").checked;
+  const rows=lastEvents.filter(e=>!only||e.level!=="info").slice().reverse();
+  document.querySelector("#events").innerHTML=rows.map(e=>
+    "<tr><td>"+e.seq+"</td><td class='"+(e.level==="error"?"bad":e.level==="warn"?"warn":"")+"'>"+esc(e.level)+"</td><td><code>"+esc(e.method)+" "+esc(e.path)+"</code><br><span class='muted'>"+esc(e.request_id)+"</span></td><td>"+e.status+"</td><td>"+e.duration_ms+"</td><td><code>"+esc(e.trace_id??"")+"</code></td></tr>"
+  ).join("");
+}
+document.querySelector("#refresh").onclick=load;
+document.querySelector("#errorsOnly").onchange=renderEvents;
+document.querySelector("#copy").onclick=async()=>{
+  await navigator.clipboard.writeText(JSON.stringify({status:lastStatus,events:lastEvents},null,2));
+};
+load();setInterval(load,1500);
+</script>
