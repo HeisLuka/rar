@@ -241,7 +241,9 @@ impl SqliteAuthnStore {
         .bind(request.now_ms)
         .execute(&mut *tx)
         .await
-        .map_err(|error| AuthnError::new("principal_insert_failed", bounded_sqlx_message(&error)))?;
+        .map_err(|error| {
+            AuthnError::new("principal_insert_failed", bounded_sqlx_message(&error))
+        })?;
 
         sqlx::query(
             r#"
