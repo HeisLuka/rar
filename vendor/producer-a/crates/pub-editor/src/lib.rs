@@ -30,8 +30,10 @@ use pub_export::{
 };
 use pub_idml::{
     IDML_ADAPTER_VERSION_V0_1, IDML_SCHEMA_FENCE_LEGACY_DOM_7, IMAGE_BYTES_FEATURE,
-    IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlEmbeddedImagePlacement,
-    IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
+    IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE,
+    IdmlAuthoredRectanglePlacement, IdmlEmbeddedImagePlacement, IdmlRgb8, IdmlWireProfile,
+    add_authored_rectangles_to_idml, add_embedded_images_to_idml,
+    project_resolved_graph_to_idml, write_idml_ucf,
 };
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
@@ -40,7 +42,8 @@ use pub_model::{
 };
 pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_odg::{
-    ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
+    ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgAuthoredRectanglePlacement,
+    OdgEmbeddedImagePlacement, OdgRgb8, add_authored_rectangles_to_odg,
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
@@ -68,6 +71,10 @@ pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
+const AUTHORED_SHAPE_IDENTITY_FEATURE: &str = "node.created_identity";
+const AUTHORED_SHAPE_GEOMETRY_FEATURE: &str = "node.geometry.bounds";
+const AUTHORED_SHAPE_PAINT_FEATURE: &str = "shape.paint";
+const AUTHORED_SHAPE_ORDER_FEATURE: &str = "page.object_order";
 
 /// Canonical Story-state identity shared with services/editor-api/story_range_v1.py.
 pub fn story_state_id_v1(story_id: StoryId, text: &str) -> String {
