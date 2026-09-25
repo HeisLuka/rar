@@ -2,6 +2,9 @@ use std::sync::{Arc, RwLock};
 
 use crate::{
     auth_runtime::AuthRuntime,
+    authz_runtime::SqliteAuthzAuthority,
+    blob_runtime::BlobStoreRuntime,
+    jobs_runtime::JobsRuntime,
     sqlite_store::SqliteRevisionStore,
     state::{DependencyFailure, RuntimeDependency, RuntimePorts},
 };
@@ -76,6 +79,18 @@ pub fn authn_dependency(authn: AuthRuntime) -> RuntimeDependencyBinding {
     bind(authn)
 }
 
+pub fn authz_dependency(authz: SqliteAuthzAuthority) -> RuntimeDependencyBinding {
+    bind(authz)
+}
+
+pub fn jobs_dependency(jobs: JobsRuntime) -> RuntimeDependencyBinding {
+    bind(jobs)
+}
+
+pub fn blob_store_dependency(blob_store: BlobStoreRuntime) -> RuntimeDependencyBinding {
+    bind(blob_store)
+}
+
 pub struct RevisionStreamPorts {
     pub ports: RuntimePorts,
     pub readiness: ReadinessHandle,
@@ -113,6 +128,54 @@ pub fn ports_with_revision_stream_and_authn(
         ports,
         revision_readiness: revision.readiness,
         authn_readiness: authn.readiness,
+    }
+}
+
+pub struct ConfiguredServePorts {
+    pub ports: RuntimePorts,
+    pub authn_readiness: ReadinessHandle,
+    pub authz_readiness: ReadinessHandle,
+    pub revision_readiness: ReadinessHandle,
+    pub jobs_readiness: ReadinessHandle,
+    pub blob_store_readiness: ReadinessHandle,
+}
+
+pub fn ports_with_configured_serve(
+    revision_stream: SqliteRevisionStore,
+    authn: AuthRuntime,
+    authz: SqliteAuthzAuthority,
+    jobs: JobsRuntime,
+    blob_store: BlobStoreRuntime,
+) -> ConfiguredServePorts {
+    assemble_configured_serve(
+        revision_stream_dependency(revision_stream),
+        authn_dependency(authn),
+        authz_dependency(authz),
+        jobs_dependency(jobs),
+        blob_store_dependency(blob_store),
+    )
+}
+
+fn assemble_configured_serve(
+    revision: RuntimeDependencyBinding,
+    authn: RuntimeDependencyBinding,
+    authz: RuntimeDependencyBinding,
+    jobs: RuntimeDependencyBinding,
+    blob_store: RuntimeDependencyBinding,
+) -> ConfiguredServePorts {
+    let mut ports = RuntimePorts::unconfigured();
+    ports.revision_stream = revision.dependency;
+    ports.authn = authn.dependency;
+    ports.authz = authz.dependency;
+    ports.jobs = jobs.dependency;
+    ports.blob_store = blob_store.dependency;
+    ConfiguredServePorts {
+        ports,
+        authn_readiness: authn.readiness,
+        authz_readiness: authz.readiness,
+        revision_readiness: revision.readiness,
+        jobs_readiness: jobs.readiness,
+        blob_store_readiness: blob_store.readiness,
     }
 }
 
@@ -255,6 +318,71 @@ mod tests {
         );
 
         drop(assembled);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn configured_required_ports_are_ready_and_each_lifecycle_fails_closed() {
+        let assembled = assemble_configured_serve(bind(()), bind(()), bind(()), bind(()), bind(()));
+
+        let report = assembled.ports.readiness_report();
+        assert!(report.ready);
+        assert_eq!(report.status, "ready");
+        for component in ["authn", "authz", "revision_stream", "jobs", "blob_store"] {
+            assert!(report.components[component].required);
+            assert!(report.components[component].ready);
+        }
+        assert!(!report.components["observability"].required);
+
+        for (handle, component, code) in [
+            (&assembled.authn_readiness, "authn", "authn_unavailable"),
+            (&assembled.authz_readiness, "authz", "authz_unavailable"),
+            (
+                &assembled.revision_readiness,
+                "revision_stream",
+                "revision_stream_unavailable",
+            ),
+            (&assembled.jobs_readiness, "jobs", "jobs_unavailable"),
+            (
+                &assembled.blob_store_readiness,
+                "blob_store",
+                "blob_store_unavailable",
+            ),
+        ] {
+            handle.fail(code, "synthetic lifecycle failure").unwrap();
+            let degraded = assembled.ports.readiness_report();
+            assert!(!degraded.ready);
+            assert!(!degraded.components[component].ready);
+            assert_eq!(degraded.components[component].code.as_deref(), Some(code));
+            handle.restore().unwrap();
+            assert!(assembled.ports.readiness_report().ready);
+        }
+    }
+
+    #[test]
+    fn unconfigured_ports_remain_fail_closed() {
+        let report = RuntimePorts::unconfigured().readiness_report();
+        assert!(!report.ready);
+        assert_eq!(report.status, "not_ready");
+        for component in ["authn", "authz", "revision_stream", "jobs", "blob_store"] {
+            assert_eq!(
+                report.components[component].code.as_deref(),
+                Some("not_configured")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn required_producers_fail_before_binding_when_storage_is_unmigrated() {
+        let path = temp_db("unmigrated");
+        fs::write(&path, b"").unwrap();
+
+        let authz = SqliteAuthzAuthority::open(&path, 1, Duration::from_secs(1)).await;
+        assert!(authz.is_err());
+
+        let jobs = JobsRuntime::open(&path, 1, Duration::from_secs(1)).await;
+        assert!(jobs.is_err());
+
         cleanup(&path);
     }
 

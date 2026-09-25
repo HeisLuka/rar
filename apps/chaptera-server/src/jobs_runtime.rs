@@ -90,6 +90,7 @@ pub struct JobsRuntime {
     queue: SqliteJobQueue,
     authz: SqliteAuthzAuthority,
     publications: SqliteExportPublicationStore,
+    owns_authz: bool,
 }
 
 impl JobsRuntime {
@@ -99,12 +100,32 @@ impl JobsRuntime {
         busy_timeout: Duration,
     ) -> Result<Self, JobsRuntimeError> {
         let path = path.as_ref();
-        let queue = SqliteJobQueue::open(path, max_connections, busy_timeout)
-            .await
-            .map_err(queue_error)?;
         let authz = SqliteAuthzAuthority::open(path, max_connections, busy_timeout)
             .await
             .map_err(authz_error)?;
+        Self::open_with_authz_owned(path, max_connections, busy_timeout, authz, true).await
+    }
+
+    pub async fn open_with_authz(
+        path: impl AsRef<Path>,
+        max_connections: u32,
+        busy_timeout: Duration,
+        authz: SqliteAuthzAuthority,
+    ) -> Result<Self, JobsRuntimeError> {
+        Self::open_with_authz_owned(path, max_connections, busy_timeout, authz, false).await
+    }
+
+    async fn open_with_authz_owned(
+        path: impl AsRef<Path>,
+        max_connections: u32,
+        busy_timeout: Duration,
+        authz: SqliteAuthzAuthority,
+        owns_authz: bool,
+    ) -> Result<Self, JobsRuntimeError> {
+        let path = path.as_ref();
+        let queue = SqliteJobQueue::open(path, max_connections, busy_timeout)
+            .await
+            .map_err(queue_error)?;
         let publications = SqliteExportPublicationStore::open(path, max_connections, busy_timeout)
             .await
             .map_err(publication_error)?;
@@ -112,12 +133,15 @@ impl JobsRuntime {
             queue,
             authz,
             publications,
+            owns_authz,
         })
     }
 
     pub async fn close(&self) {
         self.queue.close().await;
-        self.authz.close().await;
+        if self.owns_authz {
+            self.authz.close().await;
+        }
         self.publications.close().await;
     }
 
@@ -522,6 +546,51 @@ mod tests {
         assert_eq!(error.code, "idempotency_conflict");
 
         runtime.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn injected_authz_remains_open_when_jobs_runtime_closes() {
+        let path = temp_db("shared-authz");
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+        let authz = SqliteAuthzAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        authz
+            .set_role(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                DocumentRole::Editor,
+                None,
+                "grant:shared-authz",
+                1,
+            )
+            .await
+            .unwrap();
+
+        let runtime = JobsRuntime::open_with_authz(&path, 4, Duration::from_secs(2), authz.clone())
+            .await
+            .unwrap();
+        runtime.close().await;
+
+        authz
+            .authorize(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                crate::authz_runtime::CAP_EXPORT,
+                "authorize:after-jobs-close",
+                2,
+            )
+            .await
+            .unwrap();
+
+        authz.close().await;
         cleanup(&path);
     }
 
