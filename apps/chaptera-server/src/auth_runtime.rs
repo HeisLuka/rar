@@ -47,22 +47,14 @@ impl AuthRuntime {
         config: &ChapteraConfig,
         secrets: &ResolvedSecrets,
     ) -> Result<Self, AuthRuntimeError> {
-        let auth = config
-            .auth
-            .as_ref()
-            .ok_or_else(|| AuthRuntimeError::new("auth_config_missing", "auth configuration is missing"))?;
+        let auth = config.auth.as_ref().ok_or_else(|| {
+            AuthRuntimeError::new("auth_config_missing", "auth configuration is missing")
+        })?;
         let public_origin = config.public_origin.as_deref().ok_or_else(|| {
             AuthRuntimeError::new("public_origin_missing", "public_origin is required for AuthN")
         })?;
 
-        if auth.oidc.redirect_path != AUTH_CALLBACK_PATH {
-            return Err(AuthRuntimeError::new(
-                "oidc_redirect_path_mismatch",
-                format!(
-                    "auth.oidc.redirect_path must be {AUTH_CALLBACK_PATH:?} for the mounted V0 callback route"
-                ),
-            ));
-        }
+        require_canonical_callback_path(&auth.oidc.redirect_path)?;
 
         let client_secret = secrets
             .oidc_client_secret
@@ -128,6 +120,19 @@ impl AuthRuntime {
     }
 }
 
+fn require_canonical_callback_path(redirect_path: &str) -> Result<(), AuthRuntimeError> {
+    if redirect_path == AUTH_CALLBACK_PATH {
+        Ok(())
+    } else {
+        Err(AuthRuntimeError::new(
+            "oidc_redirect_path_mismatch",
+            format!(
+                "auth.oidc.redirect_path must be {AUTH_CALLBACK_PATH:?} for the mounted V0 callback route"
+            ),
+        ))
+    }
+}
+
 fn redirect_url(public_origin: &str, redirect_path: &str) -> Result<String, AuthRuntimeError> {
     let mut origin = Url::parse(public_origin).map_err(|_| {
         AuthRuntimeError::new("public_origin_invalid", "public_origin is not a valid URL")
@@ -144,7 +149,9 @@ mod tests {
 
     #[test]
     fn configured_callback_path_must_match_mounted_route() {
-        assert_eq!(AUTH_CALLBACK_PATH, "/v1/auth/callback");
+        require_canonical_callback_path(AUTH_CALLBACK_PATH).unwrap();
+        let error = require_canonical_callback_path("/different/callback").unwrap_err();
+        assert_eq!(error.code, "oidc_redirect_path_mismatch");
     }
 
     #[test]
