@@ -840,9 +840,13 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&path);
 
-        let error = SqliteBlobGcLedger::open(&path, 1, Duration::from_secs(2))
-            .await
-            .unwrap_err();
+        let error = match SqliteBlobGcLedger::open(&path, 1, Duration::from_secs(2)).await {
+            Ok(ledger) => {
+                ledger.close().await;
+                panic!("unmigrated GC ledger unexpectedly opened")
+            }
+            Err(error) => error,
+        };
         assert_eq!(error.code, "gc_database_missing");
         assert!(!path.exists());
     }
