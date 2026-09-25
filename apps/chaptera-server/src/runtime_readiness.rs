@@ -2,6 +2,9 @@ use std::sync::{Arc, RwLock};
 
 use crate::{
     auth_runtime::AuthRuntime,
+    authz_runtime::SqliteAuthzAuthority,
+    blob_runtime::BlobStoreRuntime,
+    jobs_runtime::JobsAdmissionRuntime,
     sqlite_store::SqliteRevisionStore,
     state::{DependencyFailure, RuntimeDependency, RuntimePorts},
 };
@@ -76,6 +79,18 @@ pub fn authn_dependency(authn: AuthRuntime) -> RuntimeDependencyBinding {
     bind(authn)
 }
 
+pub fn authz_dependency(authz: SqliteAuthzAuthority) -> RuntimeDependencyBinding {
+    bind(authz)
+}
+
+pub fn jobs_dependency(jobs: JobsAdmissionRuntime) -> RuntimeDependencyBinding {
+    bind(jobs)
+}
+
+pub fn blob_store_dependency(blob_store: BlobStoreRuntime) -> RuntimeDependencyBinding {
+    bind(blob_store)
+}
+
 pub struct RevisionStreamPorts {
     pub ports: RuntimePorts,
     pub readiness: ReadinessHandle,
@@ -113,6 +128,45 @@ pub fn ports_with_revision_stream_and_authn(
         ports,
         revision_readiness: revision.readiness,
         authn_readiness: authn.readiness,
+    }
+}
+
+pub struct RequiredRuntimePorts {
+    pub ports: RuntimePorts,
+    pub authn_readiness: ReadinessHandle,
+    pub authz_readiness: ReadinessHandle,
+    pub revision_readiness: ReadinessHandle,
+    pub jobs_readiness: ReadinessHandle,
+    pub blob_store_readiness: ReadinessHandle,
+}
+
+pub fn ports_with_required_producers(
+    authn: AuthRuntime,
+    authz: SqliteAuthzAuthority,
+    revision_stream: SqliteRevisionStore,
+    jobs: JobsAdmissionRuntime,
+    blob_store: BlobStoreRuntime,
+) -> RequiredRuntimePorts {
+    let authn = authn_dependency(authn);
+    let authz = authz_dependency(authz);
+    let revision = revision_stream_dependency(revision_stream);
+    let jobs = jobs_dependency(jobs);
+    let blob_store = blob_store_dependency(blob_store);
+
+    let mut ports = RuntimePorts::unconfigured();
+    ports.authn = authn.dependency;
+    ports.authz = authz.dependency;
+    ports.revision_stream = revision.dependency;
+    ports.jobs = jobs.dependency;
+    ports.blob_store = blob_store.dependency;
+
+    RequiredRuntimePorts {
+        ports,
+        authn_readiness: authn.readiness,
+        authz_readiness: authz.readiness,
+        revision_readiness: revision.readiness,
+        jobs_readiness: jobs.readiness,
+        blob_store_readiness: blob_store.readiness,
     }
 }
 
