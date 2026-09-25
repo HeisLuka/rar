@@ -1,4 +1,8 @@
-use std::{fmt, path::Path, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    fmt,
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -22,7 +26,10 @@ pub struct JobsRuntimeError {
 
 impl JobsRuntimeError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 }
 
@@ -101,7 +108,11 @@ impl JobsRuntime {
         let publications = SqliteExportPublicationStore::open(path, max_connections, busy_timeout)
             .await
             .map_err(publication_error)?;
-        Ok(Self { queue, authz, publications })
+        Ok(Self {
+            queue,
+            authz,
+            publications,
+        })
     }
 
     pub async fn close(&self) {
@@ -125,8 +136,9 @@ impl JobsRuntime {
             target_profile: request.target_profile.clone(),
             layout_environment_id: request.layout_environment_id.clone(),
         };
-        let payload_bytes = serde_json::to_vec(&payload)
-            .map_err(|error| JobsRuntimeError::new("export_payload_encode_failed", bounded(&error.to_string())))?;
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|error| {
+            JobsRuntimeError::new("export_payload_encode_failed", bounded(&error.to_string()))
+        })?;
         // Reuse the executor's canonical V1 decoder/validator instead of
         // maintaining a second payload grammar in the serve path.
         ExportJobPayloadV1::decode(&payload_bytes).map_err(export_payload_error)?;
@@ -144,7 +156,8 @@ impl JobsRuntime {
             .map_err(authz_error)?;
 
         let job_id = stable_job_id(&request.tenant_id, &request.client_request_id);
-        let outcome = self.queue
+        let outcome = self
+            .queue
             .enqueue(EnqueueRequest {
                 job_id,
                 tenant_id: request.tenant_id,
@@ -188,7 +201,11 @@ impl JobsRuntime {
         let (_job, _payload) = self
             .authorized_job(tenant_id, principal_id, job_id, operation_id, now_ms)
             .await?;
-        let job = self.queue.request_cancel(job_id, now_ms).await.map_err(queue_error)?;
+        let job = self
+            .queue
+            .request_cancel(job_id, now_ms)
+            .await
+            .map_err(queue_error)?;
         snapshot(&job)
     }
 
@@ -209,14 +226,17 @@ impl JobsRuntime {
                 "export job has not reached durable success",
             ));
         }
-        let publication = self.publications
+        let publication = self
+            .publications
             .get_visible_by_job(tenant_id, job_id)
             .await
             .map_err(publication_error)?
-            .ok_or_else(|| JobsRuntimeError::new(
-                "export_artifact_not_visible",
-                "succeeded job has no publication visible through the durable effect barrier",
-            ))?;
+            .ok_or_else(|| {
+                JobsRuntimeError::new(
+                    "export_artifact_not_visible",
+                    "succeeded job has no publication visible through the durable effect barrier",
+                )
+            })?;
         validate_publication_identity(&payload, &publication)?;
         Ok(AuthorizedExportDownloadV1 {
             job_id: job.job_id,
@@ -241,9 +261,13 @@ impl JobsRuntime {
         now_ms: i64,
     ) -> Result<(JobRecord, ExportJobPayloadV1), JobsRuntimeError> {
         if now_ms < 0 {
-            return Err(JobsRuntimeError::new("invalid_now", "timestamp must be non-negative"));
+            return Err(JobsRuntimeError::new(
+                "invalid_now",
+                "timestamp must be non-negative",
+            ));
         }
-        let job = self.queue
+        let job = self
+            .queue
             .get(job_id)
             .await
             .map_err(queue_error)?
@@ -394,13 +418,16 @@ fn bounded(message: &str) -> String {
 }
 
 pub fn unix_now_ms() -> Result<i64, JobsRuntimeError> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| JobsRuntimeError::new("clock_before_epoch", "system clock is before UNIX epoch"))?;
-    i64::try_from(elapsed.as_millis())
-        .map_err(|_| JobsRuntimeError::new("clock_overflow", "system clock does not fit i64 milliseconds"))
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| {
+        JobsRuntimeError::new("clock_before_epoch", "system clock is before UNIX epoch")
+    })?;
+    i64::try_from(elapsed.as_millis()).map_err(|_| {
+        JobsRuntimeError::new(
+            "clock_overflow",
+            "system clock does not fit i64 milliseconds",
+        )
+    })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -498,7 +525,10 @@ mod tests {
     #[tokio::test]
     async fn restart_reopens_same_durable_job_without_payload_leakage() {
         let (runtime, path) = runtime("restart").await;
-        let created = runtime.create_export(create_request("client:restart")).await.unwrap();
+        let created = runtime
+            .create_export(create_request("client:restart"))
+            .await
+            .unwrap();
         runtime.close().await;
 
         let reopened = JobsRuntime::open(&path, 4, Duration::from_secs(2))
@@ -526,7 +556,10 @@ mod tests {
     #[tokio::test]
     async fn status_and_cancel_are_tenant_scoped_and_reauthorize_current_grant() {
         let (runtime, path) = runtime("cancel").await;
-        let created = runtime.create_export(create_request("client:cancel")).await.unwrap();
+        let created = runtime
+            .create_export(create_request("client:cancel"))
+            .await
+            .unwrap();
 
         let wrong_tenant = runtime
             .status(
@@ -541,13 +574,7 @@ mod tests {
         assert_eq!(wrong_tenant.code, "job_scope_mismatch");
 
         let cancelled = runtime
-            .request_cancel(
-                "tenant:1",
-                "principal:1",
-                &created.job_id,
-                "cancel:one",
-                21,
-            )
+            .request_cancel("tenant:1", "principal:1", &created.job_id, "cancel:one", 21)
             .await
             .unwrap();
         assert!(cancelled.cancel_requested);
@@ -555,13 +582,7 @@ mod tests {
 
         runtime
             .authz
-            .revoke(
-                "tenant:1",
-                "doc:1",
-                "principal:1",
-                "revoke:one",
-                22,
-            )
+            .revoke("tenant:1", "doc:1", "principal:1", "revoke:one", 22)
             .await
             .unwrap();
         let denied = runtime
@@ -583,7 +604,10 @@ mod tests {
     #[tokio::test]
     async fn download_requires_visible_publication_effect_and_current_authz() {
         let (runtime, path) = runtime("download").await;
-        let created = runtime.create_export(create_request("client:download")).await.unwrap();
+        let created = runtime
+            .create_export(create_request("client:download"))
+            .await
+            .unwrap();
 
         let lease = runtime
             .queue
@@ -646,13 +670,7 @@ mod tests {
 
         runtime
             .authz
-            .revoke(
-                "tenant:1",
-                "doc:1",
-                "principal:1",
-                "revoke:download",
-                25,
-            )
+            .revoke("tenant:1", "doc:1", "principal:1", "revoke:download", 25)
             .await
             .unwrap();
         let revoked = runtime
