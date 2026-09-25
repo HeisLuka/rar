@@ -1,3 +1,4 @@
+use crate::{QuillToknChunk, tokn::parse_tokn_chunks};
 use pub_core::{Decoded, QuillSyid, RawSpan, StreamPath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -97,6 +98,7 @@ pub struct QuillStoryCatalog {
     pub text: QuillTextChunk,
     pub stories: Vec<QuillStorySlice>,
     pub tcd: Vec<QuillTcdChunk>,
+    pub tokn: Vec<QuillToknChunk>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +150,34 @@ pub enum QuillStoryReadError {
     TcdCellCountOverflow {
         stored_cell_count_minus_one: u32,
     },
+    ToknStoryOrdinalOutOfBounds {
+        story_ordinal: u16,
+        story_count: u32,
+    },
+    ToknUnexpectedPlcType {
+        found: u32,
+    },
+    ToknCountOverflow {
+        count: u32,
+    },
+    ToknNonMonotonicBoundary {
+        previous: u32,
+        next: u32,
+    },
+    ToknInvalidBlockLength {
+        offset: u64,
+        length: u32,
+    },
+    ToknTokenSpanOverflow {
+        start: u32,
+        length: u32,
+    },
+    ToknTokenLengthExceedsBoundary {
+        start: u32,
+        length: u32,
+        boundary: u32,
+    },
+    ToknTargetSectionOverflow,
 }
 
 impl fmt::Display for QuillStoryReadError {
@@ -162,9 +192,7 @@ impl std::error::Error for QuillStoryReadError {}
 ///
 /// The reader preserves raw field bytes and exact spans, follows descriptor
 /// overflow nodes, keeps descriptor option deviations, and never decodes TEXT
-/// lossily. TCD is parsed only as a raw-backed Story-scoped cell-boundary
-/// relation. FDPP/FDPC, TOKN, CELLS/table geometry and CDM table mapping remain
-/// deliberately out of scope.
+/// lossily. TCD is parsed only as a raw-backed Story-scoped cell-boundary relation. TOKN is parsed as a generic raw-backed two-phase token carrier joined to Story identity through descriptor ordinal -> SYID. FDPP/FDPC semantics, CELLS/table geometry, Hyperlink entities and CDM field mapping remain deliberately out of scope.
 pub fn parse_confirmed_story_catalog(
     stream: StreamPath,
     bytes: &[u8],
@@ -233,6 +261,7 @@ pub fn parse_confirmed_story_catalog(
     }
 
     let tcd = parse_tcd_chunks(stream.clone(), bytes, &descriptors, &syid, &strs)?;
+    let tokn = parse_tokn_chunks(stream.clone(), bytes, &descriptors, &syid.ids)?;
 
     Ok(QuillStoryCatalog {
         descriptor_nodes,
@@ -241,6 +270,7 @@ pub fn parse_confirmed_story_catalog(
         text,
         stories,
         tcd,
+        tokn,
     })
 }
 
