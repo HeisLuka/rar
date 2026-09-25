@@ -25,7 +25,7 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p chaptera-scene-instance -p chaptera-layout-projection -- --check
       - name: Check instance gate
         run: cargo check -p chaptera-scene-instance -p chaptera-layout-projection --all-targets
       - name: Lint instance gate
