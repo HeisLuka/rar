@@ -105,9 +105,9 @@ async fn local_dashboard_requires_explicit_local_mode_and_loopback_peer() {
         .header("host", "127.0.0.1:8080")
         .body(Body::empty())
         .unwrap();
-    request.extensions_mut().insert(ConnectInfo(
-        "127.0.0.1:49000".parse().unwrap(),
-    ));
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:49000".parse().unwrap()));
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
