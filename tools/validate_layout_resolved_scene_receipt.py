@@ -73,6 +73,14 @@ def validate_semantics(receipt):
     if move["before"] == move["after"]:
         raise AssertionError("canonical move must actually change geometry")
 
+    context = receipt["projection_context_state"]
+    if not context["carried_outside_editor_project"]:
+        raise AssertionError("projection context must remain outside EditorProject")
+    if context["cmo_layout_consumed"]:
+        raise AssertionError("unsupported Cmo layout must remain deferred")
+    if context["master_relation_count"] < 0 or context["cmo_relation_count"] < 0:
+        raise AssertionError("projection context relation counts must be non-negative")
+
     inv = receipt["invariants"]
     if inv["source_reparse_after_edit_count"] != 0:
         raise AssertionError("post-edit Scene must not reparse immutable source")
@@ -86,6 +94,10 @@ def validate_semantics(receipt):
         raise AssertionError("resolved projection context extension seam is required")
     if not inv["graph_only_wrapper_is_empty_context"]:
         raise AssertionError("graph-only convenience path must equal empty context")
+    if not inv["projection_context_carried_outside_editor_project"]:
+        raise AssertionError("projection context must be carried outside EditorProject")
+    if not inv["unsupported_cmo_layout_deferred"]:
+        raise AssertionError("unsupported Cmo layout must stay deferred")
     if inv["raw_source_bytes_emitted"]:
         raise AssertionError("public receipt must not emit source bytes")
 
@@ -103,6 +115,9 @@ def validate_semantics(receipt):
         "viewer_adapter_baseline_equivalent": True,
         "source_reparse_after_edit_count": 0,
         "context_extension_seam_present": True,
+        "projection_context_hash": context["projection_context_hash"],
+        "master_relation_count": context["master_relation_count"],
+        "cmo_relation_count": context["cmo_relation_count"],
     }
 
 
