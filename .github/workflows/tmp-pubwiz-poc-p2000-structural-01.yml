@@ -1,0 +1,130 @@
+name: TEMP PUBWIZ P2000 POC structural inventory
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-poc-p2000-structural-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full msitools iat
+      - name: Recover exact X05-44678 assets and analyze
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/x05
+          python - <<'PY'
+          import json,urllib.request,urllib.parse
+          req=urllib.request.Request("https://archive.org/metadata/X05-44678",headers={"User-Agent":"rar-poc-struct/1.0"})
+          with urllib.request.urlopen(req,timeout=60) as r: meta=json.load(r)
+          fs=[f for f in meta.get("files",[]) if str(f.get("source") or "")=="original" and str(f.get("name") or "").lower().endswith(".7z")]
+          fs.sort(key=lambda f:int(f.get("size") or 0),reverse=True)
+          f=fs[0]; name=f["name"]
+          url="https://archive.org/download/X05-44678/"+urllib.parse.quote(name,safe="/")
+          open("/tmp/x05/url","w").write(url)
+          open("out/source.json","w").write(json.dumps({"name":name,"size":int(f.get("size") or 0),"md5":f.get("md5"),"sha1":f.get("sha1")},indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -o /tmp/x05/source.7z "$(cat /tmp/x05/url)"
+          7z l -slt /tmp/x05/source.7z > /tmp/x05/a.slt
+          python - <<'PY'
+          import pathlib
+          t=pathlib.Path("/tmp/x05/a.slt").read_text(errors="replace")
+          rows=[];cur={}
+          for line in t.splitlines():
+              if " = " in line:
+                  k,v=line.split(" = ",1)
+                  if k=="Path" and cur: rows.append(cur);cur={}
+                  cur[k]=v
+          if cur: rows.append(cur)
+          c=[]
+          for r in rows:
+              p=r.get("Path","")
+              if p.lower().endswith((".iso",".img",".bin",".mdf")):
+                  c.append((int(r.get("Size","0") or 0),p))
+          c.sort(reverse=True)
+          pathlib.Path("/tmp/x05/member").write_text(c[0][1])
+          PY
+          mkdir -p /tmp/x05/image
+          7z x -y -o/tmp/x05/image /tmp/x05/source.7z "$(cat /tmp/x05/member)" >/dev/null
+          IMAGE="$(find /tmp/x05/image -type f | head -n1)"
+          if [[ "${IMAGE,,}" == *.mdf ]]; then iat "$IMAGE" /tmp/x05/converted.iso >/dev/null; IMAGE=/tmp/x05/converted.iso; fi
+          mkdir -p /tmp/x05/install
+          7z x -y -o/tmp/x05/install "$IMAGE" -r '*.MSI' '*.msi' >/dev/null || true
+          mkdir -p /tmp/x05/msiout
+          n=0
+          while IFS= read -r msi; do
+            n=$((n+1)); mkdir -p "/tmp/x05/msiout/$n"
+            msiextract -C "/tmp/x05/msiout/$n" "$msi" >/dev/null 2>&1 || true
+          done < <(find /tmp/x05/install -type f \( -iname '*.msi' \))
+          python - <<'PY'
+          import pathlib,hashlib,json,collections
+          root=pathlib.Path("/tmp/x05/msiout")
+          targets={}
+          for p in root.rglob("*"):
+              if p.is_file() and p.name.upper() in {"ACCSBAR.POC","ACCTBOX.POC"}:
+                  b=p.read_bytes(); h=hashlib.sha256(b).hexdigest()
+                  targets[p.name.upper()] = (p,b,h)
+          if set(targets)!={"ACCSBAR.POC","ACCTBOX.POC"}: raise SystemExit(f"missing targets: {targets.keys()}")
+          def u16(b,o): return int.from_bytes(b[o:o+2],"little")
+          def analyze(name,b,h):
+              if not b.startswith(b"POCPB5"): raise SystemExit(f"{name}: bad magic")
+              words=[u16(b,o) for o in range(6,len(b)-1,2)]
+              tags=[]
+              for i,w in enumerate(words):
+                  typ=(w>>11)&0x1f; opy=w&0x7ff
+                  tags.append((i,typ,opy,w))
+              type_counts=collections.Counter(t for _,t,_,_ in tags)
+              opy_counts=collections.Counter(o for _,_,o,_ in tags)
+              pair_counts=collections.Counter((t,o) for _,t,o,_ in tags)
+              plausible_offsets=[]
+              for o in range(6,min(len(b)-4,512),2):
+                  v=u16(b,o)
+                  if 6 <= v < len(b) and v%2==0:
+                      plausible_offsets.append({"at":o,"value":v})
+              return {
+                "name":name,"size":len(b),"sha256":h,
+                "prefix16_hex":b[:16].hex(),"suffix16_hex":b[-16:].hex(),
+                "word_count_after_magic":len(words),
+                "type_counts":dict(sorted(type_counts.items())),
+                "top_opyids":opy_counts.most_common(32),
+                "top_type_opy_pairs":[{"type":k[0],"opyid":k[1],"count":v} for k,v in pair_counts.most_common(64)],
+                "first_64_decoded":[{"word_index":i,"type":t,"opyid":o,"raw":w} for i,t,o,w in tags[:64]],
+                "plausible_u16_offsets_first512":plausible_offsets[:128],
+              }
+          report={"schema":"chaptera.pubwiz-poc-p2000-structural-inventory.v1","source_safe":True,"raw_poc_retained":False,
+                  "files":[analyze(n,b,h) for n,(p,b,h) in sorted(targets.items())]}
+          pathlib.Path("out/report.json").write_text(json.dumps(report,indent=2))
+          summary={"schema":"chaptera.pubwiz-poc-p2000-structural-summary.v1","files":[
+              {"name":x["name"],"size":x["size"],"sha256":x["sha256"],"prefix16_hex":x["prefix16_hex"],
+               "word_count_after_magic":x["word_count_after_magic"],"type_counts":x["type_counts"],
+               "top_pairs":x["top_type_opy_pairs"][:16]} for x in report["files"]]}
+          pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.poc' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          r=json.load(open("out/report.json"))
+          assert r["source_safe"] is True
+          assert r["raw_poc_retained"] is False
+          assert len(r["files"])==2
+          assert {x["name"] for x in r["files"]}=={"ACCSBAR.POC","ACCTBOX.POC"}
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-poc-p2000-structural-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
