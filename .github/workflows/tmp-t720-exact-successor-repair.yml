@@ -1,0 +1,35 @@
+name: TEMP T720 exact successor repair
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-t720-exact-successor-repair.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Restore exact proven successor list and remove this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/10873945783/zip" > /tmp/t720-proof.zip
+          unzip -p /tmp/t720-proof.zip successor-1515.sha256.txt > /tmp/successor.txt
+          test "$(wc -l < /tmp/successor.txt)" -eq 1515
+          test "$(sha256sum /tmp/successor.txt | awk '{print $1}')" = "3151155207344da1e611b690c0c7c80dfcb08fd3edf3191da59e2f14be45675c"
+          cp /tmp/successor.txt tools/corpus/receipts/current-rar-1515.sha256.txt
+          rm .github/workflows/tmp-t720-exact-successor-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/corpus/receipts/current-rar-1515.sha256.txt .github/workflows/tmp-t720-exact-successor-repair.yml
+          git commit -m "corpus: restore exact proven Rar 1515 authority"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
