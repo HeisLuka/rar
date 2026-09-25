@@ -9,6 +9,7 @@ mod create_shape;
 mod create_textbox;
 mod fragment;
 mod projection_context;
+mod revision_identity;
 mod rotate_quarter;
 mod shape_paint;
 mod shape_paint_op;
@@ -50,6 +51,11 @@ pub use fragment::{
 pub use projection_context::{
     CmoProjectionRelationV1, MasterProjectionRelationV1, PUB_PROJECTION_CONTEXT_SCHEMA_V1,
     PubProjectionContextV1,
+};
+
+pub use revision_identity::{
+    AUTHORING_REVISION_SCHEMA_V1, AuthoringRevisionIdParseError, AuthoringRevisionIdV1,
+    AuthoringRevisionIdentityError, canonical_revision_json_v1, derive_authoring_revision_id_v1,
 };
 
 pub use source_identity::{
