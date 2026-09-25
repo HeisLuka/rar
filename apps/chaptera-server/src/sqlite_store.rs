@@ -215,6 +215,115 @@ impl SqliteRevisionStore {
         }
     }
 
+    pub async fn append_edge_with_revision_identity(
+        &self,
+        edge: RevisionEdge,
+        binding: RevisionIdentityBinding,
+    ) -> Result<AppendOutcome, SqliteStoreError> {
+        validate_edge(&edge)?;
+        validate_revision_identity_binding(&binding)?;
+
+        if edge.document_id != binding.document_id
+            || edge.child_revision != binding.service_revision_id
+        {
+            return Err(SqliteStoreError::new(
+                "revision_identity_edge_mismatch",
+                "revision identity binding must name the exact document and child service/history revision",
+            ));
+        }
+
+        if let Some(outcome) = self
+            .reconcile_edge_identity_state(&edge, &binding)
+            .await?
+        {
+            return Ok(outcome);
+        }
+
+        let mut transaction = self.pool.begin().await.map_err(sqlite_read_error)?;
+
+        let edge_result = sqlx::query(
+            r#"
+            INSERT INTO revision_edges (
+                document_id,
+                parent_revision,
+                parent_cursor,
+                operation_id,
+                request_hash,
+                canonical_event,
+                child_revision,
+                child_cursor,
+                resulting_state_hash,
+                authoring_root_hash,
+                semantic_schema_version,
+                committed_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(edge.document_id.as_bytes())
+        .bind(edge.parent_revision.as_bytes())
+        .bind(edge.parent_cursor)
+        .bind(edge.operation_id.as_bytes())
+        .bind(edge.request_hash.as_bytes())
+        .bind(&edge.canonical_event)
+        .bind(edge.child_revision.as_bytes())
+        .bind(edge.child_cursor)
+        .bind(edge.resulting_state_hash.as_bytes())
+        .bind(edge.authoring_root_hash.as_ref().map(String::as_bytes))
+        .bind(edge.semantic_schema_version)
+        .bind(edge.committed_at_ms)
+        .execute(&mut *transaction)
+        .await;
+
+        if let Err(error) = edge_result {
+            let message = bounded_sqlx_message(&error);
+            let _ = transaction.rollback().await;
+            if let Some(outcome) = self
+                .reconcile_edge_identity_state(&edge, &binding)
+                .await?
+            {
+                return Ok(outcome);
+            }
+            return Err(SqliteStoreError::new("sqlite_append_failed", message));
+        }
+
+        let binding_result = sqlx::query(
+            r#"
+            INSERT INTO revision_identity_bindings (
+                document_id,
+                service_revision_id,
+                canonical_schema_version,
+                canonical_revision_id,
+                bound_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(binding.document_id.as_bytes())
+        .bind(binding.service_revision_id.as_bytes())
+        .bind(&binding.canonical_schema_version)
+        .bind(&binding.canonical_revision_id)
+        .bind(binding.bound_at_ms)
+        .execute(&mut *transaction)
+        .await;
+
+        if let Err(error) = binding_result {
+            let message = bounded_sqlx_message(&error);
+            let _ = transaction.rollback().await;
+            if let Some(outcome) = self
+                .reconcile_edge_identity_state(&edge, &binding)
+                .await?
+            {
+                return Ok(outcome);
+            }
+            return Err(SqliteStoreError::new(
+                "revision_identity_bind_failed",
+                message,
+            ));
+        }
+
+        transaction.commit().await.map_err(sqlite_read_error)?;
+        Ok(AppendOutcome::Committed(edge))
+    }
+
     pub async fn read_edge(
         &self,
         document_id: &str,
@@ -414,6 +523,68 @@ impl SqliteRevisionStore {
         }
 
         Ok(edges)
+    }
+
+    async fn reconcile_edge_identity_state(
+        &self,
+        requested_edge: &RevisionEdge,
+        requested_binding: &RevisionIdentityBinding,
+    ) -> Result<Option<AppendOutcome>, SqliteStoreError> {
+        if let Some(existing_edge) = self
+            .read_edge(
+                &requested_edge.document_id,
+                &requested_edge.parent_revision,
+            )
+            .await?
+        {
+            if !same_retry_identity(&existing_edge, requested_edge) {
+                return Ok(Some(AppendOutcome::Conflict(existing_edge)));
+            }
+
+            let existing_binding = self
+                .read_revision_identity(
+                    &requested_binding.document_id,
+                    &requested_binding.service_revision_id,
+                )
+                .await?;
+
+            return match existing_binding {
+                Some(existing_binding)
+                    if same_revision_identity(&existing_binding, requested_binding) =>
+                {
+                    Ok(Some(AppendOutcome::AlreadyCommitted(existing_edge)))
+                }
+                Some(_) => Err(SqliteStoreError::new(
+                    "revision_identity_conflict",
+                    "exact RevisionStream retry is bound to a different canonical AuthoringRevisionId",
+                )),
+                None => Err(SqliteStoreError::new(
+                    "revision_identity_partial_commit",
+                    "RevisionStream edge exists without its required canonical revision identity binding",
+                )),
+            };
+        }
+
+        if let Some(existing_binding) = self
+            .read_revision_identity(
+                &requested_binding.document_id,
+                &requested_binding.service_revision_id,
+            )
+            .await?
+        {
+            if same_revision_identity(&existing_binding, requested_binding) {
+                return Err(SqliteStoreError::new(
+                    "revision_identity_orphan_binding",
+                    "canonical revision identity binding exists without the corresponding RevisionStream edge",
+                ));
+            }
+            return Err(SqliteStoreError::new(
+                "revision_identity_conflict",
+                "service/history revision is already bound to a different canonical AuthoringRevisionId",
+            ));
+        }
+
+        Ok(None)
     }
 
     pub async fn bind_revision_identity(
@@ -1155,6 +1326,95 @@ mod tests {
                 .code,
             "canonical_event_corrupt"
         );
+    }
+
+    #[tokio::test]
+    async fn atomic_child_append_commits_edge_and_identity_together() {
+        let path = temp_db("revision-identity-atomic");
+        let store = store(&path).await;
+        let child = edge(
+            "doc-atomic",
+            "rev-0",
+            "rev-1",
+            "op-1",
+            &hash(b'a'),
+            b"atomic-child",
+            0,
+        );
+        let binding = identity("doc-atomic", "rev-1", b'e', 100);
+
+        assert_eq!(
+            store
+                .append_edge_with_revision_identity(child.clone(), binding.clone())
+                .await
+                .unwrap(),
+            AppendOutcome::Committed(child.clone())
+        );
+        assert_eq!(
+            store
+                .require_revision_identity("doc-atomic", "rev-1")
+                .await
+                .unwrap(),
+            binding
+        );
+
+        let mut retry_binding = identity("doc-atomic", "rev-1", b'e', 999);
+        retry_binding.bound_at_ms = 999;
+        assert_eq!(
+            store
+                .append_edge_with_revision_identity(child.clone(), retry_binding)
+                .await
+                .unwrap(),
+            AppendOutcome::AlreadyCommitted(child.clone())
+        );
+        assert_eq!(
+            store
+                .require_revision_identity("doc-atomic", "rev-1")
+                .await
+                .unwrap()
+                .bound_at_ms,
+            100
+        );
+
+        let changed_binding = identity("doc-atomic", "rev-1", b'f', 101);
+        assert_eq!(
+            store
+                .append_edge_with_revision_identity(child.clone(), changed_binding)
+                .await
+                .unwrap_err()
+                .code,
+            "revision_identity_conflict"
+        );
+
+        let competing = edge(
+            "doc-atomic",
+            "rev-0",
+            "rev-other",
+            "op-2",
+            &hash(b'b'),
+            b"competing-child",
+            0,
+        );
+        assert_eq!(
+            store
+                .append_edge_with_revision_identity(
+                    competing.clone(),
+                    identity("doc-atomic", "rev-other", b'c', 102),
+                )
+                .await
+                .unwrap(),
+            AppendOutcome::Conflict(child)
+        );
+        assert!(
+            store
+                .read_revision_identity("doc-atomic", "rev-other")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        store.close().await;
+        cleanup(&path);
     }
 
     #[tokio::test]
