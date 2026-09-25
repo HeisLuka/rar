@@ -34,6 +34,13 @@ max_api_body_bytes = 8388608
 max_upload_body_bytes = 268435456
 request_timeout_ms = 30000
 
+# Example deployment policy only; Chaptera has no hidden product-default auth TTLs.
+# Operators must choose these values explicitly for their environment.
+[auth]
+login_flow_ttl_seconds = 600
+session_idle_ttl_seconds = 1800
+session_absolute_ttl_seconds = 86400
+
 [auth.oidc]
 issuer = "https://id.example.invalid"
 client_id = "chaptera-cloud"
