@@ -1,0 +1,102 @@
+name: TEMP 4n6 Publisher provenance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-4n6-pub-prov-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full file binutils osslsigncode
+      - name: Fetch official trial and inspect
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/4n6/pkg
+          curl -fL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 \
+            -D /tmp/4n6/headers -o /tmp/4n6/setup.exe \
+            -w 'http_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nsize_download=%{size_download}\n' \
+            'https://forensiksoft.com/dl/setup-pub-converter.exe' > /tmp/4n6/meta
+          sha256sum /tmp/4n6/setup.exe > /tmp/4n6/sha256
+          file -b /tmp/4n6/setup.exe > /tmp/4n6/filetype
+          osslsigncode verify -in /tmp/4n6/setup.exe > /tmp/4n6/signature 2>&1 || true
+          7z l -slt /tmp/4n6/setup.exe > /tmp/4n6/listing 2>&1 || true
+          7z x -y -o/tmp/4n6/pkg /tmp/4n6/setup.exe >/tmp/4n6/extract.log 2>&1 || true
+          python - <<'PY'
+          import pathlib,hashlib,json,subprocess,re
+          root=pathlib.Path('/tmp/4n6/pkg')
+          def read(p): return pathlib.Path(p).read_text(errors='replace') if pathlib.Path(p).exists() else ''
+          def sha(p):
+              h=hashlib.sha256()
+              with open(p,'rb') as f:
+                  for c in iter(lambda:f.read(1<<20),b''): h.update(c)
+              return h.hexdigest()
+          def cmd(a):
+              try:
+                  r=subprocess.run(a,capture_output=True,text=True,errors='replace',timeout=30)
+                  return r.stdout+r.stderr
+              except Exception as e: return 'ERROR '+repr(e)
+          files=[p for p in root.rglob('*') if p.is_file()]
+          inv=[]; binaries=[]; combined=''
+          for p in files:
+              rel=str(p.relative_to(root))
+              ft=cmd(['file','-b',str(p)]).strip()
+              row={'path':rel,'size':p.stat().st_size,'sha256':sha(p),'file_type':ft}
+              inv.append(row)
+              if 'PE32' in ft or p.suffix.lower() in {'.exe','.dll'}:
+                  s=cmd(['strings','-a','-n','5',str(p)])
+                  combined+='\n'+s
+                  row['imports_excerpt']=cmd(['objdump','-p',str(p)])[:30000]
+                  row['marker_excerpt']='\n'.join(x for x in s.splitlines() if re.search(r'4n6|Forensik|Publisher|libmspub|librevenge|writerperfect|libwpd|LibreOffice|OpenOffice|Qt|Electron|Tauri|Rust|Python|Aspose|Leadtools|KeyView|Outside In|BitRecover|SysTools|CoolUtils|PDFium|MuPDF|wkhtml|chromium',x,re.I))[:30000]
+                  binaries.append(row)
+          low=combined.lower()
+          known=['libmspub','librevenge','writerperfect','libwpd','libreoffice','openoffice','aspose','keyview','outside in']
+          report={
+            'schema':'chaptera.4n6-publisher-provenance.v1',
+            'source_safe':True,'raw_package_retained':False,
+            'endpoint':'https://forensiksoft.com/dl/setup-pub-converter.exe',
+            'fetch':dict(line.split('=',1) for line in read('/tmp/4n6/meta').splitlines() if '=' in line),
+            'installer':{
+              'size':pathlib.Path('/tmp/4n6/setup.exe').stat().st_size,
+              'sha256':sha('/tmp/4n6/setup.exe'),
+              'file_type':read('/tmp/4n6/filetype').strip(),
+              'signature_excerpt':read('/tmp/4n6/signature')[:15000],
+              'archive_listing_excerpt':read('/tmp/4n6/listing')[:25000]
+            },
+            'extracted_file_count':len(files),
+            'inventory':inv,
+            'binary_count':len(binaries),
+            'binaries':binaries,
+            'known_engine_marker_counts':{k:low.count(k) for k in known},
+            'guardrail':'Vendor own-engine claim and absence of markers do not prove independent reverse engineering.'
+          }
+          pathlib.Path('out/report.json').write_text(json.dumps(report,indent=2))
+          summary={k:report[k] for k in ['fetch','installer','extracted_file_count','binary_count','known_engine_marker_counts','guardrail']}
+          summary['binaries']=[{'path':x['path'],'size':x['size'],'sha256':x['sha256'],'file_type':x['file_type'],'imports_excerpt':x.get('imports_excerpt','')[:8000],'marker_excerpt':x.get('marker_excerpt','')[:8000]} for x in binaries]
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe artifact
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.bin' \) | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          r=json.load(open('out/report.json'))
+          assert r['source_safe'] is True and r['raw_package_retained'] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 4n6-publisher-provenance-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
