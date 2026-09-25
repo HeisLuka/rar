@@ -25,6 +25,7 @@ import platform
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -257,7 +258,9 @@ def load_and_verify_project(
     moved_node_id: str,
     before_rect: dict[str, Any],
     after_rect: dict[str, Any],
-) -> tuple[bytes, dict[str, Any], int, int]:
+    story_before_state_id: str,
+    story_after_state_id: str,
+) -> tuple[bytes, dict[str, Any], int, int, str]:
     if not path.is_file():
         raise DesktopVerticalError("desktop producer did not write EditorProject")
     raw = path.read_bytes()
@@ -292,15 +295,25 @@ def load_and_verify_project(
         raise DesktopVerticalError(
             "Desktop V0 EditorProject must contain exactly one Story edit and one MoveNode"
         )
-    if story_ops[0].get("story_id") != story_id:
+    story_operation = story_ops[0]
+    if story_operation.get("story_id") != story_id:
         raise DesktopVerticalError("EditorProject Story operation identity mismatch")
+    if story_operation.get("before_story_state_id") != story_before_state_id:
+        raise DesktopVerticalError("EditorProject Story before-state identity mismatch")
+    if story_operation.get("after_story_state_id") != story_after_state_id:
+        raise DesktopVerticalError("EditorProject Story after-state identity mismatch")
+    replacement_text = story_operation.get("replacement_text")
+    if not isinstance(replacement_text, str) or len(replacement_text) < 8:
+        raise DesktopVerticalError(
+            "Desktop V0 Story edit must use a non-trivial export witness string"
+        )
     move = move_ops[0]
     if move.get("node_id") != moved_node_id:
         raise DesktopVerticalError("EditorProject MoveNode identity mismatch")
     if move.get("before") != before_rect or move.get("after") != after_rect:
         raise DesktopVerticalError("EditorProject MoveNode RectEmu differs from observation")
 
-    return raw, project, len(story_ops), len(move_ops)
+    return raw, project, len(story_ops), len(move_ops), replacement_text
 
 
 def verify_export_package(
@@ -309,6 +322,7 @@ def verify_export_package(
     *,
     moved_node_id: str,
     after_rect: dict[str, Any],
+    replacement_text: str,
 ) -> bytes:
     if not path.is_file():
         raise DesktopVerticalError("desktop producer did not write edited export")
@@ -323,15 +337,37 @@ def verify_export_package(
         if export_format == "idml":
             if "designmap.xml" not in names:
                 raise DesktopVerticalError("IDML package is missing designmap.xml")
-            if not any(name.startswith("Stories/") and name.endswith(".xml") for name in names):
+            story_parts = sorted(
+                name
+                for name in names
+                if name.startswith("Stories/") and name.endswith(".xml")
+            )
+            if not story_parts:
                 raise DesktopVerticalError("IDML package has no Story XML")
+            try:
+                edited_story_present = any(
+                    replacement_text in "".join(ET.fromstring(archive.read(name)).itertext())
+                    for name in story_parts
+                )
+            except ET.ParseError as error:
+                raise DesktopVerticalError("IDML Story XML is not parseable") from error
         elif export_format == "odg":
             if "mimetype" not in names or "content.xml" not in names:
                 raise DesktopVerticalError("ODG package is missing mimetype/content.xml")
             if archive.read("mimetype") != b"application/vnd.oasis.opendocument.graphics":
                 raise DesktopVerticalError("ODG mimetype mismatch")
+            try:
+                edited_story_present = replacement_text in "".join(
+                    ET.fromstring(archive.read("content.xml")).itertext()
+                )
+            except ET.ParseError as error:
+                raise DesktopVerticalError("ODG content.xml is not parseable") from error
         else:
             raise DesktopVerticalError("unsupported edited export format")
+        if not edited_story_present:
+            raise DesktopVerticalError(
+                "edited export does not contain the accepted Story replacement witness"
+            )
 
     try:
         geometry_proof = verify_editable_export_geometry(
@@ -431,19 +467,22 @@ def run_local_desktop_vertical(
 
     story = observation["story_edit"]
     move = observation["object_move"]
-    project_raw, project, story_count, move_count = load_and_verify_project(
+    project_raw, project, story_count, move_count, replacement_text = load_and_verify_project(
         project_output,
         source_hash=expected_hash,
         story_id=story["story_id"],
         moved_node_id=move["origin_node_id"],
         before_rect=move["before"],
         after_rect=move["after"],
+        story_before_state_id=story["before_state_id"],
+        story_after_state_id=story["after_state_id"],
     )
     export_raw = verify_export_package(
         export_output,
         export_format,
         moved_node_id=move["origin_node_id"],
         after_rect=move["after"],
+        replacement_text=replacement_text,
     )
 
     project_sha256 = hashlib.sha256(project_raw).hexdigest()
