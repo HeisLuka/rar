@@ -626,6 +626,145 @@ mod tests {
         }
     }
 
+    fn legacy_linear_membership_diagnostics(
+        mut input: BoundedAuthoringSlice,
+    ) -> Vec<ProjectionDiagnostic> {
+        input.stories.sort_by_key(|story| story.id);
+        input.node_geometry.sort_by_key(|node| node.node_id);
+        input.story_frames.sort_by(|left, right| {
+            (left.story_id, left.ordinal, left.frame_id).cmp(&(
+                right.story_id,
+                right.ordinal,
+                right.frame_id,
+            ))
+        });
+
+        let mut diagnostics = Vec::new();
+        for frame in &input.story_frames {
+            if !input.stories.iter().any(|story| story.id == frame.story_id) {
+                diagnostics.push(ProjectionDiagnostic {
+                    code: "missing_story_content".into(),
+                    severity: ProjectionSeverity::Error,
+                    origin: frame.story_id.into_canonical(),
+                    message: "story frame references story content absent from projection".into(),
+                });
+            }
+            if !input
+                .node_geometry
+                .iter()
+                .any(|node| node.node_id == frame.frame_id)
+            {
+                diagnostics.push(ProjectionDiagnostic {
+                    code: "missing_frame_geometry".into(),
+                    severity: ProjectionSeverity::Error,
+                    origin: frame.frame_id.into_canonical(),
+                    message: "story frame has no projected authored geometry".into(),
+                });
+            }
+        }
+        diagnostics
+    }
+
+    #[test]
+    fn indexed_membership_preserves_legacy_projection_bytes_and_diagnostics() {
+        let mut input = fixture(false);
+        input.stories.clear();
+        input
+            .node_geometry
+            .retain(|node| node.node_id != node_id(29));
+
+        let legacy_membership = legacy_linear_membership_diagnostics(input.clone());
+        let (indexed, stats) = project_bounded_with_membership_stats(input);
+        let indexed_membership: Vec<_> = indexed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.code.as_str(),
+                    "missing_story_content" | "missing_frame_geometry"
+                )
+            })
+            .cloned()
+            .collect();
+        assert_eq!(indexed_membership, legacy_membership);
+        assert_eq!(stats.additional_index_bytes, 0);
+
+        let mut legacy_projection = indexed.clone();
+        let tail: Vec<_> = indexed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                !matches!(
+                    diagnostic.code.as_str(),
+                    "missing_story_content" | "missing_frame_geometry"
+                )
+            })
+            .cloned()
+            .collect();
+        legacy_projection.diagnostics = legacy_membership;
+        legacy_projection.diagnostics.extend(tail);
+        assert_eq!(
+            serde_json::to_vec(&indexed).expect("serialize indexed projection"),
+            serde_json::to_vec(&legacy_projection).expect("serialize legacy projection")
+        );
+    }
+
+    #[test]
+    fn indexed_membership_comparison_count_is_logarithmically_bounded() {
+        let count = 200u8;
+        let mut input = BoundedAuthoringSlice {
+            pages: Vec::new(),
+            node_geometry: Vec::new(),
+            stories: Vec::new(),
+            story_frames: Vec::new(),
+            tables: Vec::new(),
+            guides: Vec::new(),
+            unknown_layout_state: Vec::new(),
+        };
+        for value in 1..=count {
+            input.stories.push(Story {
+                id: story_id(value),
+                text: String::new(),
+                paragraphs: Vec::new(),
+                runs: Vec::new(),
+                fields: Vec::new(),
+                hyperlinks: Vec::new(),
+                source_refs: Vec::new(),
+            });
+            input.node_geometry.push(BoundedNodeGeometryInput {
+                node_id: node_id(value),
+                parent_origin: id(250),
+                bounds: RectEmu::new(
+                    LengthEmu::new(0),
+                    LengthEmu::new(0),
+                    LengthEmu::new(1),
+                    LengthEmu::new(1),
+                ),
+                transform: Affine2D::identity(),
+            });
+            input.story_frames.push(StoryFrame {
+                story_id: story_id(value),
+                frame_id: node_id(value),
+                ordinal: 0,
+                previous: None,
+                next: None,
+            });
+        }
+
+        let (_, stats) = project_bounded_with_membership_stats(input);
+        let per_lookup_bound = 9u64;
+        assert_eq!(stats.story_frame_count, u64::from(count));
+        assert_eq!(stats.additional_index_bytes, 0);
+        assert!(
+            stats.total_membership_comparisons()
+                <= u64::from(count) * per_lookup_bound * 2
+        );
+        assert!(
+            stats.total_membership_comparisons()
+                < u64::from(count) * u64::from(count)
+        );
+    }
+
     #[test]
     fn projection_is_deterministic_across_input_order() {
         assert_eq!(
