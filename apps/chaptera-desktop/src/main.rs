@@ -2221,8 +2221,11 @@ impl ViewerApp {
         let mut canvas_clicked = false;
         let mut canvas_hit: Option<String> = None;
         let mut next_canvas_drag = self.canvas_drag;
+        let mut next_canvas_resize = self.canvas_resize;
         let mut drag_commit = None;
         let mut drag_error = None;
+        let mut resize_commit = None;
+        let mut resize_error = None;
         let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
         let page_nodes = visual
@@ -2276,6 +2279,34 @@ impl ViewerApp {
                         let bounds = authored_node.header.bounds;
                         editor
                             .can_move_node_to(hit.node_id, bounds.x, bounds.y)
+                            .ok()
+                            .map(|_| (hit.instance_id.clone(), (hit.node_id, bounds)))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+
+        let resizable_nodes = self
+            .editor
+            .as_ref()
+            .map(|editor| {
+                hit_index
+                    .entries
+                    .iter()
+                    .filter_map(|hit| {
+                        let instance = direct_scene_instance(editor, &page_id_text, hit.node_id)?;
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
+                        let origin_node_id = hit.node_id.as_canonical().to_string();
+                        if !admission.admitted
+                            || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
+                        {
+                            return None;
+                        }
+                        let authored_node = editor.graph().nodes.get(&hit.node_id)?;
+                        let bounds = authored_node.header.bounds;
+                        editor
+                            .can_resize_node(hit.node_id)
                             .ok()
                             .map(|_| (hit.instance_id.clone(), (hit.node_id, bounds)))
                     })
@@ -2382,9 +2413,14 @@ impl ViewerApp {
                 );
 
                 for node in page_nodes.iter().copied() {
-                    let node_bounds = next_canvas_drag
-                        .filter(|drag| drag.node_id() == node.origin)
-                        .map(|drag| drag.preview_bounds())
+                    let node_bounds = next_canvas_resize
+                        .filter(|resize| resize.node_id() == node.origin)
+                        .and_then(|resize| resize.preview_bounds())
+                        .or_else(|| {
+                            next_canvas_drag
+                                .filter(|drag| drag.node_id() == node.origin)
+                                .map(|drag| drag.preview_bounds())
+                        })
                         .unwrap_or(node.bounds);
                     let width = node_bounds.width.get();
                     let height = node_bounds.height.get();
@@ -2540,9 +2576,14 @@ impl ViewerApp {
                     && node.bounds.width.get() > 0
                     && node.bounds.height.get() > 0
                 {
-                    let selected_bounds = next_canvas_drag
-                        .filter(|drag| drag.node_id() == node.origin)
-                        .map(|drag| drag.preview_bounds())
+                    let selected_bounds = next_canvas_resize
+                        .filter(|resize| resize.node_id() == node.origin)
+                        .and_then(|resize| resize.preview_bounds())
+                        .or_else(|| {
+                            next_canvas_drag
+                                .filter(|drag| drag.node_id() == node.origin)
+                                .map(|drag| drag.preview_bounds())
+                        })
                         .unwrap_or(node.bounds);
                     let min = egui::pos2(
                         page_rect.left() + selected_bounds.x.get() as f32 * scene_scale,
@@ -2552,7 +2593,45 @@ impl ViewerApp {
                         selected_bounds.width.get() as f32 * scene_scale,
                         selected_bounds.height.get() as f32 * scene_scale,
                     );
-                    paint_selection_overlay(&painter, egui::Rect::from_min_size(min, size));
+                    let selected_rect = egui::Rect::from_min_size(min, size);
+                    let resize_enabled = resizable_nodes.contains_key(selected_instance_id);
+                    paint_selection_overlay(&painter, selected_rect, resize_enabled);
+                    if resize_enabled {
+                        let screen_bounds = ScreenRect::new(
+                            f64::from(selected_rect.left()),
+                            f64::from(selected_rect.top()),
+                            f64::from(selected_rect.width()),
+                            f64::from(selected_rect.height()),
+                        )
+                        .ok();
+                        if let Some(screen_bounds) = screen_bounds {
+                            for handle in ResizeHandle::ALL {
+                                if let Ok(center) = resize_handle_center(screen_bounds, handle) {
+                                    let center = egui::pos2(center.x as f32, center.y as f32);
+                                    let handle_rect = egui::Rect::from_center_size(
+                                        center,
+                                        egui::vec2(12.0_f32, 12.0_f32),
+                                    );
+                                    let a11y = ui.interact(
+                                        handle_rect,
+                                        ui.id().with((
+                                            "resize-handle",
+                                            selected_instance_id,
+                                            resize_handle_label(handle),
+                                        )),
+                                        egui::Sense::hover(),
+                                    );
+                                    a11y.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Other,
+                                            true,
+                                            format!("Resize {} handle", resize_handle_label(handle)),
+                                        )
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             });
 
@@ -2655,7 +2734,7 @@ fn canvas_document_point(
         .ok()
 }
 
-fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect) {
+fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect, show_handles: bool) {
     let accent = egui::Color32::from_rgb(232, 126, 36);
     painter.rect_stroke(
         rect.expand(2.0),
@@ -2664,27 +2743,43 @@ fn paint_selection_overlay(painter: &egui::Painter, rect: egui::Rect) {
         egui::StrokeKind::Inside,
     );
 
-    let center = rect.center();
-    let handles = [
-        rect.left_top(),
-        egui::pos2(center.x, rect.top()),
-        rect.right_top(),
-        egui::pos2(rect.left(), center.y),
-        egui::pos2(rect.right(), center.y),
-        rect.left_bottom(),
-        egui::pos2(center.x, rect.bottom()),
-        rect.right_bottom(),
-    ];
+    if show_handles {
+        let center = rect.center();
+        let handles = [
+            rect.left_top(),
+            egui::pos2(center.x, rect.top()),
+            rect.right_top(),
+            egui::pos2(rect.left(), center.y),
+            egui::pos2(rect.right(), center.y),
+            rect.left_bottom(),
+            egui::pos2(center.x, rect.bottom()),
+            rect.right_bottom(),
+        ];
 
-    for handle in handles {
-        let handle_rect = egui::Rect::from_center_size(handle, egui::vec2(7.0_f32, 7.0_f32));
-        painter.rect_filled(handle_rect, 0, egui::Color32::WHITE);
-        painter.rect_stroke(
-            handle_rect,
-            0,
-            egui::Stroke::new(1.5_f32, accent),
-            egui::StrokeKind::Inside,
-        );
+        for handle in handles {
+            let handle_rect =
+                egui::Rect::from_center_size(handle, egui::vec2(7.0_f32, 7.0_f32));
+            painter.rect_filled(handle_rect, 0, egui::Color32::WHITE);
+            painter.rect_stroke(
+                handle_rect,
+                0,
+                egui::Stroke::new(1.5_f32, accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
+fn resize_handle_label(handle: ResizeHandle) -> &'static str {
+    match handle {
+        ResizeHandle::TopLeft => "top-left",
+        ResizeHandle::Top => "top",
+        ResizeHandle::TopRight => "top-right",
+        ResizeHandle::Left => "left",
+        ResizeHandle::Right => "right",
+        ResizeHandle::BottomLeft => "bottom-left",
+        ResizeHandle::Bottom => "bottom",
+        ResizeHandle::BottomRight => "bottom-right",
     }
 }
 
