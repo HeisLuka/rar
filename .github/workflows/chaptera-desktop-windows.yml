@@ -141,7 +141,12 @@ jobs:
             target/release/Chaptera-Editor.package.json
             target/release/editor-live-trial-package.real.json
             target/release/editor-agent-control.real.json
-            target/chaptera-vtpe-state-v1/receipt.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-vtpe-state-v1
+          path: target/chaptera-vtpe-state-v1/receipt.json
           if-no-files-found: error
 
   validate-portable-editor:
