@@ -53,6 +53,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+#[ignore = "requires pinned real PUB fixture from CLOUD-EXPORT-EXECUTOR-01 acceptance"]
 async fn exact_edited_real_pub_produces_deterministic_idml_and_loss_report() {
     let source_bytes = fs::read(fixture_path()).expect("read pinned SampleNewsletter.pub");
     let source_sha256 = sha256_hex(&source_bytes);
