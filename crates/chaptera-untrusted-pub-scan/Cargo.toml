@@ -1,0 +1,17 @@
+[package]
+name = "chaptera-untrusted-pub-scan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chaptera-untrusted-pub-worker"
+path = "src/bin/untrusted_pub_worker.rs"
+
+[dependencies]
+cfb.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

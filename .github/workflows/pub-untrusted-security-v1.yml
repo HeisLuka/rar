@@ -1,0 +1,250 @@
+name: PUB untrusted security V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/chaptera-untrusted-pub-scan/**"
+      - "tools/migration_pdf_worker_isolation.py"
+      - "tools/test_migration_pdf_worker_isolation.py"
+      - "tools/untrusted_pub_batch_v1.py"
+      - "tools/test_untrusted_pub_batch_v1.py"
+      - "docs/pub-untrusted-security-v1.md"
+      - ".github/workflows/pub-untrusted-security-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  untrusted-pub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      FIXTURE_SHA256: 1e7f38b3ce1d0d956815992b15d361c405fc4bbdced5cdabb3c4581327cc183e
+      FIXTURE_URL: https://raw.githubusercontent.com/Planet-Source-Code/hartoto-flexible-phoone-book__1-69597/1400f033db5f4a57cca6d5392f551943271b7f72/help.pub
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify libseccomp
+        run: |
+          python - <<'PY'
+          import ctypes.util
+          name = ctypes.util.find_library("seccomp")
+          assert name, "libseccomp is required for network default-deny"
+          print(name)
+          PY
+
+      - name: Check untrusted PUB Rust formatting
+        run: rustfmt --edition 2024 --check crates/chaptera-untrusted-pub-scan/src/lib.rs crates/chaptera-untrusted-pub-scan/src/bin/untrusted_pub_worker.rs
+
+      - name: Lint untrusted PUB worker
+        run: cargo clippy -p chaptera-untrusted-pub-scan --all-targets -- -D warnings
+
+      - name: Test untrusted PUB scan crate
+        run: cargo test -p chaptera-untrusted-pub-scan
+
+      - name: Build untrusted PUB worker
+        run: cargo build -p chaptera-untrusted-pub-scan --bin chaptera-untrusted-pub-worker
+
+      - name: Re-run shared worker isolation regressions
+        run: python tools/test_migration_pdf_worker_isolation.py -v
+
+      - name: Test deterministic PUB admission discovery
+        run: python tools/test_untrusted_pub_batch_v1.py -v
+
+      - name: Prepare pinned PUB and deterministic hostile corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source" "$RUNNER_TEMP/negative" "$RUNNER_TEMP/timeout"
+          curl --fail --location --retry 4 --retry-delay 2             "$FIXTURE_URL"             --output "$RUNNER_TEMP/source/help.pub"
+          printf '%s  %s\n' "$FIXTURE_SHA256" "$RUNNER_TEMP/source/help.pub" | sha256sum -c -
+          cp "$RUNNER_TEMP/source/help.pub" "$RUNNER_TEMP/timeout/help.pub"
+
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          source = (temp / "source/help.pub").read_bytes()
+          negative = temp / "negative"
+
+          (negative / "good.pub").write_bytes(source)
+          (negative / "empty.pub").write_bytes(b"")
+          (negative / "magic-only.pub").write_bytes(source[:8])
+          (negative / "header-truncated.pub").write_bytes(source[:64])
+          (negative / "sector-truncated.pub").write_bytes(source[:512])
+          (negative / "half.pub").write_bytes(source[: max(1, len(source) // 2)])
+
+          corrupt_magic = bytearray(source)
+          corrupt_magic[0] ^= 0xFF
+          (negative / "corrupt-magic.pub").write_bytes(corrupt_magic)
+
+          corrupt_sector_shift = bytearray(source)
+          corrupt_sector_shift[30:32] = (0xFFFF).to_bytes(2, "little")
+          (negative / "corrupt-sector-shift.pub").write_bytes(corrupt_sector_shift)
+
+          corrupt_byte_order = bytearray(source)
+          corrupt_byte_order[28:30] = (0).to_bytes(2, "little")
+          (negative / "corrupt-byte-order.pub").write_bytes(corrupt_byte_order)
+
+          corrupt_dir_sector = bytearray(source)
+          corrupt_dir_sector[48:52] = (0x7FFFFFFE).to_bytes(4, "little")
+          (negative / "corrupt-dir-sector.pub").write_bytes(corrupt_dir_sector)
+
+          corrupt_difat_chain = bytearray(source)
+          corrupt_difat_chain[68:72] = (0x7FFFFFFE).to_bytes(4, "little")
+          corrupt_difat_chain[72:76] = (1).to_bytes(4, "little")
+          (negative / "corrupt-difat-chain.pub").write_bytes(corrupt_difat_chain)
+
+          pattern = bytes((index * 73 + 19) % 256 for index in range(4096))
+          (negative / "deterministic-bytes.pub").write_bytes(pattern)
+
+          with (negative / "oversize-default.pub").open("wb") as handle:
+              handle.truncate(256 * 1024 * 1024 + 1)
+
+          os.symlink("/etc/hosts", negative / "escape.pub")
+          os.mkfifo(negative / "trap.pub")
+          PY
+
+      - name: Prove post-read filesystem/process confinement
+        run: |
+          python tools/untrusted_pub_batch_v1.py probe             --worker target/debug/chaptera-untrusted-pub-worker             --source "$RUNNER_TEMP/source/help.pub"             --output-dir "$RUNNER_TEMP/fs-probe"             > "$RUNNER_TEMP/fs-probe.json"
+
+      - name: Run hostile batch twice
+        run: |
+          python tools/untrusted_pub_batch_v1.py batch "$RUNNER_TEMP/negative"             --worker target/debug/chaptera-untrusted-pub-worker             --output-root "$RUNNER_TEMP/negative-out-1"             > "$RUNNER_TEMP/negative-1.json"
+          python tools/untrusted_pub_batch_v1.py batch "$RUNNER_TEMP/negative"             --worker target/debug/chaptera-untrusted-pub-worker             --output-root "$RUNNER_TEMP/negative-out-2"             > "$RUNNER_TEMP/negative-2.json"
+
+      - name: Run explicit structural policy limits
+        run: |
+          python tools/untrusted_pub_batch_v1.py batch "$RUNNER_TEMP/timeout"             --worker target/debug/chaptera-untrusted-pub-worker             --output-root "$RUNNER_TEMP/cfb-limit-out"             --max-cfb-entries 1             > "$RUNNER_TEMP/cfb-limit.json"
+          python tools/untrusted_pub_batch_v1.py batch "$RUNNER_TEMP/timeout"             --worker target/debug/chaptera-untrusted-pub-worker             --output-root "$RUNNER_TEMP/stream-limit-out"             --max-declared-stream-bytes 1             > "$RUNNER_TEMP/stream-limit.json"
+
+      - name: Run forced batch wall-timeout
+        run: |
+          python tools/untrusted_pub_batch_v1.py batch "$RUNNER_TEMP/timeout"             --worker target/debug/chaptera-untrusted-pub-worker             --output-root "$RUNNER_TEMP/timeout-out"             --wall-timeout-ms 1             > "$RUNNER_TEMP/timeout.json"
+
+      - name: Validate hostile corpus and security receipt
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          expected_sha = os.environ["FIXTURE_SHA256"]
+
+          probe = json.loads((temp / "fs-probe.json").read_text(encoding="utf-8"))
+          assert probe["filesystem_default_deny"] is True, probe
+          assert probe["read_errno"] == 1, probe
+          assert probe["write_errno"] == 1, probe
+          assert probe["spawn_errno"] == 1, probe
+
+          first = json.loads((temp / "negative-1.json").read_text(encoding="utf-8"))
+          second = json.loads((temp / "negative-2.json").read_text(encoding="utf-8"))
+          assert first == second, "hostile batch receipt must be deterministic"
+
+          security = first["security"]
+          assert security["shared_worker_harness"] == "tools/migration_pdf_worker_isolation.py"
+          assert security["worker_process_isolation"] is True
+          assert security["linux_rlimits"] is True
+          assert security["network_default_deny"] is True
+          assert security["post_read_filesystem_confinement"] is True
+
+          paths = [row["relative_path"] for row in first["files"]]
+          assert paths == sorted(paths), paths
+          assert "escape.pub" not in paths, "symlink .pub must not be followed"
+          assert "trap.pub" not in paths, "FIFO .pub must not be opened"
+
+          by_path = {row["relative_path"]: row for row in first["files"]}
+          expected_regular = {
+              "good.pub",
+              "empty.pub",
+              "magic-only.pub",
+              "header-truncated.pub",
+              "sector-truncated.pub",
+              "half.pub",
+              "corrupt-magic.pub",
+              "corrupt-sector-shift.pub",
+              "corrupt-byte-order.pub",
+              "corrupt-dir-sector.pub",
+              "corrupt-difat-chain.pub",
+              "deterministic-bytes.pub",
+              "oversize-default.pub",
+          }
+          assert set(by_path) == expected_regular, paths
+
+          good = by_path["good.pub"]
+          assert good["status"] == "accepted_cfb", good
+          assert good["sha256"] == expected_sha, good
+          assert good["cfb_entry_count"] > 1, good
+          assert good["declared_stream_bytes"] > 0, good
+          assert good["filesystem_confinement"] is True, good
+
+          oversize = by_path["oversize-default.pub"]
+          assert oversize["status"] == "rejected_by_policy", oversize
+          assert oversize["security_event"].startswith("input_size_limit:"), oversize
+
+          malformed = expected_regular - {"good.pub", "oversize-default.pub"}
+          for name in sorted(malformed):
+              row = by_path[name]
+              assert row["status"] == "parse_failed", (name, row)
+              assert row["sha256"], (name, row)
+              assert row["filesystem_confinement"] is True, (name, row)
+
+          cfb_limit = json.loads((temp / "cfb-limit.json").read_text(encoding="utf-8"))["files"][0]
+          assert cfb_limit["status"] == "rejected_by_policy", cfb_limit
+          assert cfb_limit["security_event"].startswith("cfb_entry_limit:"), cfb_limit
+
+          stream_limit = json.loads((temp / "stream-limit.json").read_text(encoding="utf-8"))["files"][0]
+          assert stream_limit["status"] == "rejected_by_policy", stream_limit
+          assert stream_limit["security_event"].startswith(
+              "cfb_declared_stream_bytes_limit:"
+          ), stream_limit
+
+          timeout = json.loads((temp / "timeout.json").read_text(encoding="utf-8"))["files"][0]
+          assert timeout["status"] == "timed_out", timeout
+          assert timeout["security_event"] == "wall_timeout_ms: 1", timeout
+
+          summary = {
+              "security_profile": security["profile"],
+              "pinned_pub": good["status"],
+              "negative_regular_files": len(by_path),
+              "malformed_parse_failed": len(malformed),
+              "default_oversize": oversize["status"],
+              "cfb_entry_limit": cfb_limit["status"],
+              "declared_stream_limit": stream_limit["status"],
+              "wall_timeout": timeout["status"],
+              "filesystem_read_errno": probe["read_errno"],
+              "filesystem_write_errno": probe["write_errno"],
+              "process_spawn_errno": probe["spawn_errno"],
+              "symlink_followed": "escape.pub" in paths,
+              "fifo_opened": "trap.pub" in paths,
+              "deterministic_hostile_batch": first == second,
+          }
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          Path("target/pub-untrusted-security-v1").mkdir(parents=True, exist_ok=True)
+          Path("target/pub-untrusted-security-v1/receipt.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pub-untrusted-security-v1
+          path: target/pub-untrusted-security-v1/receipt.json
+          if-no-files-found: error

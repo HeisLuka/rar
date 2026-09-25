@@ -53,6 +53,13 @@ NETWORK_SYSCALLS = (
     "sendmmsg",
     "recvmmsg",
     "shutdown",
+    "getsockname",
+    "getpeername",
+    "setsockopt",
+    "getsockopt",
+    "io_uring_setup",
+    "io_uring_enter",
+    "io_uring_register",
 )
 
 SCMP_ACT_ALLOW = 0x7FFF0000
