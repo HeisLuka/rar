@@ -171,11 +171,32 @@ pub struct ProjectionDiagnostic {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProjectionMembershipStats {
+    pub story_frame_count: u64,
+    pub story_membership_comparisons: u64,
+    pub frame_membership_comparisons: u64,
+    pub additional_index_bytes: u64,
+}
+
+impl ProjectionMembershipStats {
+    pub fn total_membership_comparisons(self) -> u64 {
+        self.story_membership_comparisons
+            .saturating_add(self.frame_membership_comparisons)
+    }
+}
+
 /// Deterministically projects a deliberately small authoring slice.
 ///
 /// Input vector order is not semantic. Output is normalized by stable canonical
 /// identities and semantic coordinates so repeated projections are comparable.
-pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProjection {
+pub fn project_bounded(input: BoundedAuthoringSlice) -> BoundedLayoutProjection {
+    project_bounded_with_membership_stats(input).0
+}
+
+pub fn project_bounded_with_membership_stats(
+    mut input: BoundedAuthoringSlice,
+) -> (BoundedLayoutProjection, ProjectionMembershipStats) {
     input.pages.sort_by_key(|page| page.id);
     input.node_geometry.sort_by_key(|node| node.node_id);
     input.stories.sort_by_key(|story| story.id);
@@ -244,8 +265,17 @@ pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProject
         })
         .collect();
 
+    let mut membership_stats = ProjectionMembershipStats {
+        story_frame_count: input.story_frames.len() as u64,
+        ..ProjectionMembershipStats::default()
+    };
+
     for frame in &input.story_frames {
-        if !stories.iter().any(|story| story.origin == frame.story_id) {
+        if !sorted_story_contains(
+            &stories,
+            frame.story_id,
+            &mut membership_stats.story_membership_comparisons,
+        ) {
             diagnostics.push(ProjectionDiagnostic {
                 code: "missing_story_content".into(),
                 severity: ProjectionSeverity::Error,
@@ -254,10 +284,11 @@ pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProject
             });
         }
 
-        if !node_geometry
-            .iter()
-            .any(|node| node.origin == frame.frame_id)
-        {
+        if !sorted_node_geometry_contains(
+            &node_geometry,
+            frame.frame_id,
+            &mut membership_stats.frame_membership_comparisons,
+        ) {
             diagnostics.push(ProjectionDiagnostic {
                 code: "missing_frame_geometry".into(),
                 severity: ProjectionSeverity::Error,
@@ -323,15 +354,56 @@ pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProject
         }
     }));
 
-    BoundedLayoutProjection {
-        pages,
-        node_geometry,
-        stories,
-        story_frames,
-        tables,
-        guides,
-        diagnostics,
+    (
+        BoundedLayoutProjection {
+            pages,
+            node_geometry,
+            stories,
+            story_frames,
+            tables,
+            guides,
+            diagnostics,
+        },
+        membership_stats,
+    )
+}
+
+fn sorted_story_contains(
+    stories: &[ProjectedStory],
+    target: StoryId,
+    comparisons: &mut u64,
+) -> bool {
+    let mut low = 0usize;
+    let mut high = stories.len();
+    while low < high {
+        let mid = low + (high - low) / 2;
+        *comparisons = comparisons.saturating_add(1);
+        match stories[mid].origin.cmp(&target) {
+            std::cmp::Ordering::Less => low = mid + 1,
+            std::cmp::Ordering::Equal => return true,
+            std::cmp::Ordering::Greater => high = mid,
+        }
     }
+    false
+}
+
+fn sorted_node_geometry_contains(
+    nodes: &[ProjectedNodeGeometry],
+    target: NodeId,
+    comparisons: &mut u64,
+) -> bool {
+    let mut low = 0usize;
+    let mut high = nodes.len();
+    while low < high {
+        let mid = low + (high - low) / 2;
+        *comparisons = comparisons.saturating_add(1);
+        match nodes[mid].origin.cmp(&target) {
+            std::cmp::Ordering::Less => low = mid + 1,
+            std::cmp::Ordering::Equal => return true,
+            std::cmp::Ordering::Greater => high = mid,
+        }
+    }
+    false
 }
 
 fn guide_axis_order(axis: RulerGuideAxis) -> u8 {
