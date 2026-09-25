@@ -156,8 +156,8 @@ mod tests {
         project_bounded,
     };
     use pub_model::{
-        CanonicalId, EMU_PER_MILLIMETER, LengthEmu, Page, RulerGuide, RulerGuideAxis, Size2D,
-        Story, StoryFrame,
+        CanonicalId, EMU_PER_MILLIMETER, LengthEmu, Page, PublisherGuideRole, RulerGuide,
+        RulerGuideAxis, Size2D, Story, StoryFrame,
     };
 
     fn id(byte: u8) -> CanonicalId {
@@ -231,7 +231,7 @@ mod tests {
                     axis: RulerGuideAxis::Vertical,
                     position: LengthEmu::new(12 * EMU_PER_MILLIMETER),
                 },
-                affects_layout: false,
+                provenance: PublisherGuideRole::PageRulerGuide,
             }],
             unknown_layout_state: Vec::new(),
         })
