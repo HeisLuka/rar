@@ -43,6 +43,8 @@ pub enum MigrateAction {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::Parser;
 
     use super::{Cli, Command, MigrateAction};
