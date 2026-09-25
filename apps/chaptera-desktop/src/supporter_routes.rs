@@ -17,7 +17,10 @@ impl SupporterRoutes {
     }
 
     pub(crate) fn from_https_origin(origin: &str) -> Option<Self> {
-        let origin = origin.trim().trim_end_matches('/');
+        if origin != origin.trim() {
+            return None;
+        }
+        let origin = origin.trim_end_matches('/');
         let authority = origin.strip_prefix("https://")?;
 
         if authority.is_empty()
@@ -126,6 +129,8 @@ mod tests {
             "https://user@chaptera.example",
             "https://chaptera.example\\evil",
             "boosty.to/something",
+            " https://chaptera.example",
+            "https://chaptera.example ",
             " https://chaptera.example / ",
         ] {
             assert!(
