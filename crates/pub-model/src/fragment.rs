@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -70,6 +72,14 @@ pub enum AuthoringFragmentError {
     UnsafeTranslation,
     InvalidDestinationNodeId,
     DestinationReusesSourceIdentity,
+    FragmentSetTooSmall,
+    FragmentSetDuplicateSourceIdentity,
+    FragmentSetMixedSourcePage,
+    FragmentSetInvalidMemberId,
+    FragmentSetMembersNotNormalized,
+    FragmentSetOriginMismatch,
+    FragmentSetIdentityMapMismatch,
+    FragmentSetDuplicateDestinationIdentity,
     InvalidMaterializedShape(CreateShapeError),
 }
 
@@ -164,6 +174,223 @@ pub fn materialize_paste_fragment_v1(
         identity_map: paste.identity_map.clone(),
         entity,
     })
+}
+
+pub const AUTHORING_FRAGMENT_SET_SCHEMA_V1: &str = "chaptera.authoring-fragment-set.v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FragmentSetOriginEmuV1 {
+    pub x: i64,
+    pub y: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoringFragmentSetMemberV1 {
+    pub member_id: String,
+    pub fragment: AuthoringFragmentV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoringFragmentSetV1 {
+    pub schema_version: String,
+    pub source_page_id: String,
+    pub origin: FragmentSetOriginEmuV1,
+    pub members: Vec<AuthoringFragmentSetMemberV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasteFragmentSetIdentityRemapV1 {
+    pub member_id: String,
+    pub destination_node_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasteFragmentSetV1 {
+    pub fragment_set: AuthoringFragmentSetV1,
+    pub identity_map: Vec<PasteFragmentSetIdentityRemapV1>,
+    pub destination_page_id: String,
+    pub placement: TranslationEmuV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasteFragmentSetResultV1 {
+    pub identity_map: Vec<PasteFragmentSetIdentityRemapV1>,
+    pub entities: Vec<AuthoredShapeV1>,
+}
+
+pub fn capture_rectangle_fragment_set_v1(
+    shapes: &[AuthoredShapeV1],
+) -> Result<AuthoringFragmentSetV1, AuthoringFragmentError> {
+    if shapes.len() < 2 {
+        return Err(AuthoringFragmentError::FragmentSetTooSmall);
+    }
+
+    let mut by_node_id = BTreeMap::new();
+    for shape in shapes {
+        if by_node_id.insert(shape.node_id.clone(), shape).is_some() {
+            return Err(AuthoringFragmentError::FragmentSetDuplicateSourceIdentity);
+        }
+    }
+
+    let source_page_id = by_node_id
+        .values()
+        .next()
+        .expect("set size validated")
+        .page_id
+        .clone();
+    if by_node_id
+        .values()
+        .any(|shape| shape.page_id != source_page_id || shape.parent_id != source_page_id)
+    {
+        return Err(AuthoringFragmentError::FragmentSetMixedSourcePage);
+    }
+
+    let mut members = Vec::with_capacity(by_node_id.len());
+    let mut origin_x: Option<i64> = None;
+    let mut origin_y: Option<i64> = None;
+    for (index, shape) in by_node_id.values().enumerate() {
+        let fragment = capture_rectangle_fragment_v1(shape)?;
+        origin_x = Some(origin_x.map_or(shape.bounds.x, |value| value.min(shape.bounds.x)));
+        origin_y = Some(origin_y.map_or(shape.bounds.y, |value| value.min(shape.bounds.y)));
+        members.push(AuthoringFragmentSetMemberV1 {
+            member_id: format!("member:{index}"),
+            fragment,
+        });
+    }
+
+    Ok(AuthoringFragmentSetV1 {
+        schema_version: AUTHORING_FRAGMENT_SET_SCHEMA_V1.to_owned(),
+        source_page_id,
+        origin: FragmentSetOriginEmuV1 {
+            x: origin_x.expect("set size validated"),
+            y: origin_y.expect("set size validated"),
+        },
+        members,
+    })
+}
+
+pub fn materialize_paste_fragment_set_v1(
+    paste: &PasteFragmentSetV1,
+) -> Result<PasteFragmentSetResultV1, AuthoringFragmentError> {
+    validate_fragment_set_v1(&paste.fragment_set)?;
+    if paste.destination_page_id.is_empty() {
+        return Err(AuthoringFragmentError::EmptyDestinationPageId);
+    }
+    if paste.identity_map.len() != paste.fragment_set.members.len() {
+        return Err(AuthoringFragmentError::FragmentSetIdentityMapMismatch);
+    }
+
+    let mut remap_by_member = BTreeMap::new();
+    let mut destination_ids = BTreeSet::new();
+    for remap in &paste.identity_map {
+        if remap_by_member
+            .insert(remap.member_id.clone(), remap)
+            .is_some()
+        {
+            return Err(AuthoringFragmentError::FragmentSetIdentityMapMismatch);
+        }
+        validate_uuid_v7_v1(&remap.destination_node_id)
+            .map_err(|_| AuthoringFragmentError::InvalidDestinationNodeId)?;
+        if !destination_ids.insert(remap.destination_node_id.clone()) {
+            return Err(AuthoringFragmentError::FragmentSetDuplicateDestinationIdentity);
+        }
+    }
+
+    let normalized_member_ids: Vec<_> = paste
+        .fragment_set
+        .members
+        .iter()
+        .map(|member| member.member_id.clone())
+        .collect();
+    let remap_member_ids: Vec<_> = paste
+        .identity_map
+        .iter()
+        .map(|remap| remap.member_id.clone())
+        .collect();
+    if remap_member_ids != normalized_member_ids {
+        return Err(AuthoringFragmentError::FragmentSetIdentityMapMismatch);
+    }
+
+    let mut entities = Vec::with_capacity(paste.fragment_set.members.len());
+    for member in &paste.fragment_set.members {
+        let remap = remap_by_member
+            .get(&member.member_id)
+            .ok_or(AuthoringFragmentError::FragmentSetIdentityMapMismatch)?;
+        let single = PasteFragmentV1 {
+            fragment: member.fragment.clone(),
+            identity_map: PasteIdentityRemapV1 {
+                fragment_entity_id: SINGLE_RECTANGLE_ENTITY_ID_V1.to_owned(),
+                destination_node_id: remap.destination_node_id.clone(),
+            },
+            destination_page_id: paste.destination_page_id.clone(),
+            placement: paste.placement,
+        };
+        entities.push(materialize_paste_fragment_v1(&single)?.entity);
+    }
+
+    Ok(PasteFragmentSetResultV1 {
+        identity_map: paste.identity_map.clone(),
+        entities,
+    })
+}
+
+fn validate_fragment_set_v1(
+    fragment_set: &AuthoringFragmentSetV1,
+) -> Result<(), AuthoringFragmentError> {
+    if fragment_set.schema_version != AUTHORING_FRAGMENT_SET_SCHEMA_V1 {
+        return Err(AuthoringFragmentError::InvalidFragmentSchema);
+    }
+    if fragment_set.members.len() < 2 {
+        return Err(AuthoringFragmentError::FragmentSetTooSmall);
+    }
+    if fragment_set.source_page_id.is_empty() {
+        return Err(AuthoringFragmentError::FragmentSetMixedSourcePage);
+    }
+
+    let mut source_ids = BTreeSet::new();
+    let mut expected_origin_x: Option<i64> = None;
+    let mut expected_origin_y: Option<i64> = None;
+    for (index, member) in fragment_set.members.iter().enumerate() {
+        if member.member_id != format!("member:{index}") {
+            return Err(AuthoringFragmentError::FragmentSetMembersNotNormalized);
+        }
+        if member.fragment.schema_version != AUTHORING_FRAGMENT_SCHEMA_V1
+            || member.fragment.rectangle.fragment_entity_id != SINGLE_RECTANGLE_ENTITY_ID_V1
+        {
+            return Err(AuthoringFragmentError::FragmentSetInvalidMemberId);
+        }
+        validate_rect_emu_v1(member.fragment.rectangle.bounds)
+            .map_err(AuthoringFragmentError::InvalidMaterializedShape)?;
+
+        let source = member
+            .fragment
+            .rectangle
+            .source_provenance
+            .as_ref()
+            .ok_or(AuthoringFragmentError::FragmentSetDuplicateSourceIdentity)?;
+        if !source_ids.insert(source.source_node_id.clone()) {
+            return Err(AuthoringFragmentError::FragmentSetDuplicateSourceIdentity);
+        }
+        expected_origin_x = Some(expected_origin_x.map_or(
+            member.fragment.rectangle.bounds.x,
+            |value| value.min(member.fragment.rectangle.bounds.x),
+        ));
+        expected_origin_y = Some(expected_origin_y.map_or(
+            member.fragment.rectangle.bounds.y,
+            |value| value.min(member.fragment.rectangle.bounds.y),
+        ));
+    }
+
+    if fragment_set.origin
+        != (FragmentSetOriginEmuV1 {
+            x: expected_origin_x.expect("set size validated"),
+            y: expected_origin_y.expect("set size validated"),
+        })
+    {
+        return Err(AuthoringFragmentError::FragmentSetOriginMismatch);
+    }
+
+    Ok(())
 }
 
 fn translated_bounds_v1(
@@ -357,6 +584,145 @@ mod tests {
         assert_eq!(
             materialize_paste_fragment_v1(&operation),
             Err(AuthoringFragmentError::UnsafeTranslation)
+        );
+    }
+
+    fn source_shape_with(
+        node_id: &str,
+        x: i64,
+        y: i64,
+    ) -> AuthoredShapeV1 {
+        let mut shape = source_shape();
+        shape.node_id = node_id.to_owned();
+        shape.bounds.x = x;
+        shape.bounds.y = y;
+        shape
+    }
+
+    #[test]
+    fn fragment_set_capture_normalizes_by_source_identity_not_input_order() {
+        let a = source_shape_with(SOURCE_ID, 500, 100);
+        let b = source_shape_with("01890f47-0c03-7abc-8def-0123456789ab", -200, 900);
+        let first = capture_rectangle_fragment_set_v1(&[a.clone(), b.clone()]).expect("capture");
+        let second = capture_rectangle_fragment_set_v1(&[b, a]).expect("capture");
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first
+                .members
+                .iter()
+                .map(|member| member.member_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["member:0", "member:1"]
+        );
+        assert_eq!(first.origin, FragmentSetOriginEmuV1 { x: -200, y: 100 });
+    }
+
+    #[test]
+    fn fragment_set_rejects_duplicate_or_mixed_page_sources() {
+        let a = source_shape_with(SOURCE_ID, 0, 0);
+        assert_eq!(
+            capture_rectangle_fragment_set_v1(&[a.clone(), a]),
+            Err(AuthoringFragmentError::FragmentSetDuplicateSourceIdentity)
+        );
+
+        let a = source_shape_with(SOURCE_ID, 0, 0);
+        let mut b = source_shape_with("01890f47-0c03-7abc-8def-0123456789ab", 100, 100);
+        b.page_id = "page:other".to_owned();
+        b.parent_id = "page:other".to_owned();
+        assert_eq!(
+            capture_rectangle_fragment_set_v1(&[a, b]),
+            Err(AuthoringFragmentError::FragmentSetMixedSourcePage)
+        );
+    }
+
+    #[test]
+    fn fragment_set_paste_preserves_relative_offsets_and_replays_identity_map() {
+        let a = source_shape_with(SOURCE_ID, 500, 100);
+        let b = source_shape_with("01890f47-0c03-7abc-8def-0123456789ab", -200, 900);
+        let set = capture_rectangle_fragment_set_v1(&[b, a]).expect("capture");
+        let paste = PasteFragmentSetV1 {
+            fragment_set: set,
+            identity_map: vec![
+                PasteFragmentSetIdentityRemapV1 {
+                    member_id: "member:0".to_owned(),
+                    destination_node_id: PASTE_ID.to_owned(),
+                },
+                PasteFragmentSetIdentityRemapV1 {
+                    member_id: "member:1".to_owned(),
+                    destination_node_id: SECOND_PASTE_ID.to_owned(),
+                },
+            ],
+            destination_page_id: "page:destination".to_owned(),
+            placement: TranslationEmuV1 {
+                dx_emu: 1_000,
+                dy_emu: -50,
+            },
+        };
+        let first = materialize_paste_fragment_set_v1(&paste).expect("paste");
+        let replay = materialize_paste_fragment_set_v1(&paste).expect("replay");
+        assert_eq!(first, replay);
+        assert_eq!(first.entities.len(), 2);
+
+        let before_dx = first.entities[1].bounds.x - first.entities[0].bounds.x;
+        let before_dy = first.entities[1].bounds.y - first.entities[0].bounds.y;
+        let source_dx = paste.fragment_set.members[1].fragment.rectangle.bounds.x
+            - paste.fragment_set.members[0].fragment.rectangle.bounds.x;
+        let source_dy = paste.fragment_set.members[1].fragment.rectangle.bounds.y
+            - paste.fragment_set.members[0].fragment.rectangle.bounds.y;
+        assert_eq!((before_dx, before_dy), (source_dx, source_dy));
+    }
+
+    #[test]
+    fn fragment_set_identity_map_must_be_complete_unique_and_normalized() {
+        let a = source_shape_with(SOURCE_ID, 0, 0);
+        let b = source_shape_with("01890f47-0c03-7abc-8def-0123456789ab", 100, 100);
+        let set = capture_rectangle_fragment_set_v1(&[a, b]).expect("capture");
+
+        let duplicate_destination = PasteFragmentSetV1 {
+            fragment_set: set.clone(),
+            identity_map: vec![
+                PasteFragmentSetIdentityRemapV1 {
+                    member_id: "member:0".to_owned(),
+                    destination_node_id: PASTE_ID.to_owned(),
+                },
+                PasteFragmentSetIdentityRemapV1 {
+                    member_id: "member:1".to_owned(),
+                    destination_node_id: PASTE_ID.to_owned(),
+                },
+            ],
+            destination_page_id: "page:destination".to_owned(),
+            placement: TranslationEmuV1 {
+                dx_emu: 0,
+                dy_emu: 0,
+            },
+        };
+        assert_eq!(
+            materialize_paste_fragment_set_v1(&duplicate_destination),
+            Err(AuthoringFragmentError::FragmentSetDuplicateDestinationIdentity)
+        );
+
+        let reversed = PasteFragmentSetV1 {
+            fragment_set: set,
+            identity_map: vec![
+                PasteFragmentSetIdentityRemapV1 {
+                    member_id: "member:1".to_owned(),
+                    destination_node_id: PASTE_ID.to_owned(),
+                },
+                PasteFragmentSetIdentityRemapV1 {
+                    member_id: "member:0".to_owned(),
+                    destination_node_id: SECOND_PASTE_ID.to_owned(),
+                },
+            ],
+            destination_page_id: "page:destination".to_owned(),
+            placement: TranslationEmuV1 {
+                dx_emu: 0,
+                dy_emu: 0,
+            },
+        };
+        assert_eq!(
+            materialize_paste_fragment_set_v1(&reversed),
+            Err(AuthoringFragmentError::FragmentSetIdentityMapMismatch)
         );
     }
 
