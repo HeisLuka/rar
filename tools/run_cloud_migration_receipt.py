@@ -49,11 +49,14 @@ def main() -> int:
 
         assert before["state"] == "pending"
         assert before["current_version"] == 0
-        assert before["pending_versions"] == [1, 2, 3, 4, 5, 6]
+        expected_versions = [1, 2, 3, 4, 5, 6, 7]
+        assert before["target_version"] == 7
+        assert before["pending_versions"] == expected_versions
 
         assert up["state"] == "current"
-        assert up["current_version"] == 6
-        assert up["applied_versions"] == [1, 2, 3, 4, 5, 6]
+        assert up["target_version"] == 7
+        assert up["current_version"] == 7
+        assert up["applied_versions"] == expected_versions
         assert current == up
 
         with sqlite3.connect(db) as connection:
@@ -63,9 +66,14 @@ def main() -> int:
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-            for required in {"principals", "principal_identities", "sessions"}:
+            for required in {
+                "principals",
+                "principal_identities",
+                "sessions",
+                "derived_artifacts",
+            }:
                 if required not in tables:
-                    raise SystemExit(f"authn migration did not materialize {required}")
+                    raise SystemExit(f"migration chain did not materialize {required}")
 
             connection.execute(
                 "UPDATE chaptera_schema_migrations "

@@ -6,6 +6,7 @@ pub mod build_info;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod derived_artifacts;
 pub mod doctor;
 pub mod job_executor_registry;
 pub mod job_queue;
