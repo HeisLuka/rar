@@ -1140,9 +1140,11 @@ impl EditorSession {
             }
         }
 
-        let actual_grids = effective_table_grids(&candidate.graph);
-        if actual_grids != project.table_grids {
-            return Err(EditorProjectError::TableGridMismatch);
+        if project.schema_version == EDITOR_PROJECT_VERSION_V0_6 {
+            let actual_grids = effective_table_grids(&candidate.graph);
+            if actual_grids != project.table_grids {
+                return Err(EditorProjectError::TableGridMismatch);
+            }
         }
 
         *self = candidate;
