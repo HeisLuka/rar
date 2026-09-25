@@ -256,6 +256,75 @@ pub trait ProjectCreationPort: Send + Sync {
     ) -> Result<ProjectCreateResult, IngressError>;
 }
 
+/// Build the canonical durable ISSUED row from a preallocated opaque UploadId.
+///
+/// Production Cloud composition must allocate this identity before upload
+/// admission and use the same value as UploadAdmission reservation_id. That
+/// makes the admission reservation and durable UploadRecord recoverably joined
+/// across process restarts without a second lifecycle table.
+pub fn build_issue_upload_candidate(
+    max_source_bytes: u64,
+    request: IssueUploadRequest,
+    upload_id: String,
+) -> Result<UploadRecord, IngressError> {
+    if max_source_bytes == 0 {
+        return Err(IngressError::new(
+            "invalid_config",
+            "max_source_bytes must be positive",
+        ));
+    }
+    require_ident(&request.tenant_id, "tenant_id")?;
+    require_ident(&request.principal_id, "principal_id")?;
+    require_ident(&request.idempotency_key, "idempotency_key")?;
+    require_ident(&upload_id, "upload_id")?;
+    if request.expected_byte_len == 0 || request.expected_byte_len > max_source_bytes {
+        return Err(IngressError::new(
+            "upload_size_rejected",
+            "expected_byte_len is outside the bounded PUB source class",
+        ));
+    }
+    if request.expires_at_ms <= request.now_ms {
+        return Err(IngressError::new(
+            "invalid_expiry",
+            "upload expiry must be after issue time",
+        ));
+    }
+    if let Some(content_type) = &request.declared_content_type
+        && (content_type.len() > 256 || content_type.chars().any(char::is_control))
+    {
+        return Err(IngressError::new(
+            "invalid_content_type",
+            "declared content type is not a bounded display hint",
+        ));
+    }
+
+    let request_hash = issue_request_hash(&request)?;
+    let physical_upload_ref = format!("quarantine/{}/{}", request.tenant_id, upload_id);
+
+    Ok(UploadRecord {
+        upload_id,
+        tenant_id: request.tenant_id,
+        principal_id: request.principal_id,
+        purpose: UploadPurpose::PubSource,
+        expected_byte_len: request.expected_byte_len,
+        declared_content_type: request.declared_content_type,
+        physical_upload_ref,
+        state: UploadState::Issued,
+        upload_generation: 0,
+        object_version: None,
+        object_etag: None,
+        observed_byte_len: None,
+        canonical_sha256: None,
+        durable_binding_id: None,
+        created_at_ms: request.now_ms,
+        expires_at_ms: request.expires_at_ms,
+        completed_at_ms: None,
+        terminal_code: None,
+        idempotency_key: request.idempotency_key,
+        request_hash,
+    })
+}
+
 #[derive(Clone)]
 pub struct SourceIngressService {
     max_source_bytes: u64,
@@ -298,58 +367,8 @@ impl SourceIngressService {
         &self,
         request: IssueUploadRequest,
     ) -> Result<IssueUploadResult, IngressError> {
-        require_ident(&request.tenant_id, "tenant_id")?;
-        require_ident(&request.principal_id, "principal_id")?;
-        require_ident(&request.idempotency_key, "idempotency_key")?;
-        if request.expected_byte_len == 0 || request.expected_byte_len > self.max_source_bytes {
-            return Err(IngressError::new(
-                "upload_size_rejected",
-                "expected_byte_len is outside the bounded PUB source class",
-            ));
-        }
-        if request.expires_at_ms <= request.now_ms {
-            return Err(IngressError::new(
-                "invalid_expiry",
-                "upload expiry must be after issue time",
-            ));
-        }
-        if let Some(content_type) = &request.declared_content_type
-            && (content_type.len() > 256 || content_type.chars().any(char::is_control))
-        {
-            return Err(IngressError::new(
-                "invalid_content_type",
-                "declared content type is not a bounded display hint",
-            ));
-        }
-
-        let request_hash = issue_request_hash(&request)?;
         let upload_id = self.ids.next_upload_id()?;
-        require_ident(&upload_id, "upload_id")?;
-        let physical_upload_ref = format!("quarantine/{}/{}", request.tenant_id, upload_id);
-
-        let candidate = UploadRecord {
-            upload_id,
-            tenant_id: request.tenant_id,
-            principal_id: request.principal_id,
-            purpose: UploadPurpose::PubSource,
-            expected_byte_len: request.expected_byte_len,
-            declared_content_type: request.declared_content_type,
-            physical_upload_ref,
-            state: UploadState::Issued,
-            upload_generation: 0,
-            object_version: None,
-            object_etag: None,
-            observed_byte_len: None,
-            canonical_sha256: None,
-            durable_binding_id: None,
-            created_at_ms: request.now_ms,
-            expires_at_ms: request.expires_at_ms,
-            completed_at_ms: None,
-            terminal_code: None,
-            idempotency_key: request.idempotency_key,
-            request_hash,
-        };
-
+        let candidate = build_issue_upload_candidate(self.max_source_bytes, request, upload_id)?;
         let upload = self.repo.issue_idempotent(candidate)?;
         let transport = self.quarantine.issue_transport(&upload)?;
         Ok(IssueUploadResult { upload, transport })
@@ -1319,6 +1338,40 @@ mod tests {
             .complete_upload("tenant-a", "principal-a", &issued.upload.upload_id, 200)
             .unwrap()
             .upload
+    }
+
+    #[test]
+    fn preallocated_upload_id_is_the_durable_admission_join_identity() {
+        let request = IssueUploadRequest {
+            tenant_id: "tenant-a".into(),
+            principal_id: "principal-a".into(),
+            expected_byte_len: 4,
+            declared_content_type: Some("application/x-mspublisher".into()),
+            idempotency_key: "issue-preallocated".into(),
+            now_ms: 100,
+            expires_at_ms: 10_000,
+        };
+
+        let first = build_issue_upload_candidate(
+            1024 * 1024,
+            request.clone(),
+            "upload-reservation-42".into(),
+        )
+        .unwrap();
+        let replay = build_issue_upload_candidate(
+            1024 * 1024,
+            request,
+            "upload-reservation-42".into(),
+        )
+        .unwrap();
+
+        assert_eq!(first.upload_id, "upload-reservation-42");
+        assert_eq!(
+            first.physical_upload_ref,
+            "quarantine/tenant-a/upload-reservation-42"
+        );
+        assert_eq!(first.request_hash, replay.request_hash);
+        assert_eq!(first, replay);
     }
 
     #[test]
