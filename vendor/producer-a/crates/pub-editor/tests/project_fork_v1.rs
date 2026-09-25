@@ -1,8 +1,8 @@
-use pub_editor::{
-    EditOperation, EditorProject, EditorProjectAsset, EditorProjectForkProvenance,
-    EditorProjectIdentity, EDITOR_PROJECT_VERSION_V0_5,
-};
 use pub_editor::Sha256Digest;
+use pub_editor::{
+    EDITOR_PROJECT_VERSION_V0_5, EditOperation, EditorProject, EditorProjectAsset,
+    EditorProjectForkProvenance, EditorProjectIdentity,
+};
 
 fn project_with_identity() -> EditorProject {
     EditorProject {
@@ -24,7 +24,9 @@ fn project_with_identity() -> EditorProject {
 fn fork_preserves_effective_state_but_rekeys_history_identity() {
     let parent = project_with_identity();
     let parent_state = parent.state_id_v1();
-    let fork = parent.fork_next_issue().expect("identity-bearing project should fork");
+    let fork = parent
+        .fork_next_issue()
+        .expect("identity-bearing project should fork");
     let fork_identity = fork.identity.as_ref().expect("fork identity");
     let parent_identity = parent.identity.as_ref().expect("parent identity");
 
