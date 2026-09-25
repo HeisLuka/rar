@@ -3,7 +3,8 @@ name: Authoring Shape Paint V1
 on:
   pull_request:
     paths:
-      - "crates/pub-model/**"
+      - "crates/pub-model/src/shape_paint.rs"
+      - "crates/pub-model/src/shape_paint_op.rs"
       - "crates/pub-paint-bridge/**"
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_shape_paint.py"
