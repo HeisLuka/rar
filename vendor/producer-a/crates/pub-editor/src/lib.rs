@@ -61,7 +61,13 @@ pub fn story_state_id_v1(story_id: StoryId, text: &str) -> String {
     });
     let bytes = serde_json::to_vec(&payload)
         .expect("canonical Story state JSON serialization cannot fail");
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing lowercase hex into String cannot fail");
+    }
+    format!("sha256:{encoded}")
 }
 
 fn scalar_byte_offset(text: &str, scalar_index: u32) -> Option<usize> {
