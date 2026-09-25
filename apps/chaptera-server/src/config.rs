@@ -626,9 +626,18 @@ fn validate_source_ingress_http(
     }
 
     for (field, path) in [
-        ("source_ingress.baseline.isolation_python", &baseline.isolation_python),
-        ("source_ingress.baseline.isolation_harness", &baseline.isolation_harness),
-        ("source_ingress.baseline.worker_binary", &baseline.worker_binary),
+        (
+            "source_ingress.baseline.isolation_python",
+            &baseline.isolation_python,
+        ),
+        (
+            "source_ingress.baseline.isolation_harness",
+            &baseline.isolation_harness,
+        ),
+        (
+            "source_ingress.baseline.worker_binary",
+            &baseline.worker_binary,
+        ),
         ("source_ingress.baseline.temp_root", &baseline.temp_root),
     ] {
         if path.as_os_str().is_empty() {
