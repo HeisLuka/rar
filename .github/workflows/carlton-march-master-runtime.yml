@@ -4,7 +4,8 @@ on:
   pull_request:
     paths:
       - "crates/pub-master-projection/**"
-      - "crates/pub-model/**"
+      - "crates/pub-model/src/projection_context.rs"
+      - "crates/pub-model/src/source_identity.rs"
       - ".github/workflows/carlton-march-master-runtime.yml"
   workflow_dispatch:
 
