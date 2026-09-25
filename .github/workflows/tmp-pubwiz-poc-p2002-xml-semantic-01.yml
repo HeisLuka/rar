@@ -51,7 +51,7 @@ jobs:
           for f in m.get("files",[]):
               if str(f.get("source") or "")!="original": continue
               n=str(f.get("name") or "")
-              if n.lower().endswith((".iso",".img")):
+              if n=="Microsoft Office Professional Plus 2007.iso":
                   cand.append((int(f.get("size") or 0),n,f.get("md5"),f.get("sha1")))
           if not cand: raise SystemExit("no original Office12 image")
           cand.sort(reverse=True)
