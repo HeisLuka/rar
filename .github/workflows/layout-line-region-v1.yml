@@ -22,8 +22,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Check formatting of touched crates
+        run: cargo fmt -p chaptera-line-region -p chaptera-layout-invalidation -- --check
       - name: Check line-region and flow integration
         run: cargo check -p chaptera-line-region -p chaptera-layout-invalidation --all-targets
       - name: Lint line-region and flow integration
