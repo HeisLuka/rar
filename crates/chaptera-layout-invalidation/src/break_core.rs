@@ -73,7 +73,7 @@ where
 
     let measured_width_emu = metrics[start_index..end_index]
         .iter()
-        .map(&advance_emu)
+        .map(|metric| advance_emu(metric))
         .sum();
 
     LineBreakProbeV1::Selected(LineBreakDecisionV1 {
