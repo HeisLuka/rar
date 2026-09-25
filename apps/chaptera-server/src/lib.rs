@@ -7,6 +7,7 @@ pub mod cli;
 pub mod config;
 pub mod db;
 pub mod doctor;
+pub mod job_executor_registry;
 pub mod job_queue;
 pub mod job_worker;
 pub mod jobs;
