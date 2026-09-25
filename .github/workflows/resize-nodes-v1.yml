@@ -1,0 +1,33 @@
+name: Resize Nodes V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/resize_nodes_v1.py"
+      - "services/editor-api/test_resize_nodes_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/create_shape_v1.py"
+      - ".github/workflows/resize-nodes-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run atomic ResizeNodes tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_resize_nodes_v1
+      - name: Re-run multi-resize planner
+        working-directory: services/editor-api
+        run: python -m unittest -v test_multi_resize_plan_v1
+      - name: Re-run revision kernel regression
+        working-directory: services/editor-api
+        run: python -m unittest -v test_revision_store
