@@ -37,6 +37,16 @@ pub(crate) struct ValueReceipt {
     pub(crate) kind: ValueReceiptKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SupporterAction {
+    Support,
+    Later,
+    AlreadySupported,
+    Share,
+    Report,
+    ArchiveHelp,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DocumentSession {
     page_count: usize,
