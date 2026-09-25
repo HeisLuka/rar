@@ -775,6 +775,21 @@ mod tests {
         }
     }
 
+    fn baseline(upload_id: &str) -> ProjectBaselineIdentity {
+        ProjectBaselineIdentity {
+            service_revision_id: format!("service-baseline-{upload_id}"),
+            canonical_schema_version: AUTHORING_REVISION_SCHEMA_V1.into(),
+            canonical_authoring_revision_id: hex_lower(Sha256::digest(upload_id.as_bytes())),
+        }
+    }
+
+    #[test]
+    fn planned_project_identity_matches_closed_lifecycle_contract() {
+        let planned = plan_project_identity(&request("upload-1", "create-1", 3)).unwrap();
+        assert_eq!(planned.project_id, "project:c54c2429d0bf699b890aab84");
+        assert_eq!(planned.document_id, "document:c54c2429d0bf699b890aab84");
+    }
+
     #[tokio::test]
     async fn fresh_validated_upload_atomically_creates_project_document_genesis_and_consumption() {
         let (path, adapter, pool) = setup("fresh").await;
@@ -790,7 +805,7 @@ mod tests {
         .await;
 
         let created = adapter
-            .create_project_from_upload(request("upload-1", "create-1", 3))
+            .create_project_from_upload(request("upload-1", "create-1", 3), baseline("upload-1"))
             .await
             .unwrap();
 
@@ -835,6 +850,20 @@ mod tests {
         assert_eq!(consumption_count, 1);
         assert_eq!(state, "CONSUMED");
 
+        let identity: (String, String) = sqlx::query_as(
+            "SELECT canonical_schema_version, canonical_revision_id FROM revision_identity_bindings WHERE document_id = ? AND service_revision_id = ?",
+        )
+        .bind(created.document_id.as_bytes())
+        .bind(created.genesis_revision_id.as_bytes())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(identity.0, AUTHORING_REVISION_SCHEMA_V1);
+        assert_eq!(
+            identity.1,
+            baseline("upload-1").canonical_authoring_revision_id
+        );
+
         adapter.close().await;
         pool.close().await;
         cleanup(&path);
@@ -854,8 +883,9 @@ mod tests {
         )
         .await;
         let req = request("upload-1", "create-1", 3);
+        let identity = baseline("upload-1");
         let first = adapter
-            .create_project_from_upload(req.clone())
+            .create_project_from_upload(req.clone(), identity.clone())
             .await
             .unwrap();
         adapter.close().await;
@@ -863,7 +893,10 @@ mod tests {
         let reopened = SqliteProjectPersistence::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
-        let second = reopened.create_project_from_upload(req).await.unwrap();
+        let second = reopened
+            .create_project_from_upload(req, identity)
+            .await
+            .unwrap();
         assert_eq!(second, first);
 
         reopened.close().await;
@@ -885,14 +918,14 @@ mod tests {
         )
         .await;
         adapter
-            .create_project_from_upload(request("upload-1", "create-1", 3))
+            .create_project_from_upload(request("upload-1", "create-1", 3), baseline("upload-1"))
             .await
             .unwrap();
 
         let mut changed = request("upload-1", "create-1", 3);
         changed.name = "Different name".into();
         let error = adapter
-            .create_project_from_upload(changed)
+            .create_project_from_upload(changed, baseline("upload-1"))
             .await
             .unwrap_err();
         assert_eq!(error.code, "idempotency_conflict");
@@ -919,11 +952,11 @@ mod tests {
         }
 
         let first = adapter
-            .create_project_from_upload(request("upload-1", "create-1", 3))
+            .create_project_from_upload(request("upload-1", "create-1", 3), baseline("upload-1"))
             .await
             .unwrap();
         let second = adapter
-            .create_project_from_upload(request("upload-2", "create-2", 3))
+            .create_project_from_upload(request("upload-2", "create-2", 3), baseline("upload-2"))
             .await
             .unwrap();
 
@@ -951,7 +984,7 @@ mod tests {
         .await;
 
         let error = adapter
-            .create_project_from_upload(request("upload-1", "create-1", 2))
+            .create_project_from_upload(request("upload-1", "create-1", 2), baseline("upload-1"))
             .await
             .unwrap_err();
         assert_eq!(error.code, "source_not_validated_durable");
@@ -966,7 +999,7 @@ mod tests {
         wrong_tenant.tenant_id = "tenant-b".into();
         assert_eq!(
             adapter
-                .create_project_from_upload(wrong_tenant)
+                .create_project_from_upload(wrong_tenant, baseline("upload-1"))
                 .await
                 .unwrap_err()
                 .code,
@@ -975,7 +1008,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .create_project_from_upload(request("upload-1", "create-3", 1))
+                .create_project_from_upload(request("upload-1", "create-3", 1), baseline("upload-1"))
                 .await
                 .unwrap_err()
                 .code,
@@ -1010,13 +1043,19 @@ mod tests {
         let error = adapter
             .create_project_from_upload_inner(
                 request("upload-1", "create-1", 3),
+                baseline("upload-1"),
                 CommitFailpoint::BeforeCommit,
             )
             .await
             .unwrap_err();
         assert_eq!(error.code, "injected_before_commit");
 
-        for table in ["projects", "documents", "upload_consumptions"] {
+        for table in [
+            "projects",
+            "documents",
+            "upload_consumptions",
+            "revision_identity_bindings",
+        ] {
             let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
                 .fetch_one(&pool)
                 .await
@@ -1049,8 +1088,9 @@ mod tests {
         )
         .await;
         let req = request("upload-1", "create-1", 3);
+        let identity = baseline("upload-1");
         let committed = adapter
-            .create_project_from_upload(req.clone())
+            .create_project_from_upload(req.clone(), identity.clone())
             .await
             .unwrap();
         adapter.close().await;
@@ -1059,7 +1099,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            reopened.create_project_from_upload(req).await.unwrap(),
+            reopened
+                .create_project_from_upload(req, identity)
+                .await
+                .unwrap(),
             committed
         );
 
@@ -1083,7 +1126,7 @@ mod tests {
         )
         .await;
         let created = adapter
-            .create_project_from_upload(request("upload-1", "create-1", 3))
+            .create_project_from_upload(request("upload-1", "create-1", 3), baseline("upload-1"))
             .await
             .unwrap();
 
