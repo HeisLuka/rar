@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/rescue-product-validation-receipt.v1.json",
+  "title": "Chaptera Rescue product validation receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "product",
+    "producer_receipt_sha256",
+    "fixture",
+    "outcome",
+    "source_immutable",
+    "artifact_count",
+    "known_loss",
+    "native_pub_delivery_allowed",
+    "fail_closed",
+    "privacy"
+  ],
+  "properties": {
+    "receipt_version": {"const": "chaptera.rescue-product-validation.v1"},
+    "product": {"const": "Chaptera Rescue"},
+    "producer_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source_sha256"],
+      "properties": {
+        "kind": {"enum": ["natural_partial_cfb", "healthy_control", "partial_control"]},
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "outcome": {
+      "enum": [
+        "bounded_recovered",
+        "partially_recovered",
+        "manual_review",
+        "unsupported/no_safe_recovery"
+      ]
+    },
+    "source_immutable": {"const": true},
+    "artifact_count": {"type": "integer", "minimum": 0},
+    "known_loss": {"type": "boolean"},
+    "native_pub_delivery_allowed": {"type": "boolean"},
+    "fail_closed": {"const": true},
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_free", "private_content_serialized"],
+      "properties": {
+        "source_free": {"const": true},
+        "private_content_serialized": {"const": false}
+      }
+    }
+  }
+}
