@@ -36,6 +36,7 @@ pub struct FolderSweepFileResult {
     pub format_version: Option<String>,
     pub intake_class: Option<String>,
     pub failure_group_id: Option<String>,
+    pub full_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -317,6 +318,7 @@ fn scan_pub_candidate(
                 format_version: None,
                 intake_class: None,
                 failure_group_id: Some(group_id),
+                full_diagnostic: Some(diagnostic),
             };
         }
     };
@@ -334,6 +336,7 @@ fn scan_pub_candidate(
             format_version: visual.document.source.format_version.clone(),
             intake_class: None,
             failure_group_id: None,
+            full_diagnostic: None,
         },
         Err(error) => {
             let intake = intake_class_name(classify_failure_candidate(&bytes).class).to_owned();
@@ -354,6 +357,7 @@ fn scan_pub_candidate(
                 format_version: None,
                 intake_class: Some(intake),
                 failure_group_id: Some(group_id),
+                full_diagnostic: Some(error),
             }
         }
     }
@@ -384,8 +388,18 @@ fn collect_pub_candidates(
         }
     };
 
-    let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
-    entries.sort_by(|left, right| {
+    let mut readable_entries = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => readable_entries.push(entry),
+            Err(error) => failures.push(TraversalFailure {
+                relative_path: relative_display(root, directory),
+                depth,
+                message: format!("read directory entry: {error}"),
+            }),
+        }
+    }
+    readable_entries.sort_by(|left, right| {
         let left_name = left.file_name().to_string_lossy().into_owned();
         let right_name = right.file_name().to_string_lossy().into_owned();
         left_name
@@ -394,7 +408,7 @@ fn collect_pub_candidates(
             .then_with(|| left_name.cmp(&right_name))
     });
 
-    for entry in entries {
+    for entry in readable_entries {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
@@ -497,6 +511,9 @@ fn normalize_failure_token(token: &str) -> String {
         && hex.chars().all(|ch| ch.is_ascii_hexdigit())
     {
         return token.replace(trimmed, "<hex>");
+    }
+    if trimmed.len() >= 5 && trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+        return token.replace(trimmed, "<n>");
     }
     token.to_owned()
 }
@@ -644,6 +661,10 @@ mod tests {
         assert!(normalized.contains("0x2C"));
         assert!(normalized.contains("/Quill/QuillSub/CONTENTS"));
         assert!(normalized.contains("<hex>"));
+
+        let offset = normalize_failure_message("record failed at byte 123456 in field 0x21");
+        assert!(offset.contains("<n>"));
+        assert!(offset.contains("0x21"));
     }
 
     #[test]
