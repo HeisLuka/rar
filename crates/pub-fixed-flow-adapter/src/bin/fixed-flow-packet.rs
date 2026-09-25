@@ -4,9 +4,7 @@ use std::{
     process::ExitCode,
 };
 
-use pub_fixed_flow_adapter::{
-    ShapedFlowInputV1, build_receipt_v1, materialize_fixed_runs_v1,
-};
+use pub_fixed_flow_adapter::{ShapedFlowInputV1, build_receipt_v1, materialize_fixed_runs_v1};
 use serde_json::json;
 
 const PACKET_VERSION_V1: &str = "chaptera.fixed-flow-adapter-packet.v1";
