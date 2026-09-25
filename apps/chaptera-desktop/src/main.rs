@@ -482,6 +482,8 @@ impl ViewerApp {
             .map(|editor| editor.operations().len())
             .unwrap_or(0);
         let editor_available = self.editor.is_some();
+        let saved_operation_count = self.saved_project_operation_count().ok().flatten();
+        let reopen_enabled = operation_count > 0 && saved_operation_count == Some(operation_count);
         let document_label = self
             .source_path
             .as_ref()
@@ -518,6 +520,64 @@ impl ViewerApp {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(operation_count > 0, |ui| {
+                    ui.menu_button("Export", |ui| {
+                        if ui.button("Preview IDML").clicked() {
+                            self.refresh_export_preview(pub_editor::EditorEditableTarget::Idml);
+                        }
+                        if ui.button("Preview ODG").clicked() {
+                            self.refresh_export_preview(pub_editor::EditorEditableTarget::Odg);
+                        }
+
+                        if let Some(preview) = self.export_preview.clone() {
+                            ui.separator();
+                            ui.small(&preview.summary);
+                            let preview_is_current = preview.operation_count == operation_count;
+                            if !preview_is_current {
+                                ui.weak("Preview is stale. Preview again before export.");
+                            }
+                            let export_enabled = preview_is_current && preview.can_serialize;
+                            if ui
+                                .add_enabled(
+                                    export_enabled,
+                                    egui::Button::new(format!("Export edited {} copy", preview.target)),
+                                )
+                                .clicked()
+                            {
+                                match self.export_editable_copy(preview.target) {
+                                    Ok((output, report)) => {
+                                        self.edit_status = Some(format!(
+                                            "Exported edited {} copy to {} with report {}. Source PUB was not overwritten.",
+                                            preview.target,
+                                            output.display(),
+                                            report.display()
+                                        ));
+                                    }
+                                    Err(error) => {
+                                        self.edit_status = Some(format!(
+                                            "Could not export {}: {error}",
+                                            preview.target
+                                        ));
+                                    }
+                                }
+                            }
+                        } else {
+                            ui.weak("Preview IDML or ODG to review fidelity/loss before export.");
+                        }
+                    });
+                });
+
+                let reopen_response = ui.add_enabled(
+                    reopen_enabled,
+                    egui::Button::new("Reopen Project"),
+                );
+                let reopen_clicked = reopen_response.clicked();
+                if !reopen_enabled {
+                    reopen_response.on_disabled_hover_text(
+                        "Save the current EditorProject before reopening it. Reopen never discards unsaved operations.",
+                    );
+                }
+
                 let save_clicked = ui
                     .add_enabled(operation_count > 0, egui::Button::new("Save Project"))
                     .clicked();
@@ -528,6 +588,11 @@ impl ViewerApp {
                     .add_enabled(editor_available && operation_count > 0, egui::Button::new("Undo"))
                     .clicked();
 
+                if reopen_clicked {
+                    if let Err(error) = self.reopen_saved_project() {
+                        self.edit_status = Some(format!("Could not reopen saved project: {error}"));
+                    }
+                }
                 if save_clicked {
                     match self.save_editor_project_sidecar() {
                         Ok(path) => {
@@ -1409,6 +1474,50 @@ impl ViewerApp {
                 self.edit_status = Some(format!("Redo unavailable: {} ({})", error, error.code()));
             }
         }
+    }
+
+    fn saved_project_operation_count(&self) -> Result<Option<usize>, String> {
+        let Some(source_path) = self.source_path.as_ref() else {
+            return Ok(None);
+        };
+        let sidecar = editor_project_sidecar_path(source_path)
+            .ok_or_else(|| "source path has no file name".to_owned())?;
+        if !sidecar.exists() {
+            return Ok(None);
+        }
+        let bytes =
+            fs::read(&sidecar).map_err(|error| format!("read {}: {error}", sidecar.display()))?;
+        let project: pub_editor::EditorProject = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("parse editor project JSON: {error}"))?;
+        Ok(Some(project.operations.len()))
+    }
+
+    fn reopen_saved_project(&mut self) -> Result<(), String> {
+        let source_path = self
+            .source_path
+            .clone()
+            .ok_or_else(|| "source path is unavailable".to_owned())?;
+        let current_operation_count = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.operations().len())
+            .ok_or_else(|| "editor session is unavailable".to_owned())?;
+        let saved_operation_count = self
+            .saved_project_operation_count()?
+            .ok_or_else(|| "saved EditorProject sidecar is unavailable".to_owned())?;
+        if current_operation_count != saved_operation_count {
+            return Err(
+                "current edits differ from the saved EditorProject; save before reopening".to_owned(),
+            );
+        }
+
+        self.load_path(source_path);
+        if self.editor.is_none() {
+            return Err("fresh editor session could not be opened".to_owned());
+        }
+        self.edit_status =
+            Some("Reopened source and replayed the saved EditorProject in a fresh session.".to_owned());
+        Ok(())
     }
 
     fn refresh_export_preview(&mut self, target: pub_editor::EditorEditableTarget) {
@@ -3059,6 +3168,19 @@ mod tests {
             expected,
             "sidecar-replayed MoveNode must become visible through canonical scene sync"
         );
+    }
+
+    #[test]
+    fn desktop_v0_command_surface_keeps_reopen_and_export_explicit() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("Open PUB…"));
+        assert!(source.contains("Save Project"));
+        assert!(source.contains("Reopen Project"));
+        assert!(source.contains("Preview IDML"));
+        assert!(source.contains("Preview ODG"));
+        assert!(source.contains("Reopen never discards unsaved operations."));
+        assert!(source.contains("Technical details"));
+        assert!(source.contains("Match details"));
     }
 
     #[test]
