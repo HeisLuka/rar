@@ -191,6 +191,173 @@ jobs:
             done
 
             python - <<'PY'
+          import pathlib,re,json
+          checks={}
+          for b in ('9232','9241'):
+              root=pathlib.Path(f'/tmp/vd/{b}/root')
+              samples=[]
+              for p in root.rglob('installer.ini'):
+                  try:
+                      txt=p.read_text(errors='replace')
+                  except Exception:
+                      continue
+                  vals=re.findall(r'(?im)^\\s*Build\\s*=\\s*(\\d+)\\s*
+          roots={b:pathlib.Path(f'/tmp/vd/{b}/root') for b in ('9232','9241')}
+          def sha_file(p):
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  while True:
+                      x=f.read(1024*1024)
+                      if not x: break
+                      h.update(x)
+              return h.hexdigest()
+          def inv(root):
+              out={}
+              for p in root.rglob('*'):
+                  if not p.is_file(): continue
+                  rel=str(p.relative_to(root))
+                  out[rel]={'size':p.stat().st_size,'sha256':sha_file(p)}
+              return out
+          invs={b:inv(r) for b,r in roots.items()}
+          for b in invs:
+              pathlib.Path(f'out/inventory-{b}.json').write_text(json.dumps(invs[b],indent=2))
+          a,b=invs['9232'],invs['9241']
+          added=sorted(set(b)-set(a))
+          removed=sorted(set(a)-set(b))
+          changed=sorted(p for p in set(a)&set(b) if a[p]['sha256']!=b[p]['sha256'])
+          unchanged=sorted(p for p in set(a)&set(b) if a[p]['sha256']==b[p]['sha256'])
+
+          def elf_meta(root,paths):
+              rows={}
+              for rel in paths:
+                  p=root/rel
+                  typ=subprocess.run(['file','-b',str(p)],capture_output=True,text=True,errors='replace',timeout=10).stdout.strip()
+                  if 'ELF ' not in typ: continue
+                  dyn=subprocess.run(['readelf','-d',str(p)],capture_output=True,text=True,errors='replace',timeout=20).stdout
+                  rows[rel]={
+                    'file':typ,
+                    'needed':re.findall(r'Shared library: \[([^\]]+)\]',dyn),
+                    'rpath':re.findall(r'(?:RPATH|RUNPATH).*?\[([^\]]+)\]',dyn)
+                  }
+              return rows
+          delta_paths=sorted(set(added+changed))
+          elf9232=elf_meta(roots['9232'], sorted(set(removed+changed)))
+          elf9241=elf_meta(roots['9241'], delta_paths)
+
+          high_re=re.compile(r'(?i)(Microsoft Publisher|Publisher document|MS Publisher|PUB importer|Publisher import|import[^\n\r]{0,60}Publisher|Publisher[^\n\r]{0,60}import|libmspub|librevenge|writerperfect|libwpd|Quill|Root Entry|Structured Storage|Compound File|CompObj|SummaryInformation|DocumentSummaryInformation)')
+          url_re=re.compile(r'''https?://[^\s"'<>]{5,200}''',re.I)
+          signals=[]
+          for rel in delta_paths:
+              p=roots['9241']/rel
+              if p.stat().st_size>350_000_000: continue
+              try:
+                  s=subprocess.run(['strings','-a','-n','7',str(p)],capture_output=True,text=True,errors='replace',timeout=60).stdout
+              except Exception:
+                  continue
+              hs=[]
+              for line in s.splitlines():
+                  if high_re.search(line):
+                      hs.append(line[:300])
+                      if len(hs)>=80: break
+              urls=[]
+              if hs or rel in elf9241:
+                  for u in url_re.findall(s):
+                      if u not in urls:
+                          urls.append(u)
+                      if len(urls)>=50: break
+              if hs or urls:
+                  signals.append({'path':rel,'high_signal_strings':hs,'urls':urls})
+
+          core_names=[p for p in delta_paths if re.search(r'(?i)(VivaDesigner|VivaLibCore|VivaLibGui|UniAPI|UniLib|AddIns/.*\.so)',p)]
+          dep_deltas=[]
+          for rel in sorted(set(elf9232)&set(elf9241)):
+              x,y=elf9232[rel],elf9241[rel]
+              if x['needed']!=y['needed'] or x['rpath']!=y['rpath']:
+                  dep_deltas.append({'path':rel,'9232':x,'9241':y})
+          known_names=re.compile(r'(?i)(libmspub|librevenge|writerperfect|libwpd|libwpg|libodfgen|libstaroffice|LibreOffice|OpenOffice)')
+          added_known=[p for p in added if known_names.search(p)]
+          added_elf=[p for p in added if p in elf9241]
+          if added_known:
+              cls='known_engine_component_added'
+          elif added_elf:
+              cls='new_binary_components_added_review_required'
+          elif core_names:
+              cls='changed_viva_core_or_main_in_process_candidate'
+          else:
+              cls='delta_unresolved'
+          report={
+            'schema':'chaptera.vivadesigner-9232-9241-delta.v1',
+            'source_safe':True,
+            'raw_packages_retained':False,
+            'status':'delta_complete',
+            'build_9232':json.load(open('out/acquisition-9232.json')),
+            'build_9241':{
+              'size':pathlib.Path('/tmp/vd/9241/VivaDesigner.AppImage').stat().st_size,
+              'sha256':'067220f8d61e81fa40344b41e7715fc999a8d67c547dd8894c56f7d00963da10'
+            },
+            'file_counts':{k:len(v) for k,v in invs.items()},
+            'added_count':len(added),'removed_count':len(removed),'changed_count':len(changed),'unchanged_count':len(unchanged),
+            'added':added,'removed':removed,'changed':changed,
+            'changed_or_added_elf_9241':elf9241,
+            'removed_or_changed_elf_9232':elf9232,
+            'elf_dependency_deltas':dep_deltas,
+            'changed_core_candidates':core_names,
+            'delta_signals':signals,
+            'added_known_engine_paths':added_known,
+            'classification':cls,
+            'guardrail':'Changed components are ownership candidates only; no semantic or independent-RE claim follows.'
+          }
+          pathlib.Path('out/report.json').write_text(json.dumps(report,indent=2))
+          summary={k:report[k] for k in (
+            'schema','source_safe','status','build_9232','build_9241','file_counts',
+            'added_count','removed_count','changed_count','unchanged_count',
+            'added_known_engine_paths','classification','changed_core_candidates',
+            'elf_dependency_deltas','delta_signals','guardrail'
+          )}
+          summary['added_paths_sample']=added[:200]
+          summary['removed_paths_sample']=removed[:200]
+          summary['changed_paths_sample']=changed[:300]
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          fi
+
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.appimage' -o -iname '*.so' -o -iname '*.bin' \) | grep -q .; then
+            echo 'Raw binary escaped into receipt' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          s=json.load(open('out/summary.json'))
+          assert s['source_safe'] is True
+          assert s['schema']=='chaptera.vivadesigner-9232-9241-delta.v1'
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vivadesigner-9232-9241-delta-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
+,txt)
+                  if vals:
+                      samples.append({'path':str(p.relative_to(root)),'builds':vals})
+              checks[b]=samples
+          pathlib.Path('out/internal-build-checks.json').write_text(json.dumps(checks,indent=2))
+          got9232={x for s in checks['9232'] for x in s['builds']}
+          got9241={x for s in checks['9241'] for x in s['builds']}
+          if '9232' not in got9232:
+              raise SystemExit(f'candidate predecessor failed internal Build=9232 check: {checks["9232"]}')
+          if '9241' not in got9241:
+              raise SystemExit(f'control failed internal Build=9241 check: {checks["9241"]}')
+          print(json.dumps(checks,indent=2))
+          PY
+
+            python - <<'PY'
           import pathlib,hashlib,json,subprocess,re
           roots={b:pathlib.Path(f'/tmp/vd/{b}/root') for b in ('9232','9241')}
           def sha_file(p):
