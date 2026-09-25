@@ -2161,6 +2161,26 @@ fn operation_summary(operation: &EditOperation) -> Value {
                 "after":rect_json(entry.after)
             })).collect::<Vec<_>>()
         }),
+        EditOperation::CreateShape {
+            node_id,
+            page_id,
+            parent_id,
+            shape_kind,
+            bounds,
+            transform,
+            paint,
+            provenance,
+        } => json!({
+            "kind":"create_shape",
+            "node_id":node_id.as_canonical().to_string(),
+            "page_id":page_id.as_canonical().to_string(),
+            "parent_id":parent_id.as_canonical().to_string(),
+            "shape_kind":shape_kind,
+            "bounds":rect_json(*bounds),
+            "transform":transform,
+            "paint":paint,
+            "provenance":provenance
+        }),
     }
 }
 
