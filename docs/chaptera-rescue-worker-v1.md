@@ -27,3 +27,21 @@ Events report named phases, not invented percentages:
 ## Privacy / durable evidence
 
 The worker job is local IPC and may contain a local source path. Durable/public receipts must not. The terminal result identifies the immutable source by SHA-256 and, after real execution exists, may identify a producer receipt only by relative job-output path + SHA-256. The public Rescue consumer remains the authority for turning that producer receipt into a customer-facing product outcome.
+
+
+## Windows Job Object acceptance slice
+
+`RESCUE-WORKER-WIN-FENCE-01` proves the Windows product-runtime enforcement mechanism separately from the private recovery executor.
+
+The acceptance probe creates a Job Object with:
+- `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`;
+- per-process memory ceiling;
+- per-process CPU-time ceiling;
+- parent-owned wall timeout;
+- explicit cancel via `TerminateJobObject`;
+- post-run output byte/artifact-count admission before any result can be treated as publishable.
+
+Synthetic child modes prove the existing V1 status vocabulary:
+`succeeded`, `timed_out`, `cancelled`, `resource_limited`, and `failed`.
+
+This does **not** claim the real recovery executor is connected. It proves the Windows fence that the authorized executor must run under; final `RESCUE-WORKER-ISOLATION-01` closure still requires the real executor to emit the existing producer receipt contract.
