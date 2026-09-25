@@ -1,3 +1,6 @@
+#[cfg(feature = "reader-only")]
+compile_error!("chaptera-resize-producer cannot be built with the reader-only product feature");
+
 use chaptera_scene_instance::{
     ObjectMutationKindV1, SCENE_INSTANCE_SCHEMA_V1, SceneInstanceV1, SceneProjectionKindV1,
     admit_object_mutation_v1, direct_page_local_instance_v1,
