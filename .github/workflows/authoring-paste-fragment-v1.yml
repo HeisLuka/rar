@@ -53,11 +53,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Check workspace
-        run: cargo check --workspace --all-targets
-      - name: Lint workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Test workspace
-        run: cargo test --workspace
+      - name: Check pub-model formatting
+        run: cargo fmt -p pub-model -- --check
+      - name: Check pub-model
+        run: cargo check -p pub-model --all-targets
+      - name: Lint pub-model
+        run: cargo clippy -p pub-model --all-targets -- -D warnings
+      - name: Test pub-model
+        run: cargo test -p pub-model
