@@ -276,6 +276,26 @@ jobs:
               proc=subprocess.run(["pub2xhtml",str(p)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
               render[side]={"returncode":proc.returncode,"stdout_len":len(proc.stdout),"stdout_sha256":sha(proc.stdout),"stderr_len":len(proc.stderr)}
 
+          sector_size_95=1<<int.from_bytes(pubs["pub95"][0x1E:0x20],"little")
+          sector_size_97=1<<int.from_bytes(pubs["pub97"][0x1E:0x20],"little")
+          if sector_size_95!=sector_size_97:raise ValueError("CFB sector-size drift")
+          sector_size=sector_size_95
+          mini_cutoff_95=int.from_bytes(pubs["pub95"][0x38:0x3C],"little")
+          mini_cutoff_97=int.from_bytes(pubs["pub97"][0x38:0x3C],"little")
+          if mini_cutoff_95!=mini_cutoff_97:raise ValueError("mini cutoff drift")
+          contents_len_95=len(streams["pub95"]["/Contents"]);contents_len_97=len(streams["pub97"]["/Contents"])
+          if contents_len_95<mini_cutoff_95 or contents_len_97<mini_cutoff_97:raise ValueError("Contents unexpectedly mini-stream allocated")
+          contents_sectors_95=(contents_len_95+sector_size-1)//sector_size
+          contents_sectors_97=(contents_len_97+sector_size-1)//sector_size
+          contents_slack_95=contents_sectors_95*sector_size-contents_len_95
+          contents_slack_97=contents_sectors_97*sector_size-contents_len_97
+          if whole_file_delta!=sector_size:raise ValueError("whole-file growth is not exactly one CFB sector")
+          physical_growth_classification=(
+            "contents-crosses-one-regular-sector-boundary"
+            if contents_sectors_97-contents_sectors_95==1
+            else "physical-growth-not-explained-by-contents-sector-count"
+          )
+
           falsified=[k for k,v in laws.items() if v["status"]=="falsified"]
           if chain["status"]=="falsified":falsified.append("added-chain")
           if printer_status=="falsified":falsified.append("printer29")
@@ -284,7 +304,7 @@ jobs:
 
           summary={
             "schema":"chaptera.authpers-95-97-lawcheck-summary.v1","source_safe":True,"all_exact_members_verified":True,
-            "generations":{"pub95":L["generation"],"pub97":R["generation"]},"changed_streams":changed,"whole_file_delta":whole_file_delta,"contents_len_delta":len(streams["pub97"]["/Contents"])-len(streams["pub95"]["/Contents"]),
+            "generations":{"pub95":L["generation"],"pub97":R["generation"]},"changed_streams":changed,"whole_file_delta":whole_file_delta,"contents_len_delta":contents_len_97-contents_len_95,"physical_growth":{"sector_size":sector_size,"mini_stream_cutoff":mini_cutoff_95,"file_sector_delta":whole_file_delta//sector_size,"contents_len":{"pub95":contents_len_95,"pub97":contents_len_97},"contents_regular_sector_count":{"pub95":contents_sectors_95,"pub97":contents_sectors_97,"delta":contents_sectors_97-contents_sectors_95},"contents_slack":{"pub95":contents_slack_95,"pub97":contents_slack_97,"delta":contents_slack_97-contents_slack_95},"classification":physical_growth_classification},
             "directory_counts":{"pub95":len(l_ids),"pub97":len(r_ids),"common":len(common)},
             "added_ids":added,"removed_ids":removed,"tuple_changed_ids":tuple_changed,
             "text_equal":text_equal,"text_len":{"pub95":len(L["text_bytes"]),"pub97":len(R["text_bytes"])},
