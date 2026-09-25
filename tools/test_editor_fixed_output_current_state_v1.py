@@ -164,7 +164,8 @@ class EditorFixedOutputCurrentStateTests(unittest.TestCase):
         self.assertEqual("AC", packet["fixed_text_runs"][0]["logical_text"])
         self.assertEqual(0, packet["fixed_text_runs"][0]["scalar_base"])
         self.assertEqual(1, receipt["fixed_run_count"])
-        self.assertTrue(receipt["invariants"]["current_editor_project_authoritative"])\n        self.assertTrue(receipt["invariants"]["rust_fixed_flow_adapter_authoritative"])
+        self.assertTrue(receipt["invariants"]["current_editor_project_authoritative"])
+        self.assertTrue(receipt["invariants"]["rust_fixed_flow_adapter_authoritative"])
         self.assertEqual(
             0,
             receipt["invariants"]["source_reparse_after_edit_count"],
