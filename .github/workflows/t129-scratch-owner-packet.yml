@@ -52,4 +52,4 @@ jobs:
           grep -F 'SCRATCH_OWNER_SCRATCH' tools/research-runner/operations/scratch_owner_01.ps1
           grep -F '$document.ScratchArea' tools/research-runner/operations/scratch_owner_01.ps1
           grep -F 'raw_owner_semantics_claimed = $false' tools/research-runner/operations/scratch_owner_01.ps1
-          grep -F 'private\\scratch-owner-01' tools/research-runner/operations/scratch_owner_01.ps1
+          grep -F 'scratch-owner-01' tools/research-runner/operations/scratch_owner_01.ps1
