@@ -1,0 +1,177 @@
+name: TEMP CORPUS OPCLS family classification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-family-opcls-01.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y libmspub-tools
+      - name: Rehydrate exact OPCLS and classify Contents family
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, subprocess, tempfile, time, urllib.parse, urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-corpus-family-opcls/1.0"
+          SECTOR=2048
+          SPEC={
+            "sha256":"6cb88d4e02f823876a23d7f7414c7d370ca30996c30f145ec92b62f519b22170",
+            "member":"PageWiz/OPCLS.PUB",
+            "archive_url":"https://archive.org/download/pub-40-cd/PUB_40_CD.iso",
+            "root_sha256":"3abd372fd3a1def03cf17ca6277533a8a1bcfbe88b56a213f9c389035020a78b",
+            "source_page":"https://archive.org/details/pub-40-cd"
+          }
+          def sha(b): return hashlib.sha256(b).hexdigest()
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url; self.cache={}; self.delivery=self._choose()
+            def urls(self):
+              p=urllib.parse.urlparse(self.url); parts=p.path.split("/"); ident=parts[2]; fn="/".join(parts[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              last=None
+              for attempt in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception as e:
+                  last=e
+                  if attempt==3: raise
+                  time.sleep(2**attempt)
+              out=[]
+              d=str(m.get("dir") or "")
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d: out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"): raise ValueError("range unsupported")
+                b=r.read(n+1)
+              if len(b)!=n: raise ValueError(f"range size drift {len(b)} != {n}")
+              return b
+            def _choose(self):
+              last=None
+              for u in self.urls():
+                for a in range(3):
+                  try:
+                    p=self.rr(u,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001": raise ValueError("bad PVD")
+                    return u
+                  except Exception as e:
+                    last=e
+                    if a<2: time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              last=None
+              for a in range(3):
+                try:return self.rr(self.delivery,start,n)
+                except Exception as e:
+                  last=e
+                  if a<2:time.sleep(2**a)
+              raise last
+            @staticmethod
+            def rec(r):
+              return r[33:33+r[32]].decode("ascii","strict"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              if (e,s) in self.cache:return self.cache[e,s]
+              d=self.read(e*SECTOR,s); out={}; p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[e,s]=out; return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR); rl=p[156]; _,e,s,fl=self.rec(p[156:156+rl])
+              parts=[x.upper() for x in path.strip("/").split("/")]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2: raise ValueError("not dir")
+              if fl&2: raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          iso=ISO(SPEC["archive_url"])
+          data=iso.member(SPEC["member"])
+          if sha(data)!=SPEC["sha256"]: raise ValueError(f"member sha drift {sha(data)}")
+          with olefile.OleFileIO(data) as ole:
+            paths=["/"+"/".join(p) for p in ole.listdir(streams=True,storages=False)]
+            contents=ole.openstream(["Contents"]).read() if ole.exists(["Contents"]) else b""
+          pre=contents[:32]
+          tail=contents[-32:] if contents else b""
+          if len(contents)>=4 and contents[:2]==b"\xe8\xac":
+            family_word=int.from_bytes(contents[2:4],"little")
+            if family_word==0x22: family="old-0x22"
+            elif family_word==0x2c: family="mature-0x2c"
+            else: family=f"unknown-e8ac-0x{family_word:04x}"
+          else:
+            family_word=None
+            family="unknown-preamble"
+
+          out=Path("out"); out.mkdir(exist_ok=True)
+          with tempfile.TemporaryDirectory(prefix="opcls-") as td:
+            p=Path(td)/"OPCLS.PUB"; p.write_bytes(data)
+            html=Path(td)/"out.xhtml"
+            proc=subprocess.run(["pub2xhtml",str(p)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            xhtml=proc.stdout
+            parse={"returncode":proc.returncode,"stdout_len":len(proc.stdout),"stdout_sha256":sha(proc.stdout),"stderr_len":len(proc.stderr),"stderr_sha256":sha(proc.stderr)}
+          summary={
+            "schema":"chaptera.corpus-family-opcls.v1",
+            "all_exact_members_verified":True,
+            "source_page":SPEC["source_page"],
+            "selected_delivery_url":iso.delivery,
+            "root_sha256":SPEC["root_sha256"],
+            "member":SPEC["member"],
+            "member_sha256":SPEC["sha256"],
+            "member_size":len(data),
+            "stream_paths":sorted(paths),
+            "contents_len":len(contents),
+            "contents_sha256":sha(contents),
+            "contents_prefix32_hex":pre.hex(),
+            "contents_suffix32_hex":tail.hex(),
+            "family_word":family_word,
+            "family_classification":family,
+            "libmspub":parse,
+            "source_safe":True,
+            "raw_pub_retained":False
+          }
+          (out/"summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-family-opcls-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
