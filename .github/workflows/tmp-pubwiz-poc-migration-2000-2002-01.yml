@@ -1,0 +1,156 @@
+name: TEMP PUBWIZ POC migration 2000-2002
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-poc-migration-2000-2002-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inert media tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat
+      - name: Rehydrate exact P2000 and P2002 family assets
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mig/{p0src,p0disc,p0assets,p2src,p2disc,p2assets} out
+
+          # Publisher 2000 X05-44678
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/mig/p0.7z
+          test "$(sha1sum /tmp/mig/p0.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          test "$(md5sum /tmp/mig/p0.7z | awk '{print $1}')" = '79684ab77ef73df4827295ab6a804bf5'
+          7z x -y /tmp/mig/p0.7z -o/tmp/mig/p0src >/tmp/mig/p0-unpack.log
+          MDF0="$(find /tmp/mig/p0src -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF0"
+          iat "$MDF0" /tmp/mig/p0.iso >/tmp/mig/p0-iat.log
+          7z x -y /tmp/mig/p0.iso -o/tmp/mig/p0disc -r \
+            'ACCSBAR.DES' 'ACCTBOX.DES' 'ACCSBAR.POC' 'ACCTBOX.POC' >/tmp/mig/p0-targets.log
+          for n in ACCSBAR.DES ACCTBOX.DES ACCSBAR.POC ACCTBOX.POC; do
+            p="$(find /tmp/mig/p0disc -type f -iname "$n" | head -n1)"
+            test -n "$p"
+            cp "$p" "/tmp/mig/p0assets/$n"
+          done
+
+          # Publisher 2002 X08-20172
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X08-20172/2001-05_X08-20172_X08-06831_OFFICE10.7z' \
+            -o /tmp/mig/p2.7z
+          test "$(sha1sum /tmp/mig/p2.7z | awk '{print $1}')" = '1ebbf5a8c188794e14a5ad2556bb751797034d0c'
+          7z x -y /tmp/mig/p2.7z -o/tmp/mig/p2src >/tmp/mig/p2-unpack.log
+          MDF2="$(find /tmp/mig/p2src -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF2"
+          iat "$MDF2" /tmp/mig/p2.iso >/tmp/mig/p2-iat.log
+          test "$(sha256sum /tmp/mig/p2.iso | awk '{print $1}')" = '2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d'
+          7z x -y /tmp/mig/p2.iso -o/tmp/mig/p2disc >/tmp/mig/p2-disc.log
+          test -f /tmp/mig/p2disc/OFFICE1.CAB
+          for n in ACCSBAR.POC ACCTBOX.POC; do
+            7z e -y /tmp/mig/p2disc/OFFICE1.CAB -o/tmp/mig/p2assets "$n" >/tmp/mig/p2-$n.log
+            test -f "/tmp/mig/p2assets/$n"
+          done
+
+          python3 - <<'PY'
+          import difflib, hashlib, json, pathlib, re
+          p0=pathlib.Path("/tmp/mig/p0assets")
+          p2=pathlib.Path("/tmp/mig/p2assets")
+          expected={
+            "ACCSBAR":{"des_size":215,"des_sha":"bacda46b5c484a09c41a476c57728e506a08a0775e0ffc464629fc69386f8959","old_poc_size":4446,"old_poc_sha":"e1efde40d2a9f0726cc77cadc2a0571a250116437a1134652b22b408b4eebc6f","new_poc_size":11682,"new_poc_sha":"3466fb848d7eeab6e6b487599925f39cc618c27a6780b46aaf99b91ec90b850e"},
+            "ACCTBOX":{"des_size":209,"des_sha":"3d76897dfb1b4b00039bc55609a3163ea4be8d25c9241fac66d4eb688d1c7bda","old_poc_size":2366,"old_poc_sha":"269ca61cede5feb1d4975aba844e48c5dc5ff4a35ccf9fcc2a8d25d4c6148567","new_poc_size":7358,"new_poc_sha":"fe4f86e6f3e8f62d6384d348cfb9961afe8bc3d4cb146a5d20ae009de7262e20"}
+          }
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          def common_prefix(a,b):
+            i=0
+            while i<min(len(a),len(b)) and a[i]==b[i]: i+=1
+            return i
+          def common_suffix(a,b,p):
+            i=0
+            while i<min(len(a),len(b))-p and a[-1-i]==b[-1-i]: i+=1
+            return i
+          rows=[]
+          for fam,e in expected.items():
+            des=(p0/(fam+".DES")).read_bytes()
+            old=(p0/(fam+".POC")).read_bytes()
+            new=(p2/(fam+".POC")).read_bytes()
+            assert len(des)==e["des_size"] and sha(des)==e["des_sha"]
+            assert len(old)==e["old_poc_size"] and sha(old)==e["old_poc_sha"]
+            assert len(new)==e["new_poc_size"] and sha(new)==e["new_poc_sha"]
+            cp=common_prefix(old,new); cs=common_suffix(old,new,cp)
+            sm=difflib.SequenceMatcher(None,old,new,autojunk=False)
+            spans=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag=="equal": continue
+              spans.append({
+                "tag":tag,
+                "old_offset":i1,"old_len":i2-i1,"old_sha256":sha(old[i1:i2]),
+                "new_offset":j1,"new_len":j2-j1,"new_sha256":sha(new[j1:j2])
+              })
+            strings=[m.group(0) for m in re.finditer(rb"[\x20-\x7e]{4,}",des)]
+            string_hits=[]
+            for s in strings:
+              pos=new.find(s)
+              string_hits.append({
+                "sha256":sha(s),
+                "length":len(s),
+                "present_in_new_poc":pos>=0,
+                "new_poc_offset":pos if pos>=0 else None
+              })
+            rows.append({
+              "family":fam,
+              "des":{"size":len(des),"sha256":sha(des)},
+              "old_poc":{"size":len(old),"sha256":sha(old)},
+              "new_poc":{"size":len(new),"sha256":sha(new)},
+              "old_poc_is_prefix":new.startswith(old),
+              "old_poc_subsequence_offset":new.find(old),
+              "full_des_subsequence_offset":new.find(des),
+              "des_printable_string_count":len(strings),
+              "des_printable_string_hits":string_hits,
+              "all_des_printable_strings_present":all(x["present_in_new_poc"] for x in string_hits) if strings else False,
+              "common_prefix":cp,
+              "common_suffix":cs,
+              "sequence_match_ratio":round(sm.ratio(),6),
+              "delta_span_count":len(spans),
+              "delta_spans":spans
+            })
+          def classify(r):
+            if r["full_des_subsequence_offset"]>=0 and r["old_poc_subsequence_offset"]>=0:
+              return "literal-des-plus-old-poc-merge"
+            if r["old_poc_is_prefix"]:
+              return "old-poc-prefix-extension"
+            if r["old_poc_subsequence_offset"]>=0:
+              return "old-poc-subsequence-extension"
+            return "broad-poc-reserialization"
+          for r in rows:r["classification"]=classify(r)
+          result={
+            "schema":"chaptera.pubwiz-poc-migration-2000-2002.v1",
+            "sources":{
+              "p2000":{"ia_identifier":"X05-44678","transport_sha1":"56ca51186a7fe2139b3b5ab27c7d05749ba75b46"},
+              "p2002":{"ia_identifier":"X08-20172","transport_sha1":"1ebbf5a8c188794e14a5ad2556bb751797034d0c","iso_sha256":"2f0b7e4fa0a536f126ff4f63b7c2669cd31fba8adc744cfcc68eb780ee784c8d"}
+            },
+            "families":rows,
+            "source_safe":True,
+            "raw_assets_retained":False
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.des' -o -iname '*.poc' -o -iname '*.iso' -o -iname '*.cab' -o -iname '*.7z' \) | grep -q .; then
+            exit 1
+          fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-poc-migration-2000-2002-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
