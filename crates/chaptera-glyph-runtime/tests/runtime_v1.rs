@@ -1,13 +1,15 @@
 use chaptera_glyph_runtime::{
     DeterministicTestMaterializer, FontRuntimeState, GlyphCacheKey, GlyphQuality, GlyphRenderMode,
-    GlyphRequestResult, GlyphRuntime, RenderFontResourceV1, RenderGlyphRunV1, select_material_policy,
+    GlyphRequestResult, GlyphRuntime, RenderFontResourceV1, RenderGlyphRunV1,
+    select_material_policy,
 };
 
 const FONT_A: &str = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 const FONT_B: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 fn run() -> RenderGlyphRunV1 {
-    serde_json::from_str(r#"{
+    serde_json::from_str(
+        r#"{
       "atom_id":"node:0:glyph_run",
       "node_id":"node",
       "page_id":"page",
@@ -24,7 +26,9 @@ fn run() -> RenderGlyphRunV1 {
       ],
       "effect_group_id":null,
       "clip_id":null
-    }"#).unwrap()
+    }"#,
+    )
+    .unwrap()
 }
 
 fn font(hash: &str) -> RenderFontResourceV1 {
@@ -41,8 +45,11 @@ fn runtime(page_capacity: u32, max_pages: u32) -> GlyphRuntime<DeterministicTest
         page_capacity,
         max_pages,
         1,
-    ).unwrap();
-    runtime.set_font_state(FONT_A, FontRuntimeState::Ready, 1).unwrap();
+    )
+    .unwrap();
+    runtime
+        .set_font_state(FONT_A, FontRuntimeState::Ready, 1)
+        .unwrap();
     runtime
 }
 
@@ -72,14 +79,18 @@ fn current_render_scene_json_shape_deserializes_without_typography_reinterpretat
 #[test]
 fn repeated_placements_reuse_one_exact_materialization() {
     let mut runtime = runtime(8, 2);
-    let prepared = runtime.prepare_run(&run(), &font(FONT_A), 0, 1.0, 1.0).unwrap();
+    let prepared = runtime
+        .prepare_run(&run(), &font(FONT_A), 0, 1.0, 1.0)
+        .unwrap();
     assert_eq!(prepared.geometry, run().glyphs);
     assert!(!prepared.canonical_geometry_mutated);
     // glyph 10 is placed twice; only glyph 10 + 11 should materialize.
     assert_eq!(runtime.materializer().calls, 2);
     assert_eq!(runtime.receipt().unique_logical_entries, 2);
 
-    let again = runtime.prepare_run(&run(), &font(FONT_A), 0, 1.0, 1.0).unwrap();
+    let again = runtime
+        .prepare_run(&run(), &font(FONT_A), 0, 1.0, 1.0)
+        .unwrap();
     assert_eq!(again.geometry, prepared.geometry);
     assert_eq!(runtime.materializer().calls, 2);
     assert!(runtime.receipt().metrics.hits >= 4);
@@ -88,29 +99,43 @@ fn repeated_placements_reuse_one_exact_materialization() {
 #[test]
 fn font_fingerprint_face_and_bucket_never_alias() {
     let mut runtime = runtime(8, 2);
-    runtime.set_font_state(FONT_B, FontRuntimeState::Ready, 1).unwrap();
+    runtime
+        .set_font_state(FONT_B, FontRuntimeState::Ready, 1)
+        .unwrap();
     let keys = [
         key(FONT_A, 0, 10, 1),
         key(FONT_B, 0, 10, 1),
         key(FONT_A, 1, 10, 1),
         key(FONT_A, 0, 10, 2),
     ];
-    let bindings = keys.iter()
+    let bindings = keys
+        .iter()
         .map(|key| match runtime.request(key.clone()).unwrap() {
             GlyphRequestResult::Ready { binding } => binding,
             other => panic!("unexpected result: {other:?}"),
         })
         .collect::<Vec<_>>();
     assert_eq!(runtime.receipt().unique_logical_entries, 4);
-    assert_eq!(bindings.iter().map(|b| b.key.clone()).collect::<std::collections::BTreeSet<_>>().len(), 4);
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|b| b.key.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
 }
 
 #[test]
 fn scale_bucket_transition_changes_only_material_identity_not_geometry() {
     let mut runtime = runtime(32, 2);
     let input = run();
-    let normal = runtime.prepare_run(&input, &font(FONT_A), 0, 1.0, 1.0).unwrap();
-    let high = runtime.prepare_run(&input, &font(FONT_A), 0, 4.0, 1.0).unwrap();
+    let normal = runtime
+        .prepare_run(&input, &font(FONT_A), 0, 1.0, 1.0)
+        .unwrap();
+    let high = runtime
+        .prepare_run(&input, &font(FONT_A), 0, 4.0, 1.0)
+        .unwrap();
     assert_eq!(normal.geometry, input.glyphs);
     assert_eq!(high.geometry, input.glyphs);
     assert_eq!(normal.scale_bucket, 1);
@@ -159,7 +184,10 @@ fn atlas_repack_moves_physical_residency_without_changing_semantic_keys() {
         old.push(binding);
     }
     runtime.evict(&key(FONT_A, 0, 11, 1));
-    let keys_before = old.iter().map(|b| b.key.clone()).collect::<std::collections::BTreeSet<_>>();
+    let keys_before = old
+        .iter()
+        .map(|b| b.key.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     runtime.repack();
     assert!(old.iter().any(|binding| !runtime.validate_binding(binding)));
     let receipt = runtime.receipt();
@@ -190,7 +218,9 @@ fn font_generation_change_invalidates_old_residency_without_changing_font_identi
         GlyphRequestResult::Ready { binding } => binding,
         other => panic!("{other:?}"),
     };
-    runtime.set_font_state(FONT_A, FontRuntimeState::Ready, 2).unwrap();
+    runtime
+        .set_font_state(FONT_A, FontRuntimeState::Ready, 2)
+        .unwrap();
     assert!(!runtime.validate_binding(&old));
     let new = match runtime.request(logical.clone()).unwrap() {
         GlyphRequestResult::Ready { binding } => binding,
@@ -204,11 +234,24 @@ fn font_generation_change_invalidates_old_residency_without_changing_font_identi
 fn pending_blocked_failed_fonts_are_explicit_and_never_host_substituted() {
     let mut runtime = GlyphRuntime::new(DeterministicTestMaterializer::default(), 4, 1, 1).unwrap();
     let logical = key(FONT_A, 0, 10, 1);
-    assert!(matches!(runtime.request(logical.clone()).unwrap(), GlyphRequestResult::Pending { .. }));
-    runtime.set_font_state(FONT_A, FontRuntimeState::Blocked, 1).unwrap();
-    assert!(matches!(runtime.request(logical.clone()).unwrap(), GlyphRequestResult::Blocked { .. }));
-    runtime.set_font_state(FONT_A, FontRuntimeState::Failed, 1).unwrap();
-    assert!(matches!(runtime.request(logical.clone()).unwrap(), GlyphRequestResult::Failed { .. }));
+    assert!(matches!(
+        runtime.request(logical.clone()).unwrap(),
+        GlyphRequestResult::Pending { .. }
+    ));
+    runtime
+        .set_font_state(FONT_A, FontRuntimeState::Blocked, 1)
+        .unwrap();
+    assert!(matches!(
+        runtime.request(logical.clone()).unwrap(),
+        GlyphRequestResult::Blocked { .. }
+    ));
+    runtime
+        .set_font_state(FONT_A, FontRuntimeState::Failed, 1)
+        .unwrap();
+    assert!(matches!(
+        runtime.request(logical.clone()).unwrap(),
+        GlyphRequestResult::Failed { .. }
+    ));
     assert_eq!(runtime.materializer().calls, 0);
     assert!(!runtime.receipt().authority.discovers_host_fonts);
 }

@@ -114,15 +114,35 @@ pub fn select_material_policy(zoom: f64, dpr: f64) -> Result<MaterialPolicy, Gly
         return Err(GlyphRuntimeError::InvalidScale { zoom, dpr });
     }
     let policy = if scale <= 1.0 {
-        MaterialPolicy { render_mode: GlyphRenderMode::Raster, scale_bucket: 1, quality: GlyphQuality::Normal }
+        MaterialPolicy {
+            render_mode: GlyphRenderMode::Raster,
+            scale_bucket: 1,
+            quality: GlyphQuality::Normal,
+        }
     } else if scale <= 2.0 {
-        MaterialPolicy { render_mode: GlyphRenderMode::Raster, scale_bucket: 2, quality: GlyphQuality::Normal }
+        MaterialPolicy {
+            render_mode: GlyphRenderMode::Raster,
+            scale_bucket: 2,
+            quality: GlyphQuality::Normal,
+        }
     } else if scale <= 4.0 {
-        MaterialPolicy { render_mode: GlyphRenderMode::Raster, scale_bucket: 4, quality: GlyphQuality::High }
+        MaterialPolicy {
+            render_mode: GlyphRenderMode::Raster,
+            scale_bucket: 4,
+            quality: GlyphQuality::High,
+        }
     } else if scale <= 8.0 {
-        MaterialPolicy { render_mode: GlyphRenderMode::Raster, scale_bucket: 8, quality: GlyphQuality::High }
+        MaterialPolicy {
+            render_mode: GlyphRenderMode::Raster,
+            scale_bucket: 8,
+            quality: GlyphQuality::High,
+        }
     } else {
-        MaterialPolicy { render_mode: GlyphRenderMode::Vector, scale_bucket: 0, quality: GlyphQuality::Fidelity }
+        MaterialPolicy {
+            render_mode: GlyphRenderMode::Vector,
+            scale_bucket: 0,
+            quality: GlyphQuality::Fidelity,
+        }
     };
     Ok(policy)
 }
@@ -164,7 +184,10 @@ struct Atlas {
 impl Atlas {
     fn new(page_capacity: u32, max_pages: u32) -> Result<Self, GlyphRuntimeError> {
         if page_capacity == 0 || max_pages == 0 {
-            return Err(GlyphRuntimeError::InvalidAtlasBounds { page_capacity, max_pages });
+            return Err(GlyphRuntimeError::InvalidAtlasBounds {
+                page_capacity,
+                max_pages,
+            });
         }
         Ok(Self {
             page_capacity,
@@ -228,7 +251,13 @@ impl Atlas {
                 fragmentation_ratio_ppm: 0,
             };
         }
-        let pages = self.placements.values().map(|(page, _)| *page).max().unwrap_or(0) + 1;
+        let pages = self
+            .placements
+            .values()
+            .map(|(page, _)| *page)
+            .max()
+            .unwrap_or(0)
+            + 1;
         let capacity_slots = pages * self.page_capacity;
         let live_slots = self.placements.len() as u32;
         let free_slots = capacity_slots.saturating_sub(live_slots);
@@ -363,12 +392,15 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
     ) -> Result<(), GlyphRuntimeError> {
         let fingerprint = fingerprint.into();
         validate_fingerprint(&fingerprint)?;
-        let previous = self.fonts.insert(
-            fingerprint.clone(),
-            FontState { state, generation },
-        );
-        if previous.as_ref().is_some_and(|old| old.generation != generation) {
-            let keys = self.entries
+        let previous = self
+            .fonts
+            .insert(fingerprint.clone(), FontState { state, generation });
+        if previous
+            .as_ref()
+            .is_some_and(|old| old.generation != generation)
+        {
+            let keys = self
+                .entries
                 .keys()
                 .filter(|key| key.font_fingerprint == fingerprint)
                 .cloned()
@@ -392,10 +424,14 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
         self.metrics.requests += 1;
         self.touch_seq += 1;
 
-        let font = self.fonts.get(&key.font_fingerprint).cloned().unwrap_or(FontState {
-            state: FontRuntimeState::Pending,
-            generation: 0,
-        });
+        let font = self
+            .fonts
+            .get(&key.font_fingerprint)
+            .cloned()
+            .unwrap_or(FontState {
+                state: FontRuntimeState::Pending,
+                generation: 0,
+            });
         match font.state {
             FontRuntimeState::Pending => {
                 self.metrics.pending += 1;
@@ -457,8 +493,13 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
                 return Ok(GlyphRequestResult::Failed { key });
             }
         };
-        let (page, slot) = self.atlas.allocate(&key).ok_or(GlyphRuntimeError::AtlasCapacityUnavailable)?;
-        let residency_generation = self.entries.get(&key)
+        let (page, slot) = self
+            .atlas
+            .allocate(&key)
+            .ok_or(GlyphRuntimeError::AtlasCapacityUnavailable)?;
+        let residency_generation = self
+            .entries
+            .get(&key)
             .map(|entry| entry.residency_generation + 1)
             .unwrap_or(1);
         let len = material.len() as u64;
@@ -481,11 +522,18 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
         })
     }
 
-    fn ensure_atlas_capacity(&mut self, requested: &GlyphCacheKey) -> Result<(), GlyphRuntimeError> {
-        if self.atlas.placements.contains_key(requested) || self.atlas.placements.len() < self.atlas.capacity() {
+    fn ensure_atlas_capacity(
+        &mut self,
+        requested: &GlyphCacheKey,
+    ) -> Result<(), GlyphRuntimeError> {
+        if self.atlas.placements.contains_key(requested)
+            || self.atlas.placements.len() < self.atlas.capacity()
+        {
             return Ok(());
         }
-        let victim = self.entries.iter()
+        let victim = self
+            .entries
+            .iter()
             .filter(|(_, entry)| entry.atlas_page.is_some())
             .min_by_key(|(key, entry)| (entry.last_touch, (*key).clone()))
             .map(|(key, _)| key.clone())
@@ -578,7 +626,9 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
         dpr: f64,
     ) -> Result<PreparedGlyphRun, GlyphRuntimeError> {
         if font.kind != "font" {
-            return Err(GlyphRuntimeError::InvalidFontResourceKind { found: font.kind.clone() });
+            return Err(GlyphRuntimeError::InvalidFontResourceKind {
+                found: font.kind.clone(),
+            });
         }
         if font.resource_id != run.font_resource_id {
             return Err(GlyphRuntimeError::FontResourceMismatch {
@@ -592,7 +642,9 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
         validate_fingerprint(&font.content_hash)?;
         let policy = select_material_policy(zoom, dpr)?;
         let geometry = run.glyphs.clone();
-        let materials = run.glyphs.iter()
+        let materials = run
+            .glyphs
+            .iter()
             .map(|glyph| {
                 self.request(GlyphCacheKey {
                     font_fingerprint: font.content_hash.clone(),
@@ -628,7 +680,9 @@ impl<M: GlyphMaterializer> GlyphRuntime<M> {
             atlas_generation: self.atlas.generation,
             unique_logical_entries: self.entries.len(),
             resident_entries: self.atlas.placements.len(),
-            resident_material_bytes: self.entries.values()
+            resident_material_bytes: self
+                .entries
+                .values()
                 .filter(|entry| entry.atlas_page.is_some())
                 .map(|entry| entry.material_bytes.len() as u64)
                 .sum(),
@@ -672,7 +726,9 @@ impl GlyphMaterializer for DeterministicTestMaterializer {
         let size = match key.render_mode {
             GlyphRenderMode::Raster => usize::from(key.scale_bucket.max(1)) * 32,
             GlyphRenderMode::Vector => 128,
-            GlyphRenderMode::ColorComplex => return Err(MaterializeError::Unsupported("color_complex".into())),
+            GlyphRenderMode::ColorComplex => {
+                return Err(MaterializeError::Unsupported("color_complex".into()));
+            }
         };
         let mut out = Vec::with_capacity(size);
         while out.len() < size {
