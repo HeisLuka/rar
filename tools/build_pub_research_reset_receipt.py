@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import pathlib
 import re
@@ -19,6 +20,17 @@ def _safe_id(value: str, field: str) -> str:
     if not SAFE_ID_RE.fullmatch(value):
         raise AssertionError(f"{field} must be a 2-128 character safe identifier")
     return value
+
+
+def _canonical_utc_z(value: str, field: str) -> str:
+    try:
+        instant = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise AssertionError(f"{field} must be an RFC3339 timestamp") from exc
+    if instant.tzinfo is None:
+        raise AssertionError(f"{field} must include a timezone")
+    instant = instant.astimezone(dt.timezone.utc)
+    return instant.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def build_provider_receipt(
@@ -50,8 +62,12 @@ def build_provider_receipt(
         "snapshot_id": snapshot_id,
         "experiment_id": experiment_id,
         "packet_sha256": packet_sha256,
-        "restore_started_at_utc": restore["started_at_utc"],
-        "restore_completed_at_utc": restore["completed_at_utc"],
+        "restore_started_at_utc": _canonical_utc_z(
+            restore["started_at_utc"], "restore.started_at_utc"
+        ),
+        "restore_completed_at_utc": _canonical_utc_z(
+            restore["completed_at_utc"], "restore.completed_at_utc"
+        ),
         "pre_restore_state_sha256": restore["pre_restore_state_sha256"],
         "post_restore_state_sha256": restore["post_restore_state_sha256"],
         "environment_fingerprint_sha256": evidence["environment_fingerprint"],
