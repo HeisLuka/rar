@@ -15,6 +15,14 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
 try:
+    from copy_ledger_instrument_v1 import FixedCopyCountersV1, canonical_byte_len
+except ModuleNotFoundError:
+    FixedCopyCountersV1 = Any  # type: ignore[misc,assignment]
+
+    def canonical_byte_len(value: Any) -> int:
+        return len(canonical_json(value))
+
+try:
     from authored_stack_v1 import reorder_authored_lane, validate_authored_lane
 except ModuleNotFoundError:
     # Some local producer builders load revision_store.py directly via
@@ -366,10 +374,28 @@ AuthoritativeHistoryExecutor = Callable[[dict, str], Tuple[dict, list]]
 
 
 class RevisionKernel:
-    def __init__(self) -> None:
+    def __init__(self, copy_ledger_counters: Optional[FixedCopyCountersV1] = None) -> None:
         self._documents: Dict[str, DocumentState] = {}
         self._revisions: Dict[str, RevisionRecord] = {}
         self._idempotency: Dict[Tuple[str, str], Tuple[str, dict]] = {}
+        self._copy_ledger_counters = copy_ledger_counters
+
+    def _deepcopy_with_ledger(
+        self,
+        value: Any,
+        site: str,
+        *,
+        retained: bool = False,
+    ) -> Any:
+        copied = copy.deepcopy(value)
+        if self._copy_ledger_counters is not None:
+            byte_len = canonical_byte_len(value)
+            self._copy_ledger_counters.record(
+                site,
+                materialized_bytes=byte_len,
+                retained_bytes_after=byte_len if retained else 0,
+            )
+        return copied
 
     def register_baseline(
         self,
@@ -446,7 +472,10 @@ class RevisionKernel:
         *,
         pre_execute_validator: Optional[Callable[[dict], None]] = None,
     ) -> dict:
-        normalized = copy.deepcopy(request)
+        normalized = self._deepcopy_with_ledger(
+            request,
+            "revision.move_nodes_request_normalize",
+        )
         command = normalized.get("command")
         if isinstance(command, dict) and isinstance(command.get("entries"), list):
             command["entries"] = sorted(
@@ -1136,7 +1165,10 @@ class RevisionKernel:
 
         base = self._revisions[doc.current_revision_id]
         canonical_operation, resulting_project, consequences = executor(
-            copy.deepcopy(base.project),
+            self._deepcopy_with_ledger(
+                base.project,
+                "revision.executor_project_detach",
+            ),
             copy.deepcopy(request["command"]),
         )
 
@@ -1163,7 +1195,11 @@ class RevisionKernel:
             project_hash=project_hash(resulting_project),
             transition_kind="commit",
             transition_hash=transition_digest,
-            project=copy.deepcopy(resulting_project),
+            project=self._deepcopy_with_ledger(
+                resulting_project,
+                "revision.retained_project_snapshot",
+                retained=True,
+            ),
         )
 
         # Atomic persistence boundary for this bounded in-memory kernel:
@@ -1184,7 +1220,14 @@ class RevisionKernel:
             "consequences": copy.deepcopy(consequences),
             "scene_refresh": "full_snapshot",
         }
-        self._idempotency[idem_key] = (request_digest, copy.deepcopy(result))
+        self._idempotency[idem_key] = (
+            request_digest,
+            self._deepcopy_with_ledger(
+                result,
+                "revision.idempotency_result_snapshot",
+                retained=True,
+            ),
+        )
         return result
 
     def _rejected(
