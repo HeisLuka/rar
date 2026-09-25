@@ -167,6 +167,24 @@ jobs:
               try:nm=r[:nl-2].decode("utf-16le","strict")
               except Exception:continue
               dir_like.append({"offset":off,"name":nm,"name_len":nl,"object_type":ot,"start_sector":int.from_bytes(r[116:120],"little"),"stream_size":int.from_bytes(r[120:128],"little")})
+          sector_shift=int.from_bytes(data[30:32],"little")
+          sector_size=1<<sector_shift
+          dir_start_sector=int.from_bytes(data[48:52],"little")
+          def sector_bytes(sec):
+            start=512+sec*sector_size
+            return data[start:start+sector_size]
+          raw_dir_sector=sector_bytes(dir_start_sector) if dir_start_sector!=0xffffffff else b""
+          raw_sector5=sector_bytes(5) if len(data)>=512+(5+1)*sector_size else b""
+          allocation_probe={
+            "sector_size":sector_size,
+            "header_directory_start_sector":dir_start_sector,
+            "header_directory_sector_sha256":sha(raw_dir_sector) if raw_dir_sector else None,
+            "contents_entry_start_sector":dir0["start_sector"] if dir0 else None,
+            "contents_entry_start_equals_directory_start": bool(dir0 and dir0["start_sector"]==dir_start_sector),
+            "contents_first_sector_sha256":sha(contents[:sector_size]) if len(contents)>=sector_size else None,
+            "contents_first_sector_equals_raw_directory_sector": bool(raw_dir_sector and contents[:sector_size]==raw_dir_sector),
+            "raw_sector5_sha256":sha(raw_sector5) if raw_sector5 else None
+          }
           summary={
             "schema":"chaptera.corpus-family-opcls.v1",
             "all_exact_members_verified":True,
@@ -188,6 +206,7 @@ jobs:
             "e8ac2c_offsets":e8ac2c_offsets,
             "directory_record0":dir0,
             "directory_like_records_first16":dir_like,
+            "allocation_probe":allocation_probe,
             "libmspub":parse,
             "source_safe":True,
             "raw_pub_retained":False
