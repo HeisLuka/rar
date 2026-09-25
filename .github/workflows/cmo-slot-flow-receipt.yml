@@ -78,12 +78,5 @@ jobs:
             input="packages/protocol/pub-projection/v1/${fixture}"
             python tools/cmo_slot_flow_v1.py "${input}" > /tmp/python.json
             cargo run -q -p pub-cmo-slot-flow --bin cmo-slot-flow-packet -- "${input}" > /tmp/rust.json
-            python - <<'PY'
-import json
-from pathlib import Path
-left = json.loads(Path("/tmp/python.json").read_text())
-right = json.loads(Path("/tmp/rust.json").read_text())
-if left != right:
-    raise SystemExit("Rust/Python Cmo slot-flow parity mismatch")
-PY
+            python -c 'import json, pathlib, sys; a=json.loads(pathlib.Path("/tmp/python.json").read_text()); b=json.loads(pathlib.Path("/tmp/rust.json").read_text()); sys.exit(0 if a == b else "Rust/Python Cmo slot-flow parity mismatch")'
           done
