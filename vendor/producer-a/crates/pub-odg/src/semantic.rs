@@ -1,6 +1,6 @@
 use crate::{
-    ODG_CONTENT_PATH, ODG_SCHEMA_FENCE_ODF_1_4, OdgPackage, OdgPackageBuilder, OdgPackageError,
-    OdgPartKind,
+    IMAGE_FRAME_GEOMETRY_FEATURE, ODG_CONTENT_PATH, ODG_SCHEMA_FENCE_ODF_1_4, OdgPackage,
+    OdgPackageBuilder, OdgPackageError, OdgPartKind,
 };
 use pub_export::{CapabilityLevel, ExportPlan, LossKind};
 use pub_model::{
@@ -17,6 +17,7 @@ const TEXT_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 const STYLE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const SVG_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const FO_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OdgSemanticError {
@@ -231,6 +232,13 @@ where
                 })?;
 
             let Some(frame) = frame_for(node_id, &node.payload) else {
+                if has_preserved_feature(
+                    plan,
+                    node_id.into_canonical(),
+                    IMAGE_FRAME_GEOMETRY_FEATURE,
+                ) {
+                    continue;
+                }
                 if !has_reported_unsupported_omission(plan, node_id.into_canonical()) {
                     return Err(OdgSemanticError::UnplannedNodeOmission { node_id });
                 }
@@ -414,7 +422,7 @@ fn content_xml<
     writeln!(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>").unwrap();
     writeln!(
         xml,
-        "<office:document-content xmlns:office=\"{OFFICE_NS}\" xmlns:draw=\"{DRAW_NS}\" xmlns:text=\"{TEXT_NS}\" xmlns:style=\"{STYLE_NS}\" xmlns:svg=\"{SVG_NS}\" office:version=\"1.4\">"
+        "<office:document-content xmlns:office=\"{OFFICE_NS}\" xmlns:draw=\"{DRAW_NS}\" xmlns:text=\"{TEXT_NS}\" xmlns:style=\"{STYLE_NS}\" xmlns:svg=\"{SVG_NS}\" xmlns:xlink=\"{XLINK_NS}\" office:version=\"1.4\">"
     )
     .unwrap();
     xml.push_str("  <office:automatic-styles/>\n");
@@ -629,7 +637,7 @@ fn frame_name(id: NodeId) -> String {
     stable_name("Frame", id.into_canonical())
 }
 
-fn page_name(id: PageId) -> String {
+pub(crate) fn page_name(id: PageId) -> String {
     stable_name("Page", id.into_canonical())
 }
 
@@ -651,7 +659,7 @@ fn stable_name(prefix: &str, id: CanonicalId) -> String {
     value
 }
 
-fn format_emu_points(value: LengthEmu) -> String {
+pub(crate) fn format_emu_points(value: LengthEmu) -> String {
     let numerator = i128::from(value.get());
     let denominator = i128::from(EMU_PER_POINT);
     let negative = numerator < 0;
