@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "chaptera-resize-producer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "chaptera-resize-producer"
+path = "src/main.rs"
+
+[dependencies]
+chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
+pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+serde_json = "1"
+sha2 = "0.10"
+zip = "=2.4.2"
