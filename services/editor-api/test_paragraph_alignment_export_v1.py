@@ -125,7 +125,7 @@ class ParagraphAlignmentExportV1Tests(unittest.TestCase):
     def test_chaptera_override_masks_unsupported_base_and_is_never_silent(self):
         kernel, baseline = self._kernel()
         accepted = self._set(kernel, baseline.revision_id, P2, "right")
-        self.assertEqual("accepted", accepted["status"])
+        self.assertEqual("chaptera.commit-accepted.v1", accepted["protocol_version"])
 
         assessment = assess_paragraph_alignment_export_v1(
             kernel.current_revision(DOCUMENT_ID).project,
@@ -157,7 +157,7 @@ class ParagraphAlignmentExportV1Tests(unittest.TestCase):
             },
             FakeParagraphAlignmentExecutor(),
         )
-        self.assertEqual("accepted", cleared["status"])
+        self.assertEqual("chaptera.commit-accepted.v1", cleared["protocol_version"])
         current = kernel.current_revision(DOCUMENT_ID).project
         self.assertIsNone(current["paragraphs"][P2]["alignment_override"])
         assessment = assess_paragraph_alignment_export_v1(
