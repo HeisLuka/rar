@@ -1,3 +1,4 @@
+use crate::break_core::{LineBreakProbeV1, probe_line_break_v1};
 use crate::{
     ArtifactDependencyV1, ArtifactKeyV1, ArtifactReceiptV1, DependencyEdgeV1, DependencyKindV1,
     DependencyNodeV1, ExpectedUpstreamV1, FingerprintV1, fingerprint_v1,
@@ -333,34 +334,22 @@ pub fn resolve_story_flow_v1(
             })?;
         let capacity = interval.width_emu();
 
-        let mut width = 0_i64;
-        let mut probe = cursor;
-        let mut last_break = None;
-
-        while probe < scalars.len() {
-            let next = width.saturating_add(scalars[probe].advance_emu);
-            if next > capacity {
-                break;
+        let decision = match probe_line_break_v1(
+            &scalars,
+            cursor,
+            capacity,
+            |metric| metric.advance_emu,
+            |metric| metric.break_after,
+        ) {
+            LineBreakProbeV1::Selected(decision) => decision,
+            LineBreakProbeV1::Unbreakable => {
+                return Err(FlowErrorV1::UnbreakableAt {
+                    scalar_start: scalars[cursor].scalar_start,
+                });
             }
-            width = next;
-            probe += 1;
-            if scalars[probe - 1].break_after || probe == scalars.len() {
-                last_break = Some(probe);
-            }
-        }
-
-        let end = if probe == scalars.len() {
-            probe
-        } else {
-            last_break.ok_or(FlowErrorV1::UnbreakableAt {
-                scalar_start: scalars[cursor].scalar_start,
-            })?
         };
-
-        let measured_width_emu = scalars[cursor..end]
-            .iter()
-            .map(|metric| metric.advance_emu)
-            .sum();
+        let end = decision.end_index;
+        let measured_width_emu = decision.measured_width_emu;
 
         lines.push(FlowLineV1 {
             row_index: band.row_index,
