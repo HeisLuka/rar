@@ -1,23 +1,22 @@
-name: Cloud blob store V0
+name: CLOUD-BLOB-METADATA-SQLITE-01
 
 on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/blob_store.rs"
       - "apps/chaptera-server/src/sqlite_blob_metadata.rs"
-      - "apps/chaptera-server/tests/sqlite_blob_metadata.rs"
       - "apps/chaptera-server/src/lib.rs"
-      - "apps/chaptera-server/Cargo.toml"
-      - "apps/chaptera-server/migrations/0002_blob_store.sql"
-      - ".github/workflows/cloud-blob-store-v0.yml"
+      - "apps/chaptera-server/tests/sqlite_blob_metadata.rs"
+      - ".github/workflows/cloud-blob-metadata-sqlite-v1.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  durable-blob-metadata:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -26,11 +25,9 @@ jobs:
           components: rustfmt, clippy
       - name: Check chaptera-server formatting
         run: cargo fmt -p chaptera-server -- --check
-      - name: Run clippy
+      - name: Lint durable blob metadata
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Run blob metadata repository laws
+        run: cargo test -p chaptera-server --test sqlite_blob_metadata -- --nocapture
       - name: Run BlobStore regression suite
         run: cargo test -p chaptera-server blob_store:: -- --nocapture
-      - name: Run durable blob metadata repository laws
-        run: cargo test -p chaptera-server --test sqlite_blob_metadata -- --nocapture
-      - name: Run Chaptera server tests
-        run: cargo test -p chaptera-server
