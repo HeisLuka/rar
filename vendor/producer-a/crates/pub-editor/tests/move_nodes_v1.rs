@@ -5,7 +5,7 @@ use pub_editor::{
     EditorSession, LengthEmu, MoveNodeBatchEntry, RectEmu,
 };
 use pub_model::{
-    Affine2D, CanonicalId, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
+    Affine2D, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
     ResolvedGraph, Sha256Digest, Size2D, SourceDescriptor,
 };
 use pub_reader::{PubExplicitShapePaintSource, PubResolvedGraph, PubResolvedNodePayload};
