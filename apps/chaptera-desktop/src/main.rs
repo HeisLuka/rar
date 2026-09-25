@@ -3191,4 +3191,123 @@ mod tests {
             Some("pub")
         );
     }
+
+    #[derive(Default)]
+    struct SupporterTestStorage {
+        values: std::collections::BTreeMap<String, String>,
+        flush_count: usize,
+    }
+
+    impl eframe::Storage for SupporterTestStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.values.get(key).cloned()
+        }
+
+        fn set_string(&mut self, key: &str, value: String) {
+            self.values.insert(key.to_owned(), value);
+        }
+
+        fn remove_string(&mut self, key: &str) {
+            self.values.remove(key);
+        }
+
+        fn flush(&mut self) {
+            self.flush_count += 1;
+        }
+    }
+
+    #[test]
+    fn supporter_persistence_wiring_round_trips_through_eframe_storage() {
+        const DAY_SECONDS: i64 = 24 * 60 * 60;
+
+        let mut expected = supporter::SupporterState::default();
+        expected.record_meaningful_success(1_000);
+        expected.record_prompt_shown(1_000);
+        expected.record_later(1_000);
+
+        let second_prompt = 1_000 + 7 * DAY_SECONDS;
+        for _ in 0..3 {
+            expected.record_meaningful_success(second_prompt);
+        }
+        assert!(expected.can_prompt(second_prompt));
+        expected.record_prompt_shown(second_prompt);
+        expected.record_later(second_prompt);
+
+        let mut seeded = SupporterTestStorage::default();
+        eframe::Storage::set_string(
+            &mut seeded,
+            SUPPORTER_STORAGE_KEY,
+            expected.to_json_string(),
+        );
+
+        let mut app = ViewerApp::new_with_storage(None, Some(&seeded));
+        assert_eq!(app.supporter_state, expected);
+        assert!(
+            !app.supporter_state
+                .can_prompt(second_prompt + 45 * DAY_SECONDS - 1),
+            "45-day suppression must survive restore from eframe storage"
+        );
+
+        app.supporter_state.record_support_clicked(second_prompt);
+        let expected_saved = app.supporter_state.clone();
+        let mut saved = SupporterTestStorage::default();
+        eframe::App::save(&mut app, &mut saved);
+
+        assert_eq!(saved.values.len(), 1);
+        assert_eq!(
+            saved.values.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec![SUPPORTER_STORAGE_KEY]
+        );
+        let raw = saved
+            .values
+            .get(SUPPORTER_STORAGE_KEY)
+            .expect("App::save must persist the versioned supporter key");
+        let restored =
+            supporter::SupporterState::from_json_str(raw).expect("saved state must decode");
+        assert_eq!(restored, expected_saved);
+
+        for forbidden in ["filename", "path", "hash", "text", "document"] {
+            assert!(
+                !raw.contains(forbidden),
+                "persisted supporter state must not contain {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_supporter_storage_falls_back_to_conservative_default() {
+        let mut malformed = SupporterTestStorage::default();
+        eframe::Storage::set_string(
+            &mut malformed,
+            SUPPORTER_STORAGE_KEY,
+            "{not valid json".to_owned(),
+        );
+
+        let app = ViewerApp::new_with_storage(None, Some(&malformed));
+        assert_eq!(
+            app.supporter_state,
+            supporter::SupporterState::default(),
+            "malformed persisted state must not partially restore"
+        );
+
+        let future = serde_json::json!({
+            "schema_version": 255,
+            "first_value_at_unix": null,
+            "last_value_at_unix": null,
+            "last_prompt_at_unix": null,
+            "recent_prompt_unix": [],
+            "meaningful_successes_since_prompt": 0,
+            "dismiss_count": 0,
+            "dismiss_until_unix": null,
+            "claimed_supported_until_unix": null,
+            "support_clicked_until_unix": null,
+        });
+        eframe::Storage::set_string(
+            &mut malformed,
+            SUPPORTER_STORAGE_KEY,
+            future.to_string(),
+        );
+        let app = ViewerApp::new_with_storage(None, Some(&malformed));
+        assert_eq!(app.supporter_state, supporter::SupporterState::default());
+    }
 }
