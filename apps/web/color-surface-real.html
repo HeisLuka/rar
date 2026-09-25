@@ -263,19 +263,25 @@
       <rect x="3" y="1" width="1" height="1" fill="white"/>
     </svg>`;
     const blob = new Blob([svgText], { type: "image/svg+xml" });
-    let bitmap;
-    const bitmapOptions = {
-      imageOrientation: "none",
-      premultiplyAlpha: "none",
-      colorSpaceConversion: "none",
-    };
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
     try {
-      bitmap = await createImageBitmap(blob, bitmapOptions);
+      await new Promise((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("svg_image_load_failed"));
+        image.src = url;
+      });
     } catch (error) {
+      URL.revokeObjectURL(url);
       return {
         available: false,
-        requested: { color_space: "srgb_css_svg", alpha: true, bitmapOptions },
-        error_code: "explicit_svg_raster_readback_unavailable",
+        requested: {
+          color_space: "srgb_css_svg",
+          alpha: true,
+          rasterizer: "HTMLImageElement",
+          color_conversion_control: "not_exposed",
+        },
+        error_code: "svg_raster_readback_unavailable",
         error_message: String(error),
       };
     }
@@ -287,12 +293,13 @@
     document.getElementById("surfaces").append(canvas);
     const ctx = canvas.getContext("2d", { alpha: true, colorSpace: "srgb" });
     if (!ctx) {
-      bitmap.close();
+      URL.revokeObjectURL(url);
       return { available: false, error_code: "svg_readback_canvas_unavailable" };
     }
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
-    ctx.drawImage(bitmap, 0, 0);
-    bitmap.close();
+    ctx.drawImage(image, 0, 0, WIDTH, HEIGHT);
+    URL.revokeObjectURL(url);
+
     let imageData;
     let readbackOptionsSupported = true;
     try {
@@ -307,7 +314,8 @@
       requested: {
         color_space: "srgb_css_svg",
         alpha: true,
-        bitmapOptions,
+        rasterizer: "HTMLImageElement",
+        color_conversion_control: "not_exposed",
       },
       effective: {
         svg_surface_color_control: "css_svg_srgb_semantics_no_context_attribute",
@@ -316,11 +324,11 @@
           : null,
       },
       readback: {
-        api: "SVG Blob -> createImageBitmap(explicit no-conversion) -> Canvas2D.getImageData",
+        api: "SVG Blob -> HTMLImageElement -> Canvas2D.getImageData",
         requested_color_space: "srgb",
         option_supported: readbackOptionsSupported,
         conversion_uncertainty:
-          "SVG has no independent pixel readback API; receipt proves same-browser rasterized surface equivalence, not absolute monitor colorimetry.",
+          "HTMLImageElement exposes no independent color-conversion toggle for SVG; receipt proves same-browser SDR sRGB surface equivalence, not absolute monitor colorimetry.",
       },
       samples,
       expected_max_channel_delta: maxDelta(samples, EXPECTED),
