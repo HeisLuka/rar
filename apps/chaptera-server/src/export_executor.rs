@@ -481,7 +481,8 @@ fn job_failure(error: ExportExecutorError) -> JobFailure {
         | "provider_unknown_unreconciled"
         | "sqlite_blob_metadata_error"
         | "sqlite_artifact_error"
-        | "sqlite_export_publication_error" => (true, "export_transient_failure"),
+        | "sqlite_export_publication_error"
+        | "sqlite_authz_error" => (true, "export_transient_failure"),
         "export_cancelled" => (false, "export_cancelled"),
         "export_publication_conflict" => (false, "export_publication_conflict"),
         "artifact_fence_nondeterministic" => (false, "export_artifact_nondeterministic"),
@@ -592,6 +593,23 @@ fn sha256_prefixed(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sqlite_authz_storage_failure_is_retryable_internal_not_denial() {
+        let failure = job_failure(ExportExecutorError::new(
+            "sqlite_authz_error",
+            "synthetic storage fault",
+        ));
+        assert!(failure.retryable);
+        assert_eq!(failure.terminal_code, "export_transient_failure");
+
+        let denial = job_failure(ExportExecutorError::new(
+            "export_publish_unauthorized",
+            "synthetic denial",
+        ));
+        assert!(!denial.retryable);
+        assert_eq!(denial.terminal_code, "export_publish_unauthorized");
+    }
 
     #[test]
     fn payload_rejects_reference_pdf_profile_until_edited_pdf_is_proven() {
