@@ -128,17 +128,45 @@ pub enum CmoSlotFlowError {
     TargetFrameNodeId,
     HostWidth(i64),
     HostHeight(i64),
-    ShapedLineRange { index: usize },
-    NonPositiveShapedLineHeight { index: usize, value: i64 },
-    SlotOrdinal { index: usize, expected: usize, actual: usize },
-    SlotScalarOrder { index: usize },
-    SlotSourceOrder { index: usize },
-    ZeroCmoId { index: usize },
-    CarrierNodeId { index: usize },
-    CarrierStoryId { index: usize },
-    NonPositiveSlotWidth { index: usize, value: i64 },
-    NonPositiveSlotHeight { index: usize, value: i64 },
-    MarkerCount { markers: usize, slots: usize },
+    ShapedLineRange {
+        index: usize,
+    },
+    NonPositiveShapedLineHeight {
+        index: usize,
+        value: i64,
+    },
+    SlotOrdinal {
+        index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    SlotScalarOrder {
+        index: usize,
+    },
+    SlotSourceOrder {
+        index: usize,
+    },
+    ZeroCmoId {
+        index: usize,
+    },
+    CarrierNodeId {
+        index: usize,
+    },
+    CarrierStoryId {
+        index: usize,
+    },
+    NonPositiveSlotWidth {
+        index: usize,
+        value: i64,
+    },
+    NonPositiveSlotHeight {
+        index: usize,
+        value: i64,
+    },
+    MarkerCount {
+        markers: usize,
+        slots: usize,
+    },
     MetricOverflow,
     Serialization,
 }
@@ -162,10 +190,9 @@ impl fmt::Display for CmoSlotFlowError {
             Self::ShapedLineRange { index } => {
                 write!(f, "items[{index}] has invalid shaped-line scalar range")
             }
-            Self::NonPositiveShapedLineHeight { index, value } => write!(
-                f,
-                "items[{index}].height_emu must be positive, got {value}"
-            ),
+            Self::NonPositiveShapedLineHeight { index, value } => {
+                write!(f, "items[{index}].height_emu must be positive, got {value}")
+            }
             Self::SlotOrdinal {
                 index,
                 expected,
@@ -175,17 +202,26 @@ impl fmt::Display for CmoSlotFlowError {
                 "items[{index}].slot_index {actual} is not canonical ordinal {expected}"
             ),
             Self::SlotScalarOrder { index } => {
-                write!(f, "items[{index}] object-slot scalar index is not increasing")
+                write!(
+                    f,
+                    "items[{index}] object-slot scalar index is not increasing"
+                )
             }
             Self::SlotSourceOrder { index } => {
                 write!(f, "items[{index}] Cmo source_order is not increasing")
             }
             Self::ZeroCmoId { index } => write!(f, "items[{index}].cmo_id must be positive"),
             Self::CarrierNodeId { index } => {
-                write!(f, "items[{index}].carrier_node_id must be canonical lowercase UUID")
+                write!(
+                    f,
+                    "items[{index}].carrier_node_id must be canonical lowercase UUID"
+                )
             }
             Self::CarrierStoryId { index } => {
-                write!(f, "items[{index}].carrier_story_id must be canonical lowercase UUID")
+                write!(
+                    f,
+                    "items[{index}].carrier_story_id must be canonical lowercase UUID"
+                )
             }
             Self::NonPositiveSlotWidth { index, value } => write!(
                 f,
@@ -196,7 +232,10 @@ impl fmt::Display for CmoSlotFlowError {
                 "items[{index}].intrinsic_height_emu must be positive, got {value}"
             ),
             Self::MarkerCount { markers, slots } => {
-                write!(f, "story_marker_count {markers} != object slot count {slots}")
+                write!(
+                    f,
+                    "story_marker_count {markers} != object slot count {slots}"
+                )
             }
             Self::MetricOverflow => write!(f, "slot-flow EMU cursor overflowed"),
             Self::Serialization => write!(f, "slot-flow identity serialization failed"),
@@ -491,18 +530,17 @@ pub fn build_receipt_v1(
         }
     }
 
-    let (remaining_item_count, remaining_slot_count) =
-        if let Some(index) = first_nonfitting_index {
-            let tail = &input.items[index..];
-            (
-                tail.len(),
-                tail.iter()
-                    .filter(|item| matches!(item, FlowItemV1::ObjectSlot { .. }))
-                    .count(),
-            )
-        } else {
-            (0, 0)
-        };
+    let (remaining_item_count, remaining_slot_count) = if let Some(index) = first_nonfitting_index {
+        let tail = &input.items[index..];
+        (
+            tail.len(),
+            tail.iter()
+                .filter(|item| matches!(item, FlowItemV1::ObjectSlot { .. }))
+                .count(),
+        )
+    } else {
+        (0, 0)
+    };
 
     Ok(CmoSlotFlowReceiptV1 {
         receipt_version: RECEIPT_VERSION_V1.into(),
@@ -591,8 +629,8 @@ mod tests {
 
     #[test]
     fn exact_fit_is_visible_without_scaling() {
-        let receipt = build_receipt_v1(&input(vec![slot(0, 0, 1, CARRIER_A, 100, 100)], 1))
-            .expect("receipt");
+        let receipt =
+            build_receipt_v1(&input(vec![slot(0, 0, 1, CARRIER_A, 100, 100)], 1)).expect("receipt");
         assert_eq!(receipt.visible_slots.len(), 1);
         assert_eq!(receipt.visible_slots[0].resolved_width_emu, 100);
         assert_eq!(receipt.visible_slots[0].resolved_height_emu, 100);
@@ -602,14 +640,12 @@ mod tests {
 
     #[test]
     fn plus_one_width_and_height_fail_closed() {
-        let width =
-            build_receipt_v1(&input(vec![slot(0, 0, 1, CARRIER_A, 101, 10)], 1)).unwrap();
+        let width = build_receipt_v1(&input(vec![slot(0, 0, 1, CARRIER_A, 101, 10)], 1)).unwrap();
         assert!(width.overset.story_overset);
         assert_eq!(width.overset.failure_reason.as_deref(), Some("width"));
         assert!(width.visible_slots.is_empty());
 
-        let height =
-            build_receipt_v1(&input(vec![slot(0, 0, 1, CARRIER_A, 10, 101)], 1)).unwrap();
+        let height = build_receipt_v1(&input(vec![slot(0, 0, 1, CARRIER_A, 10, 101)], 1)).unwrap();
         assert!(height.overset.story_overset);
         assert_eq!(height.overset.failure_reason.as_deref(), Some("height"));
         assert!(height.visible_slots.is_empty());
