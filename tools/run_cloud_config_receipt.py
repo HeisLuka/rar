@@ -55,10 +55,13 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="chaptera-config-") as temp_raw:
         temp = pathlib.Path(temp_raw)
         config = temp / "chaptera.toml"
-        config.write_text(
-            example.replace("127.0.0.1:8080", "127.0.0.1:18082"),
-            encoding="utf-8",
+        database = temp / "chaptera.sqlite"
+        rendered = example.replace("127.0.0.1:8080", "127.0.0.1:18082")
+        rendered = rendered.replace(
+            'path = "/var/lib/chaptera/chaptera.sqlite"',
+            f'path = "{database.as_posix()}"',
         )
+        config.write_text(rendered, encoding="utf-8")
 
         missing = run(binary, config, "doctor")
         missing_secret_fails = (
@@ -99,6 +102,26 @@ def main() -> int:
             raise SystemExit(
                 "doctor did not resolve the secret and continue to runtime readiness"
             )
+
+        unmigrated = run(binary, config, "serve", env=role_env)
+        unmigrated_serve_fails = (
+            unmigrated.returncode != 0
+            and "sqlite_database_missing" in unmigrated.stderr
+            and not database.exists()
+        )
+        if not unmigrated_serve_fails:
+            raise SystemExit(
+                "prod-config serve did not fail closed before operator migration"
+            )
+
+        migrated = run(binary, config, "migrate", "up", env=role_env)
+        if migrated.returncode != 0:
+            raise SystemExit(
+                f"operator migration failed rc={migrated.returncode}: "
+                f"{migrated.stdout}\n{migrated.stderr}"
+            )
+        if not database.exists():
+            raise SystemExit("operator migration did not materialize the configured database")
 
         server_env = os.environ.copy()
         server_env.update(role_env)
@@ -159,6 +182,8 @@ def main() -> int:
         "missing_required_secret_fails_startup": missing_secret_fails,
         "systemd_credential_resolves": doctor_resolved,
         "worker_does_not_receive_oidc_secret": worker_isolated,
+        "unmigrated_prod_config_fails_closed": unmigrated_serve_fails,
+        "operator_migration_precedes_serve": True,
         "prod_config_live_code": live,
         "prod_config_ready_without_producers": ready,
         "secret_present_in_output": False,
