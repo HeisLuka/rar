@@ -159,6 +159,7 @@ pub struct ConsumeUploadRequest {
     pub workspace_id: String,
     pub name: String,
     pub client_idempotency_id: String,
+    pub now_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +168,7 @@ pub struct ConsumptionReceipt {
     pub tenant_id: String,
     pub idempotency_key: String,
     pub request_hash: String,
+    pub committed_at_ms: u64,
     pub project: ProjectCreateResult,
 }
 
@@ -654,6 +656,7 @@ impl SourceIngressService {
             tenant_id: request.tenant_id,
             idempotency_key: request.client_idempotency_id,
             request_hash,
+            committed_at_ms: request.now_ms,
             project,
         };
         let committed = self.repo.commit_consumption(
@@ -1368,6 +1371,7 @@ mod tests {
                 workspace_id: "workspace-a".into(),
                 name: "Imported PUB".into(),
                 client_idempotency_id: "create-project-1".into(),
+                now_ms: 500,
             })
             .unwrap();
         let replay = service
@@ -1378,11 +1382,18 @@ mod tests {
                 workspace_id: "workspace-a".into(),
                 name: "Imported PUB".into(),
                 client_idempotency_id: "create-project-1".into(),
+                now_ms: 900,
             })
             .unwrap();
 
         assert_eq!(project, replay);
         assert_eq!(projects.calls.load(Ordering::SeqCst), 1);
+        let consumptions = repo.consumptions.lock().unwrap();
+        let receipt = consumptions
+            .get(&("tenant-a".to_owned(), "create-project-1".to_owned()))
+            .unwrap();
+        assert_eq!(receipt.committed_at_ms, 500);
+        drop(consumptions);
         assert_eq!(
             repo.get(&validated.upload_id).unwrap().unwrap().state,
             UploadState::Consumed
@@ -1403,6 +1414,7 @@ mod tests {
                 workspace_id: "workspace-a".into(),
                 name: "Must fail".into(),
                 client_idempotency_id: "create-project-1".into(),
+                now_ms: 500,
             })
             .unwrap_err();
         assert_eq!(error.code, "source_not_validated_durable");
