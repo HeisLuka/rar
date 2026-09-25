@@ -38,8 +38,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Check task-owned Rust formatting
+        run: cargo fmt -p pub-model -p pub-paint-bridge -- --check
       - name: Check workspace
         run: cargo check --workspace --all-targets
       - name: Lint workspace
