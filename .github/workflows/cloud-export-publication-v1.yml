@@ -1,0 +1,44 @@
+name: CLOUD-EXPORT-EXECUTOR-01 publication
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0010_export_publications.sql"
+      - "apps/chaptera-server/src/export_executor.rs"
+      - "apps/chaptera-server/src/export_publication.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "tools/run_cloud_migration_receipt.py"
+      - ".github/workflows/cloud-export-publication-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-publication:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check chaptera-server formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint publication and executor
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Run publication store tests
+        run: cargo test -p chaptera-server export_publication::
+      - name: Run export executor tests
+        run: cargo test -p chaptera-server export_executor::
+      - name: Build chaptera server
+        run: cargo build -p chaptera-server
+      - name: Verify migration v10
+        run: |
+          python tools/run_cloud_migration_receipt.py             --binary target/debug/chaptera             --out target/cloud-export-publication/migration
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-export-publication-v1
+          path: target/cloud-export-publication
+          if-no-files-found: error
