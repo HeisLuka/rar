@@ -1,0 +1,19 @@
+[package]
+name = "pub-editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-export = { path = "../pub-export" }
+pub-idml = { path = "../pub-idml" }
+pub-model = { path = "../pub-model" }
+pub-odg = { path = "../pub-odg" }
+pub-reader = { path = "../pub-reader" }
+serde.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+zip.workspace = true

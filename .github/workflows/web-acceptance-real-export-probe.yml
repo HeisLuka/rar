@@ -1,0 +1,109 @@
+name: WEB-ACCEPTANCE Producer C export probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/web-acceptance-real-export-probe.yml"
+      - "vendor/producer-a/**"
+      - "tools/verify_editable_export_geometry.py"
+      - "packages/protocol/revision/v1/producer-receipts/sample-newsletter.real.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Materialize pinned SampleNewsletter.pub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .web-v0
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            -o .web-v0/SampleNewsletter.pub
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p=Path(".web-v0/SampleNewsletter.pub")
+          b=p.read_bytes()
+          assert len(b)==291840
+          assert hashlib.sha256(b).hexdigest()=="6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          PY
+
+      - name: Build bounded editable export authority
+        run: cargo build --manifest-path vendor/producer-a/Cargo.toml -p chaptera-producer-a
+
+      - name: Materialize canonical accepted project
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt=json.loads(Path("packages/protocol/revision/v1/producer-receipts/sample-newsletter.real.json").read_text())
+          Path(".web-v0/accepted-project.json").write_text(
+              json.dumps(receipt["resulting_project"], ensure_ascii=False, sort_keys=True, separators=(",",":"))+"\n"
+          )
+          PY
+
+      - name: Export canonical accepted state to IDML
+        shell: bash
+        run: |
+          set -euo pipefail
+          vendor/producer-a/target/debug/chaptera-producer-a \
+            editable-export \
+            .web-v0/SampleNewsletter.pub \
+            .web-v0/accepted-project.json \
+            idml \
+            .web-v0/accepted.idml \
+            .web-v0/export-report.json \
+            > .web-v0/export-summary.json
+
+      - name: Verify exact moved Node geometry in IDML
+        run: |
+          python tools/verify_editable_export_geometry.py \
+            --target idml \
+            --artifact .web-v0/accepted.idml \
+            --node-id 007d9898-568b-5125-b519-8d88243aabfb \
+            --x-emu 653710 \
+            --y-emu 1445292 \
+            --width-emu 4436165 \
+            --height-emu 587274 \
+            --output .web-v0/export-geometry-proof.json
+
+      - name: Assert export report is source-bound and serializable
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path(".web-v0/export-report.json").read_text())
+          assert report["schema_version"]=="0.1"
+          assert report["source"]["source_hash"]=="6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          assert report["target"]["format"]=="idml"
+          assert report["can_serialize"] is True
+          proof=json.loads(Path(".web-v0/export-geometry-proof.json").read_text())
+          assert proof["geometry_matches_edit"] is True
+          print(json.dumps({
+            "can_serialize": report["can_serialize"],
+            "counts": report["counts"],
+            "artifact_sha256": proof["artifact_sha256"],
+            "identity_binding": proof["identity_binding"],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-acceptance-real-export-probe
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            .web-v0/export-report.json
+            .web-v0/export-geometry-proof.json
+            .web-v0/export-summary.json

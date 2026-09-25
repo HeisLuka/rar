@@ -11,6 +11,10 @@ members = [
   "crates/pub-format-registry",
   "crates/pub-reader",
   "crates/pub-viewer",
+  "crates/pub-export",
+  "crates/pub-idml",
+  "crates/pub-odg",
+  "crates/pub-editor",
   "producer",
 ]
 
