@@ -1,0 +1,39 @@
+name: Render Path Runtime V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/render_path_runtime_v1.py"
+      - "tools/test_render_path_runtime_v1.py"
+      - "tools/run_render_path_runtime_receipt.py"
+      - "tools/render_path_ir_v1.py"
+      - "tools/render_scene_v1.py"
+      - "tools/scene_patch_v1.py"
+      - ".github/workflows/render-path-runtime-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test path runtime lifecycle
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_path_runtime_v1.py
+      - name: Re-run PathIR contract
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_path_ir_v1.py
+      - name: Re-run ScenePatch regression
+        run: PYTHONPATH=tools python -m unittest -v tools/test_scene_patch_v1.py
+      - name: Emit path runtime receipt
+        run: mkdir -p target/render-path-runtime && PYTHONPATH=tools python tools/run_render_path_runtime_receipt.py | tee target/render-path-runtime/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-path-runtime-${{ github.run_id }}
+          path: target/render-path-runtime/receipt.json
+          if-no-files-found: error
