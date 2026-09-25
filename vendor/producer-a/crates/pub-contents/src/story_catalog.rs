@@ -376,13 +376,17 @@ mod tests {
     };
     use pub_core::StreamPath;
 
-    fn push_u32(out: &mut Vec<u8>, id: u8, value: u32) {
-        out.extend_from_slice(&[id, BLOCK_TYPE_U32]);
+    fn push_u32(out: &mut Vec<u8>, id: u16, value: u32) {
+        out.extend_from_slice(
+            &crate::encode_packed_field_tag(id, BLOCK_TYPE_U32).expect("test tag must encode"),
+        );
         out.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn container(id: u8, wire: u8, content: &[u8]) -> Vec<u8> {
-        let mut out = vec![id, wire];
+    fn container(id: u16, wire: u8, content: &[u8]) -> Vec<u8> {
+        let mut out = crate::encode_packed_field_tag(id, wire)
+            .expect("test container tag must encode")
+            .to_vec();
         out.extend_from_slice(&u32::try_from(content.len() + 4).unwrap().to_le_bytes());
         out.extend_from_slice(content);
         out
@@ -401,7 +405,13 @@ mod tests {
         array.extend_from_slice(&container(0, BLOCK_TYPE_CONTAINER_88, &e1));
         array.extend_from_slice(&container(0, BLOCK_TYPE_CONTAINER_88, &e2));
 
-        let mut fields = vec![STORY_CATALOG_DECLARED_COUNT_ID, BLOCK_TYPE_U16, 2, 0];
+        let mut fields = crate::encode_packed_field_tag(
+            STORY_CATALOG_DECLARED_COUNT_ID,
+            BLOCK_TYPE_U16,
+        )
+        .expect("declared-count tag must encode")
+        .to_vec();
+        fields.extend_from_slice(&2_u16.to_le_bytes());
         fields.extend_from_slice(&container(
             STORY_CATALOG_ENTRY_ARRAY_ID,
             BLOCK_TYPE_CONTAINER_A0,
