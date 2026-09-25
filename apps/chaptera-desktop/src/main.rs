@@ -170,25 +170,17 @@ fn main() -> eframe::Result<()> {
             eprintln!("usage: chaptera --product-smoke-v1 [OUTPUT.json]");
             std::process::exit(2);
         }
-        match product_smoke::run() {
-            Ok(receipt) => {
-                let encoded = serde_json::to_string(&receipt)
-                    .expect("product smoke receipt is JSON-serializable");
-                if let Some(output) = output {
-                    if let Err(error) = fs::write(&output, format!("{encoded}\n")) {
-                        eprintln!("write product smoke receipt {}: {error}", output.display());
-                        std::process::exit(2);
-                    }
-                } else {
-                    println!("{encoded}");
-                }
-                return Ok(());
-            }
-            Err(error) => {
-                eprintln!("{error}");
+        let receipt = product_smoke::run();
+        let encoded = serde_json::to_string(&receipt)
+            .expect("product smoke receipt is JSON-serializable");
+        if let Some(output) = output {
+            if fs::write(&output, format!("{encoded}\n")).is_err() {
                 std::process::exit(2);
             }
+        } else {
+            println!("{encoded}");
         }
+        return Ok(());
     }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--desktop-acceptance-v1")) {
