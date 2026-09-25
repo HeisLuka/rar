@@ -80,37 +80,85 @@ jobs:
                       targets[p.name.upper()] = (p,b,h)
           if set(targets)!={"ACCSBAR.POC","ACCTBOX.POC"}: raise SystemExit(f"missing targets: {targets.keys()}")
           def u16(b,o): return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o): return int.from_bytes(b[o:o+4],"little")
+          FIXED={1:0,4:4,7:16}
+          LEN_TYPES={16,17,19,24}
+          def parse_opl(payload, base_off):
+              pos=0; props=[]; ok=True; error=None
+              while pos < len(payload):
+                  if len(payload)-pos < 2:
+                      ok=False; error={"kind":"truncated_tag","at":base_off+pos,"remaining":len(payload)-pos}; break
+                  tag=u16(payload,pos); typ=(tag>>11)&0x1f; opy=tag&0x7ff
+                  rec={"offset":base_off+pos,"tag":tag,"type":typ,"opyid":opy}
+                  if typ in FIXED:
+                      need=2+FIXED[typ]
+                      if pos+need>len(payload):
+                          ok=False; error={"kind":"truncated_fixed","at":base_off+pos,"type":typ,"need":need,"remaining":len(payload)-pos}; break
+                      rec["serialized_len"]=need
+                      if typ==4: rec["value_u32"]=u32(payload,pos+2)
+                      props.append(rec); pos+=need
+                  elif typ in LEN_TYPES:
+                      if pos+6>len(payload):
+                          ok=False; error={"kind":"truncated_length_header","at":base_off+pos,"type":typ}; break
+                      cb=u32(payload,pos+2)
+                      if cb<4 or pos+2+cb>len(payload):
+                          ok=False; error={"kind":"invalid_length","at":base_off+pos,"type":typ,"cb_after_tag":cb,"remaining":len(payload)-pos}; break
+                      rec["cb_after_tag"]=cb
+                      rec["serialized_len"]=2+cb
+                      rec["payload_len"]=cb-4
+                      props.append(rec); pos+=2+cb
+                  else:
+                      ok=False; error={"kind":"unknown_wire_type","at":base_off+pos,"tag":tag,"type":typ,"opyid":opy}; break
+              return {"ok":ok,"consumed":pos,"payload_len":len(payload),"exact_end":ok and pos==len(payload),"property_count":len(props),"properties":props,"error":error}
+          def block_summary(b, off, label):
+              if off<0 or off+4>len(b):
+                  return {"label":label,"offset":off,"ok":False,"error":"offset_oob"}
+              cb=u32(b,off)
+              if cb<4 or off+cb>len(b):
+                  return {"label":label,"offset":off,"cb":cb,"ok":False,"error":"length_oob"}
+              parsed=parse_opl(b[off+4:off+cb],off+4)
+              return {"label":label,"offset":off,"cb":cb,"end":off+cb,"ok":parsed["ok"] and parsed["exact_end"],"parse":parsed}
           def analyze(name,b,h):
               if not b.startswith(b"POCPB5"): raise SystemExit(f"{name}: bad magic")
-              words=[u16(b,o) for o in range(6,len(b)-1,2)]
-              tags=[]
-              for i,w in enumerate(words):
-                  typ=(w>>11)&0x1f; opy=w&0x7ff
-                  tags.append((i,typ,opy,w))
-              type_counts=collections.Counter(t for _,t,_,_ in tags)
-              opy_counts=collections.Counter(o for _,_,o,_ in tags)
-              pair_counts=collections.Counter((t,o) for _,t,o,_ in tags)
-              plausible_offsets=[]
-              for o in range(6,min(len(b)-4,512),2):
-                  v=u16(b,o)
-                  if 6 <= v < len(b) and v%2==0:
-                      plausible_offsets.append({"at":o,"value":v})
+              if len(b)<20: raise SystemExit(f"{name}: short header")
+              root_off=u32(b,0x10)
+              root=block_summary(b,root_off,"root")
+              sub=[]
+              cursor=(root.get("end") if root.get("ok") else None)
+              framing_ok=bool(root.get("ok"))
+              if cursor is not None:
+                  idx=0
+                  while cursor<len(b):
+                      blk=block_summary(b,cursor,f"sub{idx}")
+                      sub.append(blk)
+                      if not blk.get("ok"):
+                          framing_ok=False; break
+                      cursor=blk["end"]; idx+=1
+                  if cursor!=len(b): framing_ok=False
+              pair_counts=collections.Counter()
+              type_counts=collections.Counter()
+              for blk in [root]+sub:
+                  for p in (blk.get("parse") or {}).get("properties",[]):
+                      type_counts[p["type"]]+=1
+                      pair_counts[(p["type"],p["opyid"])]+=1
               return {
                 "name":name,"size":len(b),"sha256":h,
-                "prefix16_hex":b[:16].hex(),"suffix16_hex":b[-16:].hex(),
-                "word_count_after_magic":len(words),
+                "prefix24_hex":b[:24].hex(),"suffix16_hex":b[-16:].hex(),
+                "header":{"magic":"POCPB5","u16_06":u16(b,6),"u16_08":u16(b,8),"u16_0a":u16(b,10),"u32_0c":u32(b,12),"root_block_offset_u32_10":root_off},
+                "root":root,
+                "sub_opl_count":len(sub),
+                "sub_opls":sub,
+                "framing_exact_to_eof":framing_ok,
                 "type_counts":dict(sorted(type_counts.items())),
-                "top_opyids":opy_counts.most_common(32),
-                "top_type_opy_pairs":[{"type":k[0],"opyid":k[1],"count":v} for k,v in pair_counts.most_common(64)],
-                "first_64_decoded":[{"word_index":i,"type":t,"opyid":o,"raw":w} for i,t,o,w in tags[:64]],
-                "plausible_u16_offsets_first512":plausible_offsets[:128],
+                "top_type_opy_pairs":[{"type":k[0],"opyid":k[1],"count":v} for k,v in pair_counts.most_common(64)]
               }
           report={"schema":"chaptera.pubwiz-poc-p2000-structural-inventory.v1","source_safe":True,"raw_poc_retained":False,
                   "files":[analyze(n,b,h) for n,(p,b,h) in sorted(targets.items())]}
           pathlib.Path("out/report.json").write_text(json.dumps(report,indent=2))
           summary={"schema":"chaptera.pubwiz-poc-p2000-structural-summary.v1","files":[
-              {"name":x["name"],"size":x["size"],"sha256":x["sha256"],"prefix16_hex":x["prefix16_hex"],
-               "word_count_after_magic":x["word_count_after_magic"],"type_counts":x["type_counts"],
+              {"name":x["name"],"size":x["size"],"sha256":x["sha256"],"prefix24_hex":x["prefix24_hex"],"header":x["header"],"root_ok":x["root"]["ok"],
+               "root_cb":x["root"].get("cb"),"sub_opl_count":x["sub_opl_count"],
+               "framing_exact_to_eof":x["framing_exact_to_eof"],"type_counts":x["type_counts"],
                "top_pairs":x["top_type_opy_pairs"][:16]} for x in report["files"]]}
           pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
           print(json.dumps(summary,indent=2))
