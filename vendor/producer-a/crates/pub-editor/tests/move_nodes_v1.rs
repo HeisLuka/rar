@@ -163,11 +163,21 @@ fn canonical_batch_is_one_history_and_project_replay_unit() {
         table_grids: Vec::new(),
         operations: vec![operation.clone()],
     };
-    let after_a = batch.iter().find(|entry| entry.node_id == node_a).unwrap().after;
-    let after_b = batch.iter().find(|entry| entry.node_id == node_b).unwrap().after;
+    let after_a = batch
+        .iter()
+        .find(|entry| entry.node_id == node_a)
+        .unwrap()
+        .after;
+    let after_b = batch
+        .iter()
+        .find(|entry| entry.node_id == node_b)
+        .unwrap()
+        .after;
 
     let mut session = EditorSession::new(base.clone()).expect("session");
-    session.apply_project(&project).expect("canonical batch replay");
+    session
+        .apply_project(&project)
+        .expect("canonical batch replay");
     assert_eq!(session.operations(), &[operation.clone()]);
     assert_eq!(session.graph().nodes[&node_a].header.bounds, after_a);
     assert_eq!(session.graph().nodes[&node_b].header.bounds, after_b);
@@ -190,7 +200,9 @@ fn canonical_batch_is_one_history_and_project_replay_unit() {
     assert_eq!(session.graph().nodes[&node_b].header.bounds, after_b);
 
     let mut reopened = EditorSession::new(base).expect("reopen");
-    reopened.apply_project(&project).expect("save/reopen replay");
+    reopened
+        .apply_project(&project)
+        .expect("save/reopen replay");
     assert_eq!(reopened.project(), project);
     assert_eq!(reopened.graph().nodes[&node_a].header.bounds, after_a);
     assert_eq!(reopened.graph().nodes[&node_b].header.bounds, after_b);
@@ -204,7 +216,10 @@ fn stale_later_member_rejects_whole_batch_without_partial_mutation() {
     let before_b = base.nodes[&node_b].header.bounds;
     let mut batch = entries(&base);
     batch.sort_by_key(|entry| entry.node_id);
-    let stale = batch.iter_mut().find(|entry| entry.node_id == node_b).unwrap();
+    let stale = batch
+        .iter_mut()
+        .find(|entry| entry.node_id == node_b)
+        .unwrap();
     stale.before.x = LengthEmu::new(stale.before.x.get() + 1);
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_8.to_owned(),
@@ -257,7 +272,9 @@ fn duplicate_resize_and_wrong_page_fail_closed() {
             operations: vec![EditOperation::MoveNodes { page_id, entries }],
         };
         let mut session = EditorSession::new(base.clone()).expect("session");
-        let error = session.apply_project(&project).expect_err("reject malformed batch");
+        let error = session
+            .apply_project(&project)
+            .expect_err("reject malformed batch");
         let EditorProjectError::Operation { index: 0, error } = error else {
             panic!("operation error");
         };
@@ -323,7 +340,10 @@ fn movenodes_wire_is_canonical_and_batch_error_codes_are_stable() {
     };
     let value = serde_json::to_value(operation).expect("serialize MoveNodes");
     assert_eq!(value["kind"], "move_nodes");
-    assert_eq!(value["entries"][0]["node_id"], serde_json::to_value(node_a).unwrap());
+    assert_eq!(
+        value["entries"][0]["node_id"],
+        serde_json::to_value(node_a).unwrap()
+    );
 
     assert_eq!(EditorError::MoveNodesEmpty.code(), "move_nodes_empty");
     assert_eq!(
