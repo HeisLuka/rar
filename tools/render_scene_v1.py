@@ -30,6 +30,8 @@ def compile_render_scene(source):
     )
     effects, effect_groups = canonical_effect_tables_v1(source)
     effect_group_ids = {group["effect_group_id"] for group in effect_groups}
+    clips = sorted(copy.deepcopy(source.get("clips", [])), key=lambda c: c["clip_id"])
+    clip_ids = {clip["clip_id"] for clip in clips}
     path_table, path_lookup = build_path_table(copy.deepcopy(source.get("path_geometries", [])))
 
     transform_index = {}
@@ -45,6 +47,7 @@ def compile_render_scene(source):
     node_atoms = {}
 
     node_effect_groups = {}
+    node_clips = {}
     for node in nodes:
         tid = intern_transform(node["transform"])
         kind = node["kind"]
@@ -53,6 +56,10 @@ def compile_render_scene(source):
         if effect_group_id is not None and effect_group_id not in effect_group_ids:
             raise ValueError(f'node references unknown effect_group_id: {effect_group_id}')
         node_effect_groups[node["node_id"]] = effect_group_id
+        clip_id = node.get("clip_id")
+        if clip_id is not None and clip_id not in clip_ids:
+            raise ValueError(f'node references unknown clip_id: {clip_id}')
+        node_clips[node["node_id"]] = clip_id
         if kind in {"shape", "unknown"}:
             atom = {
                 "atom_id": atom_id(node["node_id"], 0, "rect"),
@@ -62,6 +69,7 @@ def compile_render_scene(source):
                 "transform_index": tid,
                 "paint_id": node.get("paint_id"),
                 "effect_group_id": effect_group_id,
+                "clip_id": clip_id,
             }
             rects.append(atom)
             created.append(atom["atom_id"])
@@ -75,6 +83,7 @@ def compile_render_scene(source):
                 "resource_id": node.get("resource_id"),
                 "paint_id": node.get("paint_id"),
                 "effect_group_id": effect_group_id,
+                "clip_id": clip_id,
             }
             images.append(atom)
             created.append(atom["atom_id"])
@@ -93,6 +102,7 @@ def compile_render_scene(source):
                 "effect_group_id": effect_group_id,
                 "path_index": ref["path_index"],
                 "path_digest": ref["path_digest"],
+                "clip_id": clip_id,
             }
             path_atoms.append(atom)
             created.append(atom["atom_id"])
@@ -129,6 +139,7 @@ def compile_render_scene(source):
             "glyphs": copy.deepcopy(run["glyphs"]),
             "paint_id": run.get("paint_id"),
             "effect_group_id": node_effect_groups.get(node_id),
+            "clip_id": node_clips.get(node_id),
         }
         glyph_atoms.append(atom)
         if node_id not in node_atoms:
@@ -149,7 +160,7 @@ def compile_render_scene(source):
         "pages": pages,
         "tables": {
             "transforms": transforms,
-            "clips": sorted(copy.deepcopy(source.get("clips", [])), key=lambda c: c["clip_id"]),
+            "clips": clips,
             "paints": paints,
             "resources": resources,
             "effects": effects,
