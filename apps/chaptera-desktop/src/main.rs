@@ -2539,6 +2539,22 @@ impl ViewerApp {
                             )
                         });
                     }
+                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+                        && resizable_nodes.contains_key(instance_id)
+                    {
+                        let a11y = ui.interact(
+                            node_rect,
+                            ui.id().with(("resizable-canvas-object", instance_id)),
+                            egui::Sense::hover(),
+                        );
+                        a11y.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Other,
+                                true,
+                                "Resizable canvas object",
+                            )
+                        });
+                    }
                     let node_paint = visual
                         .paints
                         .iter()
