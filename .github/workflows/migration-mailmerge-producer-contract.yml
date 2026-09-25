@@ -1,0 +1,138 @@
+name: Migration mail-merge producer contract
+
+on:
+  pull_request:
+    paths:
+      - "tools/windows/pub-runtime/New-MigrationMailMergeFixture.ps1"
+      - "tools/validate_migration_mailmerge_receipt.py"
+      - "packages/product/migration-mailmerge/v1/producer-receipt.schema.json"
+      - ".github/workflows/migration-mailmerge-producer-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-mailmerge-producer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Parse PowerShell producer
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "tools/windows/pub-runtime/New-MigrationMailMergeFixture.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+
+      - name: Compile receipt validator
+        run: python -m py_compile tools/validate_migration_mailmerge_receipt.py
+
+      - name: Install schema dependency
+        run: python -m pip install --disable-pip-version-check jsonschema
+
+      - name: Validate schema and synthetic receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/migration-mailmerge"
+          mkdir -p "$ROOT"
+          ROOT="$ROOT" python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          root = Path(os.environ["ROOT"])
+          payloads = {
+              "merge-source.xlsx": b"synthetic-data-source",
+              "mail-merge-template.pub": b"synthetic-template",
+              "mail-merge-1.pub": b"TEXT_A",
+              "mail-merge-2.pub": b"TEXT_A\nTEXT_B",
+              "mail-merge-3.pub": b"TEXT_A\nTEXT_B\nTEXT_C",
+          }
+          for name, payload in payloads.items():
+              (root / name).write_bytes(payload)
+
+          def artifact(name):
+              payload = (root / name).read_bytes()
+              return {
+                  "file_name": name,
+                  "byte_len": len(payload),
+                  "sha256": hashlib.sha256(payload).hexdigest(),
+              }
+
+          receipt = {
+              "receipt_version": "chaptera.migration-mailmerge-producer.v1",
+              "producer": "New-MigrationMailMergeFixture.ps1",
+              "publisher": {"version": "16.0", "build": "12527"},
+              "fixture": {
+                  "wizard_id": 161,
+                  "design": 1,
+                  "merge_destination": 2,
+                  "merge_field": "TextValue",
+                  "merge_values": ["TEXT_A", "TEXT_B", "TEXT_C"],
+                  "data_source_table": "Sheet1$",
+              },
+              "data_source": artifact("merge-source.xlsx"),
+              "template": artifact("mail-merge-template.pub"),
+              "template_data_source_connected": True,
+              "data_fields": ["TextValue"],
+              "outputs": [
+                  {
+                      "record_count": 1,
+                      "expected_values": ["TEXT_A"],
+                      "observed_text": ["RESCUE_MAIL_MERGE: TEXT_A"],
+                      "artifact": artifact("mail-merge-1.pub"),
+                  },
+                  {
+                      "record_count": 2,
+                      "expected_values": ["TEXT_A", "TEXT_B"],
+                      "observed_text": ["TEXT_A", "TEXT_B"],
+                      "artifact": artifact("mail-merge-2.pub"),
+                  },
+                  {
+                      "record_count": 3,
+                      "expected_values": ["TEXT_A", "TEXT_B", "TEXT_C"],
+                      "observed_text": ["TEXT_A", "TEXT_B", "TEXT_C"],
+                      "artifact": artifact("mail-merge-3.pub"),
+                  },
+              ],
+              "lineage": "new_controlled_fixture_2026_09_26",
+              "byte_identity_with_lost_merge_clone_01": False,
+          }
+          (root / "mail-merge-producer-receipt.json").write_text(
+              json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+          )
+
+          schema = json.loads(
+              Path("packages/product/migration-mailmerge/v1/producer-receipt.schema.json").read_text()
+          )
+          Draft202012Validator.check_schema(schema)
+          PY
+
+          python tools/validate_migration_mailmerge_receipt.py             --receipt "$ROOT/mail-merge-producer-receipt.json"             --root "$ROOT"
+
+      - name: Reject tampered output
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/migration-mailmerge"
+          printf 'tamper' >> "$ROOT/mail-merge-3.pub"
+          if python tools/validate_migration_mailmerge_receipt.py             --receipt "$ROOT/mail-merge-producer-receipt.json"             --root "$ROOT"; then
+            echo "validator unexpectedly accepted tampered mail-merge output" >&2
+            exit 1
+          fi
