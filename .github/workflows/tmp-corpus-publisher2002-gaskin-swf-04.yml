@@ -1,0 +1,139 @@
+name: TEMP Publisher 2002 Gaskin SWF static inspect
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recover exact archived GO.swf and statically scan strings
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import hashlib, json, re, time, zlib
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          UA="rar-publisher2002-gaskin-swf/1.0"
+          target="http://www.prenhall.com:80/gaskin/GO.swf"
+          parent_ts="20071226171813"
+
+          def cdx(u):
+            params=[
+              ("url",u),("matchType","exact"),("output","json"),
+              ("fl","timestamp,original,mimetype,statuscode,digest,length"),
+              ("filter","statuscode:200"),("collapse","digest"),("limit","20"),("gzip","false")
+            ]
+            q="https://web.archive.org/cdx/search/cdx?"+urlencode(params)
+            req=Request(q,headers={"User-Agent":UA,"Accept":"application/json"})
+            with urlopen(req,timeout=30) as r:
+              data=json.load(r)
+            return [dict(zip(data[0],x)) for x in data[1:]] if data else []
+
+          errors=[]
+          try:
+            captures=cdx(target)
+          except Exception as e:
+            captures=[]
+            errors.append({"surface":"cdx","error":f"{type(e).__name__}: {e}"})
+
+          attempts=[{"timestamp":c["timestamp"],"original":c["original"],"capture":c,"mode":"cdx"} for c in captures]
+          if not attempts:
+            attempts=[{"timestamp":parent_ts,"original":target,"capture":{"timestamp":parent_ts,"original":target,"digest":"unindexed-direct-replay"},"mode":"direct-replay"}]
+
+          receipts=[]; discoveries=[]
+          url_re=re.compile(rb'(?i)(?:https?|ftp)://[^\x00-\x20"\'<>]{4,300}')
+          token_re=re.compile(rb'(?i)[A-Za-z0-9_./?=&%:+-]{4,240}(?:\.pub|\.zip|\.cab|\.exe|\.htm|\.html|\.cfm|\.asp|\.swf|download|student|exercise|project|chapter|data.?file)[A-Za-z0-9_./?=&%:+-]{0,160}')
+
+          for a in attempts[:10]:
+            replay=f"https://web.archive.org/web/{a['timestamp']}id_/{a['original']}"
+            rec={**a,"replay":replay}
+            try:
+              req=Request(replay,headers={"User-Agent":UA,"Accept":"application/x-shockwave-flash,application/octet-stream,*/*;q=0.1"})
+              with urlopen(req,timeout=45) as r:
+                raw=r.read(20*1024*1024+1)
+                rec["status"]=getattr(r,"status",None)
+                rec["content_type"]=r.headers.get("Content-Type")
+                rec["final_url"]=r.geturl()
+              if len(raw)>20*1024*1024:
+                raise ValueError("SWF exceeds 20 MiB bound")
+              rec["size"]=len(raw)
+              rec["sha256"]=hashlib.sha256(raw).hexdigest()
+              rec["signature"]=raw[:3].decode("ascii","replace")
+              bodies=[("raw",raw)]
+              if raw[:3]==b"CWS" and len(raw)>=8:
+                try:
+                  dec=b"FWS"+raw[3:8]+zlib.decompress(raw[8:])
+                  bodies.append(("zlib-decompressed",dec))
+                  rec["decompressed_size"]=len(dec)
+                  rec["decompressed_sha256"]=hashlib.sha256(dec).hexdigest()
+                except Exception as e:
+                  rec["decompress_error"]=f"{type(e).__name__}: {e}"
+              seen=set(); found=[]
+              for source,b in bodies:
+                for rx,kind in ((url_re,"url"),(token_re,"token")):
+                  for m in rx.finditer(b):
+                    val=m.group(0).decode("latin-1","replace").strip()
+                    k=(kind,val.casefold())
+                    if k in seen: continue
+                    seen.add(k)
+                    row={"source":source,"kind":kind,"value":val}
+                    found.append(row)
+                    discoveries.append({**row,"capture_timestamp":a["timestamp"]})
+              rec["discoveries"]=found[:1000]
+              rec["discovery_count"]=len(found)
+            except Exception as e:
+              rec["error"]=f"{type(e).__name__}: {e}"
+            receipts.append(rec)
+            time.sleep(.2)
+
+          # Keep only metadata/strings; never retain SWF bytes.
+          unique={}
+          for d in discoveries:
+            unique.setdefault((d["kind"],d["value"].casefold()),d)
+          rows=sorted(unique.values(),key=lambda x:(x["kind"],x["value"].casefold()))
+          carrier=[x for x in rows if re.search(r'(?i)\.(?:pub|zip|cab|exe)(?:$|[?#])',x["value"])]
+          summary={
+            "schema":"chaptera.corpus-publisher2002-gaskin-swf.v1",
+            "source_safe":True,
+            "raw_payload_retained":False,
+            "target":target,
+            "cdx_capture_count":len(captures),
+            "attempts":receipts,
+            "unique_discovery_count":len(rows),
+            "carrier_like_strings":carrier,
+            "discoveries":rows,
+            "errors":errors,
+            "guardrail":"SWF bytes are only transiently decoded as data. Flash is never executed. Artifact retains hashes and extracted strings only."
+          }
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Source-safe artifact guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.swf' -o -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' \) | grep -q .; then
+            echo 'unexpected raw bytes in artifact' >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-publisher2002-gaskin-swf
+          path: out/**
+          retention-days: 60
+          if-no-files-found: error
