@@ -1,0 +1,250 @@
+name: TEMP CORPUS Publisher95-97 cross-document migration laws
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-95-97-laws-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Compare BOOKMARK and CHECKS migration laws
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import difflib,hashlib,json,time,urllib.parse,urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-xdoc-95-97-laws/1.0";SECTOR=2048
+          MEDIA={
+            "pub95":{"url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso","root_sha256":"36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a","root_size":47730688},
+            "pub97":{"url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso","root_sha256":"41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab","root_size":138315776}
+          }
+          DOCS={
+            "BOOKMARK":{
+              "pub95":{"member":"PAGEWIZ/BOOKMARK.PUB","sha256":"0d4c2e9e6a84a39f212f71c95591e17eb62ebaac7026427a4f84f6d1e636f5d5","size":22528},
+              "pub97":{"member":"PAGEWIZ/BOOKMARK.PUB","sha256":"8a706ca56ce5d2853b9469a666cd769bab4c62d6fb56d8d7872ff9a322394367","size":22528}
+            },
+            "CHECKS":{
+              "pub95":{"member":"PAGEWIZ/CHECKS.PUB","sha256":"5f09d894eb6c6f4888807590c11f4cdcabc4583ed3716c68c7dc361fbd7ff4be","size":12288},
+              "pub97":{"member":"PAGEWIZ/CHECKS.PUB","sha256":"4ab9b74e2f15b6f12e82fac111fb7c524dd44742d883ef52a72922428cdd106b","size":12288}
+            }
+          }
+          TARGET_MARKERS=[0x15,0x16,0x23,0x26,0x2A,0x32]
+
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              for a in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+              out=[];d=str(m.get("dir") or "")
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError("range length drift")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              for a in range(4):
+                try:return self.rr(self.delivery,start,n)
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","replace"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              k=(e,s)
+              if k in self.cache:return self.cache[k]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[k]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
+              for i,x in enumerate([x.upper() for x in path.strip("/").split("/") if x]):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len([z for z in path.strip("/").split("/") if z]) and not fl&2:raise ValueError("not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def contents(pub):
+            with olefile.OleFileIO(pub) as ole:return ole.openstream(["Contents"]).read()
+
+          def parse(c):
+            if c[:4]!=b"\xe8\xac\x22\x00":raise ValueError("not old22")
+            sig=c[0x0c:0x0e].hex();cv=u16(c,4)
+            gen={("7d00",300):"Publisher95",("8800",300):"Publisher97"}.get((sig,cv),"unknown")
+            off=u32(c,0x16);n=u16(c,off);rows=[]
+            for i in range(n):
+              p=off+2+i*10
+              r={"service":u16(c,p),"id":u16(c,p+2),"parent":u16(c,p+4),"offset":u32(c,p+6)}
+              r["marker"]=u16(c,r["offset"]);rows.append(r)
+            offs=sorted(set(r["offset"] for r in rows));chunks={}
+            for r in rows:
+              nxt=[x for x in offs if x>r["offset"]];e=min(nxt) if nxt else len(c)
+              raw=c[r["offset"]:e];chunks[r["id"]]={"raw":raw,"len":len(raw),"sha256":sha(raw)}
+            root=u32(c,0x12);m=root+14
+            text_meta={"root":root,"start":u32(c,m),"end":u32(c,m+4),"dir_offset":off}
+            return {"generation":gen,"rows":rows,"by_id":{r["id"]:r for r in rows},"chunks":chunks,"text":text_meta}
+
+          isos={k:ISO(v["url"]) for k,v in MEDIA.items()}
+          parsed={}
+          for doc,sides in DOCS.items():
+            parsed[doc]={}
+            for side,s in sides.items():
+              pub=isos[side].member(s["member"])
+              if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(f"{doc}/{side} exact member drift")
+              parsed[doc][side]=parse(contents(pub))
+
+          def normalized_chunk(raw, ids, physical_values):
+            b=bytearray(raw)
+            if len(b)>=2:b[0:2]=b"\x00\x00"
+            for p in range(0,len(b)-1,2):
+              if int.from_bytes(b[p:p+2],"little") in ids:b[p:p+2]=b"\xfe\xff"
+            for p in range(0,max(0,len(b)-3)):
+              if int.from_bytes(b[p:p+4],"little") in physical_values:b[p:p+4]=b"\xfd\xfd\xfd\xfd"
+            return bytes(b)
+
+          def delta_sig(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False);ops=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag=="equal":continue
+              ops.append((tag,i2-i1,j2-j1,sha(a[i1:i2]),sha(b[j1:j2])))
+            return sha(json.dumps(ops,separators=(",",":")).encode()),ops
+
+          per_doc={}
+          for doc in DOCS:
+            L=parsed[doc]["pub95"];R=parsed[doc]["pub97"]
+            if L["generation"]!="Publisher95" or R["generation"]!="Publisher97":raise ValueError(doc+" generation mismatch")
+            l_ids=set(L["by_id"]);r_ids=set(R["by_id"]);common=sorted(l_ids&r_ids);added=sorted(r_ids-l_ids);removed=sorted(l_ids-r_ids)
+            tuple_changes=[]
+            for oid in common:
+              a=L["by_id"][oid];b=R["by_id"][oid]
+              if (a["service"],a["id"],a["parent"],a["marker"])!=(b["service"],b["id"],b["parent"],b["marker"]):tuple_changes.append(oid)
+            added_rows=[R["by_id"][oid] for oid in added]
+            ids=l_ids|r_ids
+            lphys={L["text"]["root"],L["text"]["start"],L["text"]["end"],L["text"]["dir_offset"]}|{x["offset"] for x in L["rows"]}
+            rphys={R["text"]["root"],R["text"]["start"],R["text"]["end"],R["text"]["dir_offset"]}|{x["offset"] for x in R["rows"]}
+            markers={}
+            for marker in TARGET_MARKERS:
+              rows=[]
+              for oid in common:
+                lr=L["by_id"][oid];rr=R["by_id"][oid]
+                if lr["marker"]!=marker or rr["marker"]!=marker:continue
+                a=L["chunks"][oid]["raw"];b=R["chunks"][oid]["raw"]
+                if a==b:continue
+                na=normalized_chunk(a,ids,lphys);nb=normalized_chunk(b,ids,rphys)
+                sig,ops=delta_sig(na,nb)
+                rows.append({"id":oid,"left_len":len(a),"right_len":len(b),"service":lr["service"],"parent":lr["parent"],"delta_signature":sig,"delta_op_shapes":[[x[0],x[1],x[2]] for x in ops],"left_normalized_sha256":sha(na),"right_normalized_sha256":sha(nb)})
+              markers[f"0x{marker:02X}"]=rows
+            per_doc[doc]={"common_count":len(common),"added_ids":added,"removed_ids":removed,"tuple_changed_ids":tuple_changes,"added_rows":added_rows,"markers":markers}
+
+          # Normalize the two added-node chains by role rather than absolute ID.
+          def chain_shape(doc):
+            rows=per_doc[doc]["added_rows"]
+            if len(rows)!=2:return {"isomorphic_candidate":False,"rows":rows}
+            ids={r["id"] for r in rows}
+            first=[r for r in rows if r["parent"] not in ids]
+            if len(first)!=1:return {"isomorphic_candidate":False,"rows":rows}
+            a=first[0];second=[r for r in rows if r["parent"]==a["id"]]
+            if len(second)!=1:return {"isomorphic_candidate":False,"rows":rows}
+            b=second[0]
+            parent=parsed[doc]["pub97"]["by_id"].get(a["parent"])
+            return {"isomorphic_candidate":True,"root_child":{"service":a["service"],"marker":a["marker"],"parent_marker":parent["marker"] if parent else None,"parent_service":parent["service"] if parent else None},"child":{"service":b["service"],"marker":b["marker"]}}
+
+          chains={doc:chain_shape(doc) for doc in DOCS}
+          chain_isomorphic=chains["BOOKMARK"].get("root_child")==chains["CHECKS"].get("root_child") and chains["BOOKMARK"].get("child")==chains["CHECKS"].get("child")
+
+          laws=[]
+          for marker in [f"0x{x:02X}" for x in TARGET_MARKERS]:
+            a=per_doc["BOOKMARK"]["markers"][marker];b=per_doc["CHECKS"]["markers"][marker]
+            ashapes={(x["left_len"],x["right_len"]) for x in a};bshapes={(x["left_len"],x["right_len"]) for x in b}
+            asigs={x["delta_signature"] for x in a};bsigs={x["delta_signature"] for x in b}
+            if a and b and asigs&bsigs:
+              cls="repeated-exact-normalized-delta"
+            elif a and b and ashapes&bshapes:
+              cls="repeated-shape-only"
+            elif a and b:
+              cls="repeated-marker-document-specific-shape"
+            else:
+              cls="not-observed-in-both"
+            laws.append({"marker":marker,"classification":cls,"bookmark_count":len(a),"checks_count":len(b),"shared_length_transitions":[list(x) for x in sorted(ashapes&bshapes)],"shared_delta_signatures":sorted(asigs&bsigs)})
+
+          summary={"schema":"chaptera.publisher95-97-xdoc-laws.v1","source_safe":True,"all_exact_members_verified":True,
+            "lineages":{"BOOKMARK":{"common":per_doc["BOOKMARK"]["common_count"],"added":per_doc["BOOKMARK"]["added_ids"],"removed":per_doc["BOOKMARK"]["removed_ids"],"tuple_changed":per_doc["BOOKMARK"]["tuple_changed_ids"]},"CHECKS":{"common":per_doc["CHECKS"]["common_count"],"added":per_doc["CHECKS"]["added_ids"],"removed":per_doc["CHECKS"]["removed_ids"],"tuple_changed":per_doc["CHECKS"]["tuple_changed_ids"]}},
+            "added_chain_isomorphic":chain_isomorphic,"added_chains":chains,"laws":laws,
+            "printer29_external_law_reference":"separate 105/105 paired census proves marker0x29 outer list pointer width 2->4"
+          }
+          report={"schema":"chaptera.publisher95-97-xdoc-laws-receipt.v1","media":{k:{"root_sha256":v["root_sha256"],"root_size":v["root_size"],"delivery_url":isos[k].delivery} for k,v in MEDIA.items()},"documents":per_doc,"summary":summary,"raw_pub_retained":False,"source_safe":True}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["lineages"]["BOOKMARK"]["removed"]==[]
+          assert s["lineages"]["CHECKS"]["removed"]==[]
+          assert s["lineages"]["BOOKMARK"]["tuple_changed"]==[]
+          assert s["lineages"]["CHECKS"]["tuple_changed"]==[]
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-95-97-laws-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
