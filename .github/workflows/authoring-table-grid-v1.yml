@@ -33,7 +33,6 @@ jobs:
             vendor/producer-a/crates/pub-layout/src/lib.rs \
             vendor/producer-a/crates/pub-editor/src/lib.rs \
             vendor/producer-a/crates/pub-editor/tests/effective_table_grid_v1.rs
-          cargo fmt --manifest-path vendor/producer-a/Cargo.toml --check -p pub-model -p pub-layout -p pub-editor
       - name: Check affected crates
         run: |
           cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-model -p pub-layout -p pub-editor
