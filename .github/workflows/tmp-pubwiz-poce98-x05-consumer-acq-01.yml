@@ -1,0 +1,165 @@
+name: TEMP PUBWIZ POCE98 X05 consumer acquisition
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-poce98-x05-consumer-acq-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inert media and PE tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26
+      - name: Recover exact Publisher 2000 POCE MORPH candidates
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/poce/{src,cands} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/poce/source.7z
+          test "$(sha1sum /tmp/poce/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          test "$(md5sum /tmp/poce/source.7z | awk '{print $1}')" = '79684ab77ef73df4827295ab6a804bf5'
+          7z x -y /tmp/poce/source.7z -o/tmp/poce/src >/tmp/poce/unpack.log
+          MDF="$(find /tmp/poce/src -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF"
+          iat "$MDF" /tmp/poce/disc.iso >/tmp/poce/iat.log
+          test "$(sha256sum /tmp/poce/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z l -slt /tmp/poce/disc.iso > /tmp/poce/disc.slt
+          python3 - <<'PY'
+          import json, pathlib, re
+          text=pathlib.Path('/tmp/poce/disc.slt').read_text(errors='replace')
+          rows=[]; cur={}
+          for line in text.splitlines():
+              if ' = ' not in line: continue
+              k,v=line.split(' = ',1)
+              if k=='Path' and cur:
+                  rows.append(cur); cur={}
+              cur[k]=v
+          if cur: rows.append(cur)
+          candidates=[]
+          for r in rows:
+              path=r.get('Path','')
+              base=path.replace('\\','/').rsplit('/',1)[-1]
+              if re.fullmatch(r'(?i)(?:POCE.*|MORPH.*)\.(?:DLL|EXE)',base):
+                  candidates.append({
+                      'path':path,
+                      'size':int(r.get('Size') or 0),
+                      'base':base
+                  })
+          pathlib.Path('/tmp/poce/candidates.json').write_text(json.dumps(candidates,indent=2))
+          print(json.dumps(candidates,indent=2))
+          PY
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          rows=json.loads(pathlib.Path('/tmp/poce/candidates.json').read_text())
+          manifest=[]
+          for i,row in enumerate(rows):
+              d=pathlib.Path('/tmp/poce/cands')/str(i)
+              d.mkdir(parents=True,exist_ok=True)
+              q=subprocess.run(['7z','e','-y',f'-o{d}','/tmp/poce/disc.iso',row['path']],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+              files=[p for p in d.iterdir() if p.is_file()]
+              if q.returncode!=0 or len(files)!=1:
+                  manifest.append({**row,'extract_ok':False,'returncode':q.returncode})
+                  continue
+              manifest.append({**row,'extract_ok':True,'local_path':str(files[0])})
+          pathlib.Path('/tmp/poce/extracted.json').write_text(json.dumps(manifest,indent=2))
+          PY
+          python3 - <<'PY'
+          import hashlib, json, pathlib, re
+          import pefile
+          rows=json.loads(pathlib.Path('/tmp/poce/extracted.json').read_text())
+          keywords=[b'.poc',b'pocpb5',b'pubwiz',b'accsbar',b'acctbox',b'bs2barb']
+          def sha(b): return hashlib.sha256(b).hexdigest()
+          out=[]
+          for row in rows:
+              rec={k:v for k,v in row.items() if k!='local_path'}
+              if not row.get('extract_ok'):
+                  rec['classification']='extraction-failed'
+                  out.append(rec); continue
+              p=pathlib.Path(row['local_path']); data=p.read_bytes()
+              rec['actual_size']=len(data); rec['sha256']=sha(data)
+              hits=[]
+              low=data.lower()
+              for kw in keywords:
+                  ao=[]; start=0
+                  while len(ao)<20:
+                      pos=low.find(kw,start)
+                      if pos<0: break
+                      ao.append(pos); start=pos+1
+                  u=kw.decode('ascii').encode('utf-16le')
+                  uo=[]; start=0
+                  low_u=data.lower()
+                  while len(uo)<20:
+                      pos=low_u.find(u,start)
+                      if pos<0: break
+                      uo.append(pos); start=pos+2
+                  hits.append({'keyword':kw.decode('ascii'),'ascii_offsets':ao,'utf16le_offsets':uo,'hit_count_capped':len(ao)+len(uo)})
+              rec['keyword_hits']=hits
+              direct=any(h['hit_count_capped'] for h in hits)
+              try:
+                  pe=pefile.PE(data=data,fast_load=False)
+                  rec['pe']={'machine':pe.FILE_HEADER.Machine,'timestamp':pe.FILE_HEADER.TimeDateStamp}
+                  if getattr(pe,'VS_FIXEDFILEINFO',None):
+                      ffi=pe.VS_FIXEDFILEINFO[0]
+                      rec['pe']['file_version']=[
+                          ffi.FileVersionMS>>16,ffi.FileVersionMS&0xffff,
+                          ffi.FileVersionLS>>16,ffi.FileVersionLS&0xffff
+                      ]
+                  imports=[]
+                  if hasattr(pe,'DIRECTORY_ENTRY_IMPORT'):
+                      for ent in pe.DIRECTORY_ENTRY_IMPORT:
+                          dll=(ent.dll or b'').decode('ascii','replace')
+                          names=[]
+                          for imp in ent.imports:
+                              n=(imp.name or b'').decode('ascii','replace')
+                              if re.search(r'(?i)poc|morph|wiz',n): names.append(n)
+                          imports.append({'dll':dll,'relevant_names':names[:50]})
+                  rec['imports']=imports[:100]
+                  exports=[]
+                  if hasattr(pe,'DIRECTORY_ENTRY_EXPORT') and pe.DIRECTORY_ENTRY_EXPORT:
+                      for sym in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                          n=(sym.name or b'').decode('ascii','replace')
+                          if n and re.search(r'(?i)poc|morph|wiz',n): exports.append(n)
+                  rec['relevant_exports']=exports[:100]
+              except Exception as exc:
+                  rec['pe_parse_error']=type(exc).__name__
+              rec['classification']='provenance-pinned-candidate-with-direct-static-poc-evidence' if direct else 'provenance-pinned-candidate-without-direct-static-poc-evidence'
+              out.append(rec)
+          result={
+              'schema':'chaptera.pubwiz-poce98-x05-consumer-acq.v1',
+              'source':{
+                  'ia_identifier':'X05-44678',
+                  'transport_sha1':'56ca51186a7fe2139b3b5ab27c7d05749ba75b46',
+                  'image_sha256':'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+              },
+              'candidate_count':len(out),
+              'direct_static_poc_evidence_count':sum(r.get('classification','').endswith('with-direct-static-poc-evidence') for r in out),
+              'candidates':out,
+              'source_safe':True,
+              'raw_binaries_retained':False
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then
+            echo "raw binary leaked into retained output" >&2
+            exit 1
+          fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-poce98-x05-consumer-acq-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
