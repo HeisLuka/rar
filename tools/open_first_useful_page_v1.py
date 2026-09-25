@@ -8,7 +8,7 @@ import math
 from typing import Any
 
 RECEIPT_VERSION = "chaptera.open-first-useful-page.v1"
-MEASUREMENT_CLASSES = {"synthetic_contract_fixture", "real_pub_source_free"}
+MEASUREMENT_CLASSES = {"synthetic_contract_fixture", "hosted_public_fixture", "real_pub_source_free"}
 CACHE_STATES = {"cold", "warm", "unknown"}
 SCOPES = {
     "first_page_only",
@@ -164,7 +164,8 @@ def validate_receipt(receipt: dict[str, Any]) -> None:
     measurement_class = receipt.get("measurement_class")
     if measurement_class not in MEASUREMENT_CLASSES:
         raise OpenReceiptInvalid("measurement_class mismatch")
-    real = measurement_class == "real_pub_source_free"
+    real_runtime = measurement_class != "synthetic_contract_fixture"
+    architecture_allowed = measurement_class == "real_pub_source_free"
 
     producer = receipt.get("producer")
     if not isinstance(producer, dict):
@@ -206,14 +207,14 @@ def validate_receipt(receipt: dict[str, Any]) -> None:
     authority = receipt.get("evidence_authority")
     if not isinstance(authority, dict):
         raise OpenReceiptInvalid("evidence_authority required")
-    if authority.get("real_pub_runtime") is not real:
+    if authority.get("real_pub_runtime") is not real_runtime:
         raise OpenReceiptInvalid("real_pub_runtime mismatches measurement_class")
-    if authority.get("architecture_decision_allowed") is not real:
+    if authority.get("architecture_decision_allowed") is not architecture_allowed:
         raise OpenReceiptInvalid(
-            "architecture_decision_allowed must be true only for real receipt"
+            "architecture_decision_allowed must be true only for representative real_pub_source_free receipts"
         )
 
-    if real:
+    if real_runtime:
         corpus = receipt.get("corpus_identity")
         if not isinstance(corpus, dict):
             raise OpenReceiptInvalid("real receipt requires corpus_identity")
