@@ -89,3 +89,24 @@ A future Cloud export executor must construct `DerivedArtifactFenceV1` with:
 
 This prevents a semantically false exact-revision fence while keeping all
 revision hash authorities independently versioned.
+
+
+## Atomic child commit
+
+A new accepted child revision must not become durable before its canonical
+identity binding. `SqliteRevisionStore::append_edge_with_revision_identity`
+therefore writes the RevisionStream child edge and its canonical mapping in one
+SQLite transaction.
+
+- commit success makes both records durable together;
+- exact retry requires both the same edge and the same canonical mapping;
+- a changed mapping on an exact edge retry fails as
+  `revision_identity_conflict`;
+- a conflicting same-parent writer returns the existing canonical edge and
+  leaves no mapping for the losing child;
+- an edge-without-mapping or mapping-without-edge is treated as explicit
+  partial/orphan state, not silently repaired by guessing.
+
+Baseline revisions have no predecessor edge, so their explicit mapping is
+registered through `bind_revision_identity`. Child producers should use the
+atomic append API.
