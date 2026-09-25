@@ -7,7 +7,6 @@ on:
       - "services/editor-api/test_text_cut_v1.py"
       - "services/editor-api/text_range_fragment_v1.py"
       - "services/editor-api/text_egress_v1.py"
-      - "services/editor-api/story_edit_transaction_v1.py"
       - "services/editor-api/text_selection_state_v1.py"
       - ".github/workflows/text-cut-v1.yml"
   workflow_dispatch:
