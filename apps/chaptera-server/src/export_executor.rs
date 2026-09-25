@@ -469,7 +469,8 @@ fn job_failure(error: ExportExecutorError) -> JobFailure {
         | "provider_unknown_unreconciled"
         | "sqlite_blob_metadata_error"
         | "sqlite_artifact_error"
-        | "sqlite_export_publication_error" => (true, "export_transient_failure"),
+        | "sqlite_export_publication_error"
+        | "sqlite_authz_error" => (true, "export_transient_failure"),
         "export_cancelled" => (false, "export_cancelled"),
         "export_publication_conflict" => (false, "export_publication_conflict"),
         "artifact_fence_nondeterministic" => (false, "export_artifact_nondeterministic"),
