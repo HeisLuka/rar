@@ -127,13 +127,16 @@ def main() -> int:
             )
 
         worker = run(binary, config, "worker")
-        worker_isolated = (
-            worker.returncode != 0
-            and "worker_runtime_not_configured" in worker.stderr
-            and "credentials_directory_missing" not in worker.stderr
+        worker_does_not_resolve_web_secret = (
+            "credentials_directory_missing" not in worker.stderr
+            and "oidc_client_secret" not in worker.stderr
+            and "receipt-only-oidc-secret" not in worker.stdout
+            and "receipt-only-oidc-secret" not in worker.stderr
         )
-        if not worker_isolated:
-            raise SystemExit("worker unexpectedly required the web/OIDC secret")
+        if not worker_does_not_resolve_web_secret:
+            raise SystemExit(
+                "worker unexpectedly resolved or required the web/OIDC secret"
+            )
 
         credentials = temp / "credentials"
         credentials.mkdir()
@@ -247,7 +250,7 @@ def main() -> int:
         "typed_prod_config": True,
         "missing_required_secret_fails_startup": missing_secret_fails,
         "systemd_credential_resolves": doctor_resolved,
-        "worker_does_not_receive_oidc_secret": worker_isolated,
+        "worker_does_not_receive_oidc_secret": worker_does_not_resolve_web_secret,
         "unmigrated_prod_config_fails_closed": unmigrated_serve_fails,
         "operator_migration_precedes_serve": True,
         "prod_config_validated_without_external_idp": True,
