@@ -6,6 +6,7 @@
 // The cadence API is intentionally staged one PR before its UI consumer (#227).
 mod acceptance;
 mod agent;
+mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
 
@@ -174,6 +175,33 @@ fn main() -> eframe::Result<()> {
             std::process::exit(2);
         }
         return Ok(());
+    }
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--product-smoke-v1")) {
+        let output = args.next().map(PathBuf::from);
+        if args.next().is_some() {
+            eprintln!("usage: chaptera --product-smoke-v1 [OUTPUT.json]");
+            std::process::exit(2);
+        }
+        match product_smoke::run() {
+            Ok(receipt) => {
+                let encoded = serde_json::to_string(&receipt)
+                    .expect("product smoke receipt is JSON-serializable");
+                if let Some(output) = output {
+                    if let Err(error) = fs::write(&output, format!("{encoded}\n")) {
+                        eprintln!("write product smoke receipt {}: {error}", output.display());
+                        std::process::exit(2);
+                    }
+                } else {
+                    println!("{encoded}");
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
     }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--desktop-acceptance-v1")) {
