@@ -1,4 +1,4 @@
-name: TEMP PUBWIZ P2000 POC structural inventory
+name: TEMP PUBWIZ P2000 POC type30 trailer classification
 on:
   pull_request:
     paths:
@@ -23,7 +23,7 @@ jobs:
           mkdir -p out /tmp/x05
           python - <<'PY'
           import json,urllib.request,urllib.parse
-          req=urllib.request.Request("https://archive.org/metadata/X05-44678",headers={"User-Agent":"rar-poc-struct/1.0"})
+          req=urllib.request.Request("https://archive.org/metadata/X05-44678",headers={"User-Agent":"rar-poc-type30/1.0"})
           with urllib.request.urlopen(req,timeout=60) as r: meta=json.load(r)
           fs=[f for f in meta.get("files",[]) if str(f.get("source") or "")=="original" and str(f.get("name") or "").lower().endswith(".7z")]
           fs.sort(key=lambda f:int(f.get("size") or 0),reverse=True)
@@ -141,10 +141,39 @@ jobs:
                   if cursor!=len(b): framing_ok=False
               pair_counts=collections.Counter()
               type_counts=collections.Counter()
-              for blk in [root]+sub:
+              type30=[]
+              for bi,blk in enumerate([root]+sub):
                   for p in (blk.get("parse") or {}).get("properties",[]):
                       type_counts[p["type"]]+=1
                       pair_counts[(p["type"],p["opyid"])]+=1
+                  pr=blk.get("parse") or {}
+                  residual=pr.get("residual")
+                  if residual and residual.get("len",0)>=2:
+                      payload_start=blk["offset"]+4
+                      rstart=payload_start+pr.get("consumed",0)
+                      rlen=residual["len"]
+                      raw=b[rstart:rstart+rlen]
+                      tag=u16(raw,0)
+                      typ=(tag>>11)&0x1f
+                      opy=tag&0x7ff
+                      if typ==30:
+                          row={"block_index":bi-1 if bi>0 else -1,
+                               "block_label":blk.get("label"),
+                               "block_offset":blk["offset"],
+                               "trailer_offset":rstart,
+                               "trailer_len":rlen,
+                               "trailer_hex":raw.hex(),
+                               "trailer_sha256":hashlib.sha256(raw).hexdigest(),
+                               "tag_u16":tag,"type":typ,"opyid":opy,
+                               "header_only_exact":rlen==2,
+                               "fixed_u32_exact":rlen==6,
+                               "fixed_u32_value":u32(raw,2) if rlen>=6 else None,
+                               "length_delimited_possible":False}
+                          if rlen>=6:
+                              cb=u32(raw,2)
+                              row["length_field_u32"]=cb
+                              row["length_delimited_possible"]= bool(cb>=4 and 2+cb==rlen)
+                          type30.append(row)
               return {
                 "name":name,"size":len(b),"sha256":h,
                 "prefix24_hex":b[:24].hex(),"suffix16_hex":b[-16:].hex(),
@@ -154,12 +183,34 @@ jobs:
                 "sub_opls":sub,
                 "framing_exact_to_eof":framing_ok,
                 "type_counts":dict(sorted(type_counts.items())),
-                "top_type_opy_pairs":[{"type":k[0],"opyid":k[1],"count":v} for k,v in pair_counts.most_common(64)]
+                "top_type_opy_pairs":[{"type":k[0],"opyid":k[1],"count":v} for k,v in pair_counts.most_common(64)],
+                "type30_trailers":type30
               }
-          report={"schema":"chaptera.pubwiz-poc-p2000-structural-inventory.v1","source_safe":True,"raw_poc_retained":False,
-                  "files":[analyze(n,b,h) for n,(p,b,h) in sorted(targets.items())]}
+          files=[analyze(n,b,h) for n,(p,b,h) in sorted(targets.items())]
+          all30=[dict(x, file=f["name"]) for f in files for x in f["type30_trailers"]]
+          groups=collections.defaultdict(list)
+          for x in all30: groups[(x["tag_u16"],x["trailer_hex"])].append(x["file"])
+          verdicts=[]
+          for (tag,hx),fs in sorted(groups.items()):
+              sample=next(x for x in all30 if x["tag_u16"]==tag and x["trailer_hex"]==hx)
+              if sample["header_only_exact"]:
+                  width="header-only-2-byte"
+              elif sample["fixed_u32_exact"] and not sample["length_delimited_possible"]:
+                  width="tag-plus-fixed-u32"
+              elif sample["length_delimited_possible"]:
+                  width="tag-plus-length-delimited"
+              else:
+                  width="opaque-bounded"
+              verdicts.append({"tag_u16":tag,"type":sample["type"],"opyid":sample["opyid"],
+                               "trailer_hex":hx,"trailer_len":sample["trailer_len"],
+                               "occurrence_count":len(fs),"files":sorted(fs),
+                               "fixed_u32_value":sample["fixed_u32_value"],
+                               "length_field_u32":sample.get("length_field_u32"),
+                               "framing_verdict":width})
+          report={"schema":"chaptera.pubwiz-poc-type30.v1","source_safe":True,"raw_poc_retained":False,
+                  "files":files,"type30_verdicts":verdicts}
           pathlib.Path("out/report.json").write_text(json.dumps(report,indent=2))
-          summary={"schema":"chaptera.pubwiz-poc-p2000-structural-summary.v1","files":[
+          summary={"schema":"chaptera.pubwiz-poc-type30-summary.v1","type30_verdicts":verdicts,"files":[
               {"name":x["name"],"size":x["size"],"sha256":x["sha256"],"prefix24_hex":x["prefix24_hex"],"header":x["header"],"root_length_ok":x["root"]["length_ok"],"root_parse_exact":x["root"]["parse_exact"],
                "root_cb":x["root"].get("cb"),"sub_opl_count":x["sub_opl_count"],
                "framing_exact_to_eof":x["framing_exact_to_eof"],"type_counts":x["type_counts"],
@@ -182,7 +233,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: pubwiz-poc-p2000-structural-receipt
+          name: pubwiz-poc-type30-receipt
           path: out/**
           if-no-files-found: error
           retention-days: 90
