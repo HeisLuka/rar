@@ -1,0 +1,122 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Local Editor</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#111317;color:#eef1f5}
+body{display:grid;grid-template-rows:auto 1fr}
+header{background:#171b21;border-bottom:1px solid #2b323d;padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+h1{font-size:16px;margin:0 10px 0 0}
+button,select{border:1px solid #394352;background:#252b34;color:#eef1f5;border-radius:7px;padding:7px 10px}
+button{cursor:pointer}button:hover{background:#303845}
+#state{font-size:12px;color:#9aa4b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:200px}
+#disclosure{font-size:12px;color:#aeb8c6;display:flex;gap:12px;flex-wrap:wrap;width:100%}
+#host-wrap{overflow:auto;background:#d9d9d9;position:relative}
+#host{width:1200px;height:3600px;position:relative;touch-action:none;background:#e9e9e9}
+.bad{color:#ff8d8d}.ok{color:#70e5a3}.warn{color:#ffd166}
+</style>
+<header>
+  <h1>Chaptera Local Editor</h1>
+  <button id="undo">Undo</button>
+  <button id="redo">Redo</button>
+  <button id="reopen">Reopen</button>
+  <select id="target"><option value="idml">IDML</option><option value="odg">ODG</option></select>
+  <button id="preview">Export preview</button>
+  <span id="state">connecting…</span>
+  <div id="disclosure">
+    <span id="fidelity"></span>
+    <span id="capabilities"></span>
+    <span id="loss"></span>
+  </div>
+</header>
+<div id="host-wrap"><div id="host" aria-label="Chaptera editor canvas"></div></div>
+<script type="module">
+import {BrowserEditorShellV1} from "./editor-shell-v1.mjs";
+import {HttpEditorServiceV1} from "./editor-service-client-v1.mjs";
+import {BrowserObservabilityV1} from "./observability-v1.mjs";
+
+const params=new URLSearchParams(location.search);
+const api=params.get("api") ?? "http://127.0.0.1:18765";
+const emuPerCssPx=Number(params.get("emu_per_css_px") ?? "12700");
+const panYCssPx=Number(params.get("pan_y_css_px") ?? "-2600");
+const stateEl=document.querySelector("#state");
+const host=document.querySelector("#host");
+let seq=0;
+const observability=new BrowserObservabilityV1({
+  sessionIncarnation:"session:local-editor",
+  browserFamily:navigator.userAgent.includes("Firefox")?"firefox":"chromium",
+  idFactory:(prefix)=>prefix+":local-"+String(++seq).padStart(6,"0"),
+});
+const service=new HttpEditorServiceV1(api,{observability});
+let shell=null;
+
+function opId(kind){return "local-"+kind+"-"+crypto.randomUUID();}
+function showError(error){stateEl.className="bad";stateEl.textContent=String(error?.message??error);}
+function showState(state){
+  stateEl.className="";
+  stateEl.textContent="revision "+state.revision_id+(state.selected_node_id?" · selected "+state.selected_node_id:"");
+}
+
+async function disclosure(){
+  const scene=shell.snapshot;
+  const preview=await service.exportPreview(document.querySelector("#target").value);
+  const caps=scene.capabilities ?? [];
+  document.querySelector("#fidelity").textContent="Fidelity: "+scene.fidelity.state+
+    (scene.fidelity.reasons?.length?" — "+scene.fidelity.reasons.join(", "):"");
+  document.querySelector("#capabilities").textContent="Capabilities: "+
+    (caps.length?caps.map(x=>x.key+"="+x.state).join("; "):"none");
+  const losses=(preview.items??[]).filter(x=>x.disposition!=="preserved");
+  const loss=document.querySelector("#loss");
+  loss.className=preview.can_serialize?"ok":"bad";
+  loss.textContent="Export "+preview.target.format.toUpperCase()+": "+
+    (preview.can_serialize?"ready":"blocked")+" · blocking="+preview.counts.blocking+
+    " · losses="+losses.length;
+}
+
+async function history(kind){
+  const snapshot=shell.snapshot;
+  const accepted=await service.historyTransition({
+    protocol_version:"chaptera.history-transition-intent.v1",
+    document_id:snapshot.document_id,
+    source_hash:snapshot.source_hash,
+    base_revision_id:snapshot.revision_id,
+    client_operation_id:opId(kind),
+    command:{kind},
+  });
+  const scene=await service.sceneForRevision(accepted.revision_id);
+  shell.loadSnapshot(scene,{preserveSelection:false});
+  await disclosure();
+  return accepted;
+}
+
+async function start(){
+  const snapshot=await service.currentScene();
+  shell=new BrowserEditorShellV1({
+    host,
+    service,
+    rendererKind:"svg",
+    view:{emu_per_css_px:emuPerCssPx,pan_y_css_px:panYCssPx},
+    operationIdFactory:()=>opId("move"),
+    onState:(state)=>showState(state),
+  });
+  shell.loadSnapshot(snapshot,{preserveSelection:false});
+  shell.bindPointerEvents();
+  await disclosure();
+  document.querySelector("#undo").onclick=()=>history("undo").catch(showError);
+  document.querySelector("#redo").onclick=()=>history("redo").catch(showError);
+  document.querySelector("#reopen").onclick=async()=>{
+    try{
+      const response=await fetch(api+"/v1/harness/reopen",{method:"POST",headers:{"x-chaptera-principal-id":"synthetic-editor"}});
+      const scene=await response.json();
+      if(!response.ok) throw new Error(JSON.stringify(scene));
+      shell.loadSnapshot(scene,{preserveSelection:false});
+      await disclosure();
+    }catch(error){showError(error)}
+  };
+  document.querySelector("#preview").onclick=()=>disclosure().catch(showError);
+  document.querySelector("#target").onchange=()=>disclosure().catch(showError);
+  document.querySelector("#host-wrap").scrollTop=2480;
+}
+start().catch(showError);
+</script>
