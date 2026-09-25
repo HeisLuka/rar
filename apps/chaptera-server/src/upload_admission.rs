@@ -251,8 +251,7 @@ impl SqliteUploadAdmissionAuthority {
 
         require_active_principal(&mut tx, &request.principal_id).await?;
 
-        let tenant_usage =
-            active_usage(&mut *tx, "tenant_id", &request.tenant_id, now_ms).await?;
+        let tenant_usage = active_usage(&mut *tx, "tenant_id", &request.tenant_id, now_ms).await?;
         let principal_usage =
             active_usage(&mut *tx, "principal_id", &request.principal_id, now_ms).await?;
 
@@ -550,10 +549,16 @@ fn enforce_capacity(
     code: &'static str,
 ) -> Result<(), UploadAdmissionError> {
     let next_count = usage.0.checked_add(1).ok_or_else(|| {
-        UploadAdmissionError::new("upload_admission_capacity_overflow", "upload count overflow")
+        UploadAdmissionError::new(
+            "upload_admission_capacity_overflow",
+            "upload count overflow",
+        )
     })?;
     let next_bytes = usage.1.checked_add(requested_bytes).ok_or_else(|| {
-        UploadAdmissionError::new("upload_admission_capacity_overflow", "upload byte usage overflow")
+        UploadAdmissionError::new(
+            "upload_admission_capacity_overflow",
+            "upload byte usage overflow",
+        )
     })?;
     if next_count > concurrent_cap || next_bytes > byte_cap {
         return Err(UploadAdmissionError::new(
@@ -707,10 +712,7 @@ fn duration_ms(value: Duration, label: &'static str) -> Result<i64, UploadAdmiss
     })
 }
 
-fn blob_text(
-    row: &sqlx::sqlite::SqliteRow,
-    column: &str,
-) -> Result<String, UploadAdmissionError> {
+fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, UploadAdmissionError> {
     let bytes: Vec<u8> = row.try_get(column).map_err(sqlite_error)?;
     String::from_utf8(bytes).map_err(|_| {
         UploadAdmissionError::new(
@@ -931,9 +933,15 @@ mod tests {
             .reserve(request("old", "principal-a", 900), 10)
             .await
             .unwrap();
-        let usage = authority.usage("tenant-a", "principal-a", 50).await.unwrap();
+        let usage = authority
+            .usage("tenant-a", "principal-a", 50)
+            .await
+            .unwrap();
         assert_eq!(usage, (1, 900, 1, 900));
-        let usage = authority.usage("tenant-a", "principal-a", 111).await.unwrap();
+        let usage = authority
+            .usage("tenant-a", "principal-a", 111)
+            .await
+            .unwrap();
         assert_eq!(usage, (0, 0, 0, 0));
 
         authority
@@ -965,12 +973,7 @@ mod tests {
             other => panic!("unexpected reserve outcome: {other:?}"),
         };
         let renewed = authority
-            .renew(
-                "tenant-a",
-                "life",
-                record.lease_generation,
-                20,
-            )
+            .renew("tenant-a", "life", record.lease_generation, 20)
             .await
             .unwrap();
         assert_eq!(renewed.lease_generation, 1);
@@ -983,21 +986,18 @@ mod tests {
             "upload_admission_renew_conflict"
         );
         assert_eq!(
-            authority
-                .release("tenant-a", "life", 1, 40)
-                .await
-                .unwrap(),
+            authority.release("tenant-a", "life", 1, 40).await.unwrap(),
             ReleaseUploadOutcome::Released
         );
         assert_eq!(
-            authority
-                .release("tenant-a", "life", 1, 41)
-                .await
-                .unwrap(),
+            authority.release("tenant-a", "life", 1, 41).await.unwrap(),
             ReleaseUploadOutcome::AlreadyReleased
         );
         assert_eq!(
-            authority.usage("tenant-a", "principal-a", 42).await.unwrap(),
+            authority
+                .usage("tenant-a", "principal-a", 42)
+                .await
+                .unwrap(),
             (0, 0, 0, 0)
         );
 
