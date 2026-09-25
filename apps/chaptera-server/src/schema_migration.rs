@@ -30,6 +30,7 @@ const REVISION_IDENTITY_BINDINGS_SQL: &str =
 const EXPORT_PUBLICATIONS_SQL: &str = include_str!("../migrations/0010_export_publications.sql");
 const AUTHZ_PRINCIPAL_GRANTS_SQL: &str =
     include_str!("../migrations/0011_authz_principal_grants.sql");
+const BLOB_GC_DELETE_FENCE_SQL: &str = include_str!("../migrations/0012_blob_gc_delete_fence.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -94,9 +95,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "authz_principal_grants",
         sql: AUTHZ_PRINCIPAL_GRANTS_SQL,
     },
+    MigrationSpec {
+        version: 12,
+        name: "blob_gc_delete_fence",
+        sql: BLOB_GC_DELETE_FENCE_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 11;
+pub const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -605,7 +611,7 @@ mod tests {
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(
             report.pending_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
         assert!(!path.exists());
     }
@@ -619,7 +625,7 @@ mod tests {
         assert_eq!(first.state, "current");
         assert_eq!(
             first.applied_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
 
         let second = runtime.migrate_up().await.unwrap();
@@ -715,7 +721,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 final_report.applied_versions,
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
             );
 
             cleanup(&path);

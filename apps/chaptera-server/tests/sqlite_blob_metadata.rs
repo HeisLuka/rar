@@ -270,6 +270,66 @@ async fn generation_fenced_delete_is_idempotent() {
 }
 
 #[tokio::test]
+async fn gc_fence_hides_dedupe_candidate_and_blocks_all_binding_commits() {
+    let (repo, path) = migrated_repo("gc-fence").await;
+    let p = physical("tenant-a", "blob-1", 'g');
+    let mut first = binding("tenant-a", "binding-1", &p);
+    first.lifecycle_state = BindingLifecycle::PurgeEligible;
+    repo.commit_physical_and_binding(p.clone(), first.clone())
+        .await
+        .unwrap();
+
+    let pool = SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE physical_blobs
+         SET gc_delete_fence = ?, gc_fenced_at_ms = ?
+         WHERE physical_blob_id = ? AND storage_generation = ? AND deleted = 0",
+    )
+    .bind(b"gc-fence-1".as_slice())
+    .bind(200_i64)
+    .bind(p.physical_blob_id.as_bytes())
+    .bind(&p.storage_generation)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    assert!(
+        repo.find_physical_by_content("tenant-a", &p.content_sha256, p.byte_len)
+            .await
+            .unwrap()
+            .is_none(),
+        "dedupe must not select a physical blob once GC owns the delete fence"
+    );
+
+    let second = binding("tenant-a", "binding-2", &p);
+    let error = repo.commit_binding(second).await.unwrap_err();
+    assert_eq!(error.code, "physical_blob_gc_fenced");
+
+    let error = repo
+        .commit_physical_and_binding(p.clone(), first.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "physical_blob_gc_fenced");
+
+    assert_eq!(
+        repo.get_binding("binding-1").await.unwrap(),
+        Some(first),
+        "existing metadata is preserved while the physical row is fenced"
+    );
+    assert!(repo.get_binding("binding-2").await.unwrap().is_none());
+
+    repo.close().await;
+    cleanup(&path);
+}
+
+#[tokio::test]
 async fn unmigrated_open_fails_without_bootstrapping_schema() {
     let path = temp_db("unmigrated");
     fs::File::create(&path).unwrap();
