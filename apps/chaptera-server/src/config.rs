@@ -5,11 +5,17 @@ use std::{
     fmt, fs,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
+use chaptera_untrusted_pub_scan::PubScanPolicyV1;
 use serde::Deserialize;
 use url::Url;
 use zeroize::Zeroizing;
+
+use crate::{
+    source_ingress_security::SourceSecurityScannerConfig, upload_admission::UploadAdmissionConfig,
+};
 
 pub const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
@@ -33,6 +39,8 @@ pub struct ChapteraConfig {
     pub worker: WorkerConfig,
     pub storage: StorageConfig,
     pub limits: LimitsConfig,
+    pub upload_admission: UploadAdmissionRuntimeConfig,
+    pub source_validation: SourceValidationRuntimeConfig,
     #[serde(default)]
     pub edge: EdgeConfig,
     pub auth: Option<AuthConfig>,
@@ -96,6 +104,76 @@ impl Default for EdgeConfig {
             max_api_body_bytes: 8 * 1024 * 1024,
             max_upload_body_bytes: 256 * 1024 * 1024,
             request_timeout_ms: 30_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UploadAdmissionRuntimeConfig {
+    pub principal_concurrent_cap: i64,
+    pub tenant_concurrent_cap: i64,
+    pub principal_bytes_cap: i64,
+    pub tenant_bytes_cap: i64,
+    pub max_single_upload_bytes: i64,
+    pub lease_seconds: u64,
+    pub retention_seconds: u64,
+}
+
+impl UploadAdmissionRuntimeConfig {
+    pub fn materialize(&self) -> UploadAdmissionConfig {
+        UploadAdmissionConfig {
+            principal_concurrent_cap: self.principal_concurrent_cap,
+            tenant_concurrent_cap: self.tenant_concurrent_cap,
+            principal_bytes_cap: self.principal_bytes_cap,
+            tenant_bytes_cap: self.tenant_bytes_cap,
+            max_single_upload_bytes: self.max_single_upload_bytes,
+            lease_duration: Duration::from_secs(self.lease_seconds),
+            retention: Duration::from_secs(self.retention_seconds),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceValidationRuntimeConfig {
+    pub clamd_endpoint: SocketAddr,
+    pub clamd_connect_timeout_ms: u64,
+    pub clamd_io_timeout_ms: u64,
+    pub isolation_python: PathBuf,
+    pub isolation_harness: PathBuf,
+    pub worker_binary: PathBuf,
+    pub worker_wall_timeout_ms: u64,
+    pub worker_address_space_mb: u64,
+    pub worker_cpu_seconds: u64,
+    pub worker_open_files: u64,
+    pub worker_output_file_mb: u64,
+    pub max_file_bytes: u64,
+    pub max_cfb_entries: u64,
+    pub max_declared_stream_bytes: u64,
+    pub temp_root: PathBuf,
+}
+
+impl SourceValidationRuntimeConfig {
+    pub fn materialize(&self) -> SourceSecurityScannerConfig {
+        SourceSecurityScannerConfig {
+            clamd_endpoint: self.clamd_endpoint,
+            clamd_connect_timeout: Duration::from_millis(self.clamd_connect_timeout_ms),
+            clamd_io_timeout: Duration::from_millis(self.clamd_io_timeout_ms),
+            isolation_python: self.isolation_python.clone(),
+            isolation_harness: self.isolation_harness.clone(),
+            worker_binary: self.worker_binary.clone(),
+            worker_wall_timeout: Duration::from_millis(self.worker_wall_timeout_ms),
+            worker_address_space_mb: self.worker_address_space_mb,
+            worker_cpu_seconds: self.worker_cpu_seconds,
+            worker_open_files: self.worker_open_files,
+            worker_output_file_mb: self.worker_output_file_mb,
+            policy: PubScanPolicyV1 {
+                max_file_bytes: self.max_file_bytes,
+                max_cfb_entries: self.max_cfb_entries,
+                max_declared_stream_bytes: self.max_declared_stream_bytes,
+            },
+            temp_root: self.temp_root.clone(),
         }
     }
 }
@@ -245,6 +323,32 @@ impl ChapteraConfig {
                 worker_spool_bytes: 4 * 1024 * 1024 * 1024,
                 min_free_disk_bytes: 1024 * 1024 * 1024,
             },
+            upload_admission: UploadAdmissionRuntimeConfig {
+                principal_concurrent_cap: 2,
+                tenant_concurrent_cap: 8,
+                principal_bytes_cap: 512 * 1024 * 1024,
+                tenant_bytes_cap: 2 * 1024 * 1024 * 1024,
+                max_single_upload_bytes: 256 * 1024 * 1024,
+                lease_seconds: 3600,
+                retention_seconds: 7 * 24 * 60 * 60,
+            },
+            source_validation: SourceValidationRuntimeConfig {
+                clamd_endpoint: "127.0.0.1:3310".parse().expect("static clamd endpoint"),
+                clamd_connect_timeout_ms: 2_000,
+                clamd_io_timeout_ms: 5_000,
+                isolation_python: PathBuf::from("python3"),
+                isolation_harness: PathBuf::from("tools/migration_pdf_worker_isolation.py"),
+                worker_binary: PathBuf::from("target/debug/chaptera-untrusted-pub-worker"),
+                worker_wall_timeout_ms: 15_000,
+                worker_address_space_mb: 512,
+                worker_cpu_seconds: 10,
+                worker_open_files: 64,
+                worker_output_file_mb: 32,
+                max_file_bytes: 256 * 1024 * 1024,
+                max_cfb_entries: 8_192,
+                max_declared_stream_bytes: 512 * 1024 * 1024,
+                temp_root: env::temp_dir(),
+            },
             edge: EdgeConfig::default(),
             auth: None,
             key_ring: None,
@@ -357,6 +461,63 @@ impl ChapteraConfig {
                 "disk_limit_invalid",
                 "worker_spool_bytes and min_free_disk_bytes must be non-zero",
             ));
+        }
+
+        self.upload_admission
+            .materialize()
+            .validate()
+            .map_err(|error| ConfigError::new(error.code, error.message))?;
+        self.source_validation
+            .materialize()
+            .validate()
+            .map_err(|error| ConfigError::new(error.code, error.message))?;
+
+        let admitted_max =
+            u64::try_from(self.upload_admission.max_single_upload_bytes).map_err(|_| {
+                ConfigError::new(
+                    "source_upload_limit_invalid",
+                    "upload admission max_single_upload_bytes does not fit u64",
+                )
+            })?;
+        if admitted_max != self.source_validation.max_file_bytes {
+            return Err(ConfigError::new(
+                "source_upload_limit_mismatch",
+                "upload admission and source validation must use one V0 max PUB byte limit",
+            ));
+        }
+        if self.source_validation.max_declared_stream_bytes < self.source_validation.max_file_bytes
+        {
+            return Err(ConfigError::new(
+                "source_validation_stream_limit_invalid",
+                "declared stream byte limit must be >= source file byte limit",
+            ));
+        }
+        if self.environment == EnvironmentMode::Prod {
+            for (field, path) in [
+                (
+                    "source_validation.isolation_python",
+                    &self.source_validation.isolation_python,
+                ),
+                (
+                    "source_validation.isolation_harness",
+                    &self.source_validation.isolation_harness,
+                ),
+                (
+                    "source_validation.worker_binary",
+                    &self.source_validation.worker_binary,
+                ),
+                (
+                    "source_validation.temp_root",
+                    &self.source_validation.temp_root,
+                ),
+            ] {
+                if !path.is_absolute() {
+                    return Err(ConfigError::new(
+                        "source_validation_path_not_absolute",
+                        format!("prod {field} must be absolute"),
+                    ));
+                }
+            }
         }
 
         match (&self.auth, self.environment) {
@@ -986,6 +1147,33 @@ private_namespace = "chaptera-private"
 [limits]
 worker_spool_bytes = 4294967296
 min_free_disk_bytes = 1073741824
+
+
+[upload_admission]
+principal_concurrent_cap = 2
+tenant_concurrent_cap = 8
+principal_bytes_cap = 536870912
+tenant_bytes_cap = 2147483648
+max_single_upload_bytes = 268435456
+lease_seconds = 3600
+retention_seconds = 604800
+
+[source_validation]
+clamd_endpoint = "127.0.0.1:3310"
+clamd_connect_timeout_ms = 2000
+clamd_io_timeout_ms = 5000
+isolation_python = "/usr/bin/python3"
+isolation_harness = "/opt/chaptera/current/tools/migration_pdf_worker_isolation.py"
+worker_binary = "/opt/chaptera/current/chaptera-untrusted-pub-worker"
+worker_wall_timeout_ms = 15000
+worker_address_space_mb = 512
+worker_cpu_seconds = 10
+worker_open_files = 64
+worker_output_file_mb = 32
+max_file_bytes = 268435456
+max_cfb_entries = 8192
+max_declared_stream_bytes = 536870912
+temp_root = "/var/lib/chaptera/source-scan-tmp"
 
 [edge]
 trusted_proxy_ips = ["127.0.0.1", "::1"]

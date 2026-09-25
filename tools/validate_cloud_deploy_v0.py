@@ -114,6 +114,24 @@ def main() -> int:
     require(config, "max_api_body_bytes = 8388608", "config")
     require(config, "max_upload_body_bytes = 268435456", "config")
     require(config, "request_timeout_ms = 30000", "config")
+    require(config, "[upload_admission]", "config")
+    require(config, "principal_concurrent_cap = 2", "config")
+    require(config, "tenant_concurrent_cap = 8", "config")
+    require(config, "max_single_upload_bytes = 268435456", "config")
+    require(config, "[source_validation]", "config")
+    require(config, 'clamd_endpoint = "127.0.0.1:3310"', "config")
+    require(config, 'isolation_python = "/usr/bin/python3"', "config")
+    require(
+        config,
+        'isolation_harness = "/opt/chaptera/current/tools/migration_pdf_worker_isolation.py"',
+        "config",
+    )
+    require(
+        config,
+        'worker_binary = "/opt/chaptera/current/chaptera-untrusted-pub-worker"',
+        "config",
+    )
+    require(config, "max_file_bytes = 268435456", "config")
     if "0.0.0.0:8080" in config or "[::]:8080" in config:
         raise AssertionError("example config exposes the app listener publicly")
 

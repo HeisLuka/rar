@@ -35,6 +35,34 @@ private_namespace = "chaptera-private"
 worker_spool_bytes = 4294967296
 min_free_disk_bytes = 1073741824
 
+[upload_admission]
+# One explicit V0 upload admission envelope shared by web + worker.
+principal_concurrent_cap = 2
+tenant_concurrent_cap = 8
+principal_bytes_cap = 536870912
+tenant_bytes_cap = 2147483648
+max_single_upload_bytes = 268435456
+lease_seconds = 3600
+retention_seconds = 604800
+
+[source_validation]
+# ClamD is a host-local service; parser child remains separately no-network.
+clamd_endpoint = "127.0.0.1:3310"
+clamd_connect_timeout_ms = 2000
+clamd_io_timeout_ms = 5000
+isolation_python = "/usr/bin/python3"
+isolation_harness = "/opt/chaptera/current/tools/migration_pdf_worker_isolation.py"
+worker_binary = "/opt/chaptera/current/chaptera-untrusted-pub-worker"
+worker_wall_timeout_ms = 15000
+worker_address_space_mb = 512
+worker_cpu_seconds = 10
+worker_open_files = 64
+worker_output_file_mb = 32
+max_file_bytes = 268435456
+max_cfb_entries = 8192
+max_declared_stream_bytes = 536870912
+temp_root = "/var/lib/chaptera/source-scan-tmp"
+
 [edge]
 # Only these immediate peers may assert X-Forwarded-* authority to Chaptera.
 trusted_proxy_ips = ["127.0.0.1", "::1"]

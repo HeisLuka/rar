@@ -1,0 +1,54 @@
+name: CLOUD-SOURCE-VALIDATION-JOB-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/source_validation_job.rs"
+      - "apps/chaptera-server/src/source_ingress_async.rs"
+      - "apps/chaptera-server/src/source_ingress_security.rs"
+      - "apps/chaptera-server/src/source_ingress_sqlite.rs"
+      - "apps/chaptera-server/src/upload_admission.rs"
+      - "apps/chaptera-server/src/worker_runtime.rs"
+      - "apps/chaptera-server/src/job_queue.rs"
+      - "apps/chaptera-server/src/job_worker.rs"
+      - "apps/chaptera-server/src/job_executor_registry.rs"
+      - "apps/chaptera-server/src/quota_admission.rs"
+      - "apps/chaptera-server/src/config.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "deploy/config/chaptera.prod.example.toml"
+      - "tools/validate_cloud_deploy_v0.py"
+      - ".github/workflows/cloud-source-validation-job-v1.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  source-validation-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --package chaptera-server -- --check
+      - name: Lint server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Test durable source validation job
+        run: cargo test -p chaptera-server source_validation_job
+      - name: Test upload admission reacquire
+        run: cargo test -p chaptera-server upload_admission
+      - name: Test worker registration
+        run: cargo test -p chaptera-server worker_runtime
+      - name: Test quota routing
+        run: cargo test -p chaptera-server quota_admission
+      - name: Test typed source validation config
+        run: cargo test -p chaptera-server config
+      - name: Validate deploy config surface
+        run: python3 tools/validate_cloud_deploy_v0.py
