@@ -1,6 +1,9 @@
 use serde_json::{Value, json};
 use std::env;
 
+// The clean job supplies independently measured executable identity through the
+// environment; this GUI binary reports product/runtime identity and never trusts
+// a repository-relative path or bundled source tree.
 const PROTOCOL_VERSION: &str = "chaptera.desktop-source-free-smoke.v1";
 
 fn bound_binary_identity() -> Result<(String, u64), String> {
