@@ -85,7 +85,10 @@ impl ExportJobPayloadV1 {
         for (label, value) in [
             ("tenant_id", self.tenant_id.as_str()),
             ("document_id", self.document_id.as_str()),
-            ("requesting_principal_id", self.requesting_principal_id.as_str()),
+            (
+                "requesting_principal_id",
+                self.requesting_principal_id.as_str(),
+            ),
             ("exact_revision_id", self.exact_revision_id.as_str()),
         ] {
             require_ident(value, label)?;
