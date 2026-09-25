@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/tmp-vivadesigner-9232-9241-delta-01.yml'
+  push:
+    branches:
+      - 'research/vivadesigner-9232-9241-delta-01-strict'
+    paths:
+      - '.github/workflows/tmp-vivadesigner-9232-9241-delta-01.yml'
 permissions:
   contents: read
 
@@ -19,137 +24,152 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends squashfs-tools binutils file curl
 
-      - name: Locate and acquire exact official build 9232
+      - name: Acquire exact official predecessor candidate
         run: |
           set -euo pipefail
-          mkdir -p out /tmp/vd/9232 /tmp/vd/9241 /tmp/vd/probes
+          mkdir -p out /tmp/vd/9232 /tmp/vd/9241
+          python - <<'PY'
+          import html, json, pathlib, re, subprocess, urllib.parse, urllib.request
+
           PAGE='https://viva.systems/download/vivadesigner11-64-bit-appimage/'
-          curl -fL --retry 4 --retry-all-errors --connect-timeout 30 --max-time 120             -A 'rar-vivadesigner-delta/1.0' "$PAGE" -o /tmp/vd/page.html
+          UA='rar-vivadesigner-delta/2.0'
+          out=pathlib.Path('out')
+          tmp=pathlib.Path('/tmp/vd')
+          probes=[]
 
-          python - <<'PY'
-          import json, pathlib, re, html, urllib.parse
-          txt=pathlib.Path('/tmp/vd/page.html').read_text(errors='replace')
-          cand=[]
-          for m in re.finditer(r'''(?i)(?:href|data-downloadurl)=["']([^"']+)["']''', txt):
-              u=html.unescape(m.group(1))
-              if 'wpdmdl=' in u or '9232' in u or u.lower().endswith('.appimage'):
-                  cand.append(urllib.parse.urljoin('https://viva.systems/',u))
-          for m in re.finditer(r'(?i)wpdmdl(?:=|%3D)(\d+)',txt):
-              cand.append('https://viva.systems/download/?wpdmdl='+m.group(1))
-          cand += ['https://viva.systems/download/?wpdmdl=8074']
-          seen=[]
-          for x in cand:
-              if x not in seen: seen.append(x)
-          pathlib.Path('/tmp/vd/candidates.json').write_text(json.dumps(seen,indent=2))
-          print(json.dumps({'candidate_urls':seen},indent=2))
-          PY
+          def fetch_text(url, timeout=90):
+              req=urllib.request.Request(url,headers={'User-Agent':UA})
+              with urllib.request.urlopen(req,timeout=timeout) as r:
+                  return r.read().decode('utf-8','replace')
 
-          python - <<'PY'
-          import json, subprocess, pathlib
-          cands=json.loads(pathlib.Path('/tmp/vd/candidates.json').read_text())
-          rows=[]
-          for i,u in enumerate(cands):
-              hdr=f'/tmp/vd/probes/h{i}.txt'
-              cmd=['curl','-sSIL','--retry','2','--connect-timeout','20','--max-time','90','-A','rar-vivadesigner-delta/1.0','-D',hdr,'-o','/dev/null',u]
-              p=subprocess.run(cmd,text=True,capture_output=True)
-              h=pathlib.Path(hdr).read_text(errors='replace') if pathlib.Path(hdr).exists() else ''
-              cd=[x.strip() for x in h.splitlines() if x.lower().startswith('content-disposition:')]
-              loc=[x.strip() for x in h.splitlines() if x.lower().startswith('location:')]
-              rows.append({'url':u,'returncode':p.returncode,'content_disposition':cd[-1] if cd else None,'location':loc[-1] if loc else None})
-          pathlib.Path('out/official-probes.json').write_text(json.dumps(rows,indent=2))
-          print(json.dumps(rows,indent=2))
-          PY
+          def parse_candidates(text, base):
+              found=[]
+              for m in re.finditer(r'''(?i)(?:href|data-downloadurl)=["']([^"']+)["']''',text):
+                  u=html.unescape(m.group(1))
+                  if 'wpdmdl=' in u or '9232' in u or u.lower().endswith('.appimage'):
+                      found.append(urllib.parse.urljoin(base,u))
+              for m in re.finditer(r'(?i)wpdmdl(?:=|%3D)(\d+)',text):
+                  found.append('https://viva.systems/download/?wpdmdl='+m.group(1))
+              uniq=[]
+              for u in found:
+                  if u not in uniq: uniq.append(u)
+              return uniq
 
-          python - <<'PY'
-          import json,pathlib
-          rows=json.loads(pathlib.Path('out/official-probes.json').read_text())
-          exact=[]
-          for r in rows:
-              s=' '.join(str(r.get(k) or '') for k in ('url','content_disposition','location'))
-              if 'VivaDesigner-11.5.0.9232.AppImage' in s:
-                  exact.append(r['url'])
-          pathlib.Path('/tmp/vd/exact-direct').write_text(exact[0] if exact else '')
-          PY
+          def head_probe(url):
+              p=subprocess.run(
+                  ['curl','-sSIL','--retry','2','--connect-timeout','20','--max-time','90',
+                   '-A',UA,url],
+                  capture_output=True,text=True,errors='replace')
+              headers=p.stdout
+              cd=[x.strip() for x in headers.splitlines() if x.lower().startswith('content-disposition:')]
+              loc=[x.strip() for x in headers.splitlines() if x.lower().startswith('location:')]
+              row={'url':url,'returncode':p.returncode,
+                   'content_disposition':cd[-1] if cd else None,
+                   'location':loc[-1] if loc else None}
+              probes.append(row)
+              return row
 
-          FOUND=''
-          if [ -s /tmp/vd/exact-direct ]; then
-            URL="$(cat /tmp/vd/exact-direct)"
-            echo "Direct official 9232 candidate: $URL"
-            if curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1200                 -A 'rar-vivadesigner-delta/1.0' "$URL" -o /tmp/vd/9232/VivaDesigner.AppImage; then
-              FOUND='direct'
-            fi
-          fi
+          def download(url, dest, max_time='1200'):
+              p=subprocess.run(
+                  ['curl','-fL','--retry','4','--retry-all-errors','--connect-timeout','30',
+                   '--max-time',max_time,'-A',UA,url,'-o',str(dest)],
+                  text=True)
+              return p.returncode==0 and dest.exists() and dest.stat().st_size>10_000_000
 
-          if [ -z "$FOUND" ]; then
-            python - <<'PY'
-          import json, urllib.request, urllib.parse, pathlib
-          urls=[
-            'https://viva.systems/download/?wpdmdl=8074',
-            'https://viva.systems/download/vivadesigner11-64-bit-appimage/'
-          ]
-          rows=[]
-          for u in urls:
-              q='https://web.archive.org/cdx/search/cdx?url='+urllib.parse.quote(u,safe='')+'&output=json&fl=timestamp,original,statuscode,digest,length&filter=statuscode:200&from=2026&to=2026&filter=timestamp:20260[1-6]'
+          method=None
+          source_url=None
+          direct=[]
+          try:
+              page=fetch_text(PAGE)
+              pathlib.Path('/tmp/vd/current-page.html').write_text(page)
+              direct=parse_candidates(page,PAGE)
+          except Exception as e:
+              probes.append({'url':PAGE,'page_error':repr(e)})
+          if 'https://viva.systems/download/?wpdmdl=8074' not in direct:
+              direct.append('https://viva.systems/download/?wpdmdl=8074')
+
+          exact_direct=[]
+          for u in direct:
+              r=head_probe(u)
+              joined=' '.join(str(r.get(k) or '') for k in ('url','content_disposition','location'))
+              if 'VivaDesigner-11.5.0.9232.AppImage' in joined:
+                  exact_direct.append(u)
+          out.joinpath('official-probes.json').write_text(json.dumps(probes,indent=2))
+
+          dest=pathlib.Path('/tmp/vd/9232/VivaDesigner.AppImage')
+          for u in exact_direct:
+              if download(u,dest):
+                  method='direct-official'
+                  source_url=u
+                  break
+
+          cdx_rows=[]
+          def cdx(url):
+              q='https://web.archive.org/cdx/search/cdx?url='+urllib.parse.quote(url,safe='')+'&output=json&fl=timestamp,original,statuscode,digest,length&filter=statuscode:200&from=2026&to=2026&collapse=digest'
               try:
-                  req=urllib.request.Request(q,headers={'User-Agent':'rar-vivadesigner-delta/1.0'})
-                  with urllib.request.urlopen(req,timeout=60) as r:
-                      data=json.load(r)
-                  for row in data[1:] if len(data)>1 else []:
-                      rows.append(dict(zip(data[0],row)))
+                  data=json.loads(fetch_text(q,60))
+                  if isinstance(data,list) and len(data)>1:
+                      hdr=data[0]
+                      return [dict(zip(hdr,row)) for row in data[1:]]
               except Exception as e:
-                  rows.append({'original':u,'error':repr(e)})
-          pathlib.Path('out/wayback-cdx.json').write_text(json.dumps(rows,indent=2))
-          good=[r for r in rows if r.get('timestamp') and r.get('original')]
-          good.sort(key=lambda r:r['timestamp'],reverse=True)
-          pathlib.Path('/tmp/vd/wayback-candidate.json').write_text(json.dumps(good[0] if good else {}))
-          print(json.dumps({'wayback_candidates':good[:20]},indent=2))
-          PY
-            TS="$(python - <<'PY'
-          import json
-          r=json.load(open('/tmp/vd/wayback-candidate.json'))
-          print(r.get('timestamp',''))
-          PY
-          )"
-            ORIG="$(python - <<'PY'
-          import json
-          r=json.load(open('/tmp/vd/wayback-candidate.json'))
-          print(r.get('original',''))
-          PY
-          )"
-            if [ -n "$TS" ] && [ -n "$ORIG" ]; then
-              WURL="https://web.archive.org/web/${TS}id_/${ORIG}"
-              echo "Wayback official URL candidate: $WURL"
-              if curl -fL --retry 4 --retry-all-errors --connect-timeout 30 --max-time 1200                   -A 'rar-vivadesigner-delta/1.0' "$WURL" -o /tmp/vd/9232/VivaDesigner.AppImage; then
-                FOUND='wayback-official'
-              fi
-            fi
-          fi
+                  cdx_rows.append({'query_url':url,'error':repr(e)})
+              return []
 
-          python - <<'PY'
-          import hashlib,json,pathlib,subprocess
-          p=pathlib.Path('/tmp/vd/9232/VivaDesigner.AppImage')
-          result={'acquired':p.exists() and p.stat().st_size>10_000_000}
+          def before_feature(rows):
+              good=[r for r in rows if r.get('timestamp') and r.get('original') and r['timestamp']<'20260713000000']
+              good.sort(key=lambda r:r['timestamp'],reverse=True)
+              return good
+
+          historical_urls=[]
+          if method is None:
+              page_snaps=before_feature(cdx(PAGE))
+              cdx_rows.extend(page_snaps)
+              for snap in page_snaps[:5]:
+                  replay='https://web.archive.org/web/'+snap['timestamp']+'id_/'+snap['original']
+                  try:
+                      hpage=fetch_text(replay,90)
+                      for u in parse_candidates(hpage,PAGE):
+                          if u not in historical_urls: historical_urls.append(u)
+                  except Exception as e:
+                      cdx_rows.append({'replay':replay,'error':repr(e)})
+
+              for u in direct+historical_urls:
+                  rows=before_feature(cdx(u))
+                  cdx_rows.extend(rows)
+                  for snap in rows[:5]:
+                      replay='https://web.archive.org/web/'+snap['timestamp']+'id_/'+snap['original']
+                      if download(replay,dest):
+                          method='wayback-official'
+                          source_url=snap['original']
+                          cdx_rows.append({'selected_timestamp':snap['timestamp'],'selected_original':snap['original']})
+                          break
+                  if method: break
+
+          out.joinpath('wayback-cdx.json').write_text(json.dumps(cdx_rows,indent=2))
+          result={'acquired':dest.exists() and dest.stat().st_size>10_000_000,
+                  'method':method,'source_url':source_url}
           if result['acquired']:
-              result['size']=p.stat().st_size
+              import hashlib
               h=hashlib.sha256()
-              with p.open('rb') as f:
+              with dest.open('rb') as f:
                   while True:
                       b=f.read(1024*1024)
                       if not b: break
                       h.update(b)
-              result['sha256']=h.hexdigest()
-              result['file']=subprocess.run(['file','-b',str(p)],capture_output=True,text=True).stdout.strip()
-          pathlib.Path('out/acquisition-9232.json').write_text(json.dumps(result,indent=2))
+              result.update({'size':dest.stat().st_size,'sha256':h.hexdigest(),
+                             'file':subprocess.run(['file','-b',str(dest)],capture_output=True,text=True).stdout.strip()})
+          out.joinpath('acquisition-9232.json').write_text(json.dumps(result,indent=2))
           print(json.dumps(result,indent=2))
           PY
 
       - name: Acquire exact official build 9241 control
         run: |
           set -euo pipefail
-          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1200             -A 'rar-vivadesigner-delta/1.0' 'https://viva.systems/download/?wpdmdl=8074'             -o /tmp/vd/9241/VivaDesigner.AppImage
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1200             -A 'rar-vivadesigner-delta/2.0' 'https://viva.systems/download/?wpdmdl=8074'             -o /tmp/vd/9241/VivaDesigner.AppImage
           test "$(sha256sum /tmp/vd/9241/VivaDesigner.AppImage | awk '{print $1}')" =             '067220f8d61e81fa40344b41e7715fc999a8d67c547dd8894c56f7d00963da10'
 
-      - name: Extract and compare exact packages
+      - name: Build bounded acquisition-negative if predecessor absent
+        if: ${{ always() }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -164,20 +184,23 @@ jobs:
                 'build_9232_acquired':False,
                 'build_9241_sha256':'067220f8d61e81fa40344b41e7715fc999a8d67c547dd8894c56f7d00963da10',
                 'classification':'unresolved_predecessor_bytes_missing',
-                'guardrail':'No neighboring build or unofficial mirror substituted.'
+                'guardrail':'No neighboring build, platform, or unofficial mirror substituted.'
               },indent=2))
           PY
 
-          if python - <<'PY'
+      - name: Extract, verify internal builds, and compare
+        run: |
+          set -euo pipefail
+          python - <<'PY'
           import json
-          raise SystemExit(0 if json.load(open('out/acquisition-9232.json')).get('acquired') else 1)
+          if not json.load(open('out/acquisition-9232.json')).get('acquired'):
+              raise SystemExit(78)
           PY
-          then
-            for B in 9232 9241; do
-              python - "$B" <<'PY'
+          for B in 9232 9241; do
+            python - "$B" <<'PY'
           import pathlib,sys
           b=sys.argv[1]
-          p=pathlib.Path(f'/tmp/vd/{b}/VivaDesigner.AppImage')
+          p=pathlib.Path('/tmp/vd')/b/'VivaDesigner.AppImage'
           raw=p.read_bytes()
           hits=[]; pos=0
           while True:
@@ -185,181 +208,32 @@ jobs:
               if i<0: break
               hits.append(i); pos=i+1
           if not hits: raise SystemExit(f'{b}: no squashfs magic')
-          pathlib.Path(f'/tmp/vd/{b}.offset').write_text(str(hits[-1]))
+          pathlib.Path('/tmp/vd/'+b+'.offset').write_text(str(hits[-1]))
           PY
-              unsquashfs -o "$(cat /tmp/vd/$B.offset)" -d "/tmp/vd/$B/root"                 "/tmp/vd/$B/VivaDesigner.AppImage" >/dev/null
-            done
+            unsquashfs -o "$(cat /tmp/vd/$B.offset)" -d "/tmp/vd/$B/root" "/tmp/vd/$B/VivaDesigner.AppImage" >/dev/null
+          done
 
-            python - <<'PY'
-          import pathlib,re,json
+          python - <<'PY'
+          import hashlib,json,pathlib,re,subprocess
+          roots={b:pathlib.Path('/tmp/vd')/b/'root' for b in ('9232','9241')}
+
           checks={}
-          for b in ('9232','9241'):
-              root=pathlib.Path(f'/tmp/vd/{b}/root')
+          for b,root in roots.items():
               samples=[]
               for p in root.rglob('installer.ini'):
-                  try:
-                      txt=p.read_text(errors='replace')
-                  except Exception:
-                      continue
-                  vals=re.findall(r'(?im)^\\s*Build\\s*=\\s*(\\d+)\\s*
-          roots={b:pathlib.Path(f'/tmp/vd/{b}/root') for b in ('9232','9241')}
-          def sha_file(p):
-              h=hashlib.sha256()
-              with p.open('rb') as f:
-                  while True:
-                      x=f.read(1024*1024)
-                      if not x: break
-                      h.update(x)
-              return h.hexdigest()
-          def inv(root):
-              out={}
-              for p in root.rglob('*'):
-                  if not p.is_file(): continue
-                  rel=str(p.relative_to(root))
-                  out[rel]={'size':p.stat().st_size,'sha256':sha_file(p)}
-              return out
-          invs={b:inv(r) for b,r in roots.items()}
-          for b in invs:
-              pathlib.Path(f'out/inventory-{b}.json').write_text(json.dumps(invs[b],indent=2))
-          a,b=invs['9232'],invs['9241']
-          added=sorted(set(b)-set(a))
-          removed=sorted(set(a)-set(b))
-          changed=sorted(p for p in set(a)&set(b) if a[p]['sha256']!=b[p]['sha256'])
-          unchanged=sorted(p for p in set(a)&set(b) if a[p]['sha256']==b[p]['sha256'])
-
-          def elf_meta(root,paths):
-              rows={}
-              for rel in paths:
-                  p=root/rel
-                  typ=subprocess.run(['file','-b',str(p)],capture_output=True,text=True,errors='replace',timeout=10).stdout.strip()
-                  if 'ELF ' not in typ: continue
-                  dyn=subprocess.run(['readelf','-d',str(p)],capture_output=True,text=True,errors='replace',timeout=20).stdout
-                  rows[rel]={
-                    'file':typ,
-                    'needed':re.findall(r'Shared library: \[([^\]]+)\]',dyn),
-                    'rpath':re.findall(r'(?:RPATH|RUNPATH).*?\[([^\]]+)\]',dyn)
-                  }
-              return rows
-          delta_paths=sorted(set(added+changed))
-          elf9232=elf_meta(roots['9232'], sorted(set(removed+changed)))
-          elf9241=elf_meta(roots['9241'], delta_paths)
-
-          high_re=re.compile(r'(?i)(Microsoft Publisher|Publisher document|MS Publisher|PUB importer|Publisher import|import[^\n\r]{0,60}Publisher|Publisher[^\n\r]{0,60}import|libmspub|librevenge|writerperfect|libwpd|Quill|Root Entry|Structured Storage|Compound File|CompObj|SummaryInformation|DocumentSummaryInformation)')
-          url_re=re.compile(r'''https?://[^\s"'<>]{5,200}''',re.I)
-          signals=[]
-          for rel in delta_paths:
-              p=roots['9241']/rel
-              if p.stat().st_size>350_000_000: continue
-              try:
-                  s=subprocess.run(['strings','-a','-n','7',str(p)],capture_output=True,text=True,errors='replace',timeout=60).stdout
-              except Exception:
-                  continue
-              hs=[]
-              for line in s.splitlines():
-                  if high_re.search(line):
-                      hs.append(line[:300])
-                      if len(hs)>=80: break
-              urls=[]
-              if hs or rel in elf9241:
-                  for u in url_re.findall(s):
-                      if u not in urls:
-                          urls.append(u)
-                      if len(urls)>=50: break
-              if hs or urls:
-                  signals.append({'path':rel,'high_signal_strings':hs,'urls':urls})
-
-          core_names=[p for p in delta_paths if re.search(r'(?i)(VivaDesigner|VivaLibCore|VivaLibGui|UniAPI|UniLib|AddIns/.*\.so)',p)]
-          dep_deltas=[]
-          for rel in sorted(set(elf9232)&set(elf9241)):
-              x,y=elf9232[rel],elf9241[rel]
-              if x['needed']!=y['needed'] or x['rpath']!=y['rpath']:
-                  dep_deltas.append({'path':rel,'9232':x,'9241':y})
-          known_names=re.compile(r'(?i)(libmspub|librevenge|writerperfect|libwpd|libwpg|libodfgen|libstaroffice|LibreOffice|OpenOffice)')
-          added_known=[p for p in added if known_names.search(p)]
-          added_elf=[p for p in added if p in elf9241]
-          if added_known:
-              cls='known_engine_component_added'
-          elif added_elf:
-              cls='new_binary_components_added_review_required'
-          elif core_names:
-              cls='changed_viva_core_or_main_in_process_candidate'
-          else:
-              cls='delta_unresolved'
-          report={
-            'schema':'chaptera.vivadesigner-9232-9241-delta.v1',
-            'source_safe':True,
-            'raw_packages_retained':False,
-            'status':'delta_complete',
-            'build_9232':json.load(open('out/acquisition-9232.json')),
-            'build_9241':{
-              'size':pathlib.Path('/tmp/vd/9241/VivaDesigner.AppImage').stat().st_size,
-              'sha256':'067220f8d61e81fa40344b41e7715fc999a8d67c547dd8894c56f7d00963da10'
-            },
-            'file_counts':{k:len(v) for k,v in invs.items()},
-            'added_count':len(added),'removed_count':len(removed),'changed_count':len(changed),'unchanged_count':len(unchanged),
-            'added':added,'removed':removed,'changed':changed,
-            'changed_or_added_elf_9241':elf9241,
-            'removed_or_changed_elf_9232':elf9232,
-            'elf_dependency_deltas':dep_deltas,
-            'changed_core_candidates':core_names,
-            'delta_signals':signals,
-            'added_known_engine_paths':added_known,
-            'classification':cls,
-            'guardrail':'Changed components are ownership candidates only; no semantic or independent-RE claim follows.'
-          }
-          pathlib.Path('out/report.json').write_text(json.dumps(report,indent=2))
-          summary={k:report[k] for k in (
-            'schema','source_safe','status','build_9232','build_9241','file_counts',
-            'added_count','removed_count','changed_count','unchanged_count',
-            'added_known_engine_paths','classification','changed_core_candidates',
-            'elf_dependency_deltas','delta_signals','guardrail'
-          )}
-          summary['added_paths_sample']=added[:200]
-          summary['removed_paths_sample']=removed[:200]
-          summary['changed_paths_sample']=changed[:300]
-          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2))
-          print(json.dumps(summary,indent=2))
-          PY
-          fi
-
-      - name: Enforce source-safe receipt
-        run: |
-          set -euo pipefail
-          if find out -type f \( -iname '*.appimage' -o -iname '*.so' -o -iname '*.bin' \) | grep -q .; then
-            echo 'Raw binary escaped into receipt' >&2
-            exit 1
-          fi
-          python - <<'PY'
-          import json
-          s=json.load(open('out/summary.json'))
-          assert s['source_safe'] is True
-          assert s['schema']=='chaptera.vivadesigner-9232-9241-delta.v1'
-          PY
-          sha256sum out/*.json | sort > out/sha256sums.txt
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vivadesigner-9232-9241-delta-receipt
-          path: out/**
-          if-no-files-found: error
-          retention-days: 90
-,txt)
-                  if vals:
-                      samples.append({'path':str(p.relative_to(root)),'builds':vals})
+                  try: txt=p.read_text(errors='replace')
+                  except Exception: continue
+                  vals=re.findall(r'(?im)^\s*Build\s*=\s*(\d+)\s*$',txt)
+                  if vals: samples.append({'path':str(p.relative_to(root)),'builds':vals})
               checks[b]=samples
           pathlib.Path('out/internal-build-checks.json').write_text(json.dumps(checks,indent=2))
           got9232={x for s in checks['9232'] for x in s['builds']}
           got9241={x for s in checks['9241'] for x in s['builds']}
           if '9232' not in got9232:
-              raise SystemExit(f'candidate predecessor failed internal Build=9232 check: {checks["9232"]}')
+              raise SystemExit('candidate predecessor failed internal Build=9232 check')
           if '9241' not in got9241:
-              raise SystemExit(f'control failed internal Build=9241 check: {checks["9241"]}')
-          print(json.dumps(checks,indent=2))
-          PY
+              raise SystemExit('control failed internal Build=9241 check')
 
-            python - <<'PY'
-          import pathlib,hashlib,json,subprocess,re
-          roots={b:pathlib.Path(f'/tmp/vd/{b}/root') for b in ('9232','9241')}
           def sha_file(p):
               h=hashlib.sha256()
               with p.open('rb') as f:
@@ -368,17 +242,18 @@ jobs:
                       if not x: break
                       h.update(x)
               return h.hexdigest()
-          def inv(root):
+
+          def inventory(root):
               out={}
               for p in root.rglob('*'):
-                  if not p.is_file(): continue
-                  rel=str(p.relative_to(root))
-                  out[rel]={'size':p.stat().st_size,'sha256':sha_file(p)}
+                  if p.is_file():
+                      out[str(p.relative_to(root))]={'size':p.stat().st_size,'sha256':sha_file(p)}
               return out
-          invs={b:inv(r) for b,r in roots.items()}
-          for b in invs:
-              pathlib.Path(f'out/inventory-{b}.json').write_text(json.dumps(invs[b],indent=2))
-          a,b=invs['9232'],invs['9241']
+
+          inv={b:inventory(root) for b,root in roots.items()}
+          for b in inv:
+              pathlib.Path('out/inventory-'+b+'.json').write_text(json.dumps(inv[b],indent=2))
+          a,b=inv['9232'],inv['9241']
           added=sorted(set(b)-set(a))
           removed=sorted(set(a)-set(b))
           changed=sorted(p for p in set(a)&set(b) if a[p]['sha256']!=b[p]['sha256'])
@@ -397,77 +272,74 @@ jobs:
                     'rpath':re.findall(r'(?:RPATH|RUNPATH).*?\[([^\]]+)\]',dyn)
                   }
               return rows
-          delta_paths=sorted(set(added+changed))
-          elf9232=elf_meta(roots['9232'], sorted(set(removed+changed)))
-          elf9241=elf_meta(roots['9241'], delta_paths)
 
-          high_re=re.compile(r'(?i)(Microsoft Publisher|Publisher document|MS Publisher|PUB importer|Publisher import|import[^\n\r]{0,60}Publisher|Publisher[^\n\r]{0,60}import|libmspub|librevenge|writerperfect|libwpd|Quill|Root Entry|Structured Storage|Compound File|CompObj|SummaryInformation|DocumentSummaryInformation)')
+          delta=sorted(set(added+changed))
+          elf9232=elf_meta(roots['9232'],sorted(set(removed+changed)))
+          elf9241=elf_meta(roots['9241'],delta)
+          dep_deltas=[]
+          for rel in sorted(set(elf9232)&set(elf9241)):
+              x,y=elf9232[rel],elf9241[rel]
+              if x['needed']!=y['needed'] or x['rpath']!=y['rpath']:
+                  dep_deltas.append({'path':rel,'9232':x,'9241':y})
+
+          high=re.compile(r'(?i)(Microsoft Publisher|Publisher document|MS Publisher|PUB importer|Publisher import|import[^\n\r]{0,60}Publisher|Publisher[^\n\r]{0,60}import|libmspub|librevenge|writerperfect|libwpd|Quill|Root Entry|Structured Storage|Compound File|CompObj|SummaryInformation|DocumentSummaryInformation)')
           url_re=re.compile(r'''https?://[^\s"'<>]{5,200}''',re.I)
           signals=[]
-          for rel in delta_paths:
+          for rel in delta:
               p=roots['9241']/rel
               if p.stat().st_size>350_000_000: continue
               try:
                   s=subprocess.run(['strings','-a','-n','7',str(p)],capture_output=True,text=True,errors='replace',timeout=60).stdout
               except Exception:
                   continue
-              hs=[]
-              for line in s.splitlines():
-                  if high_re.search(line):
-                      hs.append(line[:300])
-                      if len(hs)>=80: break
+              hs=[line[:300] for line in s.splitlines() if high.search(line)][:80]
               urls=[]
               if hs or rel in elf9241:
                   for u in url_re.findall(s):
-                      if u not in urls:
-                          urls.append(u)
+                      if u not in urls: urls.append(u)
                       if len(urls)>=50: break
               if hs or urls:
                   signals.append({'path':rel,'high_signal_strings':hs,'urls':urls})
 
-          core_names=[p for p in delta_paths if re.search(r'(?i)(VivaDesigner|VivaLibCore|VivaLibGui|UniAPI|UniLib|AddIns/.*\.so)',p)]
-          dep_deltas=[]
-          for rel in sorted(set(elf9232)&set(elf9241)):
-              x,y=elf9232[rel],elf9241[rel]
-              if x['needed']!=y['needed'] or x['rpath']!=y['rpath']:
-                  dep_deltas.append({'path':rel,'9232':x,'9241':y})
-          known_names=re.compile(r'(?i)(libmspub|librevenge|writerperfect|libwpd|libwpg|libodfgen|libstaroffice|LibreOffice|OpenOffice)')
-          added_known=[p for p in added if known_names.search(p)]
+          known=re.compile(r'(?i)(libmspub|librevenge|writerperfect|libwpd|libwpg|libodfgen|libstaroffice|LibreOffice|OpenOffice)')
+          added_known=[p for p in added if known.search(p)]
+          core=[p for p in delta if re.search(r'(?i)(VivaDesigner|VivaLibCore|VivaLibGui|UniAPI|UniLib|AddIns/.*\.so)',p)]
           added_elf=[p for p in added if p in elf9241]
           if added_known:
-              cls='known_engine_component_added'
+              classification='known_engine_component_added'
           elif added_elf:
-              cls='new_binary_components_added_review_required'
-          elif core_names:
-              cls='changed_viva_core_or_main_in_process_candidate'
+              classification='new_binary_components_added_review_required'
+          elif core:
+              classification='changed_viva_core_or_main_in_process_candidate'
           else:
-              cls='delta_unresolved'
+              classification='delta_unresolved'
+
           report={
             'schema':'chaptera.vivadesigner-9232-9241-delta.v1',
             'source_safe':True,
             'raw_packages_retained':False,
             'status':'delta_complete',
             'build_9232':json.load(open('out/acquisition-9232.json')),
-            'build_9241':{
-              'size':pathlib.Path('/tmp/vd/9241/VivaDesigner.AppImage').stat().st_size,
-              'sha256':'067220f8d61e81fa40344b41e7715fc999a8d67c547dd8894c56f7d00963da10'
-            },
-            'file_counts':{k:len(v) for k,v in invs.items()},
-            'added_count':len(added),'removed_count':len(removed),'changed_count':len(changed),'unchanged_count':len(unchanged),
+            'build_9241':{'size':pathlib.Path('/tmp/vd/9241/VivaDesigner.AppImage').stat().st_size,
+                          'sha256':'067220f8d61e81fa40344b41e7715fc999a8d67c547dd8894c56f7d00963da10'},
+            'internal_build_checks':checks,
+            'file_counts':{k:len(v) for k,v in inv.items()},
+            'added_count':len(added),'removed_count':len(removed),
+            'changed_count':len(changed),'unchanged_count':len(unchanged),
             'added':added,'removed':removed,'changed':changed,
             'changed_or_added_elf_9241':elf9241,
             'removed_or_changed_elf_9232':elf9232,
             'elf_dependency_deltas':dep_deltas,
-            'changed_core_candidates':core_names,
+            'changed_core_candidates':core,
             'delta_signals':signals,
             'added_known_engine_paths':added_known,
-            'classification':cls,
+            'classification':classification,
             'guardrail':'Changed components are ownership candidates only; no semantic or independent-RE claim follows.'
           }
           pathlib.Path('out/report.json').write_text(json.dumps(report,indent=2))
           summary={k:report[k] for k in (
-            'schema','source_safe','status','build_9232','build_9241','file_counts',
-            'added_count','removed_count','changed_count','unchanged_count',
+            'schema','source_safe','status','build_9232','build_9241','internal_build_checks',
+            'file_counts','added_count','removed_count','changed_count','unchanged_count',
             'added_known_engine_paths','classification','changed_core_candidates',
             'elf_dependency_deltas','delta_signals','guardrail'
           )}
@@ -477,15 +349,16 @@ jobs:
           pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2))
           print(json.dumps(summary,indent=2))
           PY
-          fi
 
       - name: Enforce source-safe receipt
+        if: ${{ always() }}
         run: |
           set -euo pipefail
           if find out -type f \( -iname '*.appimage' -o -iname '*.so' -o -iname '*.bin' \) | grep -q .; then
             echo 'Raw binary escaped into receipt' >&2
             exit 1
           fi
+          test -f out/summary.json
           python - <<'PY'
           import json
           s=json.load(open('out/summary.json'))
@@ -495,6 +368,7 @@ jobs:
           sha256sum out/*.json | sort > out/sha256sums.txt
 
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: vivadesigner-9232-9241-delta-receipt
           path: out/**
