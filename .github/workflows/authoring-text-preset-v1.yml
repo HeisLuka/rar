@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "Cargo.toml"
-      - "crates/pub-model/**"
+      - "crates/pub-model/src/text_preset.rs"
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_authoring_text_preset_state.py"
       - ".github/workflows/authoring-text-preset-v1.yml"
