@@ -4,7 +4,7 @@ use url::Url;
 use zeroize::Zeroizing;
 
 use crate::{
-    auth_http::AuthHttpState,
+    auth_http::{AUTH_CALLBACK_PATH, AuthHttpState},
     authn::{LoginFlowStore, SqliteAuthnStore},
     authn_session::SessionPolicy,
     config::{ChapteraConfig, ResolvedSecrets},
@@ -54,6 +54,15 @@ impl AuthRuntime {
         let public_origin = config.public_origin.as_deref().ok_or_else(|| {
             AuthRuntimeError::new("public_origin_missing", "public_origin is required for AuthN")
         })?;
+
+        if auth.oidc.redirect_path != AUTH_CALLBACK_PATH {
+            return Err(AuthRuntimeError::new(
+                "oidc_redirect_path_mismatch",
+                format!(
+                    "auth.oidc.redirect_path must be {AUTH_CALLBACK_PATH:?} for the mounted V0 callback route"
+                ),
+            ));
+        }
 
         let client_secret = secrets
             .oidc_client_secret
@@ -132,6 +141,11 @@ fn redirect_url(public_origin: &str, redirect_path: &str) -> Result<String, Auth
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_callback_path_must_match_mounted_route() {
+        assert_eq!(AUTH_CALLBACK_PATH, "/v1/auth/callback");
+    }
 
     #[test]
     fn redirect_url_is_derived_from_validated_public_origin() {
