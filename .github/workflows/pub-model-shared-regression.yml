@@ -1,0 +1,36 @@
+name: PUB model shared regression
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/pub-model/**"
+      - ".github/workflows/pub-model-shared-regression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shared-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check workspace formatting
+        run: cargo fmt -p pub-model -p pub-paint-bridge -p pub-master-projection -p pub-plccmob-projection -- --check
+      - name: Check workspace compilation
+        run: cargo check -p pub-model -p pub-paint-bridge -p pub-master-projection -p pub-plccmob-projection --all-targets
+      - name: Lint workspace
+        run: cargo clippy -p pub-model -p pub-paint-bridge -p pub-master-projection -p pub-plccmob-projection --all-targets -- -D warnings
+      - name: Test canonical PUB model
+        run: cargo test -p pub-model
+      - name: Test direct PUB model projection/paint dependents
+        run: |
+          cargo test -p pub-paint-bridge
+          cargo test -p pub-master-projection
+          cargo test -p pub-plccmob-projection

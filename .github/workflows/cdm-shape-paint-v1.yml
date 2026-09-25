@@ -4,7 +4,8 @@ on:
   pull_request:
     paths:
       - "Cargo.toml"
-      - "crates/pub-model/**"
+      - "crates/pub-model/src/shape_paint.rs"
+      - "crates/pub-model/src/shape_paint_op.rs"
       - "crates/pub-paint-bridge/**"
       - ".github/workflows/cdm-shape-paint-v1.yml"
   workflow_dispatch:
@@ -21,10 +22,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p pub-model -p pub-paint-bridge -- --check
       - name: Check workspace
-        run: cargo check --workspace --all-targets
+        run: cargo check -p pub-model -p pub-paint-bridge --all-targets
       - name: Lint workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p pub-model -p pub-paint-bridge --all-targets -- -D warnings
       - name: Test workspace
-        run: cargo test --workspace
+        run: cargo test -p pub-model -p pub-paint-bridge

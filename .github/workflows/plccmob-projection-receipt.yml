@@ -6,7 +6,7 @@ on:
       - "Cargo.toml"
       - "crates/pub-plccmob-projection/**"
       - "crates/pub-model/src/projection_context.rs"
-      - "crates/pub-model/src/lib.rs"
+      - "crates/pub-model/src/source_identity.rs"
       - "packages/protocol/pub-projection/**"
       - "tools/validate_plccmob_projection_receipt.py"
       - "tools/test_plccmob_projection_receipt.py"
@@ -34,7 +34,7 @@ jobs:
         run: python -m pip install "jsonschema==4.23.0"
 
       - name: Check bounded Rust core formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p pub-model -p pub-plccmob-projection -- --check
 
       - name: Check bounded Rust core
         run: cargo check -p pub-plccmob-projection --all-targets
