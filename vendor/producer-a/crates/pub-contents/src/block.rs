@@ -19,11 +19,67 @@ pub const BLOCK_TYPE_DUMMY: u8 = 0x78;
 pub const BLOCK_TYPE_CONTAINER_88: u8 = 0x88;
 pub const BLOCK_TYPE_CONTAINER_90: u8 = 0x90;
 pub const BLOCK_TYPE_CONTAINER_A0: u8 = 0xA0;
+pub const CONTENTS_PACKED_FIELD_ID_MAX: u16 = 0x07FF;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackedFieldTagError {
+    FieldIdOutOfRange { field_id: u16 },
+    WireTypeNotNormalized { wire_type: u8 },
+}
+
+impl fmt::Display for PackedFieldTagError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FieldIdOutOfRange { field_id } => {
+                write!(f, "Contents field id 0x{field_id:04X} exceeds 11 bits")
+            }
+            Self::WireTypeNotNormalized { wire_type } => write!(
+                f,
+                "Contents wire type 0x{wire_type:02X} is not normalized (low 3 bits must be clear)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PackedFieldTagError {}
+
+/// Decode the mature Contents two-byte field tag.
+///
+/// The returned id is the full 11-bit class-local field coordinate. The
+/// returned block type is the normalized physical wire class: the low three
+/// bits of byte1 belong to the high bits of the field id.
+pub fn decode_packed_field_tag(raw_tag: [u8; 2]) -> (u16, u8) {
+    let field_id = u16::from(raw_tag[0]) | (u16::from(raw_tag[1] & 0x07) << 8);
+    let wire_type = raw_tag[1] & 0xF8;
+    (field_id, wire_type)
+}
+
+pub fn encode_packed_field_tag(
+    field_id: u16,
+    wire_type: u8,
+) -> Result<[u8; 2], PackedFieldTagError> {
+    if field_id > CONTENTS_PACKED_FIELD_ID_MAX {
+        return Err(PackedFieldTagError::FieldIdOutOfRange { field_id });
+    }
+    if wire_type & 0x07 != 0 {
+        return Err(PackedFieldTagError::WireTypeNotNormalized { wire_type });
+    }
+    Ok([
+        (field_id & 0x00FF) as u8,
+        wire_type | ((field_id >> 8) as u8 & 0x07),
+    ])
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawContentsBlock {
-    pub id: u8,
+    /// Full decoded 11-bit field id. This is not the raw low tag byte.
+    pub id: u16,
+    /// Normalized wire type (raw byte1 masked with 0xF8).
     pub block_type: u8,
+    /// Exact original two-byte field tag.
+    pub raw_tag: [u8; 2],
+    /// Exact source span of the raw tag.
+    pub tag_source: RawSpan,
     pub source: RawSpan,
     pub body: RawContentsBlockBody,
 }
@@ -125,8 +181,15 @@ fn parse_confirmed_block_inner(
     cursor: &mut ContentsCursor<'_>,
 ) -> Result<RawContentsBlock, BlockReadError> {
     let start = cursor.position();
-    let (id, id_source) = cursor.read_u8()?;
-    let (block_type, _) = cursor.read_u8()?;
+    let (tag0, tag0_source) = cursor.read_u8()?;
+    let (tag1, _) = cursor.read_u8()?;
+    let raw_tag = [tag0, tag1];
+    let (id, block_type) = decode_packed_field_tag(raw_tag);
+    let tag_source = RawSpan {
+        stream: tag0_source.stream.clone(),
+        offset: tag0_source.offset,
+        len: 2,
+    };
 
     let body = match block_type {
         BLOCK_TYPE_EMPTY => RawContentsBlockBody::Empty,
@@ -197,14 +260,16 @@ fn parse_confirmed_block_inner(
 
     let end = cursor.position();
     let source = RawSpan {
-        stream: id_source.stream,
-        offset: id_source.offset,
+        stream: tag0_source.stream,
+        offset: tag0_source.offset,
         len: (end - start) as u64,
     };
 
     Ok(RawContentsBlock {
         id,
         block_type,
+        raw_tag,
+        tag_source,
         source,
         body,
     })
@@ -214,6 +279,55 @@ fn parse_confirmed_block_inner(
 mod tests {
     use super::*;
     use pub_core::StreamPath;
+
+    #[test]
+    fn packed_tag_codec_preserves_11_bit_field_ids() {
+        let vectors = [
+            (0x0213, 0x08, [0x13, 0x0A]),
+            (0x0224, 0x88, [0x24, 0x8A]),
+            (0x0206, 0x80, [0x06, 0x82]),
+            (0x0257, 0x88, [0x57, 0x8A]),
+        ];
+
+        for (field_id, wire_type, raw_tag) in vectors {
+            assert_eq!(
+                encode_packed_field_tag(field_id, wire_type).expect("vector must encode"),
+                raw_tag
+            );
+            assert_eq!(decode_packed_field_tag(raw_tag), (field_id, wire_type));
+        }
+
+        assert_eq!(
+            encode_packed_field_tag(0x0800, 0x20),
+            Err(PackedFieldTagError::FieldIdOutOfRange { field_id: 0x0800 })
+        );
+        assert_eq!(
+            encode_packed_field_tag(0x0024, 0x8A),
+            Err(PackedFieldTagError::WireTypeNotNormalized { wire_type: 0x8A })
+        );
+    }
+
+    #[test]
+    fn parses_extended_field_id_and_preserves_exact_raw_tag() {
+        let bytes = [0x24, 0x8A, 0x04, 0x00, 0x00, 0x00];
+        let mut cursor = ContentsCursor::new(StreamPath("/Contents".into()), &bytes);
+
+        let block = parse_confirmed_block(&mut cursor).expect("extended packed field must parse");
+
+        assert_eq!(block.id, 0x0224);
+        assert_eq!(block.block_type, BLOCK_TYPE_CONTAINER_88);
+        assert_eq!(block.raw_tag, [0x24, 0x8A]);
+        assert_eq!(
+            block.tag_source,
+            RawSpan {
+                stream: StreamPath("/Contents".into()),
+                offset: 0,
+                len: 2,
+            }
+        );
+        assert_eq!(block.source.len, 6);
+        assert_eq!(cursor.position(), 6);
+    }
 
     #[test]
     fn parses_service_u16_block() {
@@ -401,7 +515,7 @@ mod tests {
     #[test]
     fn unsupported_type_does_not_advance_cursor() {
         let mut cursor =
-            ContentsCursor::new(StreamPath("/Contents".into()), &[0x01, 0x21, 0xAA, 0xBB]);
+            ContentsCursor::new(StreamPath("/Contents".into()), &[0x01, 0x30, 0xAA, 0xBB]);
 
         let error = parse_confirmed_block(&mut cursor)
             .expect_err("неподтверждённый тип должен отклоняться");
@@ -409,7 +523,7 @@ mod tests {
         assert_eq!(
             error,
             BlockReadError::UnsupportedType {
-                block_type: 0x21,
+                block_type: 0x30,
                 offset: 0,
             }
         );
