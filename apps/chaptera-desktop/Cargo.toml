@@ -16,7 +16,7 @@ embedded-fixture-tests = []
 
 [dependencies]
 chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
-eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
+eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11", "persistence"] }
 image = { version = "=0.25.8", default-features = false, features = ["jpeg", "png"] }
 pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
 pub-export = { path = "../../vendor/producer-a/crates/pub-export" }
