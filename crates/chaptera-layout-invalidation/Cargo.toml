@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 sha2.workspace = true
 chaptera-layout-projection = { path = "../chaptera-layout-projection" }
+chaptera-line-region = { path = "../chaptera-line-region" }
 
 [dev-dependencies]
 serde.workspace = true
