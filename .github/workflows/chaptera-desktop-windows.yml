@@ -105,6 +105,38 @@ jobs:
             source_commit = "${{ github.sha }}"
           } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-editor.desktop-build.json
 
+      - name: Prove real paired ReplaceImage UI and editable export receipt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $releaseDir = (Resolve-Path "target/release").Path
+          $exe = Join-Path $releaseDir "chaptera-editor.exe"
+          $uiReceipt = Join-Path $releaseDir "replace-image-ui.real.json"
+          $exportReceipt = Join-Path $releaseDir "replace-image-export.real.json"
+          $privateProof = Join-Path $env:RUNNER_TEMP "replace-image-export.private.json"
+          $binding = "rb_" + [guid]::NewGuid().ToString("N").ToLowerInvariant()
+
+          $env:CHAPTERA_REPLACE_IMAGE_UI_RECEIPT = $uiReceipt
+          $env:CHAPTERA_REPLACE_IMAGE_PRIVATE_PROOF = $privateProof
+          $env:CHAPTERA_REPLACE_IMAGE_BINDING_ID = $binding
+          $env:CHAPTERA_REPLACE_IMAGE_BUILD_SHA256 = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:CHAPTERA_REPLACE_IMAGE_VERSION = "0.1.0-ci${{ github.run_number }}"
+
+          try {
+            cargo test -p chaptera-desktop --features embedded-fixture-tests replace_image_real_receipt_pair_evidence -- --ignored --nocapture
+            python tools/validate_replace_image_receipt.py ui "$uiReceipt"
+            python tools/build_replace_image_export_receipt.py --ui-receipt "$uiReceipt" --source-hash "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf" --projection-instance-admitted --output "$exportReceipt" -- python tools/replay_replace_image_export_proof.py --proof "$privateProof"
+            python tools/validate_replace_image_receipt.py pair "$uiReceipt" "$exportReceipt"
+          }
+          finally {
+            if (Test-Path $privateProof) {
+              Remove-Item -Force $privateProof
+            }
+          }
+
+          if (Test-Path $privateProof) { throw "private ReplaceImage proof must not be retained" }
+
       - name: Capture headless Chaptera UX snapshots
         shell: pwsh
         run: |
@@ -154,6 +186,8 @@ jobs:
             target/release/Chaptera-Editor.package.json
             target/release/editor-live-trial-package.real.json
             target/release/editor-agent-control.real.json
+            target/release/replace-image-ui.real.json
+            target/release/replace-image-export.real.json
             target/release/chaptera-editor-ux-1280x820.png
             target/release/chaptera-editor-ux-900x600.png
             target/release/editor-desktop-ux-snapshots.real.json
