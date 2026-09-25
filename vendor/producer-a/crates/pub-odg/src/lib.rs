@@ -23,9 +23,8 @@ pub use image::{
 
 pub use semantic::{OdgSemanticError, project_resolved_graph_to_odg};
 pub use shape::{
-    AUTHORED_SHAPE_GEOMETRY_FEATURE, AUTHORED_SHAPE_IDENTITY_FEATURE,
-    AUTHORED_SHAPE_ORDER_FEATURE, AUTHORED_SHAPE_PAINT_FEATURE,
-    OdgAuthoredRectanglePlacement, OdgAuthoredShapeError, OdgRgb8,
+    AUTHORED_SHAPE_GEOMETRY_FEATURE, AUTHORED_SHAPE_IDENTITY_FEATURE, AUTHORED_SHAPE_ORDER_FEATURE,
+    AUTHORED_SHAPE_PAINT_FEATURE, OdgAuthoredRectanglePlacement, OdgAuthoredShapeError, OdgRgb8,
     add_authored_rectangles_to_odg,
 };
 
