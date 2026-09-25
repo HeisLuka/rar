@@ -34,8 +34,16 @@ pub fn plan_project_identity(
 ) -> Result<PlannedProjectIdentity, IngressError> {
     validate_request(request)?;
     Ok(PlannedProjectIdentity {
-        project_id: stable_id("project", &request.tenant_id, &request.client_idempotency_id)?,
-        document_id: stable_id("document", &request.tenant_id, &request.client_idempotency_id)?,
+        project_id: stable_id(
+            "project",
+            &request.tenant_id,
+            &request.client_idempotency_id,
+        )?,
+        document_id: stable_id(
+            "document",
+            &request.tenant_id,
+            &request.client_idempotency_id,
+        )?,
     })
 }
 
@@ -137,13 +145,7 @@ impl SqliteProjectPersistence {
                     "project creation idempotency key was reused with different input",
                 ));
             }
-            verify_lifecycle_rows(
-                &mut tx,
-                &request.tenant_id,
-                &prior.project,
-                &baseline,
-            )
-            .await?;
+            verify_lifecycle_rows(&mut tx, &request.tenant_id, &prior.project, &baseline).await?;
             tx.commit().await.map_err(sqlite_error)?;
             return Ok(prior.project);
         }
@@ -571,11 +573,7 @@ fn consumption_request_hash(request: &ConsumeUploadRequest) -> Result<String, In
     Ok(hex_lower(&digest))
 }
 
-fn stable_id(
-    prefix: &str,
-    tenant_id: &str,
-    request_id: &str,
-) -> Result<String, IngressError> {
+fn stable_id(prefix: &str, tenant_id: &str, request_id: &str) -> Result<String, IngressError> {
     let bytes = serde_json::to_vec(&(tenant_id, request_id))
         .map_err(|error| IngressError::new("identity_generation_failed", error.to_string()))?;
     let digest = Sha256::digest(bytes);
@@ -939,10 +937,7 @@ mod tests {
         let mut changed_baseline = baseline("upload-1");
         changed_baseline.canonical_authoring_revision_id = "f".repeat(64);
         let error = adapter
-            .create_project_from_upload(
-                request("upload-1", "create-1", 3),
-                changed_baseline,
-            )
+            .create_project_from_upload(request("upload-1", "create-1", 3), changed_baseline)
             .await
             .unwrap_err();
         assert_eq!(error.code, "idempotency_conflict");
@@ -1025,7 +1020,10 @@ mod tests {
 
         assert_eq!(
             adapter
-                .create_project_from_upload(request("upload-1", "create-3", 1), baseline("upload-1"))
+                .create_project_from_upload(
+                    request("upload-1", "create-3", 1),
+                    baseline("upload-1"),
+                )
                 .await
                 .unwrap_err()
                 .code,
