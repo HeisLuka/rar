@@ -1058,6 +1058,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             if let Some(index) = project
                 .operations
