@@ -274,6 +274,132 @@ impl SqliteRevisionStore {
         Ok(edges)
     }
 
+    /// Load exactly the contiguous RevisionStream prefix from one authorized
+    /// baseline to the requested revision.
+    ///
+    /// This deliberately does not decode or validate rows after the requested
+    /// revision. Historical materialization must not silently become
+    /// materialization of the current/latest head, and a later unrelated tail
+    /// cannot change the bytes needed for an already named historical state.
+    pub async fn load_chain_to_revision(
+        &self,
+        document_id: &str,
+        baseline_revision: &str,
+        baseline_cursor: i64,
+        requested_revision: &str,
+    ) -> Result<Vec<RevisionEdge>, SqliteStoreError> {
+        require_ident(document_id, "document_id")?;
+        require_ident(baseline_revision, "baseline_revision")?;
+        require_ident(requested_revision, "requested_revision")?;
+        if baseline_cursor < 0 {
+            return Err(SqliteStoreError::new(
+                "invalid_baseline_cursor",
+                "baseline cursor must be non-negative",
+            ));
+        }
+        if requested_revision == baseline_revision {
+            return Ok(Vec::new());
+        }
+
+        let target_cursor = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT child_cursor
+            FROM revision_edges
+            WHERE document_id = ? AND child_revision = ?
+            "#,
+        )
+        .bind(document_id.as_bytes())
+        .bind(requested_revision.as_bytes())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlite_read_error)?
+        .ok_or_else(|| {
+            SqliteStoreError::new(
+                "requested_revision_not_found",
+                "requested revision is not present in this document RevisionStream",
+            )
+        })?;
+
+        if target_cursor <= baseline_cursor {
+            return Err(SqliteStoreError::new(
+                "requested_revision_before_baseline",
+                "requested revision does not descend from the authorized baseline cursor",
+            ));
+        }
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                document_id,
+                parent_revision,
+                parent_cursor,
+                operation_id,
+                request_hash,
+                canonical_event,
+                child_revision,
+                child_cursor,
+                resulting_state_hash,
+                authoring_root_hash,
+                semantic_schema_version,
+                committed_at_ms
+            FROM revision_edges
+            WHERE document_id = ?
+              AND child_cursor > ?
+              AND child_cursor <= ?
+            ORDER BY child_cursor ASC, child_revision ASC
+            "#,
+        )
+        .bind(document_id.as_bytes())
+        .bind(baseline_cursor)
+        .bind(target_cursor)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlite_read_error)?;
+
+        let expected_len = usize::try_from(target_cursor - baseline_cursor).map_err(|_| {
+            SqliteStoreError::new(
+                "revision_chain_corrupt",
+                "requested revision cursor distance does not fit memory bounds",
+            )
+        })?;
+        if rows.len() != expected_len {
+            return Err(SqliteStoreError::new(
+                "revision_chain_corrupt",
+                "RevisionStream prefix contains a cursor gap before the requested revision",
+            ));
+        }
+
+        let mut edges = Vec::with_capacity(rows.len());
+        for row in rows {
+            edges.push(decode_edge_row(row)?);
+        }
+
+        let mut expected_parent = baseline_revision.to_owned();
+        let mut expected_cursor = baseline_cursor;
+        for edge in &edges {
+            if edge.parent_revision != expected_parent
+                || edge.parent_cursor != expected_cursor
+                || edge.child_cursor != expected_cursor.saturating_add(1)
+            {
+                return Err(SqliteStoreError::new(
+                    "revision_chain_corrupt",
+                    "RevisionStream prefix is not one exact contiguous chain from the authorized baseline",
+                ));
+            }
+            expected_parent.clone_from(&edge.child_revision);
+            expected_cursor = edge.child_cursor;
+        }
+
+        if expected_parent != requested_revision || expected_cursor != target_cursor {
+            return Err(SqliteStoreError::new(
+                "revision_chain_corrupt",
+                "RevisionStream prefix did not terminate at the exact requested revision",
+            ));
+        }
+
+        Ok(edges)
+    }
+
     async fn require_schema(&self) -> Result<(), SqliteStoreError> {
         for table in ["schema_migrations", "revision_edges"] {
             let exists: i64 = sqlx::query_scalar(
