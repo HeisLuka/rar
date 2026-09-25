@@ -1,0 +1,174 @@
+name: WEB-IMAGE-DECODE-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/image-decode-*.mjs"
+      - "apps/web/image-decode-real.html"
+      - "tools/build_web_image_decode_fixtures.py"
+      - "tools/run_web_image_decode_real.mjs"
+      - "crates/chaptera-image-decode-contract/**"
+      - ".github/workflows/web-image-decode.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test browser decode policy adapter
+        run: node --test apps/web/image-decode-v1.test.mjs
+
+  real-browser:
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.94.1
+
+      - name: Build deterministic PNG/JPEG fixtures
+        run: |
+          python -m pip install "Pillow==11.3.0"
+          python tools/build_web_image_decode_fixtures.py
+
+      - name: Materialize Rust reference decode receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p chaptera-image-decode-contract --bin decode_file_receipt --             target/web-image-decode/alpha.png image/png color-disposition:explicit-srgb             > target/web-image-decode/alpha.reference.json
+          cargo run -q -p chaptera-image-decode-contract --bin decode_file_receipt --             target/web-image-decode/orientation-6.jpg image/jpeg color-disposition:explicit-srgb             > target/web-image-decode/orientation-6.reference.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path("target/web-image-decode")
+          alpha=json.loads((root/"alpha.reference.json").read_text())
+          jpeg=json.loads((root/"orientation-6.reference.json").read_text())
+          assert alpha["decoded_dimensions"] == [3,2], alpha
+          assert alpha["alpha_association"] == "straight_unassociated", alpha
+          assert alpha["orientation_applied"] is False, alpha
+          assert jpeg["decoded_dimensions"] == [3,2], jpeg
+          assert jpeg["exif_orientation"] == 6, jpeg
+          assert jpeg["orientation_applied"] is False, jpeg
+          PY
+
+      - name: Install Playwright browser
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run exact browser image decode probe
+        run: node tools/run_web_image_decode_real.mjs ${{ matrix.browser }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-image-decode-${{ matrix.browser }}
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-image-decode/${{ matrix.browser }}-receipt.json
+
+  cross-browser:
+    needs: real-browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: web-image-decode-*
+          path: target/web-image-decode-cross/input
+          merge-multiple: true
+      - name: Cross-check exact decode receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/web-image-decode-cross
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path("target/web-image-decode-cross/input")
+          paths=sorted(root.glob("*-receipt.json"))
+          assert len(paths)==2, paths
+          rows=[json.loads(path.read_text()) for path in paths]
+          by={row["browser"]["engine"]:row for row in rows}
+          assert set(by)=={"chromium","firefox"}, set(by)
+          for row in rows:
+              assert row["exact_path"] is True
+              assert row["default_img_decode_used"] is False
+              assert [f["name"] for f in row["fixtures"]] == ["alpha","orientation-6"]
+              for fixture in row["fixtures"]:
+                  main=fixture["main_thread"]
+                  worker=fixture["worker"]
+                  assert main["browser_default_decode_used"] is False
+                  assert main["orientation_policy"] == "preserve_metadata_do_not_apply"
+                  assert main["alpha_policy"] == "straight_unassociated_at_decode_boundary"
+                  assert main["color_conversion_policy"] == "none"
+                  assert main["resize_policy"] == "no_decode_time_resize"
+                  assert fixture["main_released"] is True
+                  assert fixture["worker_released"] is True
+                  assert main["resource_sha256"] == worker["resource_sha256"]
+                  assert main["decoded_dimensions"] == worker["decoded_dimensions"]
+              orientation=next(f for f in row["fixtures"] if f["name"]=="orientation-6")
+              assert orientation["reference"]["exif_orientation"] == 6
+              assert orientation["main_thread"]["decoded_dimensions"] == [3,2]
+              alpha=next(f for f in row["fixtures"] if f["name"]=="alpha")
+              observed=alpha["readback_observation"]["rgba"]
+              assert abs(observed[3]-64) <= 2, observed
+
+          c=by["chromium"]
+          f=by["firefox"]
+          for index in range(2):
+              cf=c["fixtures"][index]
+              ff=f["fixtures"][index]
+              assert cf["reference"]["resource_sha256"] == ff["reference"]["resource_sha256"]
+              assert cf["main_thread"]["decoded_dimensions"] == ff["main_thread"]["decoded_dimensions"]
+              for field in ["orientation_policy","alpha_policy","color_conversion_policy","resize_policy"]:
+                  assert cf["main_thread"][field] == ff["main_thread"][field]
+
+          receipt={
+              "receipt_kind":"chaptera.web-image-decode-cross-browser.v1",
+              "browser_engines":sorted(by),
+              "exact_path":True,
+              "default_browser_decode_authority":False,
+              "fixtures":[{
+                  "name":c["fixtures"][i]["name"],
+                  "resource_sha256":c["fixtures"][i]["reference"]["resource_sha256"],
+                  "decoded_dimensions":c["fixtures"][i]["main_thread"]["decoded_dimensions"],
+                  "exif_orientation":c["fixtures"][i]["reference"]["exif_orientation"],
+              } for i in range(2)],
+              "policy":{
+                  "orientation":"preserve_metadata_do_not_apply",
+                  "alpha":"straight_unassociated_at_decode_boundary",
+                  "color_conversion":"none",
+                  "resize":"no_decode_time_resize",
+              },
+              "worker_main_identity_agrees":True,
+              "graphics_objects_released":True,
+          }
+          out=Path("target/web-image-decode-cross/receipt.json")
+          out.write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n")
+          print(json.dumps(receipt,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-image-decode-cross-browser
+          if-no-files-found: error
+          retention-days: 90
+          path: target/web-image-decode-cross/receipt.json
