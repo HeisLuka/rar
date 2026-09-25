@@ -32,7 +32,10 @@ jobs:
           UA='rar-pub-training-officexp-locator/1.0 (public format research)'
           ISBN10='0735612943'
           ISBN13='9780735612945'
-          exact_names=['SpotColor.pub','SpotColor2.pub','ProcessColor.pub','PrintDoc1.pub','PrintDoc2.pub']
+          exact_names=['BusinessCard.pub','SpotColor.pub','SpotColor2.pub','ProcessColor.pub','PrintDoc1.pub','PrintDoc2.pub']
+          exact_paths=['Office XP SBS/Publisher/Chap22/BusinessCard.pub'] + [
+              'Office XP SBS/Publisher/Chap23/'+x for x in exact_names if x!='BusinessCard.pub'
+          ]
 
           def get_json(url, timeout=60, cap=64*1024*1024):
               req=Request(url,headers={'User-Agent':UA,'Accept':'application/json'})
@@ -145,7 +148,7 @@ jobs:
                   errors.append({'surface':'wayback_cdx','query':label,'error':f'{type(exc).__name__}: {exc}'})
               time.sleep(0.8)
 
-          filename_re=re.compile(r'(SpotColor2?\.pub|ProcessColor\.pub|PrintDoc[12]\.pub)',re.I)
+          filename_re=re.compile(r'(BusinessCard\.pub|SpotColor2?\.pub|ProcessColor\.pub|PrintDoc[12]\.pub)',re.I)
           candidate_re=re.compile(r'(publisher|office.?xp|step.?by.?step|practice|companion|download|1294|12945|\.(?:pub|zip|cab|exe|iso|img|bin|rar|7z)(?:[?#].*)?$)',re.I)
           cdx_candidates=[]
           for row in cdx_rows:
@@ -166,9 +169,7 @@ jobs:
               'book':'Microsoft Office XP Step by Step',
               'isbn10':ISBN10,
               'isbn13':ISBN13,
-              'known_publisher_practice_paths':[
-                  'Office XP SBS/Publisher/Chap23/'+x for x in exact_names
-              ],
+              'known_publisher_practice_paths':exact_paths,
               'internet_archive_search_docs':len(ia_docs),
               'internet_archive_unique_items':len(ia_items),
               'internet_archive_items_with_candidate_files':sum(bool(x.get('files')) for x in ia_items),
