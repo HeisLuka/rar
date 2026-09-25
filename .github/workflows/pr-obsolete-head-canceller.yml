@@ -1,0 +1,57 @@
+name: Cancel obsolete PR head runs
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cancel-obsolete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel older workflow runs for this PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          runs_file="$(mktemp)"
+          trap 'rm -f "$runs_file"' EXIT
+          : >"$runs_file"
+
+          for status in queued in_progress; do
+            gh api --paginate --method GET "repos/$GH_REPO/actions/runs" \
+              -f status="$status" -f event=pull_request -f per_page=100 \
+              --jq --argjson pr "$PR_NUMBER" '
+                .workflow_runs[]
+                | select(any(.pull_requests[]?; .number == $pr))
+                | [.id, .head_sha, .name]
+                | @tsv
+              ' >>"$runs_file"
+          done
+
+          cancelled=0
+          while IFS=$'\t' read -r id head_sha name; do
+            [[ -n "$id" ]] || continue
+            [[ "$head_sha" != "$CURRENT_SHA" ]] || continue
+            echo "CANCEL $id  ${head_sha:0:12}  $name"
+            if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
+              cancelled=$((cancelled + 1))
+            else
+              echo "::warning::Could not cancel run $id; it may have completed concurrently."
+            fi
+          done <"$runs_file"
+
+          echo "Cancelled obsolete runs for PR #$PR_NUMBER: $cancelled"

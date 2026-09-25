@@ -21,7 +21,7 @@ jobs:
   drain:
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel obsolete PR-head runs from the queue storm
+      - name: Cancel obsolete pull-request head runs
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,65 +30,42 @@ jobs:
           set -euo pipefail
 
           preserve_file="$(mktemp)"
-          trap 'rm -f "$preserve_file"' EXIT
+          runs_file="$(mktemp)"
+          trap 'rm -f "$preserve_file" "$runs_file"' EXIT
 
-          for pr in 767 770 772; do
-            state="$(gh api --method GET "repos/$GH_REPO/pulls/$pr" --jq '.state')"
-            if [[ "$state" == "open" ]]; then
-              gh api --method GET "repos/$GH_REPO/pulls/$pr" --jq '.head.sha' >>"$preserve_file"
-            fi
-          done
+          gh api --paginate --method GET "repos/$GH_REPO/pulls" \
+            -f state=open -f per_page=100 \
+            --jq '.[].head.sha' \
+            | sort -u >"$preserve_file"
 
-          sort -u "$preserve_file" -o "$preserve_file"
-          echo "Preserving current open-PR heads:"
+          echo "Preserving current heads of all open PRs:"
           cat "$preserve_file" || true
 
-          is_target_branch() {
-            case "$1" in
-              cloud-source-ingress-serve-v1|              cloud-source-ingress-serve-v2|              cloud-source-validation-job-v1|              cloud-source-validation-job-v2|              cloud-source-validation-job-v3|              package-self-contained-local-01|              package-self-contained-local-01-v2|              ci/pr-latest-head-concurrency-v1)
-                return 0
-                ;;
-              *)
-                return 1
-                ;;
-            esac
-          }
+          : >"$runs_file"
+          for status in queued in_progress; do
+            gh api --paginate --method GET "repos/$GH_REPO/actions/runs" \
+              -f status="$status" -f event=pull_request -f per_page=100 \
+              --jq '.workflow_runs[] | [.id, (.head_branch // ""), .head_sha, .name] | @tsv' \
+              >>"$runs_file"
+          done
 
           cancelled=0
           preserved=0
+          while IFS=$'\t' read -r id head_branch head_sha name; do
+            [[ -n "$id" ]] || continue
+            if grep -Fxq "$head_sha" "$preserve_file"; then
+              echo "KEEP   $id  $head_branch  ${head_sha:0:12}  $name"
+              preserved=$((preserved + 1))
+              continue
+            fi
 
-          for status in queued in_progress; do
-            page=1
-            while :; do
-              payload="$(gh api --method GET "repos/$GH_REPO/actions/runs"                 -f status="$status"                 -f per_page=100                 -f page="$page")"
+            echo "CANCEL $id  $head_branch  ${head_sha:0:12}  $name"
+            if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
+              cancelled=$((cancelled + 1))
+            else
+              echo "::warning::Could not cancel run $id; it may have completed concurrently."
+            fi
+          done <"$runs_file"
 
-              count="$(jq '.workflow_runs | length' <<<"$payload")"
-              [[ "$count" -gt 0 ]] || break
-
-              while IFS=$'\t' read -r id event head_branch head_sha name; do
-                [[ "$event" == "pull_request" ]] || continue
-                is_target_branch "$head_branch" || continue
-
-                if grep -Fxq "$head_sha" "$preserve_file"; then
-                  echo "KEEP   $id  $head_branch  ${head_sha:0:12}  $name"
-                  preserved=$((preserved + 1))
-                  continue
-                fi
-
-                echo "CANCEL $id  $head_branch  ${head_sha:0:12}  $name"
-                if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
-                  cancelled=$((cancelled + 1))
-                else
-                  echo "::warning::Could not cancel run $id; it may have completed concurrently."
-                fi
-              done < <(
-                jq -r '.workflow_runs[] | [.id, .event, (.head_branch // ""), .head_sha, .name] | @tsv' <<<"$payload"
-              )
-
-              [[ "$count" -eq 100 ]] || break
-              page=$((page + 1))
-            done
-          done
-
-          echo "Cancelled obsolete runs: $cancelled"
+          echo "Cancelled obsolete PR-head runs: $cancelled"
           echo "Preserved current-head runs: $preserved"
