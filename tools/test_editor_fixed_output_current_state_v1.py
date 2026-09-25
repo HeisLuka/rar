@@ -22,6 +22,9 @@ SOURCE_HASH = "a" * 64
 PAGE_ID = "20000000-0000-4000-8000-000000000001"
 NODE_ID = "10000000-0000-4000-8000-000000000001"
 STORY_ID = "30000000-0000-4000-8000-000000000001"
+CARRIER_PAGE_ID = "20000000-0000-4000-8000-000000000002"
+CARRIER_NODE_ID = "10000000-0000-4000-8000-000000000002"
+CARRIER_STORY_ID = "30000000-0000-4000-8000-000000000002"
 BEFORE = {"x": 1000, "y": 2000, "width": 3000, "height": 4000}
 AFTER = {"x": 128000, "y": 256000, "width": 3000, "height": 4000}
 
@@ -76,6 +79,114 @@ def graph():
             }
         },
     }
+
+
+def cmo_graph(text="\uFFFC", *, carrier_height=3000):
+    value = graph()
+    value["document"]["pages"].append(CARRIER_PAGE_ID)
+    value["pages"][CARRIER_PAGE_ID] = {
+        "id": CARRIER_PAGE_ID,
+        "size": {"width": 914400, "height": 1828800},
+        "bleed": None,
+        "margins": None,
+        "children": [CARRIER_NODE_ID],
+        "source_refs": [{"private": "carrier-page"}],
+    }
+    value["nodes"][CARRIER_NODE_ID] = {
+        "header": {
+            "id": CARRIER_NODE_ID,
+            "parent_id": CARRIER_PAGE_ID,
+            "bounds": {
+                "x": 0,
+                "y": 0,
+                "width": 2500,
+                "height": carrier_height,
+            },
+            "transform": {
+                "a": "1",
+                "b": "0",
+                "c": "0",
+                "d": "1",
+                "tx": 0,
+                "ty": 0,
+            },
+            "source_refs": [{"carrier": "Cmo"}],
+        },
+        "payload": {
+            "story_frame": {
+                "story_id": CARRIER_STORY_ID,
+                "ordinal": 0,
+                "previous_frame": None,
+                "next_frame": None,
+            }
+        },
+    }
+    value["stories"][STORY_ID]["text"] = text
+    value["stories"][CARRIER_STORY_ID] = {
+        "id": CARRIER_STORY_ID,
+        "text": "PRIVATE CARRIER STORY",
+        "source_refs": [{"carrier": "Quill"}],
+    }
+    return value
+
+
+def cmo_context():
+    return {
+        "schema_version": "chaptera.pub-projection-context.v1",
+        "master_relations": [],
+        "cmo_relations": [{
+            "source_order": 3,
+            "cmo_id": 7,
+            "carrier_ohpo": 319,
+            "carrier_cmo_id": 7,
+            "target_qsid": 49,
+            "carrier_node_id": CARRIER_NODE_ID,
+            "carrier_story_id": CARRIER_STORY_ID,
+            "target_story_id": STORY_ID,
+            "target_frame_node_id": NODE_ID,
+        }],
+    }
+
+
+def cmo_shaped_flow(text):
+    lines = []
+    if text == "A\uFFFC":
+        lines = [{
+            "frame_node_id": NODE_ID,
+            "story_id": STORY_ID,
+            "frame_line_index": 0,
+            "scalar_start": 0,
+            "scalar_end": 1,
+            "consumed_scalar_end": 1,
+            "text": "A",
+            "units_per_em": 1000,
+            "measured_width": 500,
+            "glyphs": [glyph(21, 0)],
+        }]
+    elif text != "\uFFFC":
+        raise AssertionError("unsupported Cmo test Story")
+    return {
+        "schema_version": "chaptera.shaped-flow-bridge-input.v1",
+        "source_hash": SOURCE_HASH,
+        "flow_id": "sha256:" + "c" * 64,
+        "environment": {
+            "font_size_emu": 1000,
+            "line_height_emu": 1400,
+        },
+        "lines": lines,
+        "diagnostics": [],
+    }
+
+
+def build_cmo(text="\uFFFC", *, carrier_height=3000):
+    return build_current_fixed_output(
+        baseline_graph=cmo_graph(text, carrier_height=carrier_height),
+        editor_project=project([]),
+        projection_context=cmo_context(),
+        shaped_flow=cmo_shaped_flow(text),
+        implementation="rar-editor-fixed-output-current-state-v1",
+        commit_or_build="deadbeef",
+    )
 
 
 def move_operation():
@@ -251,6 +362,70 @@ class EditorFixedOutputCurrentStateTests(unittest.TestCase):
         self.assertEqual(
             baseline["current_story_states"][0]["scalar_count"],
             edited["current_story_states"][0]["scalar_count"],
+        )
+
+    def test_cmo_visible_slot_materializes_in_current_fixed_output_scene(self):
+        packet, receipt = build_cmo()
+
+        projected = [
+            node
+            for node in packet["scene"]["nodes"]
+            if node.get("projection_kind") == "cmo_story_slot"
+        ]
+        self.assertEqual(1, len(projected))
+        self.assertEqual(CARRIER_NODE_ID, projected[0]["origin"])
+        self.assertEqual(PAGE_ID, projected[0]["parent_origin"])
+        self.assertEqual(
+            {"x": 1000, "y": 2000, "width": 2500, "height": 3000},
+            projected[0]["bounds"],
+        )
+        self.assertEqual(
+            1,
+            sum(
+                node["origin"] == CARRIER_NODE_ID
+                for node in packet["scene"]["nodes"]
+            ),
+        )
+        self.assertEqual(1, receipt["cmo_target_count"])
+        self.assertEqual(1, receipt["cmo_visible_slot_count"])
+        self.assertEqual(0, receipt["cmo_overset_story_count"])
+        self.assertFalse(receipt["story_overset"])
+        self.assertTrue(
+            receipt["invariants"]["canonical_cmo_slot_flow_authoritative"]
+        )
+        self.assertEqual(
+            0,
+            receipt["invariants"]["cmo_carrier_reparent_count"],
+        )
+        self.assertFalse(receipt["invariants"]["cmo_scaling_applied"])
+        self.assertFalse(receipt["invariants"]["cmo_skip_to_fit"])
+        self.assertFalse(
+            any(
+                item["code"] == "cmo_slot_flow_not_materialized"
+                for item in packet["scene"]["diagnostics"]
+            )
+        )
+        self.assertNotIn("PRIVATE CARRIER STORY", json.dumps(receipt, sort_keys=True))
+
+    def test_cmo_first_nonfit_sets_authoritative_fixed_output_overset(self):
+        packet, receipt = build_cmo("A\uFFFC", carrier_height=3000)
+
+        self.assertEqual("A", packet["fixed_text_runs"][0]["logical_text"])
+        self.assertEqual(0, receipt["cmo_visible_slot_count"])
+        self.assertEqual(1, receipt["cmo_overset_story_count"])
+        self.assertTrue(receipt["story_overset"])
+        self.assertTrue(
+            any(
+                item["code"] == "cmo_story_overset"
+                and item["origin"] == STORY_ID
+                for item in packet["scene"]["diagnostics"]
+            )
+        )
+        self.assertFalse(
+            any(
+                node.get("projection_kind") == "cmo_story_slot"
+                for node in packet["scene"]["nodes"]
+            )
         )
 
 
