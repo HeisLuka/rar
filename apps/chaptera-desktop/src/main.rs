@@ -3435,7 +3435,11 @@ mod tests {
         {
             let editor = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
             editor.focus();
-            harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        }
+        harness.step();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        {
+            let editor = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
             editor.type_text(replacement.clone());
         }
         harness.step();
