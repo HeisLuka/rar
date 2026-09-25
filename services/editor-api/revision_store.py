@@ -432,6 +432,27 @@ except ModuleNotFoundError:
     )
 
 
+try:
+    from resize_nodes_v1 import (
+        execute_resize_nodes_v1,
+        normalize_resize_nodes_request_v1,
+        validate_resize_nodes_operation_v1,
+        validate_resize_nodes_request_v1,
+    )
+except ModuleNotFoundError:
+    import pathlib
+
+    _resize_nodes_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _resize_nodes_dir not in sys.path:
+        sys.path.insert(0, _resize_nodes_dir)
+    from resize_nodes_v1 import (
+        execute_resize_nodes_v1,
+        normalize_resize_nodes_request_v1,
+        validate_resize_nodes_operation_v1,
+        validate_resize_nodes_request_v1,
+    )
+
+
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
 
@@ -622,6 +643,20 @@ class RevisionKernel:
             request_validator=self._validate_resize_request_shape,
             canonical_validator=self._validate_canonical_resize,
             pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_resize_nodes(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_resize_nodes_v1,
+    ) -> dict:
+        """Commit one fully-preflighted exact-bounds rectangle batch."""
+        normalized = normalize_resize_nodes_request_v1(request)
+        return self._commit_command(
+            normalized,
+            executor,
+            request_validator=validate_resize_nodes_request_v1,
+            canonical_validator=validate_resize_nodes_operation_v1,
         )
 
     def commit_replace_image(
