@@ -141,7 +141,9 @@
     return {
       input_class: meta.input_class,
       fixture: meta.fixture,
-      real_pub: false,
+      real_pub: meta.real_pub === true,
+      representative_corpus: meta.representative_corpus === true,
+      technology_decision_allowed: meta.technology_decision_allowed === true,
       payload_bytes: new TextEncoder().encode(payloadText).byteLength,
       parse_ms: parseMs,
       pages: snapshot.pages.length,

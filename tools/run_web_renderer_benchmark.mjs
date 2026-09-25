@@ -9,6 +9,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = path.join(ROOT, "target", "web-render");
 const FIXTURE_DIR = path.join(ROOT, "packages", "protocol", "scene", "v1", "fixtures");
 const BROWSER_NAME = process.argv[2] ?? "chromium";
+const REAL_SCENE_PATH = process.argv[3] ? path.resolve(process.argv[3]) : null;
 const ENGINES = { chromium, firefox };
 
 if (!(BROWSER_NAME in ENGINES)) {
@@ -117,52 +118,68 @@ async function main() {
       { waitUntil: "networkidle" }
     );
 
-    const inputs = [
-      ["simple-text.json", "protocol_fixture", readFixture("simple-text.json")],
-      ["exact-image.json", "protocol_fixture", readFixture("exact-image.json")],
-      ["group-table.json", "protocol_fixture", readFixture("group-table.json")],
-      ["partial-unsupported.json", "protocol_fixture", readFixture("partial-unsupported.json")],
-      ["synthetic-stress-5000", "synthetic_stress", stressSnapshot()]
-    ];
+    const inputs = REAL_SCENE_PATH
+      ? [[
+          path.basename(REAL_SCENE_PATH),
+          "real_pub_scene",
+          fs.readFileSync(REAL_SCENE_PATH, "utf8")
+        ]]
+      : [
+          ["simple-text.json", "protocol_fixture", readFixture("simple-text.json")],
+          ["exact-image.json", "protocol_fixture", readFixture("exact-image.json")],
+          ["group-table.json", "protocol_fixture", readFixture("group-table.json")],
+          ["partial-unsupported.json", "protocol_fixture", readFixture("partial-unsupported.json")],
+          ["synthetic-stress-5000", "synthetic_stress", stressSnapshot()]
+        ];
 
     const cases = [];
     for (const [fixture, inputClass, payloadText] of inputs) {
       const result = await page.evaluate(
-        async ({ payloadText, fixture, inputClass }) =>
+        async ({ payloadText, fixture, inputClass, realPub }) =>
           window.runRenderBenchmark(payloadText, {
             fixture,
-            input_class: inputClass
+            input_class: inputClass,
+            real_pub: realPub,
+            representative_corpus: realPub,
+            technology_decision_allowed: false
           }),
-        { payloadText, fixture, inputClass }
+        { payloadText, fixture, inputClass, realPub: Boolean(REAL_SCENE_PATH) }
       );
       cases.push(result);
     }
 
-    const groupTable = readFixture("group-table.json");
+    const screenshotPayload = REAL_SCENE_PATH
+      ? fs.readFileSync(REAL_SCENE_PATH, "utf8")
+      : readFixture("group-table.json");
+    const screenshotLabel = REAL_SCENE_PATH ? "real-sample-newsletter" : "group-table";
     for (const renderer of ["svg", "canvas2d", "webgl2-hybrid"]) {
       const state = await page.evaluate(
         async ({ payloadText, renderer }) =>
           window.renderForScreenshot(payloadText, renderer),
-        { payloadText: groupTable, renderer }
+        { payloadText: screenshotPayload, renderer }
       );
       if (state.available) {
         await page.locator("#host").screenshot({
           path: path.join(
             TARGET,
-            BROWSER_NAME + "-group-table-" + renderer + ".png"
+            BROWSER_NAME + "-" + screenshotLabel + "-" + renderer + ".png"
           )
         });
       }
     }
 
+    const realPub = Boolean(REAL_SCENE_PATH);
     const receipt = {
-      receipt_kind: "synthetic_renderer_benchmark_preflight",
+      receipt_kind: realPub
+        ? "chaptera.real-pub-renderer-benchmark.v1"
+        : "synthetic_renderer_benchmark_preflight",
       browser_engine: BROWSER_NAME,
-      real_pub: false,
-      representative_corpus: false,
+      real_pub: realPub,
+      representative_corpus: realPub,
       technology_decision_allowed: false,
-      note:
-        "Protocol fixtures and synthetic stress only. Do not use this receipt as the final WEB-RENDER-01 technology decision.",
+      note: realPub
+        ? "Pinned real SampleNewsletter BrowserSceneSnapshotV1 measurement. This is a decision input; final WEB-RENDER-01 selection remains gated on WEB-COLOR-SURFACE-01."
+        : "Protocol fixtures and synthetic stress only. Do not use this receipt as the final WEB-RENDER-01 technology decision.",
       cases
     };
     fs.writeFileSync(
