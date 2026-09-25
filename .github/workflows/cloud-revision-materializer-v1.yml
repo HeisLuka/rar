@@ -1,0 +1,48 @@
+name: Cloud exact RevisionId materializer V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/Cargo.toml"
+      - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/src/sqlite_store.rs"
+      - "apps/chaptera-server/src/revision_materializer.rs"
+      - "apps/chaptera-server/tests/revision_materializer.rs"
+      - "docs/cloud-revision-materializer-v1.md"
+      - ".github/workflows/cloud-revision-materializer-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-revision-materializer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint chaptera-server materializer
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Run exact replay and fail-closed matrix
+        run: cargo test -p chaptera-server --test revision_materializer -- --nocapture
+      - name: Fetch exact public SampleNewsletter fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/cloud-revision-materializer
+          fixture="target/cloud-revision-materializer/SampleNewsletter.pub"
+          curl -fL --retry 3             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"             -o "$fixture"
+          test "$(stat -c%s "$fixture")" = "291840"
+          echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  $fixture"             | sha256sum -c -
+      - name: Prove real PUB R0 R1 R2 and historical R1 replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHAPTERA_SAMPLE_NEWSLETTER_PUB="$GITHUB_WORKSPACE/target/cloud-revision-materializer/SampleNewsletter.pub"
+          cargo test -p chaptera-server --test revision_materializer             real_sample_newsletter_materializes_exact_historical_revision             -- --ignored --exact --nocapture
