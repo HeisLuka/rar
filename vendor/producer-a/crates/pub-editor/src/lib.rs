@@ -2436,7 +2436,6 @@ fn empty_editor_story(story_id: StoryId) -> Story {
         source_refs: Vec::new(),
     }
 }
-
 fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> {
     let mut grids = Vec::new();
 
