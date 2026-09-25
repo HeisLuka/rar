@@ -1,0 +1,43 @@
+name: Layout Line Region V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-line-region/**"
+      - "crates/chaptera-layout-invalidation/Cargo.toml"
+      - "crates/chaptera-layout-invalidation/src/runtime.rs"
+      - ".github/workflows/layout-line-region-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check line-region and flow integration
+        run: cargo check -p chaptera-line-region -p chaptera-layout-invalidation --all-targets
+      - name: Lint line-region and flow integration
+        run: cargo clippy -p chaptera-line-region -p chaptera-layout-invalidation --all-targets -- -D warnings
+      - name: Test line-region solver
+        run: cargo test -p chaptera-line-region
+      - name: Test shaped-flow bridge regressions
+        run: cargo test -p chaptera-layout-invalidation line_region_bridge_tests
+      - name: Emit geometry-only drag/resize benchmark receipt
+        run: |
+          mkdir -p target/line-region
+          cargo run -q -p chaptera-line-region --bin line_region_receipt | tee target/line-region/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: layout-line-region-${{ github.run_id }}
+          path: target/line-region/receipt.json
+          if-no-files-found: error
