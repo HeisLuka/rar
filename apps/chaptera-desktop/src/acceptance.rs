@@ -17,7 +17,13 @@ const PROTOCOL_VERSION: &str = "chaptera.editor-desktop-vertical-observation.v1"
 const REPLACEMENT_WITNESS: &str = "ChapteraV0";
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing lowercase hex into String cannot fail");
+    }
+    encoded
 }
 
 fn state_id(editor: &EditorSession) -> Result<String, String> {
