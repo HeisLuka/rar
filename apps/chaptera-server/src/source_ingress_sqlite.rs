@@ -6,7 +6,9 @@ use std::{
 
 use sqlx::{
     Row, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous},
+    sqlite::{
+        SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous,
+    },
 };
 
 use crate::source_ingress::{
@@ -102,12 +104,18 @@ impl SqliteSourceIngressRepository {
         .bind(to_i64(candidate.upload_generation, "upload_generation")?)
         .bind(candidate.object_version.clone())
         .bind(candidate.object_etag.clone())
-        .bind(optional_u64_i64(candidate.observed_byte_len, "observed_byte_len")?)
+        .bind(optional_u64_i64(
+            candidate.observed_byte_len,
+            "observed_byte_len",
+        )?)
         .bind(optional_blob(&candidate.canonical_sha256))
         .bind(optional_blob(&candidate.durable_binding_id))
         .bind(to_i64(candidate.created_at_ms, "created_at_ms")?)
         .bind(to_i64(candidate.expires_at_ms, "expires_at_ms")?)
-        .bind(optional_u64_i64(candidate.completed_at_ms, "completed_at_ms")?)
+        .bind(optional_u64_i64(
+            candidate.completed_at_ms,
+            "completed_at_ms",
+        )?)
         .bind(candidate.terminal_code.clone())
         .bind(candidate.idempotency_key.as_bytes())
         .bind(candidate.request_hash.as_bytes())
@@ -115,18 +123,15 @@ impl SqliteSourceIngressRepository {
         .await
         .map_err(sqlite_error)?;
 
-        let current = fetch_upload_by_idempotency(
-            &mut tx,
-            &candidate.tenant_id,
-            &candidate.idempotency_key,
-        )
-        .await?
-        .ok_or_else(|| {
-            IngressError::new(
-                "upload_id_collision",
-                "upload insert did not establish the requested idempotency identity",
-            )
-        })?;
+        let current =
+            fetch_upload_by_idempotency(&mut tx, &candidate.tenant_id, &candidate.idempotency_key)
+                .await?
+                .ok_or_else(|| {
+                    IngressError::new(
+                        "upload_id_collision",
+                        "upload insert did not establish the requested idempotency identity",
+                    )
+                })?;
 
         if current.request_hash != candidate.request_hash {
             return Err(IngressError::new(
@@ -200,7 +205,10 @@ impl SqliteSourceIngressRepository {
         .bind(to_i64(next.upload_generation, "upload_generation")?)
         .bind(next.object_version.clone())
         .bind(next.object_etag.clone())
-        .bind(optional_u64_i64(next.observed_byte_len, "observed_byte_len")?)
+        .bind(optional_u64_i64(
+            next.observed_byte_len,
+            "observed_byte_len",
+        )?)
         .bind(optional_blob(&next.canonical_sha256))
         .bind(optional_blob(&next.durable_binding_id))
         .bind(optional_u64_i64(next.completed_at_ms, "completed_at_ms")?)
@@ -624,10 +632,7 @@ fn to_i64(value: u64, label: &'static str) -> Result<i64, IngressError> {
     })
 }
 
-fn optional_u64_i64(
-    value: Option<u64>,
-    label: &'static str,
-) -> Result<Option<i64>, IngressError> {
+fn optional_u64_i64(value: Option<u64>, label: &'static str) -> Result<Option<i64>, IngressError> {
     value.map(|value| to_i64(value, label)).transpose()
 }
 
@@ -652,10 +657,7 @@ fn nonnegative_u64(row: &SqliteRow, column: &str) -> Result<u64, IngressError> {
     })
 }
 
-fn optional_nonnegative_u64(
-    row: &SqliteRow,
-    column: &str,
-) -> Result<Option<u64>, IngressError> {
+fn optional_nonnegative_u64(row: &SqliteRow, column: &str) -> Result<Option<u64>, IngressError> {
     let value: Option<i64> = row.try_get(column).map_err(sqlite_error)?;
     value
         .map(|value| {
@@ -753,10 +755,9 @@ mod tests {
             .migrate_up()
             .await
             .unwrap();
-        let repository =
-            SqliteSourceIngressRepository::open(&path, 4, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let repository = SqliteSourceIngressRepository::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
         (path, repository)
     }
 
@@ -805,14 +806,10 @@ mod tests {
         assert_eq!(error.code, "idempotency_conflict");
 
         repository.close().await;
-        let reopened =
-            SqliteSourceIngressRepository::open(&path, 2, Duration::from_secs(2))
-                .await
-                .unwrap();
-        assert_eq!(
-            reopened.get("upload-1").await.unwrap().unwrap(),
-            first
-        );
+        let reopened = SqliteSourceIngressRepository::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(reopened.get("upload-1").await.unwrap().unwrap(), first);
         reopened.close().await;
         cleanup(&path);
     }
@@ -921,10 +918,9 @@ mod tests {
         );
 
         repository.close().await;
-        let reopened =
-            SqliteSourceIngressRepository::open(&path, 2, Duration::from_secs(2))
-                .await
-                .unwrap();
+        let reopened = SqliteSourceIngressRepository::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
         assert_eq!(
             reopened
                 .find_consumption("tenant-a", "create-project-1")
