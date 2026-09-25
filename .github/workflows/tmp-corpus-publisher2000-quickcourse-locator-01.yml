@@ -1,0 +1,137 @@
+name: TEMP Publisher 2000 Quick Course locator census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-publisher2000-quickcourse-locator-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Query exact ISBN and historical locator surfaces
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json,re,time
+          from pathlib import Path
+          from urllib.parse import urlencode,quote
+          from urllib.request import Request,urlopen
+          from urllib.error import HTTPError
+
+          UA='rar-pub2000-quickcourse-locator/1.0'
+          isbns=['1572319909','9781572319905','0735610886','9780735610880']
+          title='Quick Course in Microsoft Publisher 2000'
+          errors=[]
+
+          def get_json(url,timeout=60,cap=64*1024*1024):
+              req=Request(url,headers={'User-Agent':UA,'Accept':'application/json'})
+              with urlopen(req,timeout=timeout) as r:
+                  raw=r.read(cap+1)
+              if len(raw)>cap: raise ValueError('response cap exceeded')
+              return json.loads(raw.decode('utf-8'))
+
+          ia_docs=[]
+          queries=[f'isbn:{x}' for x in isbns]+[f'"{title}"']
+          for q in queries:
+              params=[('q',q),('fl[]','identifier'),('fl[]','title'),('fl[]','description'),('fl[]','date'),('fl[]','year'),('fl[]','mediatype'),('fl[]','collection'),('rows','100'),('page','1'),('output','json')]
+              try:
+                  data=get_json('https://archive.org/advancedsearch.php?'+urlencode(params))
+                  for d in data.get('response',{}).get('docs',[]):
+                      d=dict(d); d['query']=q; ia_docs.append(d)
+              except Exception as e:
+                  errors.append({'surface':'ia_search','query':q,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(.4)
+
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|bin|cue|7z|rar)(?:$|[?#])',re.I)
+          ia_items=[]; seen=set()
+          for d in ia_docs:
+              ident=str(d.get('identifier',''))
+              if not ident or ident in seen: continue
+              seen.add(ident)
+              item={'identifier':ident,'search_doc':d,'candidate_files':[]}
+              try:
+                  meta=get_json('https://archive.org/metadata/'+quote(ident,safe=''))
+                  for f in meta.get('files',[]):
+                      name=str(f.get('name',''))
+                      if carrier_re.search(name):
+                          item['candidate_files'].append({'name':name,'size':f.get('size'),'format':f.get('format'),'md5':f.get('md5'),'sha1':f.get('sha1'),'source':f.get('source')})
+              except Exception as e:
+                  item['metadata_error']=f'{type(e).__name__}: {e}'
+              ia_items.append(item); time.sleep(.25)
+
+          openlibrary=[]
+          for isbn in isbns:
+              try:
+                  d=get_json(f'https://openlibrary.org/isbn/{isbn}.json')
+                  openlibrary.append({'isbn':isbn,'key':d.get('key'),'title':d.get('title'),'publish_date':d.get('publish_date'),'publishers':d.get('publishers'),'ocaid':d.get('ocaid')})
+              except HTTPError as e:
+                  openlibrary.append({'isbn':isbn,'status':e.code,'error':str(e)})
+              except Exception as e:
+                  openlibrary.append({'isbn':isbn,'error':f'{type(e).__name__}: {e}'})
+
+          prefixes=[]
+          for isbn in isbns:
+              prefixes += [
+                ('oreilly-'+isbn,f'examples.oreilly.com/{isbn}/'),
+                ('mspress-isbn-'+isbn,f'mspress.microsoft.com/{isbn}/'),
+                ('microsoft-mspress-isbn-'+isbn,f'www.microsoft.com/mspress/{isbn}/'),
+              ]
+          # historically plausible Quick Course paths; bounded prefixes only
+          prefixes += [
+            ('mspress-quickcourse-publisher2000','mspress.microsoft.com/quickcourse/publisher2000/'),
+            ('mspress-quickcourse-publisher','mspress.microsoft.com/quickcourse/publisher/'),
+          ]
+          cdx='https://web.archive.org/cdx/search/cdx'
+          rows=[]
+          for label,prefix in prefixes:
+              params=[('url',prefix),('matchType','prefix'),('output','json'),('fl','timestamp,original,mimetype,statuscode,digest,length'),('filter','statuscode:200'),('collapse','urlkey'),('limit','20000'),('gzip','false')]
+              try:
+                  data=get_json(cdx+'?'+urlencode(params))
+                  if data:
+                      hdr=data[0]
+                      for x in data[1:]:
+                          if isinstance(x,list):
+                              r={str(k):str(v) for k,v in zip(hdr,x)}; r['query_label']=label; rows.append(r)
+              except Exception as e:
+                  errors.append({'surface':'wayback_cdx','query':label,'error':f'{type(e).__name__}: {e}'})
+              time.sleep(.4)
+
+          likely=[r for r in rows if carrier_re.search(r.get('original','')) or re.search(r'(publisher|practice|exercise|sample|download|quick.?course)',r.get('original',''),re.I)]
+          summary={
+            'schema':'chaptera.corpus-publisher2000-quickcourse-locator.v1',
+            'source_safe':True,'raw_payload_retained':False,
+            'title':title,'isbns':isbns,
+            'ia_search_observations':len(ia_docs),'ia_unique_items':len(ia_items),
+            'ia_items_with_candidate_files':sum(bool(x['candidate_files']) for x in ia_items),
+            'openlibrary':openlibrary,
+            'wayback_rows':len(rows),'wayback_likely_rows':len(likely),
+            'wayback_likely':likely,'errors':errors,
+            'guardrail':'Book/ISBN/course wording is provenance evidence only; no writer-version inference and no carrier bytes retained.'
+          }
+          Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/internet-archive-items.json').write_text(json.dumps(ia_items,indent=2,ensure_ascii=False),encoding='utf-8')
+          Path('out/wayback-rows.json').write_text(json.dumps(rows,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          for x in ia_items:
+              if x['candidate_files']: print('IA',x['identifier'],json.dumps(x['candidate_files'],ensure_ascii=False))
+          PY
+      - name: Metadata-only guard
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' \) | grep -q .; then exit 1; fi
+          sha256sum out/* | sort > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-publisher2000-quickcourse-locator
+          path: out/**
+          retention-days: 60
