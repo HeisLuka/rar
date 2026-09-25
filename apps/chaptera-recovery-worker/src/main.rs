@@ -122,7 +122,10 @@ fn valid_job_id(value: &str) -> bool {
 
 fn validate_job(job: &Job) -> Result<(), String> {
     if job.protocol_version != JOB_VERSION {
-        return Err(format!("unsupported protocol_version: {}", job.protocol_version));
+        return Err(format!(
+            "unsupported protocol_version: {}",
+            job.protocol_version
+        ));
     }
     if !valid_job_id(&job.job_id) {
         return Err("job_id must be canonical lowercase UUID text".to_owned());
@@ -152,8 +155,7 @@ fn validate_job(job: &Job) -> Result<(), String> {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file =
-        File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 1024 * 1024];
     loop {
