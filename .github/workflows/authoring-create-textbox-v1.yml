@@ -1,0 +1,40 @@
+name: Authoring CreateTextBox V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/pub-model/**"
+      - "services/editor-api/create_textbox_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "services/editor-api/test_create_textbox_v1.py"
+      - "services/editor-api/text_ingress_v1.py"
+      - "services/editor-api/story_edit_transaction_v1.py"
+      - ".github/workflows/authoring-create-textbox-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  textbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check pub-model formatting
+        run: cargo fmt -p pub-model -- --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Lint pub-model
+        run: cargo clippy -p pub-model --all-targets -- -D warnings
+      - name: Test pub-model
+        run: cargo test -p pub-model
+      - name: Test atomic CreateTextBox
+        run: python services/editor-api/test_create_textbox_v1.py
+      - name: Regression text ingress
+        run: python services/editor-api/test_text_ingress_v1.py
+      - name: Regression Story edit core
+        run: python services/editor-api/test_story_edit_transaction_v1.py
