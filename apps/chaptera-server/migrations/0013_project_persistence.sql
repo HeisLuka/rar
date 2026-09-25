@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS projects (
     tenant_id           BLOB NOT NULL,
     workspace_id        BLOB NOT NULL,
     name                TEXT NOT NULL,
+    lifecycle_state     TEXT NOT NULL CHECK (lifecycle_state IN ('active', 'trashed', 'deleted')),
+    lifecycle_generation INTEGER NOT NULL CHECK (lifecycle_generation >= 0),
+    metadata_version    INTEGER NOT NULL CHECK (metadata_version >= 0),
+    deleted             INTEGER NOT NULL CHECK (deleted IN (0, 1)),
     created_at_ms       INTEGER NOT NULL,
 
     CHECK (length(project_id) > 0),
