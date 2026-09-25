@@ -1,0 +1,17 @@
+name: RENDER-TEXTURE-RESIDENCY-01
+on:
+  pull_request:
+    paths: ["tools/texture_residency_v1.py","tools/test_texture_residency_v1.py","tools/run_texture_residency_bench.py",".github/workflows/render-texture-residency.yml"]
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  fake-adapter-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m unittest tools/test_texture_residency_v1.py
+      - run: mkdir -p target/texture-residency && python tools/run_texture_residency_bench.py | tee target/texture-residency/receipt.json
+      - uses: actions/upload-artifact@v4
+        with: { name: render-texture-residency-${{ github.run_id }}, path: target/texture-residency/receipt.json }
