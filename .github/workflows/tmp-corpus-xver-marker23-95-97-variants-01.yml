@@ -1,0 +1,463 @@
+name: TEMP CORPUS Publisher95-97 marker0x23 structural variants
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-xver-marker23-95-97-variants-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Compare marker0x23 structural families
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib, json, time, urllib.parse, urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-marker23-xver/1.0"
+          SECTOR=2048
+          P95_URL="https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso"
+          P97_URL="https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso"
+          P95_SOURCE="https://archive.org/details/microsoft-home-collection-1993-1995-"
+          P97_SOURCE="https://archive.org/details/MSPublisher97-EN"
+
+          SPECS={
+            "BOOKMARK.PUB":{
+              "object_id":276,
+              "pub95":{"sha256":"0d4c2e9e6a84a39f212f71c95591e17eb62ebaac7026427a4f84f6d1e636f5d5","size":22528},
+              "pub97":{"sha256":"8a706ca56ce5d2853b9469a666cd769bab4c62d6fb56d8d7872ff9a322394367","size":22528},
+              "family":"standard-30-to-48-control",
+            },
+            "BMEMO1.PUB":{
+              "object_id":391,
+              "pub95":{"sha256":"2045174006892d8cc5be2ff10cdddc5ec3a5174a3d3b47da03522d4a9f51d6eb","size":13824},
+              "pub97":{"sha256":"df2528195a253a229ecc1648e16633d85d95e030c11d42db215eba9afd214cc2","size":14848},
+              "family":"variant-36-to-54",
+            },
+            "BMEMO2.PUB":{
+              "object_id":391,
+              "pub95":{"sha256":"587772508a6dfa4636a19fd9af8b514f5d93367277d3cc94c6ab0a4ebe0ecab7","size":15872},
+              "pub97":{"sha256":"1c6b07ba75d1621e89d9437a1a4f6dddf408644bf25a4ca54c509eec40f7b35a","size":16384},
+              "family":"variant-36-to-54",
+            },
+            "PMEMO1.PUB":{
+              "object_id":319,
+              "pub95":{"sha256":"33757251ddcab7058084e6d8c29323f045520ec8633d840afc451b976440dd9d","size":16384},
+              "pub97":{"sha256":"136fbd367c3a7a7cd5a2a556f76de3a3c84aeffdff8ea555c509b56ce2e8bc25","size":16384},
+              "family":"variant-36-to-54",
+            },
+          }
+
+          def sha(b: bytes) -> str:
+              return hashlib.sha256(b).hexdigest()
+
+          def u16(b,o): return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o): return int.from_bytes(b[o:o+4],"little")
+          def sint(b,o,n): return int.from_bytes(b[o:o+n],"little",signed=True)
+
+          class ISO:
+              def __init__(self,url):
+                  self.url=url
+                  self.cache={}
+                  self.delivery=self._choose()
+
+              def candidates(self):
+                  p=urllib.parse.urlparse(self.url)
+                  q=p.path.split("/")
+                  ident=q[2]
+                  fn="/".join(q[3:])
+                  req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+                  last=None
+                  for attempt in range(4):
+                      try:
+                          with urllib.request.urlopen(req,timeout=45) as r:
+                              meta=json.load(r)
+                          break
+                      except Exception as e:
+                          last=e
+                          if attempt==3: raise
+                          time.sleep(2**attempt)
+                  d=str(meta.get("dir") or "")
+                  out=[]
+                  for k in ("d1","d2"):
+                      h=str(meta.get(k) or "")
+                      if h and d:
+                          out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+                  out += [self.url,self.url+"?download=1"]
+                  return list(dict.fromkeys(out))
+
+              def rr(self,url,start,n):
+                  req=urllib.request.Request(url,headers={
+                      "User-Agent":UA,
+                      "Range":f"bytes={start}-{start+n-1}",
+                      "Accept-Encoding":"identity",
+                  })
+                  with urllib.request.urlopen(req,timeout=45) as r:
+                      if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):
+                          raise ValueError("range unsupported")
+                      d=r.read(n+1)
+                  if len(d)!=n:
+                      raise ValueError(f"range length drift {len(d)} != {n}")
+                  return d
+
+              def _choose(self):
+                  last=None
+                  for url in self.candidates():
+                      for attempt in range(3):
+                          try:
+                              p=self.rr(url,16*SECTOR,SECTOR)
+                              if p[:6]!=b"\x01CD001":
+                                  raise ValueError("bad PVD")
+                              return url
+                          except Exception as e:
+                              last=e
+                              if attempt<2: time.sleep(2**attempt)
+                  raise last
+
+              def read(self,start,n):
+                  last=None
+                  for attempt in range(3):
+                      try:
+                          return self.rr(self.delivery,start,n)
+                      except Exception as e:
+                          last=e
+                          if attempt<2: time.sleep(2**attempt)
+                  raise last
+
+              @staticmethod
+              def rec(r):
+                  return (
+                      r[33:33+r[32]].decode("ascii","strict"),
+                      int.from_bytes(r[2:6],"little"),
+                      int.from_bytes(r[10:14],"little"),
+                      r[25],
+                  )
+
+              def directory(self,e,s):
+                  key=(e,s)
+                  if key in self.cache:
+                      return self.cache[key]
+                  d=self.read(e*SECTOR,s)
+                  out={}
+                  p=0
+                  while p<len(d):
+                      n=d[p]
+                      if not n:
+                          p=((p//SECTOR)+1)*SECTOR
+                          continue
+                      name,ex,sz,fl=self.rec(d[p:p+n])
+                      if name not in ("\x00","\x01"):
+                          out[name.split(";")[0].upper()]=(ex,sz,fl)
+                      p+=n
+                  self.cache[key]=out
+                  return out
+
+              def member(self,path):
+                  p=self.read(16*SECTOR,SECTOR)
+                  rl=p[156]
+                  _,e,s,fl=self.rec(p[156:156+rl])
+                  parts=[x.upper() for x in path.strip("/").split("/") if x]
+                  for i,x in enumerate(parts):
+                      e,s,fl=self.directory(e,s)[x]
+                      if i+1<len(parts) and not fl&2:
+                          raise ValueError("not dir")
+                  if fl&2:
+                      raise ValueError("target dir")
+                  return self.read(e*SECTOR,s)
+
+          def contents(pub):
+              with olefile.OleFileIO(pub) as ole:
+                  return ole.openstream(["Contents"]).read()
+
+          def parse_dir(c):
+              off=u32(c,0x16)
+              n=u16(c,off)
+              rows=[]
+              for i in range(n):
+                  p=off+2+i*10
+                  row={
+                      "index":i,
+                      "service":u16(c,p),
+                      "id":u16(c,p+2),
+                      "parent":u16(c,p+4),
+                      "offset":u32(c,p+6),
+                  }
+                  row["marker"]=u16(c,row["offset"])
+                  rows.append(row)
+              by={r["id"]:r for r in rows}
+              offsets=sorted(set(r["offset"] for r in rows))
+              chunks={}
+              for r in rows:
+                  greater=[x for x in offsets if x>r["offset"]]
+                  end=min(greater) if greater else len(c)
+                  chunks[r["id"]]=c[r["offset"]:end]
+              return {"offset":off,"rows":rows,"by_id":by,"chunks":chunks}
+
+          def infer_ptr_size(data, generation):
+              if len(data)<4:
+                  raise ValueError("short list data")
+              a=u16(data,0); b=u16(data,2)
+              if a>b:
+                  return 4
+              if a!=0:
+                  return 2
+              return 4 if generation=="pub97" else 2
+
+          def parse_ptr_list(raw, generation):
+              if len(raw)<4:
+                  raise ValueError("short chunk")
+              marker=u16(raw,0)
+              data_off=raw[3]
+              if not (4<=data_off<len(raw)):
+                  raise ValueError(f"bad data_off {data_off}")
+              data=raw[data_off:]
+              ps=infer_ptr_size(data,generation)
+              cur=0
+              need=ps*3+2+ps
+              if len(data)<need:
+                  raise ValueError("short list header")
+              n=int.from_bytes(data[cur:cur+ps],"little"); cur+=ps
+              maxn=int.from_bytes(data[cur:cur+ps],"little"); cur+=ps
+              data_size=int.from_bytes(data[cur:cur+ps],"little"); cur+=ps
+              f0=sint(data,cur,2); cur+=2
+              f1=sint(data,cur,ps); cur+=ps
+              beg=cur
+              if beg+(n+1)*ps>len(data):
+                  raise ValueError("short pointer vector")
+              ptrs=[]
+              for i in range(n+1):
+                  ptrs.append(int.from_bytes(data[beg+i*ps:beg+(i+1)*ps],"little"))
+              table_extent=(n+1)*ps
+              available=len(data)-beg
+              sentinel=(1<<(8*ps))-1
+
+              zones=[]
+              for i in range(n):
+                  a,b=ptrs[i],ptrs[i+1]
+                  # re-lab's generic rule is adjacent increase; additionally keep
+                  # only payload zones after the pointer table and inside this chunk.
+                  valid=(b>a and a>=table_extent and b<=available)
+                  if valid:
+                      seg=data[beg+a:beg+b]
+                      zones.append({
+                          "ordinal":i,
+                          "start":a,
+                          "end":b,
+                          "len":len(seg),
+                          "sha256":sha(seg),
+                      })
+
+              return {
+                  "marker":marker,
+                  "chunk_len":len(raw),
+                  "data_offset":data_off,
+                  "data_len":len(data),
+                  "pointer_size":ps,
+                  "n":n,
+                  "maxn":maxn,
+                  "data_size":data_size,
+                  "f0":f0,
+                  "f1":f1,
+                  "pointer_table_start":beg,
+                  "pointer_table_extent":table_extent,
+                  "available_from_pointer_table":available,
+                  "sentinel":sentinel,
+                  "pointers":ptrs,
+                  "zones":zones,
+              }
+
+          iso95=ISO(P95_URL)
+          iso97=ISO(P97_URL)
+          results=[]
+
+          for name,spec in SPECS.items():
+              pair={}
+              parsed={}
+              for generation,iso,source in (
+                  ("pub95",iso95,P95_SOURCE),
+                  ("pub97",iso97,P97_SOURCE),
+              ):
+                  member=f"PAGEWIZ/{name}"
+                  pub=iso.member(member)
+                  exp=spec[generation]
+                  if len(pub)!=exp["size"] or sha(pub)!=exp["sha256"]:
+                      raise ValueError(f"{name} {generation} identity drift")
+                  c=contents(pub)
+                  d=parse_dir(c)
+                  oid=spec["object_id"]
+                  if oid not in d["by_id"]:
+                      raise ValueError(f"{name} {generation} missing object {oid}")
+                  row=d["by_id"][oid]
+                  if row["marker"]!=0x23:
+                      raise ValueError(f"{name} {generation} id {oid} marker={row['marker']:#x}")
+                  raw=d["chunks"][oid]
+                  pl=parse_ptr_list(raw,generation)
+                  parsed[generation]=pl
+                  pair[generation]={
+                      "sha256":exp["sha256"],
+                      "byte_len":exp["size"],
+                      "source_page":source,
+                      "delivery_url":iso.delivery,
+                      "contents_len":len(c),
+                      "object":{
+                          "id":oid,
+                          "service":row["service"],
+                          "parent":row["parent"],
+                          "marker":row["marker"],
+                      },
+                      "list":pl,
+                  }
+
+              L=parsed["pub95"]; R=parsed["pub97"]
+              same_meta=(
+                  L["n"]==R["n"] and
+                  L["maxn"]==R["maxn"] and
+                  L["data_size"]==R["data_size"] and
+                  L["f0"]==R["f0"] and
+                  L["f1"]==R["f1"]
+              )
+              expected_growth=2*L["n"]+10 if (L["pointer_size"],R["pointer_size"])==(2,4) else None
+              chunk_growth=R["chunk_len"]-L["chunk_len"]
+              table_growth=R["pointer_table_extent"]-L["pointer_table_extent"]
+
+              pointer_mapping=[]
+              pointer_mapping_ok=True
+              if len(L["pointers"])!=len(R["pointers"]):
+                  pointer_mapping_ok=False
+              else:
+                  for i,(a,b) in enumerate(zip(L["pointers"],R["pointers"])):
+                      if a==L["sentinel"] and b==R["sentinel"]:
+                          cls="sentinel-widened"; ok=True; delta=None
+                      elif a>=L["pointer_table_extent"] and b>=R["pointer_table_extent"]:
+                          delta=b-a
+                          ok=(delta==table_growth)
+                          cls="payload-offset"
+                      else:
+                          delta=b-a
+                          ok=(a==b)
+                          cls="non-payload-scalar"
+                      pointer_mapping.append({
+                          "ordinal":i,
+                          "pub95":a,
+                          "pub97":b,
+                          "class":cls,
+                          "delta":delta,
+                          "matches_expected":ok,
+                      })
+                      pointer_mapping_ok &= ok
+
+              lz={z["ordinal"]:z for z in L["zones"]}
+              rz={z["ordinal"]:z for z in R["zones"]}
+              zone_ordinals=sorted(set(lz)|set(rz))
+              zone_cmp=[]
+              zones_equal=True
+              for i in zone_ordinals:
+                  a=lz.get(i); b=rz.get(i)
+                  eq=bool(a and b and a["len"]==b["len"] and a["sha256"]==b["sha256"])
+                  zone_cmp.append({
+                      "ordinal":i,
+                      "pub95":a,
+                      "pub97":b,
+                      "payload_equal":eq,
+                  })
+                  zones_equal &= eq
+
+              structural=(
+                  same_meta and
+                  L["pointer_size"]==2 and R["pointer_size"]==4 and
+                  expected_growth==chunk_growth and
+                  pointer_mapping_ok and
+                  set(lz)==set(rz) and
+                  zones_equal
+              )
+              classification=(
+                  "same-listheader-pointer-widening-stable-records"
+                  if structural else
+                  "residual-structural-or-payload-difference"
+              )
+
+              results.append({
+                  "name":name,
+                  "family":spec["family"],
+                  "exact_identity_verified":True,
+                  "pub95":pair["pub95"],
+                  "pub97":pair["pub97"],
+                  "same_header_metadata":same_meta,
+                  "expected_chunk_growth_from_width_only":expected_growth,
+                  "observed_chunk_growth":chunk_growth,
+                  "pointer_table_growth":table_growth,
+                  "pointer_mapping":pointer_mapping,
+                  "pointer_mapping_ok":pointer_mapping_ok,
+                  "record_zone_comparison":zone_cmp,
+                  "record_zones_equal":zones_equal,
+                  "classification":classification,
+              })
+
+          control=next(x for x in results if x["name"]=="BOOKMARK.PUB")
+          variants=[x for x in results if x["family"]=="variant-36-to-54"]
+          all_variants_same=all(x["classification"]=="same-listheader-pointer-widening-stable-records" for x in variants)
+          control_same=(control["classification"]=="same-listheader-pointer-widening-stable-records")
+          all_same_family=control_same and all_variants_same
+
+          summary={
+              "schema":"chaptera.publisher95-97-marker23-variants.v1",
+              "source_safe":True,
+              "raw_pub_retained":False,
+              "pair_count":len(results),
+              "control":control["name"],
+              "variant_names":[x["name"] for x in variants],
+              "all_exact_identities_verified":all(x["exact_identity_verified"] for x in results),
+              "control_structurally_explained":control_same,
+              "all_36_to_54_variants_structurally_explained":all_variants_same,
+              "all_four_same_widening_family":all_same_family,
+              "classifications":{x["name"]:x["classification"] for x in results},
+              "results":results,
+          }
+
+          out=Path("out")
+          out.mkdir(exist_ok=True)
+          (out/"marker23.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          compact={
+              k:v for k,v in summary.items() if k!="results"
+          }
+          (out/"summary.json").write_text(json.dumps(compact,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(compact,indent=2))
+          PY
+      - name: Enforce source-safe structural receipt
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB unexpectedly retained"
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/marker23.json").read_text())
+          assert s["source_safe"] is True
+          assert s["raw_pub_retained"] is False
+          assert s["pair_count"] == 4
+          assert s["all_exact_identities_verified"] is True
+          assert set(s["variant_names"]) == {"BMEMO1.PUB","BMEMO2.PUB","PMEMO1.PUB"}
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-xver-marker23-95-97-variants-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
