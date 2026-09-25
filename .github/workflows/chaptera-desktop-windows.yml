@@ -37,6 +37,9 @@ jobs:
       - name: Test current scene-instance mutation gate
         run: cargo test -p chaptera-scene-instance
 
+      - name: Test Chaptera agent protocol core
+        run: cargo test -p chaptera-desktop
+
       - name: Test canonical desktop Story range wire
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test story_range_v1
 
@@ -89,6 +92,13 @@ jobs:
           python tools/validate_editor_desktop_vertical_receipt.py "$receipt"
           Copy-Item "$receipt" "target/release/editor-desktop-vertical.real.json"
 
+      - name: Run real agent-control protocol
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "chaptera-agent-v1"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          python tools/test_chaptera_agent_v1.py --exe target/release/chaptera.exe --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --work-dir "$out" --receipt target/release/editor-agent-control.real.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: chaptera-editor-windows-x86_64
@@ -96,4 +106,5 @@ jobs:
             target/release/chaptera.exe
             target/release/chaptera.desktop-build.json
             target/release/editor-desktop-vertical.real.json
+            target/release/editor-agent-control.real.json
           if-no-files-found: error
