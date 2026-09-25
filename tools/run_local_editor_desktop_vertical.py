@@ -275,8 +275,21 @@ def load_and_verify_project(
     if project.get("source_hash") != source_hash:
         raise DesktopVerticalError("EditorProject source identity mismatch")
     schema_version = project.get("schema_version")
-    if schema_version not in {"pub-editor-v0.2", "pub-editor-v0.3", "pub-editor-v0.4"}:
+    supported_schema_versions = {
+        f"pub-editor-v0.{version}" for version in range(2, 12)
+    }
+    if schema_version not in supported_schema_versions:
         raise DesktopVerticalError("unsupported EditorProject schema_version")
+    if schema_version == "pub-editor-v0.11":
+        identity = project.get("identity")
+        if not isinstance(identity, dict):
+            raise DesktopVerticalError("pub-editor-v0.11 EditorProject must carry durable identity")
+        for field in ("project_id", "document_id", "history_id", "genesis_revision_id"):
+            value = identity.get(field)
+            if not isinstance(value, str) or not value:
+                raise DesktopVerticalError(
+                    f"pub-editor-v0.11 EditorProject identity missing {field}"
+                )
     operations = project.get("operations")
     if not isinstance(operations, list):
         raise DesktopVerticalError("EditorProject.operations must be an array")
