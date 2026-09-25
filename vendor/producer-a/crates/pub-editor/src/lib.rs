@@ -30,8 +30,10 @@ use pub_export::{
 };
 use pub_idml::{
     IDML_ADAPTER_VERSION_V0_1, IDML_SCHEMA_FENCE_LEGACY_DOM_7, IMAGE_BYTES_FEATURE,
-    IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlEmbeddedImagePlacement,
-    IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
+    IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE,
+    IdmlAuthoredRectanglePlacement, IdmlEmbeddedImagePlacement, IdmlRgb8, IdmlWireProfile,
+    add_authored_rectangles_to_idml, add_embedded_images_to_idml,
+    project_resolved_graph_to_idml, write_idml_ucf,
 };
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
@@ -40,7 +42,8 @@ use pub_model::{
 };
 pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_odg::{
-    ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
+    ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgAuthoredRectanglePlacement,
+    OdgEmbeddedImagePlacement, OdgRgb8, add_authored_rectangles_to_odg,
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
@@ -68,6 +71,10 @@ pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
+const AUTHORED_SHAPE_IDENTITY_FEATURE: &str = "node.created_identity";
+const AUTHORED_SHAPE_GEOMETRY_FEATURE: &str = "node.geometry.bounds";
+const AUTHORED_SHAPE_PAINT_FEATURE: &str = "shape.paint";
+const AUTHORED_SHAPE_ORDER_FEATURE: &str = "page.object_order";
 
 /// Canonical Story-state identity shared with services/editor-api/story_range_v1.py.
 pub fn story_state_id_v1(story_id: StoryId, text: &str) -> String {
@@ -1618,6 +1625,13 @@ impl EditorSession {
                         message: error.to_string(),
                     }
                 })?;
+                let authored = self.idml_authored_rectangle_placements()?;
+                add_authored_rectangles_to_idml(&plan, &mut package, &authored).map_err(
+                    |error| EditorExportError::Projection {
+                        target,
+                        message: error.to_string(),
+                    },
+                )?;
                 write_idml_ucf(&package).map_err(|error| EditorExportError::Write {
                     target,
                     message: error.to_string(),
@@ -1638,6 +1652,13 @@ impl EditorSession {
                         message: error.to_string(),
                     }
                 })?;
+                let authored = self.odg_authored_rectangle_placements()?;
+                add_authored_rectangles_to_odg(&plan, &mut package, &authored).map_err(
+                    |error| EditorExportError::Projection {
+                        target,
+                        message: error.to_string(),
+                    },
+                )?;
                 write_odg(&package).map_err(|error| EditorExportError::Write {
                     target,
                     message: error.to_string(),
@@ -1660,7 +1681,12 @@ impl EditorSession {
     ) -> Result<(ExportReport, String, ExportPlan), EditorExportError> {
         self.validate_source_identity()
             .map_err(EditorExportError::Session)?;
-        let plan = editable_export_plan(target, &self.graph, &self.image_replacements);
+        let plan = editable_export_plan(
+            target,
+            &self.graph,
+            &self.image_replacements,
+            &self.authored_shapes,
+        );
         let report = build_export_report(
             &plan,
             ExportReportSource {
@@ -1804,6 +1830,89 @@ impl EditorSession {
                 z_index,
                 mime: asset.mime.clone(),
                 bytes: asset.bytes.clone(),
+            });
+        }
+
+        Ok(placements)
+    }
+
+    fn idml_authored_rectangle_placements(
+        &self,
+    ) -> Result<Vec<IdmlAuthoredRectanglePlacement>, EditorExportError> {
+        let target = EditorEditableTarget::Idml;
+        let mut placements = Vec::with_capacity(self.authored_shapes.len());
+
+        for shape in self.authored_shapes.values() {
+            let page = self.graph.pages.get(&shape.page_id).ok_or_else(|| {
+                EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "authored rectangle {} references missing page {}",
+                        shape.node_id.as_canonical(),
+                        shape.page_id.as_canonical()
+                    ),
+                }
+            })?;
+
+            placements.push(IdmlAuthoredRectanglePlacement {
+                node_id: shape.node_id,
+                page_id: shape.page_id,
+                page_size: page.size,
+                bounds: shape.bounds,
+                fill_visible: shape.paint.fill.visible,
+                fill_color: IdmlRgb8 {
+                    r: shape.paint.fill.color.r,
+                    g: shape.paint.fill.color.g,
+                    b: shape.paint.fill.color.b,
+                },
+                stroke_visible: shape.paint.stroke.visible,
+                stroke_color: IdmlRgb8 {
+                    r: shape.paint.stroke.color.r,
+                    g: shape.paint.stroke.color.g,
+                    b: shape.paint.stroke.color.b,
+                },
+                stroke_width_emu: shape.paint.stroke.width_emu,
+            });
+        }
+
+        Ok(placements)
+    }
+
+    fn odg_authored_rectangle_placements(
+        &self,
+    ) -> Result<Vec<OdgAuthoredRectanglePlacement>, EditorExportError> {
+        let target = EditorEditableTarget::Odg;
+        let mut placements = Vec::with_capacity(self.authored_shapes.len());
+
+        for shape in self.authored_shapes.values() {
+            if !self.graph.pages.contains_key(&shape.page_id) {
+                return Err(EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "authored rectangle {} references missing page {}",
+                        shape.node_id.as_canonical(),
+                        shape.page_id.as_canonical()
+                    ),
+                });
+            }
+
+            placements.push(OdgAuthoredRectanglePlacement {
+                node_id: shape.node_id,
+                page_id: shape.page_id,
+                bounds: shape.bounds,
+                fill_visible: shape.paint.fill.visible,
+                fill_color: OdgRgb8 {
+                    r: shape.paint.fill.color.r,
+                    g: shape.paint.fill.color.g,
+                    b: shape.paint.fill.color.b,
+                },
+                stroke_visible: shape.paint.stroke.visible,
+                stroke_color: OdgRgb8 {
+                    r: shape.paint.stroke.color.r,
+                    g: shape.paint.stroke.color.g,
+                    b: shape.paint.stroke.color.b,
+                },
+                stroke_width_emu: shape.paint.stroke.width_emu,
             });
         }
 
@@ -3082,11 +3191,26 @@ fn editable_export_plan(
     target: EditorEditableTarget,
     graph: &PubResolvedGraph,
     image_replacements: &BTreeMap<NodeId, Sha256Digest>,
+    authored_shapes: &BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
 ) -> ExportPlan {
     let mut features = BTreeMap::new();
     features.insert("page.geometry".into(), CapabilityLevel::Preserved);
     features.insert("story.text".into(), CapabilityLevel::Preserved);
     features.insert("story.linked_frames".into(), CapabilityLevel::Preserved);
+    if !authored_shapes.is_empty() {
+        features.insert(
+            AUTHORED_SHAPE_IDENTITY_FEATURE.into(),
+            CapabilityLevel::Preserved,
+        );
+        features.insert(
+            AUTHORED_SHAPE_GEOMETRY_FEATURE.into(),
+            CapabilityLevel::Preserved,
+        );
+        features.insert(
+            AUTHORED_SHAPE_PAINT_FEATURE.into(),
+            CapabilityLevel::Preserved,
+        );
+    }
     if matches!(
         target,
         EditorEditableTarget::Idml | EditorEditableTarget::Odg
@@ -3132,9 +3256,12 @@ fn editable_export_plan(
                 (node.header.parent_id == page_id.into_canonical()).then_some(*node_id)
             })
             .collect::<Vec<_>>();
-        if page.children != authored {
+        let has_authored_overlay = authored_shapes
+            .values()
+            .any(|shape| shape.page_id == *page_id);
+        if page.children != authored || has_authored_overlay {
             requests.push(SemanticFeatureRequest {
-                feature: "page.object_order".into(),
+                feature: AUTHORED_SHAPE_ORDER_FEATURE.into(),
                 origin: Some(page_id.into_canonical()),
                 property_path: Some("page.children".into()),
                 require_preserved: false,
@@ -3202,6 +3329,27 @@ fn editable_export_plan(
                 require_preserved: false,
             });
         }
+    }
+
+    for shape in authored_shapes.values() {
+        requests.push(SemanticFeatureRequest {
+            feature: AUTHORED_SHAPE_IDENTITY_FEATURE.into(),
+            origin: Some(shape.node_id.into_canonical()),
+            property_path: Some("node".into()),
+            require_preserved: true,
+        });
+        requests.push(SemanticFeatureRequest {
+            feature: AUTHORED_SHAPE_GEOMETRY_FEATURE.into(),
+            origin: Some(shape.node_id.into_canonical()),
+            property_path: Some("node.bounds".into()),
+            require_preserved: true,
+        });
+        requests.push(SemanticFeatureRequest {
+            feature: AUTHORED_SHAPE_PAINT_FEATURE.into(),
+            origin: Some(shape.node_id.into_canonical()),
+            property_path: Some("node.paint".into()),
+            require_preserved: true,
+        });
     }
 
     for (story_id, roots) in roots_per_story {
