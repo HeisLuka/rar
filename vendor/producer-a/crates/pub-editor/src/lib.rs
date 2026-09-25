@@ -1792,7 +1792,12 @@ impl EditorSession {
     ) -> Result<(ExportReport, String, ExportPlan), EditorExportError> {
         self.validate_source_identity()
             .map_err(EditorExportError::Session)?;
-        let plan = editable_export_plan(target, &self.graph, &self.image_replacements);
+        let plan = editable_export_plan(
+            target,
+            &self.graph,
+            &self.image_replacements,
+            &self.image_crop_overrides,
+        );
         let report = build_export_report(
             &plan,
             ExportReportSource {
@@ -3300,6 +3305,7 @@ fn editable_export_plan(
     target: EditorEditableTarget,
     graph: &PubResolvedGraph,
     image_replacements: &BTreeMap<NodeId, Sha256Digest>,
+    image_crop_overrides: &BTreeMap<NodeId, ImageCropStateV1>,
 ) -> ExportPlan {
     let mut features = BTreeMap::new();
     features.insert("page.geometry".into(), CapabilityLevel::Preserved);
@@ -3410,7 +3416,14 @@ fn editable_export_plan(
                 feature: IMAGE_CONTENT_TRANSFORM_FEATURE.into(),
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("image.content_transform".into()),
-                require_preserved: false,
+                require_preserved: image_crop_overrides.contains_key(node_id),
+            });
+        } else if image_crop_overrides.contains_key(node_id) {
+            requests.push(SemanticFeatureRequest {
+                feature: IMAGE_CONTENT_TRANSFORM_FEATURE.into(),
+                origin: Some(node_id.into_canonical()),
+                property_path: Some("image.content_transform".into()),
+                require_preserved: true,
             });
         } else {
             requests.push(SemanticFeatureRequest {
