@@ -1,0 +1,319 @@
+name: TEMP PUBWIZ P2000 Publisher-owned name census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-names-p2000-owned-02.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat
+
+      - name: Recover exact Publisher 2000 media
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/p2k/src /tmp/p2k/img /tmp/p2k/owned
+          python - <<'PY'
+          import json, urllib.request, urllib.parse, pathlib
+          ident="X05-44678"
+          req=urllib.request.Request(
+              f"https://archive.org/metadata/{ident}",
+              headers={"User-Agent":"rar-pubwiz-names-p2000-owned/1.0"},
+          )
+          with urllib.request.urlopen(req,timeout=60) as r:
+              meta=json.load(r)
+          files=[
+              f for f in meta.get("files",[])
+              if str(f.get("source") or "")=="original"
+              and str(f.get("name") or "").lower().endswith(".7z")
+          ]
+          if not files:
+              raise SystemExit("no original 7z")
+          files.sort(key=lambda f:int(f.get("size") or 0),reverse=True)
+          f=files[0]
+          name=str(f["name"])
+          url=f"https://archive.org/download/{ident}/"+urllib.parse.quote(name,safe="/")
+          pathlib.Path("/tmp/p2k/url").write_text(url)
+          pathlib.Path("out/source.json").write_text(json.dumps({
+              "identifier":ident,
+              "name":name,
+              "reported_size":int(f.get("size") or 0),
+              "reported_md5":f.get("md5"),
+              "reported_sha1":f.get("sha1"),
+          },indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/p2k/src/source.7z "$(cat /tmp/p2k/url)"
+          test "$(sha256sum /tmp/p2k/src/source.7z | awk '{print $1}')" = \
+            "5c9b052976fc261d4a1f04d41277871395699bb98b4078b6f9bf832b932ac1ba"
+
+          7z l -slt /tmp/p2k/src/source.7z > /tmp/p2k/archive.slt
+          python - <<'PY'
+          import pathlib
+          rows=[]; cur={}
+          for line in pathlib.Path("/tmp/p2k/archive.slt").read_text(errors="replace").splitlines():
+              if " = " not in line:
+                  continue
+              k,v=line.split(" = ",1)
+              if k=="Path" and cur:
+                  rows.append(cur); cur={}
+              cur[k]=v
+          if cur: rows.append(cur)
+          cand=[]
+          for r in rows:
+              p=r.get("Path","")
+              if p.lower().endswith((".mdf",".iso",".img",".bin")):
+                  try:s=int(r.get("Size","0"))
+                  except:s=0
+                  cand.append((s,p))
+          if not cand:
+              raise SystemExit("no image member")
+          cand.sort(reverse=True)
+          pathlib.Path("/tmp/p2k/image_member").write_text(cand[0][1])
+          PY
+          7z x -y /tmp/p2k/src/source.7z -o/tmp/p2k/img "$(cat /tmp/p2k/image_member)" >/dev/null
+          IMAGE="$(find /tmp/p2k/img -type f | head -n1)"
+          test -n "$IMAGE"
+          case "$IMAGE" in
+            *.mdf|*.MDF) iat "$IMAGE" /tmp/p2k/p2000.iso >/dev/null; IMAGE=/tmp/p2k/p2000.iso ;;
+          esac
+          test "$(sha256sum "$IMAGE" | awk '{print $1}')" = \
+            "f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0"
+          printf '%s' "$IMAGE" > /tmp/p2k/image_path
+
+      - name: Select Publisher-owned files only
+        run: |
+          set -euo pipefail
+          IMAGE="$(cat /tmp/p2k/image_path)"
+          7z l -slt "$IMAGE" > /tmp/p2k/disc.slt
+          python - <<'PY'
+          import pathlib, json, re
+          paths=[]
+          for line in pathlib.Path("/tmp/p2k/disc.slt").read_text(errors="replace").splitlines():
+              if line.startswith("Path = "):
+                  paths.append(line.split(" = ",1)[1])
+          selected=[]
+          for p in paths:
+              q=p.replace("\\","/")
+              u=q.upper()
+              base=pathlib.PurePosixPath(q).name.upper()
+              if u.startswith("PFILES/MSOFFICE/OFFICE/PUBWIZ/"):
+                  selected.append(q)
+                  continue
+              if u.startswith("PFILES/MSOFFICE/OFFICE/") and re.search(
+                  r"(MSPUB|MORPH9|POCE98|PTXT9|PUB[0-9A-Z_-]*\.(?:EXE|DLL|CHM|HLP))",
+                  base,
+              ):
+                  selected.append(q)
+          selected=sorted(set(selected))
+          if not selected:
+              raise SystemExit("no Publisher-owned direct paths")
+          pathlib.Path("/tmp/p2k/owned-paths.txt").write_text("\n".join(selected)+"\n")
+          pathlib.Path("out/selected-paths.json").write_text(json.dumps({
+              "count":len(selected),
+              "paths":selected,
+          },indent=2))
+          print("selected",len(selected))
+          for p in selected[:200]:
+              print(p)
+          PY
+          7z x -y "$IMAGE" -o/tmp/p2k/owned @/tmp/p2k/owned-paths.txt >/dev/null
+
+      - name: Scan owned files with whole-token boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, hashlib, json, re
+
+          root=pathlib.Path("/tmp/p2k/owned")
+          vocabulary=[
+            "Accent Box","Accessory Bar","Arcs","Argyle","Arrows","Astro","Axis","Bars",
+            "Birthday","Blank","Blends","Blocks","Bloks","Border Flowers","Borders","Bouquet","Bounce",
+            "Brocade","Bubbles","Butterfly","Capsules","Cascade","Checkers","Circles","Color Band",
+            "Confetti","Corner Art","Crossed Lines","Diamonds","Echo","Eclipse","Edge","Floating Oval",
+            "Handprint","Hearts and Circles","Jumbled Boxes","Jungle","Layers","Leaves","Level",
+            "Linear Accent","Marker","Marquee","Maze","Mobile","Modular","Network","Pansies",
+            "Party Time","Perforation","Photoscope","Pinwheel","Pixel","Profile","Punctuation",
+            "Quadrant","Radial","Refined","Retro","Ribbons","Romance","Scallops","Signpost",
+            "Simple Divider","Soap Bubbles","Starfish","Steps","Straight Edge","Stripes","Studio",
+            "Tabs","Tilt","Triangles","Wallpaper","Watermark","Waves","Wavy Frame"
+          ]
+          p98=set(["Arcs","Bars","Blends","Bloks","Bubbles","Capsules","Checkers","Straight Edge","Tilt","Waves"])
+          p2000_doc=set(["Arcs","Tilt","Floating Oval","Mobile","Marquee"])
+          context_terms=["Master Set","Master Sets","Master Design Set","Master Design Sets","Design Sets"]
+
+          def sha256(p):
+              h=hashlib.sha256()
+              with p.open("rb") as f:
+                  while True:
+                      b=f.read(1024*1024)
+                      if not b: break
+                      h.update(b)
+              return h.hexdigest()
+
+          def isword(b):
+              return (48<=b<=57) or (65<=b<=90) or (97<=b<=122) or b==95
+
+          def whole_ascii(data,needle):
+              d=data.lower(); n=needle.lower()
+              out=[]; pos=0
+              while True:
+                  i=d.find(n,pos)
+                  if i<0: break
+                  before=d[i-1] if i>0 else None
+                  after=d[i+len(n)] if i+len(n)<len(d) else None
+                  if (before is None or not isword(before)) and (after is None or not isword(after)):
+                      out.append(i)
+                  pos=i+1
+              return out
+
+          def whole_utf16le(data,text):
+              # ASCII-only terms encoded UTF-16LE; boundary checks use adjacent UTF-16 code units.
+              needle=text.lower().encode("utf-16le")
+              d=data.lower() if False else data
+              out=[]; pos=0
+              # Case variants are searched explicitly to avoid unsafe bytewise lowercasing.
+              needles={text.encode("utf-16le"),text.upper().encode("utf-16le"),text.lower().encode("utf-16le")}
+              for n in needles:
+                  pos=0
+                  while True:
+                      i=data.find(n,pos)
+                      if i<0: break
+                      def char_at(off):
+                          if off<0 or off+2>len(data): return None
+                          lo,hi=data[off],data[off+1]
+                          if hi!=0: return None
+                          return lo
+                      before=char_at(i-2)
+                      after=char_at(i+len(n))
+                      if (before is None or not isword(before)) and (after is None or not isword(after)):
+                          out.append(i)
+                      pos=i+2
+              return sorted(set(out))
+
+          ascii_strings=re.compile(rb"[A-Za-z][A-Za-z0-9 &'()_./:-]{2,79}")
+          utf_strings=re.compile(rb"(?:[A-Za-z0-9 &'()_./:-]\x00){3,80}")
+
+          rows=[]
+          for p in root.rglob("*"):
+              if not p.is_file(): continue
+              size=p.stat().st_size
+              if size==0 or size>100*1024*1024: continue
+              data=p.read_bytes()
+              hits=[]
+              for name in vocabulary:
+                  for off in whole_ascii(data,name.encode("ascii")):
+                      hits.append({"name":name,"encoding":"ascii","offset":off})
+                  for off in whole_utf16le(data,name):
+                      hits.append({"name":name,"encoding":"utf16le","offset":off})
+              ctx=[]
+              for term in context_terms:
+                  for off in whole_ascii(data,term.encode("ascii")):
+                      ctx.append({"term":term,"encoding":"ascii","offset":off})
+                  for off in whole_utf16le(data,term):
+                      ctx.append({"term":term,"encoding":"utf16le","offset":off})
+              if not hits and not ctx:
+                  continue
+              hits=sorted({(x["name"],x["encoding"],x["offset"]):x for x in hits}.values(),key=lambda x:x["offset"])
+              names=[]
+              for x in hits:
+                  if x["name"] not in names: names.append(x["name"])
+              short=[]
+              for m in ascii_strings.finditer(data):
+                  s=m.group(0).decode("ascii","replace").strip()
+                  if 3<=len(s)<=80: short.append((m.start(),"ascii",s))
+              for m in utf_strings.finditer(data):
+                  try:s=m.group(0).decode("utf-16le").strip()
+                  except: continue
+                  if 3<=len(s)<=80: short.append((m.start(),"utf16le",s))
+              short.sort()
+              focus=[x["offset"] for x in hits]+[x["offset"] for x in ctx]
+              picked=[]
+              for off in focus:
+                  near=sorted((x for x in short if abs(x[0]-off)<=4096),key=lambda x:(abs(x[0]-off),x[0]))[:30]
+                  for x in near:
+                      if x not in picked: picked.append(x)
+              picked.sort()
+              rows.append({
+                  "file":str(p.relative_to(root)),
+                  "size":size,
+                  "sha256":sha256(p),
+                  "names":names,
+                  "name_count":len(names),
+                  "p98_names":[x for x in names if x in p98],
+                  "p2000_documented_names":[x for x in names if x in p2000_doc],
+                  "context_terms":sorted({x["term"] for x in ctx}),
+                  "hits":hits[:500],
+                  "context_hits":ctx[:100],
+                  "nearby_strings":[{"offset":o,"encoding":e,"text":s} for o,e,s in picked[:300]],
+              })
+
+          rows.sort(key=lambda r:(-(len(r["p2000_documented_names"])), -r["name_count"], r["file"]))
+          candidates=[]
+          for r in rows:
+              offsets=[x["offset"] for x in r["hits"]]
+              span=(max(offsets)-min(offsets)) if len(offsets)>=2 else None
+              if len(r["p2000_documented_names"])>=2 or (r["context_terms"] and r["name_count"]>=2):
+                  candidates.append({
+                      "file":r["file"],
+                      "size":r["size"],
+                      "sha256":r["sha256"],
+                      "names":r["names"],
+                      "p98_names":r["p98_names"],
+                      "p2000_documented_names":r["p2000_documented_names"],
+                      "context_terms":r["context_terms"],
+                      "hit_span":span,
+                  })
+
+          report={
+              "schema":"chaptera.pubwiz-p2000-publisher-owned-name-census.v2",
+              "source_safe":True,
+              "raw_payload_retained":False,
+              "owned_files_scanned":sum(1 for p in root.rglob("*") if p.is_file()),
+              "files_with_name_or_context_hits":len(rows),
+              "candidate_cluster_count":len(candidates),
+              "candidate_clusters":candidates,
+              "rows":rows,
+              "guardrail":"Only Publisher-owned direct media files are scanned. Whole-token boundaries are required. Even then, name presence is locator evidence; historical Master Set identity/order requires a coherent resource/catalog context or independent version-specific source."
+          }
+          pathlib.Path("out/owned-census.json").write_text(json.dumps(report,indent=2))
+          print(json.dumps({
+              "owned_files_scanned":report["owned_files_scanned"],
+              "files_with_name_or_context_hits":len(rows),
+              "candidate_cluster_count":len(candidates),
+              "candidate_clusters":candidates[:20],
+          },indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums-v2.txt
+
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          r=json.load(open("out/owned-census.json"))
+          assert r["source_safe"] is True
+          assert r["raw_payload_retained"] is False
+          for p in pathlib.Path("out").rglob("*"):
+              if p.suffix.lower() in {".exe",".dll",".msi",".cab",".poc",".des",".chm",".hlp",".iso",".mdf",".7z"}:
+                  raise SystemExit(f"raw payload leaked: {p}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-p2000-publisher-owned-name-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
