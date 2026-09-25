@@ -279,6 +279,24 @@ impl SourceValidationJobExecutor {
                     .await?;
                 Ok(success_effect(&payload, &result))
             }
+            Err(error) if error.code == "stale_upload_generation" => {
+                let current = self
+                    .repo
+                    .get(&payload.upload_id)
+                    .await
+                    .map_err(|_| retryable("source_validation_repository_unavailable"))?
+                    .ok_or_else(|| nonretryable("source_validation_upload_missing"))?;
+                validate_upload_fence(&payload, &current)?;
+                if admission_releasable(current.state) {
+                    self.release_terminal_admission(&payload, unix_now_ms().unwrap_or(now_ms))
+                        .await?;
+                    Ok(success_effect(&payload, &current))
+                } else {
+                    self.reacquire_active_admission(&payload, unix_now_ms().unwrap_or(now_ms))
+                        .await?;
+                    Err(retryable("source_validation_generation_race"))
+                }
+            }
             Err(error)
                 if validation_error_retryable(error.code) && job.attempt < job.max_attempts =>
             {
@@ -566,7 +584,275 @@ fn unix_now_ms() -> Result<i64, SourceValidationJobError> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    };
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
     use super::*;
+
+    static NEXT_EXECUTOR_DB: AtomicU64 = AtomicU64::new(1);
+
+    #[derive(Clone, Copy)]
+    enum TestValidationMode {
+        Success,
+        GenerationRace,
+    }
+
+    #[derive(Clone)]
+    struct TestValidationPort {
+        repo: SqliteSourceIngressRepository,
+        mode: TestValidationMode,
+    }
+
+    #[async_trait::async_trait]
+    impl SourceValidationPort for TestValidationPort {
+        async fn validate_and_promote(
+            &self,
+            tenant_id: &str,
+            upload_id: &str,
+            now_ms: u64,
+            _scanner: &dyn AsyncSourceSecurityScanner,
+        ) -> Result<UploadRecord, IngressError> {
+            let mut upload = self
+                .repo
+                .get(upload_id)
+                .await?
+                .ok_or_else(|| IngressError::new("upload_not_found", "test upload missing"))?;
+            if upload.tenant_id != tenant_id {
+                return Err(IngressError::new("tenant_mismatch", "test tenant mismatch"));
+            }
+            if upload.state == UploadState::StoredUnverified {
+                let mut validating = upload.clone();
+                validating.state = UploadState::Validating;
+                validating.upload_generation = validating
+                    .upload_generation
+                    .checked_add(1)
+                    .expect("test upload generation");
+                upload = self
+                    .repo
+                    .compare_and_swap(
+                        &upload.upload_id,
+                        upload.upload_generation,
+                        validating,
+                    )
+                    .await?;
+            }
+
+            if matches!(self.mode, TestValidationMode::GenerationRace) {
+                return Err(IngressError::new(
+                    "stale_upload_generation",
+                    "simulated reclaimed worker generation race",
+                ));
+            }
+
+            if upload.state == UploadState::Validating {
+                let mut validated = upload.clone();
+                validated.state = UploadState::ValidatedDurable;
+                validated.upload_generation = validated
+                    .upload_generation
+                    .checked_add(1)
+                    .expect("test upload generation");
+                validated.canonical_sha256 = Some("c".repeat(64));
+                validated.durable_binding_id = Some("binding-a".into());
+                validated.completed_at_ms = Some(now_ms);
+                validated.terminal_code = None;
+                upload = self
+                    .repo
+                    .compare_and_swap(
+                        &upload.upload_id,
+                        upload.upload_generation,
+                        validated,
+                    )
+                    .await?;
+            }
+            Ok(upload)
+        }
+
+        async fn reject_terminal(
+            &self,
+            _tenant_id: &str,
+            _upload_id: &str,
+            _code: &'static str,
+            _now_ms: u64,
+        ) -> Result<UploadRecord, IngressError> {
+            Err(IngressError::new(
+                "unexpected_test_rejection",
+                "generation-race reconciliation must not terminal-reject source bytes",
+            ))
+        }
+    }
+
+    struct NeverScanner;
+
+    #[async_trait::async_trait]
+    impl AsyncSourceSecurityScanner for NeverScanner {
+        async fn scan(
+            &self,
+            _input: &mut (dyn tokio::io::AsyncRead + Unpin + Send),
+        ) -> Result<crate::source_ingress_async::SourceSecurityScanOutcome, IngressError> {
+            panic!("test validation port must not delegate to the scanner")
+        }
+    }
+
+    fn executor_temp_db(label: &str) -> PathBuf {
+        let serial = NEXT_EXECUTOR_DB.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "chaptera-source-validation-executor-{label}-{}-{serial}.sqlite",
+            std::process::id()
+        ))
+    }
+
+    fn cleanup_executor_db(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
+    }
+
+    fn executor_admission_config() -> crate::upload_admission::UploadAdmissionConfig {
+        crate::upload_admission::UploadAdmissionConfig {
+            principal_concurrent_cap: 2,
+            tenant_concurrent_cap: 4,
+            principal_bytes_cap: 4096,
+            tenant_bytes_cap: 8192,
+            max_single_upload_bytes: 4096,
+            lease_duration: Duration::from_secs(60),
+            retention: Duration::from_secs(3600),
+        }
+    }
+
+    async fn executor_fixture(
+        label: &str,
+    ) -> (
+        PathBuf,
+        SqliteSourceIngressRepository,
+        SqliteUploadAdmissionAuthority,
+        SourceValidationJobPayloadV1,
+        JobRecord,
+    ) {
+        let path = executor_temp_db(label);
+        crate::schema_migration::SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(false)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO principals(principal_id, created_at_ms, disabled_at_ms) VALUES (?, 1, NULL)",
+        )
+        .bind(b"principal-a".as_slice())
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let repo = SqliteSourceIngressRepository::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let admission = SqliteUploadAdmissionAuthority::open(
+            &path,
+            4,
+            Duration::from_secs(2),
+            executor_admission_config(),
+        )
+        .await
+        .unwrap();
+
+        let now = unix_now_ms().unwrap();
+        let admission_request = UploadAdmissionRequest {
+            reservation_id: format!("upload-admission-{label}"),
+            tenant_id: "tenant-a".into(),
+            principal_id: "principal-a".into(),
+            expected_bytes: 1024,
+            request_hash: "a".repeat(64),
+        };
+        admission
+            .reserve(admission_request.clone(), now)
+            .await
+            .unwrap();
+
+        let issued = UploadRecord {
+            upload_id: format!("upload-{label}"),
+            tenant_id: "tenant-a".into(),
+            principal_id: "principal-a".into(),
+            purpose: crate::source_ingress::UploadPurpose::PubSource,
+            expected_byte_len: 1024,
+            declared_content_type: None,
+            physical_upload_ref: format!("quarantine/tenant-a/upload-{label}"),
+            state: UploadState::Issued,
+            upload_generation: 0,
+            object_version: None,
+            object_etag: None,
+            observed_byte_len: None,
+            canonical_sha256: None,
+            durable_binding_id: None,
+            created_at_ms: u64::try_from(now).unwrap(),
+            expires_at_ms: u64::try_from(now + 60_000).unwrap(),
+            completed_at_ms: None,
+            terminal_code: None,
+            idempotency_key: format!("issue-{label}"),
+            request_hash: "b".repeat(64),
+        };
+        let issued = repo.issue_idempotent(issued).await.unwrap();
+        let mut stored = issued.clone();
+        stored.state = UploadState::StoredUnverified;
+        stored.upload_generation = 1;
+        stored.object_version = Some("version-a".into());
+        stored.object_etag = Some("etag-a".into());
+        stored.observed_byte_len = Some(1024);
+        stored.completed_at_ms = Some(u64::try_from(now).unwrap());
+        repo.compare_and_swap(&issued.upload_id, 0, stored)
+            .await
+            .unwrap();
+
+        let payload = SourceValidationJobPayloadV1 {
+            schema_version: SOURCE_VALIDATION_JOB_PAYLOAD_SCHEMA_V1.into(),
+            tenant_id: "tenant-a".into(),
+            upload_id: format!("upload-{label}"),
+            principal_id: "principal-a".into(),
+            expected_upload_generation: 1,
+            admission_reservation_id: admission_request.reservation_id,
+            admission_expected_bytes: 1024,
+            admission_request_hash: admission_request.request_hash,
+        };
+        let job = JobRecord {
+            job_id: format!("job:parse:test-{label}"),
+            tenant_id: payload.tenant_id.clone(),
+            job_kind: JobKind::Parse,
+            payload_schema_version: SOURCE_VALIDATION_JOB_SCHEMA_VERSION,
+            payload: serde_json::to_vec(&payload).unwrap(),
+            request_hash: "d".repeat(64),
+            status: crate::job_queue::JobStatus::Running,
+            available_at_ms: now,
+            attempt: 1,
+            max_attempts: 3,
+            lease_owner: Some("test-worker".into()),
+            lease_generation: 1,
+            lease_expires_at_ms: Some(now + 30_000),
+            cancel_requested_at_ms: None,
+            idempotency_key: format!("source-validate-test-{label}"),
+            created_at_ms: now,
+            started_at_ms: Some(now),
+            finished_at_ms: None,
+            terminal_code: None,
+        };
+
+        (path, repo, admission, payload, job)
+    }
 
     fn payload() -> SourceValidationJobPayloadV1 {
         SourceValidationJobPayloadV1 {
@@ -735,5 +1021,87 @@ mod tests {
             success_effect(&payload(), &base).effect_key,
             success_effect(&payload(), &consumed).effect_key
         );
+    }
+
+    #[tokio::test]
+    async fn executor_terminal_success_releases_exact_admission_and_replays() {
+        let (path, repo, admission, payload, job) = executor_fixture("success").await;
+        let validation: Arc<dyn SourceValidationPort> = Arc::new(TestValidationPort {
+            repo: repo.clone(),
+            mode: TestValidationMode::Success,
+        });
+        let scanner: Arc<dyn AsyncSourceSecurityScanner> = Arc::new(NeverScanner);
+        let executor =
+            SourceValidationJobExecutor::new(repo.clone(), validation, scanner, admission.clone());
+
+        let first = executor.execute_validation(&job).await.unwrap();
+        let terminal = repo.get(&payload.upload_id).await.unwrap().unwrap();
+        assert_eq!(terminal.state, UploadState::ValidatedDurable);
+        assert!(matches!(
+            admission
+                .release_exact(admission_request(&payload), unix_now_ms().unwrap())
+                .await
+                .unwrap(),
+            crate::upload_admission::ReleaseUploadOutcome::AlreadyReleased
+        ));
+
+        let replay = executor.execute_validation(&job).await.unwrap();
+        assert_eq!(replay.effect_key, first.effect_key);
+
+        drop(executor);
+        repo.close().await;
+        admission.close().await;
+        cleanup_executor_db(&path);
+    }
+
+    #[tokio::test]
+    async fn reclaimed_generation_race_never_terminal_rejects_source() {
+        let (path, repo, admission, payload, job) = executor_fixture("race").await;
+        let race_validation: Arc<dyn SourceValidationPort> = Arc::new(TestValidationPort {
+            repo: repo.clone(),
+            mode: TestValidationMode::GenerationRace,
+        });
+        let scanner: Arc<dyn AsyncSourceSecurityScanner> = Arc::new(NeverScanner);
+        let race_executor = SourceValidationJobExecutor::new(
+            repo.clone(),
+            race_validation,
+            scanner.clone(),
+            admission.clone(),
+        );
+
+        let failure = race_executor.execute_validation(&job).await.unwrap_err();
+        assert!(failure.retryable);
+        assert_eq!(failure.terminal_code, "source_validation_generation_race");
+        let validating = repo.get(&payload.upload_id).await.unwrap().unwrap();
+        assert_eq!(validating.state, UploadState::Validating);
+        assert!(validating.terminal_code.is_none());
+
+        let reclaimed_validation: Arc<dyn SourceValidationPort> = Arc::new(TestValidationPort {
+            repo: repo.clone(),
+            mode: TestValidationMode::Success,
+        });
+        let reclaimed_executor = SourceValidationJobExecutor::new(
+            repo.clone(),
+            reclaimed_validation,
+            scanner,
+            admission.clone(),
+        );
+        let success = reclaimed_executor.execute_validation(&job).await.unwrap();
+        assert!(success.effect_key.starts_with("source-validation:"));
+        let terminal = repo.get(&payload.upload_id).await.unwrap().unwrap();
+        assert_eq!(terminal.state, UploadState::ValidatedDurable);
+        assert!(matches!(
+            admission
+                .release_exact(admission_request(&payload), unix_now_ms().unwrap())
+                .await
+                .unwrap(),
+            crate::upload_admission::ReleaseUploadOutcome::AlreadyReleased
+        ));
+
+        drop(race_executor);
+        drop(reclaimed_executor);
+        repo.close().await;
+        admission.close().await;
+        cleanup_executor_db(&path);
     }
 }
