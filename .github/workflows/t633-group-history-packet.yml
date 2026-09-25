@@ -1,0 +1,60 @@
+name: T633 GROUP-HISTORY packet self-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/t633-group-history-packet.yml'
+      - 'tools/research-runner/experiments/group-history-01.packet.json'
+      - 'tools/research-runner/operations/group_history_01.ps1'
+      - 'tools/windows/pub-runtime/GROUP-HISTORY-01.md'
+  push:
+    branches:
+      - research/group-history-01
+    paths:
+      - '.github/workflows/t633-group-history-packet.yml'
+      - 'tools/research-runner/experiments/group-history-01.packet.json'
+      - 'tools/research-runner/operations/group_history_01.ps1'
+      - 'tools/windows/pub-runtime/GROUP-HISTORY-01.md'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate experiment packet
+        run: |
+          python3 tools/research-runner/validate_packet.py \
+            --packet tools/research-runner/experiments/group-history-01.packet.json \
+            --expected-environment publisher-2019
+      - name: Parse native PowerShell without executing Publisher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/research-runner/operations/group_history_01.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            throw 'PowerShell parse failed: group_history_01.ps1'
+          }
+      - name: Enforce lifetime matrix and private-evidence contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arm in 'arm = "S0"' 'arm = "S1"' 'arm = "S2"' 'arm = "S3"' 'arm = "S4"' 'arm = "S5"' 'arm = "S6"'; do
+            grep -F "$arm" tools/research-runner/operations/group_history_01.ps1
+          done
+          grep -F 'GROUP_HISTORY_A' tools/research-runner/operations/group_history_01.ps1
+          grep -F 'GROUP_HISTORY_B' tools/research-runner/operations/group_history_01.ps1
+          grep -F 'GROUP_HISTORY_C' tools/research-runner/operations/group_history_01.ps1
+          grep -F 'repeated_noop_control_regroup_state' tools/research-runner/operations/group_history_01.ps1
+          grep -F 'regroup_identity_relation' tools/research-runner/operations/group_history_01.ps1
+          grep -F 'native_pub_outputs_private = $true' tools/research-runner/operations/group_history_01.ps1
+          grep -F 'raw_history_carrier_claimed = $false' tools/research-runner/operations/group_history_01.ps1
