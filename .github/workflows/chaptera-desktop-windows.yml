@@ -146,8 +146,10 @@ jobs:
           if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "portable ZIP leaked a Cargo checkout" }
 
           $receipt = Join-Path $artifact "chaptera.desktop-source-free-smoke.json"
-          & $exe --product-smoke-v1 $receipt
-          if ($LASTEXITCODE -ne 0) { throw "source-free Chaptera product smoke failed" }
+          $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $receipt) -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "source-free Chaptera product smoke failed with exit code $($process.ExitCode)"
+          }
           if (-not (Test-Path $receipt)) { throw "source-free product smoke receipt is missing" }
           try {
             $smoke = Get-Content -Raw $receipt | ConvertFrom-Json
