@@ -3117,6 +3117,8 @@ fn fitted_scale(page_width_emu: i64, page_height_emu: i64, viewport: egui::Vec2)
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(feature = "embedded-fixture-tests", not(feature = "reader-only")))]
+    use egui_kittest::kittest::Queryable;
 
     #[test]
     fn canvas_pointer_maps_through_interaction_transform() {
