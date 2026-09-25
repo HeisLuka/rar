@@ -1,0 +1,38 @@
+name: CLOUD-RUNTIME-PORTS-READY-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/runtime_readiness.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/jobs_runtime.rs"
+      - "tools/run_cloud_config_receipt.py"
+      - "deploy/config/chaptera.prod.example.toml"
+      - ".github/workflows/cloud-runtime-ports-ready-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  configured-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - name: Check chaptera-server formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint chaptera-server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Prove readiness lifecycle composition
+        run: cargo test -p chaptera-server runtime_readiness:: -- --nocapture
+      - name: Build Chaptera
+        run: cargo build -p chaptera-server
+      - name: Prove configured serve reaches ready
+        run: >-
+          python tools/run_cloud_config_receipt.py
+          --binary ./target/debug/chaptera
+          --example-config deploy/config/chaptera.prod.example.toml
+          --out target/cloud-runtime-ports-ready-01
