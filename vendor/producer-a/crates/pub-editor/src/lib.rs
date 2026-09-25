@@ -27,12 +27,12 @@ use pub_idml::{
     IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlEmbeddedImagePlacement,
     IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
 };
-pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
     ResourceId, SourceDerivedIdInput, StoryFrame, TableColumnId, TableRowId,
     derive_source_canonical_id, validate_story_frames,
 };
+pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
@@ -1079,8 +1079,7 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6
-            && !project.table_grids.is_empty()
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6 && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
         }
@@ -1207,11 +1206,12 @@ impl EditorSession {
             }
             EditorEditableTarget::Odg => {
                 let mut package =
-                    project_resolved_graph_to_odg(&plan, &self.graph, frame_from_payload)
-                        .map_err(|error| EditorExportError::Projection {
+                    project_resolved_graph_to_odg(&plan, &self.graph, frame_from_payload).map_err(
+                        |error| EditorExportError::Projection {
                             target,
                             message: error.to_string(),
-                        })?;
+                        },
+                    )?;
                 let placements = self.odg_replacement_placements()?;
                 add_embedded_images_to_odg(&plan, &mut package, &placements).map_err(|error| {
                     EditorExportError::Projection {
@@ -1314,15 +1314,17 @@ impl EditorSession {
         let mut placements = Vec::with_capacity(self.image_replacements.len());
 
         for (node_id, asset_sha) in &self.image_replacements {
-            let node = self.graph.nodes.get(node_id).ok_or_else(|| {
-                EditorExportError::Projection {
-                    target,
-                    message: format!(
-                        "replacement image node {} is missing from the resolved graph",
-                        node_id.as_canonical()
-                    ),
-                }
-            })?;
+            let node =
+                self.graph
+                    .nodes
+                    .get(node_id)
+                    .ok_or_else(|| EditorExportError::Projection {
+                        target,
+                        message: format!(
+                            "replacement image node {} is missing from the resolved graph",
+                            node_id.as_canonical()
+                        ),
+                    })?;
             let asset = self.replacement_assets.get(asset_sha).ok_or_else(|| {
                 EditorExportError::Projection {
                     target,
@@ -1791,11 +1793,7 @@ impl EditorSession {
         Ok(())
     }
 
-    pub fn can_resize_node_to(
-        &self,
-        node_id: NodeId,
-        bounds: RectEmu,
-    ) -> Result<(), EditorError> {
+    pub fn can_resize_node_to(&self, node_id: NodeId, bounds: RectEmu) -> Result<(), EditorError> {
         self.can_resize_node(node_id)?;
 
         let before = self
@@ -2077,7 +2075,6 @@ fn replay_canonical_operation(
     }
 }
 
-
 fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> {
     let mut grids = Vec::new();
 
@@ -2089,8 +2086,14 @@ fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> 
             continue;
         };
 
-        let row_extent = table.layout_metrics.as_ref().map(|metrics| metrics.row_pitch);
-        let column_extent = table.layout_metrics.as_ref().map(|metrics| metrics.cell_width);
+        let row_extent = table
+            .layout_metrics
+            .as_ref()
+            .map(|metrics| metrics.row_pitch);
+        let column_extent = table
+            .layout_metrics
+            .as_ref()
+            .map(|metrics| metrics.cell_width);
 
         let rows = (0..simple.rows)
             .map(|index| EffectiveTableTrackV1 {

@@ -178,7 +178,6 @@ mod tests {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectiveTableTrackV1<Id> {
     pub id: Id,
@@ -221,16 +220,44 @@ pub enum EffectiveTableGridError {
     NonContiguousColumnIndex,
     DuplicateRowId,
     DuplicateColumnId,
-    WrongCellCount { expected: u64, actual: usize },
-    CellOutOfBounds { id: TableCellId, address: TableCellAddress },
-    DuplicateCellId { id: TableCellId },
-    DuplicateAddress { address: TableCellAddress },
-    WrongTrackReference { id: TableCellId },
-    UnsupportedSpan { id: TableCellId, row_span: u32, column_span: u32 },
-    IncompleteStoryRange { id: TableCellId },
-    InvalidStoryRange { id: TableCellId, start: u32, end: u32 },
-    NonPositiveRowExtent { id: TableRowId, value: i64 },
-    NonPositiveColumnExtent { id: TableColumnId, value: i64 },
+    WrongCellCount {
+        expected: u64,
+        actual: usize,
+    },
+    CellOutOfBounds {
+        id: TableCellId,
+        address: TableCellAddress,
+    },
+    DuplicateCellId {
+        id: TableCellId,
+    },
+    DuplicateAddress {
+        address: TableCellAddress,
+    },
+    WrongTrackReference {
+        id: TableCellId,
+    },
+    UnsupportedSpan {
+        id: TableCellId,
+        row_span: u32,
+        column_span: u32,
+    },
+    IncompleteStoryRange {
+        id: TableCellId,
+    },
+    InvalidStoryRange {
+        id: TableCellId,
+        start: u32,
+        end: u32,
+    },
+    NonPositiveRowExtent {
+        id: TableRowId,
+        value: i64,
+    },
+    NonPositiveColumnExtent {
+        id: TableColumnId,
+        value: i64,
+    },
 }
 
 impl EffectiveTableGridV1 {
@@ -264,7 +291,10 @@ impl EffectiveTableGridV1 {
             if column.index != u32::try_from(index).expect("bounded Vec index") {
                 return Err(EffectiveTableGridError::NonContiguousColumnIndex);
             }
-            if self.columns[..index].iter().any(|other| other.id == column.id) {
+            if self.columns[..index]
+                .iter()
+                .any(|other| other.id == column.id)
+            {
                 return Err(EffectiveTableGridError::DuplicateColumnId);
             }
             if let Some(extent) = column.extent {
@@ -287,8 +317,12 @@ impl EffectiveTableGridV1 {
         }
 
         for (index, cell) in self.cells.iter().enumerate() {
-            let row = usize::try_from(cell.address.row).ok().and_then(|i| self.rows.get(i));
-            let column = usize::try_from(cell.address.column).ok().and_then(|i| self.columns.get(i));
+            let row = usize::try_from(cell.address.row)
+                .ok()
+                .and_then(|i| self.rows.get(i));
+            let column = usize::try_from(cell.address.column)
+                .ok()
+                .and_then(|i| self.columns.get(i));
             let (Some(row), Some(column)) = (row, column) else {
                 return Err(EffectiveTableGridError::CellOutOfBounds {
                     id: cell.id,
@@ -308,14 +342,15 @@ impl EffectiveTableGridV1 {
             if self.cells[..index].iter().any(|other| other.id == cell.id) {
                 return Err(EffectiveTableGridError::DuplicateCellId { id: cell.id });
             }
-            if self.cells[..index].iter().any(|other| other.address == cell.address) {
+            if self.cells[..index]
+                .iter()
+                .any(|other| other.address == cell.address)
+            {
                 return Err(EffectiveTableGridError::DuplicateAddress {
                     address: cell.address,
                 });
             }
-            if cell.story_id.is_none()
-                && (cell.utf16_start.is_some() || cell.utf16_end.is_some())
-            {
+            if cell.story_id.is_none() && (cell.utf16_start.is_some() || cell.utf16_end.is_some()) {
                 return Err(EffectiveTableGridError::StoryRangeWithoutStory { id: cell.id });
             }
             match (cell.utf16_start, cell.utf16_end) {
@@ -334,7 +369,6 @@ impl EffectiveTableGridV1 {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod effective_grid_tests {
@@ -361,14 +395,33 @@ mod effective_grid_tests {
         StoryId::from_canonical(CanonicalId::from_bytes([byte; 16]))
     }
 
-    fn grid(row_extent: Option<LengthEmu>, column_extent: Option<LengthEmu>) -> EffectiveTableGridV1 {
+    fn grid(
+        row_extent: Option<LengthEmu>,
+        column_extent: Option<LengthEmu>,
+    ) -> EffectiveTableGridV1 {
         let rows = vec![
-            EffectiveTableTrackV1 { id: row_id(1), index: 0, extent: row_extent },
-            EffectiveTableTrackV1 { id: row_id(2), index: 1, extent: row_extent },
+            EffectiveTableTrackV1 {
+                id: row_id(1),
+                index: 0,
+                extent: row_extent,
+            },
+            EffectiveTableTrackV1 {
+                id: row_id(2),
+                index: 1,
+                extent: row_extent,
+            },
         ];
         let columns = vec![
-            EffectiveTableTrackV1 { id: column_id(3), index: 0, extent: column_extent },
-            EffectiveTableTrackV1 { id: column_id(4), index: 1, extent: column_extent },
+            EffectiveTableTrackV1 {
+                id: column_id(3),
+                index: 0,
+                extent: column_extent,
+            },
+            EffectiveTableTrackV1 {
+                id: column_id(4),
+                index: 1,
+                extent: column_extent,
+            },
         ];
         let cells = vec![
             EffectiveTableCellV1 {

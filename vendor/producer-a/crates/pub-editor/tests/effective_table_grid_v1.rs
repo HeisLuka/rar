@@ -1,6 +1,4 @@
-use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_6, EditorProject, EditorSession,
-};
+use pub_editor::{EDITOR_PROJECT_VERSION_V0_6, EditorProject, EditorSession};
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, LengthEmu, Node, NodeHeader, NodeId, NodeKind,
     Page, PageId, RectEmu, ResolvedGraph, Sha256Digest, SimpleRectangularTable, SimpleTableCell,
@@ -198,11 +196,7 @@ fn effective_grid_roundtrips_and_replays_exactly() {
     let cell0_id = grid.cells[0].id;
 
     session
-        .replace_table_cell_text(
-            NodeId::from_canonical(canonical(2)),
-            cell0_id,
-            "Alpha",
-        )
+        .replace_table_cell_text(NodeId::from_canonical(canonical(2)), cell0_id, "Alpha")
         .unwrap();
 
     let edited = session.project();
@@ -225,7 +219,6 @@ fn effective_grid_roundtrips_and_replays_exactly() {
     replay_edited.apply_project(&edited).unwrap();
     assert_eq!(replay_edited.project(), edited);
 }
-
 
 #[test]
 fn legacy_v0_5_project_replays_on_table_source_without_v0_6_grid_payload() {

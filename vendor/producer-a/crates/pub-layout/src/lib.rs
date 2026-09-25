@@ -10,8 +10,8 @@
 use pub_model::{
     Affine2D, BoxEdges, CanonicalId, EffectiveTableGridV1, GroundedRulerGuide, LengthEmu, NodeId,
     Page, PageId, ParagraphId, PublisherGuideRole, RectEmu, RulerGuide, RulerGuideAxis,
-    SimpleRectangularTable, SimpleTableCell, Size2D, Story, StoryFrame, StoryId,
-    TableCellAddress, TableCellId, TextRunId,
+    SimpleRectangularTable, SimpleTableCell, Size2D, Story, StoryFrame, StoryId, TableCellAddress,
+    TableCellId, TextRunId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +75,6 @@ pub struct BoundedTableInput {
     pub node_id: NodeId,
     pub table: SimpleRectangularTable<TableCellId>,
 }
-
 
 pub fn bounded_table_input_from_effective_grid(
     grid: &EffectiveTableGridV1,
@@ -773,7 +772,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod effective_grid_projection_tests {
     use super::*;
@@ -889,7 +887,13 @@ mod effective_grid_projection_tests {
         assert_eq!(bounded.node_id, node_id(7));
         assert_eq!(bounded.table.rows, 2);
         assert_eq!(bounded.table.columns, 2);
-        assert!(bounded.table.cells.iter().any(|cell| cell.id == cell_id(13)));
+        assert!(
+            bounded
+                .table
+                .cells
+                .iter()
+                .any(|cell| cell.id == cell_id(13))
+        );
     }
 
     #[test]
