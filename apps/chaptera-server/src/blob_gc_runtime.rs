@@ -197,9 +197,8 @@ impl SqlitePhysicalBlobGcAuthority {
             });
         }
 
-        let eligible_at: Option<i64> = row
-            .try_get("delete_eligible_at_ms")
-            .map_err(sqlite_error)?;
+        let eligible_at: Option<i64> =
+            row.try_get("delete_eligible_at_ms").map_err(sqlite_error)?;
         let Some(eligible_at) = eligible_at else {
             return Ok(GcPreDelete::Cancel {
                 code: "not_delete_eligible",
@@ -679,11 +678,7 @@ mod tests {
         bindings
             .commit_physical_and_binding(
                 physical.clone(),
-                binding(
-                    "binding-purge",
-                    &physical,
-                    BindingLifecycle::PurgeEligible,
-                ),
+                binding("binding-purge", &physical, BindingLifecycle::PurgeEligible),
             )
             .await
             .unwrap();
@@ -694,11 +689,7 @@ mod tests {
         assert_eq!(first, second);
 
         let error = bindings
-            .commit_binding(binding(
-                "binding-new",
-                &physical,
-                BindingLifecycle::Active,
-            ))
+            .commit_binding(binding("binding-new", &physical, BindingLifecycle::Active))
             .await
             .unwrap_err();
         assert_eq!(error.code, "physical_blob_gc_fenced");
