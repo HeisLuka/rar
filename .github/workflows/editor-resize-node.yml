@@ -15,6 +15,9 @@ on:
       - "vendor/producer-a/crates/pub-editor/src/writer_assessment.rs"
       - "vendor/producer-a/crates/pub-editor/tests/resize_node_v1.rs"
       - "apps/chaptera-desktop/src/agent.rs"
+      - "apps/chaptera-desktop/Cargo.toml"
+      - "apps/chaptera-desktop/src/bin/resize_node_producer.rs"
+      - "tools/run_local_resize_node_receipt.ps1"
       - ".github/workflows/editor-resize-node.yml"
   workflow_dispatch:
 
@@ -35,6 +38,16 @@ jobs:
       - run: python -m pip install jsonschema
       - name: Test active Rar ResizeNode core
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test resize_node_v1
+      - name: Smoke current-Rar ResizeNode producer on pinned public PUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl -fsSL "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -o "$fixture"
+          echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  $fixture" | sha256sum -c -
+          test "$(wc -c < "$fixture")" -eq 291840
+          CHAPTERA_SAMPLE_NEWSLETTER="$fixture" cargo test -p chaptera-desktop --features resize-producer --bin chaptera-resize-producer real_sample_contract -- --ignored --nocapture
+
       - name: Validate ResizeNode receipt contract
         run: python -m unittest tools/test_resize_node_producer_receipt.py
       - name: Validate ResizeNode revision envelope
