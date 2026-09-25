@@ -27,6 +27,7 @@ pub mod schema_migration;
 pub mod serve;
 pub mod shutdown;
 pub mod source_ingress;
+pub mod source_authority;
 pub mod sqlite_blob_metadata;
 pub mod sqlite_store;
 pub mod state;
