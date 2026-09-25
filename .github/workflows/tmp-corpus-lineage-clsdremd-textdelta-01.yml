@@ -1,0 +1,223 @@
+name: TEMP CORPUS CLSDREMD text-delta classification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-clsdremd-textdelta-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parsers
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y libmspub-tools
+      - name: Classify source-safe CLSDREMD text delta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import difflib,hashlib,json,re,subprocess,tempfile,time,urllib.parse,urllib.request
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          import olefile
+
+          UA="rar-clsdremd-textdelta/1.0";SECTOR=2048
+          SPECS={
+            "pub95":{"sha256":"4b562a719db4a7710c5d22272b320df0d65a0c11f2d1b10f3fe99fd5c3061daf","size":12800,"member":"PAGEWIZ/CLSDREMD.PUB","url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso"},
+            "pub97":{"sha256":"75c2b723d07286c830dd7361adaff101c81452e056a65ce7d8ffe30be54b49fe","size":12800,"member":"PAGEWIZ/CLSDREMD.PUB","url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso"}
+          }
+
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              for a in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+              d=str(m.get("dir") or "");out=[]
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError("range length drift")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              for a in range(4):
+                try:return self.rr(self.delivery,start,n)
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","replace"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              k=(e,s)
+              if k in self.cache:return self.cache[k]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[k]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
+              parts=[x.upper() for x in path.strip("/").split("/") if x]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2:raise ValueError("not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def contents(pub):
+            with olefile.OleFileIO(pub) as ole:return ole.openstream(["Contents"]).read()
+
+          def text_region(c):
+            if c[:4]!=b"\xe8\xac\x22\x00":raise ValueError("not old22")
+            root=u32(c,0x12);m=root+14;start=u32(c,m);end=u32(c,m+4)
+            if not (0<=start<=end<=len(c)):raise ValueError("bad text region")
+            return c[start:end],{"root":root,"start":start,"end":end,"char":u16(c,m+8),"para":u16(c,m+10),"cell":u16(c,m+12)}
+
+          def tokens(data):
+            out=[]
+            for m in re.finditer(rb"[\x20-\x7e]{2,}",data):
+              out.append("a:"+sha(m.group(0)))
+            return out
+
+          def control_positions(data):
+            return [{"offset":i,"value":b} for i,b in enumerate(data) if b<0x20 or b==0x7f]
+
+          def delta(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False);ops=[]
+            for tag,i1,i2,j1,j2 in sm.get_opcodes():
+              if tag!="equal":
+                ops.append({"tag":tag,"left_offset":i1,"left_len":i2-i1,"left_sha256":sha(a[i1:i2]),"right_offset":j1,"right_len":j2-j1,"right_sha256":sha(b[j1:j2])})
+            cp=0
+            while cp<min(len(a),len(b)) and a[cp]==b[cp]:cp+=1
+            cs=0
+            while cs<min(len(a),len(b))-cp and a[-1-cs]==b[-1-cs]:cs+=1
+            positional_diff=sum(x!=y for x,y in zip(a,b))+abs(len(a)-len(b))
+            return {"left_len":len(a),"right_len":len(b),"sequence_match_ratio":round(sm.ratio(),6),"common_prefix":cp,"common_suffix":cs,"positional_differing_byte_count":positional_diff,"delta_span_count":len(ops),"delta_spans":ops}
+
+          def stripped_xhtml(raw):
+            try:
+              root=ET.fromstring(raw)
+            except Exception as e:
+              return {"parse_ok":False,"error":type(e).__name__,"raw_sha256":sha(raw)}
+            node_count=0;text_slots=0;attr_count=0
+            for el in root.iter():
+              node_count+=1;attr_count+=len(el.attrib)
+              if el.text is not None:
+                if el.text.strip():text_slots+=1;el.text="#TEXT#"
+                else:el.text=""
+              if el.tail is not None:
+                if el.tail.strip():text_slots+=1;el.tail="#TEXT#"
+                else:el.tail=""
+            norm=ET.tostring(root,encoding="utf-8",method="xml")
+            return {"parse_ok":True,"normalized_sha256":sha(norm),"normalized_len":len(norm),"node_count":node_count,"text_slot_count":text_slots,"attribute_count":attr_count}
+
+          pubs={};texts={};meta={};deliveries={}
+          for side,s in SPECS.items():
+            iso=ISO(s["url"]);pub=iso.member(s["member"])
+            if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(side+" exact member drift")
+            pubs[side]=pub;deliveries[side]=iso.delivery
+            texts[side],meta[side]=text_region(contents(pub))
+
+          td=delta(texts["pub95"],texts["pub97"])
+          lt=set(tokens(texts["pub95"]));rt=set(tokens(texts["pub97"]));union=lt|rt
+          token_summary={"left_count":len(lt),"right_count":len(rt),"overlap":len(lt&rt),"jaccard":round(len(lt&rt)/len(union),6) if union else 1.0}
+          controls={"pub95":control_positions(texts["pub95"]),"pub97":control_positions(texts["pub97"])}
+
+          with tempfile.TemporaryDirectory(prefix="clsdremd-textdelta-") as t:
+            t=Path(t);renders={}
+            for side,pub in pubs.items():
+              p=t/(side+".pub");p.write_bytes(pub)
+              proc=subprocess.run(["pub2xhtml",str(p)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+              renders[side]={"returncode":proc.returncode,"stdout_sha256":sha(proc.stdout),"stdout_len":len(proc.stdout),"stripped":stripped_xhtml(proc.stdout)}
+
+          stripped_equal=(
+            renders["pub95"]["stripped"].get("parse_ok") and renders["pub97"]["stripped"].get("parse_ok")
+            and renders["pub95"]["stripped"].get("normalized_sha256")==renders["pub97"]["stripped"].get("normalized_sha256")
+          )
+          compact=td["sequence_match_ratio"]>=0.75 or td["positional_differing_byte_count"]<=16
+          if stripped_equal and compact:
+            cls="compact-wording-revision-with-stable-render-structure"
+          elif stripped_equal:
+            cls="broad-text-rewrite-with-stable-render-structure"
+          else:
+            cls="text-change-with-structural-render-delta"
+
+          summary={
+            "schema":"chaptera.clsdremd-textdelta-summary.v1","source_safe":True,"all_exact_members_verified":True,
+            "text_sha256":{"pub95":sha(texts["pub95"]),"pub97":sha(texts["pub97"])},
+            "text_meta":meta,"text_delta":td,"token_hash_overlap":token_summary,"control_positions":controls,
+            "libmspub":{"returncodes":{k:v["returncode"] for k,v in renders.items()},"xhtml_equal":renders["pub95"]["stdout_sha256"]==renders["pub97"]["stdout_sha256"],"stripped_structure_equal":stripped_equal,"pub95_stripped":renders["pub95"]["stripped"],"pub97_stripped":renders["pub97"]["stripped"]},
+            "classification":cls
+          }
+          receipt={"schema":"chaptera.clsdremd-textdelta.v1","files":{k:{"sha256":s["sha256"],"member":s["member"],"delivery_url":deliveries[k]} for k,s in SPECS.items()},"summary":summary,"raw_text_retained":False,"raw_pub_retained":False,"source_safe":True}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("out/receipt.json").read_text())
+          s=r["summary"]
+          assert s["all_exact_members_verified"] is True
+          assert s["text_delta"]["left_len"]==54
+          assert s["text_delta"]["right_len"]==54
+          assert r["raw_text_retained"] is False
+          assert r["raw_pub_retained"] is False
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-clsdremd-textdelta-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
