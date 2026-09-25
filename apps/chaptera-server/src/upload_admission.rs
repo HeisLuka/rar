@@ -13,6 +13,11 @@ use sqlx::{
 pub struct UploadAdmissionError {
     pub code: &'static str,
     pub message: String,
+    /// Earliest authority-observed time when live upload capacity can change.
+    ///
+    /// This is deliberately an absolute millisecond timestamp rather than an
+    /// HTTP header value. The Serve adapter owns conversion to Retry-After.
+    pub retry_at_ms: Option<i64>,
 }
 
 impl UploadAdmissionError {
@@ -20,6 +25,19 @@ impl UploadAdmissionError {
         Self {
             code,
             message: message.into(),
+            retry_at_ms: None,
+        }
+    }
+
+    fn capacity(
+        code: &'static str,
+        message: impl Into<String>,
+        retry_at_ms: Option<i64>,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            retry_at_ms,
         }
     }
 }
@@ -256,14 +274,14 @@ impl SqliteUploadAdmissionAuthority {
             active_usage(&mut *tx, "principal_id", &request.principal_id, now_ms).await?;
 
         enforce_capacity(
-            principal_usage,
+            &principal_usage,
             request.expected_bytes,
             self.config.principal_concurrent_cap,
             self.config.principal_bytes_cap,
             "upload_principal_capacity",
         )?;
         enforce_capacity(
-            tenant_usage,
+            &tenant_usage,
             request.expected_bytes,
             self.config.tenant_concurrent_cap,
             self.config.tenant_bytes_cap,
@@ -454,7 +472,12 @@ impl SqliteUploadAdmissionAuthority {
         let tenant = active_usage(&mut *connection, "tenant_id", tenant_id, now_ms).await?;
         let principal =
             active_usage(&mut *connection, "principal_id", principal_id, now_ms).await?;
-        Ok((tenant.0, tenant.1, principal.0, principal.1))
+        Ok((
+            tenant.active_count,
+            tenant.active_bytes,
+            principal.active_count,
+            principal.active_bytes,
+        ))
     }
 
     async fn require_schema(&self) -> Result<(), UploadAdmissionError> {
@@ -506,21 +529,28 @@ async fn require_active_principal(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveUploadUsage {
+    active_count: i64,
+    active_bytes: i64,
+    next_expiry_ms: Option<i64>,
+}
+
 async fn active_usage<'e, E>(
     executor: E,
     column: &'static str,
     value: &str,
     now_ms: i64,
-) -> Result<(i64, i64), UploadAdmissionError>
+) -> Result<ActiveUploadUsage, UploadAdmissionError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let query = match column {
         "tenant_id" => {
-            "SELECT COUNT(*), COALESCE(SUM(expected_bytes), 0) FROM upload_admission_reservations WHERE tenant_id=? AND released_at_ms IS NULL AND lease_expires_at_ms>?"
+            "SELECT COUNT(*), COALESCE(SUM(expected_bytes), 0), MIN(lease_expires_at_ms) FROM upload_admission_reservations WHERE tenant_id=? AND released_at_ms IS NULL AND lease_expires_at_ms>?"
         }
         "principal_id" => {
-            "SELECT COUNT(*), COALESCE(SUM(expected_bytes), 0) FROM upload_admission_reservations WHERE principal_id=? AND released_at_ms IS NULL AND lease_expires_at_ms>?"
+            "SELECT COUNT(*), COALESCE(SUM(expected_bytes), 0), MIN(lease_expires_at_ms) FROM upload_admission_reservations WHERE principal_id=? AND released_at_ms IS NULL AND lease_expires_at_ms>?"
         }
         _ => {
             return Err(UploadAdmissionError::new(
@@ -535,35 +565,37 @@ where
         .fetch_one(executor)
         .await
         .map_err(sqlite_error)?;
-    Ok((
-        row.try_get(0).map_err(sqlite_error)?,
-        row.try_get(1).map_err(sqlite_error)?,
-    ))
+    Ok(ActiveUploadUsage {
+        active_count: row.try_get(0).map_err(sqlite_error)?,
+        active_bytes: row.try_get(1).map_err(sqlite_error)?,
+        next_expiry_ms: row.try_get(2).map_err(sqlite_error)?,
+    })
 }
 
 fn enforce_capacity(
-    usage: (i64, i64),
+    usage: &ActiveUploadUsage,
     requested_bytes: i64,
     concurrent_cap: i64,
     byte_cap: i64,
     code: &'static str,
 ) -> Result<(), UploadAdmissionError> {
-    let next_count = usage.0.checked_add(1).ok_or_else(|| {
+    let next_count = usage.active_count.checked_add(1).ok_or_else(|| {
         UploadAdmissionError::new(
             "upload_admission_capacity_overflow",
             "upload count overflow",
         )
     })?;
-    let next_bytes = usage.1.checked_add(requested_bytes).ok_or_else(|| {
+    let next_bytes = usage.active_bytes.checked_add(requested_bytes).ok_or_else(|| {
         UploadAdmissionError::new(
             "upload_admission_capacity_overflow",
             "upload byte usage overflow",
         )
     })?;
     if next_count > concurrent_cap || next_bytes > byte_cap {
-        return Err(UploadAdmissionError::new(
+        return Err(UploadAdmissionError::capacity(
             code,
             "upload admission capacity is exhausted",
+            usage.next_expiry_ms,
         ));
     }
     Ok(())
@@ -870,27 +902,23 @@ mod tests {
             .reserve(request("a2", "principal-a", 500), 10)
             .await
             .unwrap();
-        assert_eq!(
-            authority
-                .reserve(request("a3", "principal-a", 1), 10)
-                .await
-                .unwrap_err()
-                .code,
-            "upload_principal_capacity"
-        );
+        let principal_denied = authority
+            .reserve(request("a3", "principal-a", 1), 10)
+            .await
+            .unwrap_err();
+        assert_eq!(principal_denied.code, "upload_principal_capacity");
+        assert_eq!(principal_denied.retry_at_ms, Some(110));
 
         authority
             .reserve(request("b1", "principal-b", 700), 10)
             .await
             .unwrap();
-        assert_eq!(
-            authority
-                .reserve(request("b2", "principal-b", 200), 10)
-                .await
-                .unwrap_err()
-                .code,
-            "upload_tenant_capacity"
-        );
+        let tenant_denied = authority
+            .reserve(request("b2", "principal-b", 200), 10)
+            .await
+            .unwrap_err();
+        assert_eq!(tenant_denied.code, "upload_tenant_capacity");
+        assert_eq!(tenant_denied.retry_at_ms, Some(110));
 
         authority.close().await;
         cleanup(&path);
