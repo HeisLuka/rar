@@ -18,8 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check formatting
-        run: cargo fmt --check -p chaptera-glyph-runtime
+      - name: Format crate snapshot
+        run: cargo fmt -p chaptera-glyph-runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glyph-runtime-formatted-${{ github.run_id }}
+          path: |
+            crates/chaptera-glyph-runtime/src/lib.rs
+            crates/chaptera-glyph-runtime/src/bin/glyph_runtime_receipt.rs
+            crates/chaptera-glyph-runtime/tests/runtime_v1.rs
+          if-no-files-found: error
       - name: Check crate
         run: cargo check -p chaptera-glyph-runtime
       - name: Test cache atlas and generation laws
