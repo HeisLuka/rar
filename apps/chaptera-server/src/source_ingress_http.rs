@@ -16,6 +16,7 @@ use axum::{
     routing::{get, post, put},
 };
 use axum_extra::extract::CookieJar;
+use chaptera_untrusted_pub_scan::PubScanPolicyV1;
 use futures_util::StreamExt;
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
@@ -24,17 +25,21 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     auth_http::{AuthHttpError, AuthHttpState},
     blob_store::{BlobStoreError, BlobStoreService},
+    config::SourceIngressConfig,
     project_persistence_sqlite::{SqliteProjectPersistence, plan_project_identity},
-    source_baseline::{IsolatedSourceBaselineProducer, SourceBaselineError},
+    source_baseline::{
+        IsolatedSourceBaselineProducer, SourceBaselineError, SourceBaselineProducerConfig,
+    },
     source_ingress::{
         ConsumeUploadRequest, IngressError, IssueUploadRequest, ProjectCreateResult, UploadPurpose,
         UploadRecord, UploadState, plan_upload_candidate, upload_admission_reservation_id,
     },
     source_ingress_async::{AsyncSourceSecurityScanner, AsyncSourceValidationRuntime},
+    source_ingress_security::{ProductionSourceSecurityScanner, SourceSecurityScannerConfig},
     source_ingress_sqlite::SqliteSourceIngressRepository,
     upload_admission::{
-        ReserveUploadOutcome, SqliteUploadAdmissionAuthority, UploadAdmissionError,
-        UploadAdmissionRequest,
+        ReserveUploadOutcome, SqliteUploadAdmissionAuthority, UploadAdmissionConfig,
+        UploadAdmissionError, UploadAdmissionRequest,
     },
     workspace_context::{SqliteWorkspaceContextResolver, WorkspaceContextError},
 };
@@ -45,6 +50,67 @@ const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 pub struct SourceIngressHttpConfig {
     pub upload_ttl: Duration,
     pub direct_grant_ttl: Duration,
+}
+
+pub fn upload_admission_config(config: &SourceIngressConfig) -> UploadAdmissionConfig {
+    UploadAdmissionConfig {
+        principal_concurrent_cap: config.principal_concurrent_cap,
+        tenant_concurrent_cap: config.tenant_concurrent_cap,
+        principal_bytes_cap: config.principal_bytes_cap,
+        tenant_bytes_cap: config.tenant_bytes_cap,
+        max_single_upload_bytes: config.max_single_upload_bytes,
+        lease_duration: Duration::from_secs(config.admission_lease_seconds),
+        retention: Duration::from_secs(config.admission_retention_seconds),
+    }
+}
+
+pub fn http_config(config: &SourceIngressConfig) -> SourceIngressHttpConfig {
+    SourceIngressHttpConfig {
+        upload_ttl: Duration::from_secs(config.upload_ttl_seconds),
+        direct_grant_ttl: Duration::from_secs(config.direct_grant_ttl_seconds),
+    }
+}
+
+pub fn scanner_config(config: &SourceIngressConfig) -> SourceSecurityScannerConfig {
+    SourceSecurityScannerConfig {
+        clamd_endpoint: config.scanner.clamd_endpoint,
+        clamd_connect_timeout: Duration::from_millis(config.scanner.clamd_connect_timeout_ms),
+        clamd_io_timeout: Duration::from_millis(config.scanner.clamd_io_timeout_ms),
+        isolation_python: config.scanner.isolation_python.clone(),
+        isolation_harness: config.scanner.isolation_harness.clone(),
+        worker_binary: config.scanner.worker_binary.clone(),
+        worker_wall_timeout: Duration::from_secs(config.scanner.worker_wall_timeout_seconds),
+        worker_address_space_mb: config.scanner.worker_address_space_mb,
+        worker_cpu_seconds: config.scanner.worker_cpu_seconds,
+        worker_open_files: config.scanner.worker_open_files,
+        worker_output_file_mb: config.scanner.worker_output_file_mb,
+        policy: PubScanPolicyV1 {
+            max_file_bytes: u64::try_from(config.max_single_upload_bytes).unwrap_or(0),
+            max_cfb_entries: config.scanner.max_cfb_entries,
+            max_declared_stream_bytes: config.scanner.max_declared_stream_bytes,
+        },
+        temp_root: config.scanner.temp_root.clone(),
+    }
+}
+
+pub fn baseline_config(config: &SourceIngressConfig) -> SourceBaselineProducerConfig {
+    SourceBaselineProducerConfig {
+        isolation_python: config.baseline.isolation_python.clone(),
+        isolation_harness: config.baseline.isolation_harness.clone(),
+        worker_binary: config.baseline.worker_binary.clone(),
+        worker_wall_timeout: Duration::from_secs(config.baseline.worker_wall_timeout_seconds),
+        worker_address_space_mb: config.baseline.worker_address_space_mb,
+        worker_cpu_seconds: config.baseline.worker_cpu_seconds,
+        worker_open_files: config.baseline.worker_open_files,
+        worker_output_file_mb: config.baseline.worker_output_file_mb,
+        temp_root: config.baseline.temp_root.clone(),
+    }
+}
+
+pub fn production_scanner(
+    config: &SourceIngressConfig,
+) -> Result<ProductionSourceSecurityScanner, IngressError> {
+    ProductionSourceSecurityScanner::new(scanner_config(config))
 }
 
 impl SourceIngressHttpConfig {
