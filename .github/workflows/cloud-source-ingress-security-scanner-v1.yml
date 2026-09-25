@@ -1,0 +1,63 @@
+name: Cloud Source Ingress Security Scanner V1
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/Cargo.toml"
+      - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/src/source_ingress_security.rs"
+      - "crates/chaptera-untrusted-pub-scan/**"
+      - "tools/migration_pdf_worker_isolation.py"
+      - ".github/workflows/cloud-source-ingress-security-scanner-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-security-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIXTURE_SHA256: 1e7f38b3ce1d0d956815992b15d361c405fc4bbdced5cdabb3c4581327cc183e
+      FIXTURE_URL: https://raw.githubusercontent.com/Planet-Source-Code/hartoto-flexible-phoone-book__1-69597/1400f033db5f4a57cca6d5392f551943271b7f72/help.pub
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify libseccomp
+        run: |
+          python - <<'PY'
+          import ctypes.util
+          assert ctypes.util.find_library("seccomp"), "libseccomp is required"
+          PY
+
+      - name: Prepare pinned PUB
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source"
+          curl --fail --location --retry 4 --retry-delay 2 "$FIXTURE_URL" --output "$RUNNER_TEMP/source/help.pub"
+          printf '%s  %s\n' "$FIXTURE_SHA256" "$RUNNER_TEMP/source/help.pub" | sha256sum -c -
+
+      - name: Build isolated PUB worker
+        run: cargo build -p chaptera-untrusted-pub-scan --bin chaptera-untrusted-pub-worker
+
+      - name: Check formatting
+        run: cargo fmt -p chaptera-server -- --check
+
+      - name: Lint scanner adapter
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+
+      - name: Test scanner adapter
+        env:
+          CHAPTERA_TEST_PUB: ${{ runner.temp }}/source/help.pub
+          CHAPTERA_TEST_UNTRUSTED_WORKER: ${{ github.workspace }}/target/debug/chaptera-untrusted-pub-worker
+          CHAPTERA_TEST_ISOLATION_HARNESS: ${{ github.workspace }}/tools/migration_pdf_worker_isolation.py
+        run: cargo test -p chaptera-server source_ingress_security
