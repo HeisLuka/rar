@@ -19,7 +19,7 @@ required-features = ["resize-producer"]
 default = []
 reader-only = []
 embedded-fixture-tests = []
-resize-producer = []
+resize-producer = ["dep:zip"]
 
 [dependencies]
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
@@ -33,10 +33,11 @@ pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-zip = "=2.4.2"
+zip = { version = "=2.4.2", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
 
 [dev-dependencies]
 egui_kittest = { version = "=0.31.1", features = ["eframe", "wgpu"] }
+zip = "=2.4.2"
