@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/protocol/movenode-diagnostic/v1.schema.json",
+  "title": "MoveNodeDiagnosticReceiptV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "source_sha256",
+    "chaptera",
+    "native_experiment",
+    "blast_radius",
+    "invariants"
+  ],
+  "properties": {
+    "receipt_version": { "const": "chaptera.movenode-diagnostic-receipt.v1" },
+    "source_sha256": { "$ref": "#/$defs/sha256" },
+    "chaptera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_kind",
+        "node_id",
+        "scene_instance_id",
+        "admission",
+        "base_revision_id",
+        "result_revision_id",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "operation_kind": { "const": "MoveNode" },
+        "node_id": { "type": "string", "minLength": 1 },
+        "scene_instance_id": { "type": "string", "minLength": 1 },
+        "admission": { "const": "direct_page_local" },
+        "base_revision_id": { "type": "string", "minLength": 1 },
+        "result_revision_id": { "type": "string", "minLength": 1 },
+        "before": { "$ref": "#/$defs/rect_emu" },
+        "after": { "$ref": "#/$defs/rect_emu" }
+      }
+    },
+    "native_experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publisher_version",
+        "publisher_build",
+        "shape_identity",
+        "axis",
+        "emu_per_point",
+        "tolerance_emu",
+        "control",
+        "mutation"
+      ],
+      "properties": {
+        "publisher_version": { "type": "string", "minLength": 1 },
+        "publisher_build": { "type": "string", "minLength": 1 },
+        "shape_identity": { "type": "string", "minLength": 1 },
+        "axis": { "enum": ["x", "y"] },
+        "emu_per_point": { "const": 12700 },
+        "tolerance_emu": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "control": { "$ref": "#/$defs/native_arm" },
+        "mutation": { "$ref": "#/$defs/native_arm" }
+      }
+    },
+    "blast_radius": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_sha256",
+        "schema_version",
+        "source_sha256",
+        "control_sha256",
+        "mutation_sha256"
+      ],
+      "properties": {
+        "receipt_sha256": { "$ref": "#/$defs/sha256" },
+        "schema_version": { "const": "chaptera.operation-blast-radius.v1" },
+        "source_sha256": { "$ref": "#/$defs/sha256" },
+        "control_sha256": { "$ref": "#/$defs/sha256" },
+        "mutation_sha256": { "$ref": "#/$defs/sha256" },
+        "second_save_sha256": {
+          "oneOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exactly_one_durable_movenode",
+        "native_pub_writer_capability_granted"
+      ],
+      "properties": {
+        "exactly_one_durable_movenode": { "const": true },
+        "native_pub_writer_capability_granted": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rect_emu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "geometry_points": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "width", "height"],
+      "properties": {
+        "left": { "type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$" },
+        "top": { "type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$" },
+        "width": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+        "height": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }
+      }
+    },
+    "native_arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_source_sha256",
+        "first_save_sha256",
+        "second_save_sha256",
+        "before",
+        "after",
+        "parser_accepted",
+        "publisher_reopen_accepted"
+      ],
+      "properties": {
+        "baseline_source_sha256": { "$ref": "#/$defs/sha256" },
+        "first_save_sha256": { "$ref": "#/$defs/sha256" },
+        "second_save_sha256": {
+          "oneOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "before": { "$ref": "#/$defs/geometry_points" },
+        "after": { "$ref": "#/$defs/geometry_points" },
+        "parser_accepted": { "type": "boolean" },
+        "publisher_reopen_accepted": { "type": "boolean" }
+      }
+    }
+  }
+}
