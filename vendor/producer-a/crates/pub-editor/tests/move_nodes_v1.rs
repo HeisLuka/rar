@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
-    EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorError,
+    EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorError,
     EditorProject, EditorProjectError, EditorSession, LengthEmu, MoveNodeBatchEntry, RectEmu,
 };
 use pub_model::{
@@ -280,6 +280,7 @@ fn duplicate_resize_and_wrong_page_fail_closed() {
         let project = EditorProject {
             schema_version: EDITOR_PROJECT_VERSION_V0_8.to_owned(),
             source_hash: source_hash(),
+            identity: None,
             assets: Vec::new(),
             table_grids: Vec::new(),
             operations: vec![EditOperation::MoveNodes { page_id, entries }],
