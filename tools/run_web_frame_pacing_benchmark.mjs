@@ -10,15 +10,14 @@ const browser = await browserType.launch({ headless: true });
 try {
   const page = await browser.newPage();
   const result = await page.evaluate(async () => {
-    function runStorm({ eventCount, dirtyClass }) {
+    function runStorm({ eventCount, dirtyClass, profile }) {
       return new Promise((resolve) => {
         let callbacksScheduled = 0;
         let callbacksRun = 0;
         let coalesced = 0;
         let pending = false;
         let latest = 0;
-        let firstEventAt = performance.now();
-        let visibleAt = null;
+        const firstEventAt = performance.now();
 
         const invalidate = (generation) => {
           latest = generation;
@@ -31,15 +30,15 @@ try {
           requestAnimationFrame(() => {
             pending = false;
             callbacksRun += 1;
-            visibleAt = performance.now();
             resolve({
+              profile,
               dirty_class: dirtyClass,
               event_count: eventCount,
               callbacks_scheduled: callbacksScheduled,
               callbacks_run: callbacksRun,
               coalesced_events: coalesced,
               latest_generation_painted: latest,
-              event_to_visible_ms: visibleAt - firstEventAt,
+              event_to_visible_ms: performance.now() - firstEventAt,
             });
           });
         };
@@ -48,9 +47,10 @@ try {
       });
     }
 
-    const view = await runStorm({ eventCount: 1000, dirtyClass: "view" });
-    const resource = await runStorm({ eventCount: 300, dirtyClass: "resource" });
-    const surface = await runStorm({ eventCount: 100, dirtyClass: "surface" });
+    const pointer = await runStorm({ eventCount: 1000, dirtyClass: "overlay", profile: "pointer_overlay" });
+    const wheel = await runStorm({ eventCount: 500, dirtyClass: "view", profile: "wheel_zoom_view" });
+    const resource = await runStorm({ eventCount: 300, dirtyClass: "resource", profile: "resource_ready" });
+    const surface = await runStorm({ eventCount: 100, dirtyClass: "surface", profile: "resize_dpr_surface" });
 
     let hiddenLatest = 0;
     let hiddenCallbacks = 0;
@@ -63,7 +63,7 @@ try {
     return {
       raf_available: typeof requestAnimationFrame === "function",
       device_pixel_ratio: devicePixelRatio,
-      storms: [view, resource, surface],
+      storms: [pointer, wheel, resource, surface],
       hidden_resume_proxy: {
         missed_visual_events: 500,
         callbacks_after_resume: hiddenCallbacks,
