@@ -400,3 +400,274 @@ pub fn unix_now_ms() -> Result<i64, JobsRuntimeError> {
     i64::try_from(elapsed.as_millis())
         .map_err(|_| JobsRuntimeError::new("clock_overflow", "system clock does not fit i64 milliseconds"))
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use crate::{
+        authz_runtime::DocumentRole,
+        export_publication::{ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1},
+        job_queue::{JobKind, JobStatus},
+        schema_migration::SqliteMigrationRuntime,
+    };
+
+    use super::*;
+
+    static NEXT_DB: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_db(label: &str) -> PathBuf {
+        let serial = NEXT_DB.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "chaptera-jobs-runtime-{label}-{}-{serial}.sqlite",
+            std::process::id()
+        ))
+    }
+
+    fn cleanup(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
+    }
+
+    async fn runtime(label: &str) -> (JobsRuntime, PathBuf) {
+        let path = temp_db(label);
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+        let runtime = JobsRuntime::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        runtime
+            .authz
+            .set_role(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                DocumentRole::Editor,
+                None,
+                "grant:initial",
+                1,
+            )
+            .await
+            .unwrap();
+        (runtime, path)
+    }
+
+    fn create_request(client: &str) -> CreateExportJobRequestV1 {
+        CreateExportJobRequestV1 {
+            tenant_id: "tenant:1".into(),
+            document_id: "doc:1".into(),
+            principal_id: "principal:1".into(),
+            exact_revision_id: format!("sha256:{}", "a".repeat(64)),
+            canonical_authoring_revision_id: "b".repeat(64),
+            target_profile: crate::export_executor::IDML_BOUNDED_EDITABLE_PROFILE.into(),
+            layout_environment_id: format!("sha256:{}", "c".repeat(64)),
+            client_request_id: client.into(),
+            operation_id: format!("create:{client}"),
+            now_ms: 10,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_is_idempotent_and_changed_retry_conflicts() {
+        let (runtime, path) = runtime("idempotency").await;
+        let request = create_request("client:one");
+        let first = runtime.create_export(request.clone()).await.unwrap();
+        let retry = runtime.create_export(request.clone()).await.unwrap();
+        assert_eq!(first, retry);
+        assert_eq!(first.status, "queued");
+
+        let mut changed = request;
+        changed.exact_revision_id = format!("sha256:{}", "d".repeat(64));
+        changed.operation_id = "create:changed".into();
+        let error = runtime.create_export(changed).await.unwrap_err();
+        assert_eq!(error.code, "idempotency_conflict");
+
+        runtime.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn restart_reopens_same_durable_job_without_payload_leakage() {
+        let (runtime, path) = runtime("restart").await;
+        let created = runtime.create_export(create_request("client:restart")).await.unwrap();
+        runtime.close().await;
+
+        let reopened = JobsRuntime::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let snapshot = reopened
+            .status(
+                "tenant:1",
+                "principal:1",
+                &created.job_id,
+                "status:restart",
+                20,
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot, created);
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(!json.contains("requesting_principal_id"));
+        assert!(!json.contains("payload"));
+
+        reopened.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn status_and_cancel_are_tenant_scoped_and_reauthorize_current_grant() {
+        let (runtime, path) = runtime("cancel").await;
+        let created = runtime.create_export(create_request("client:cancel")).await.unwrap();
+
+        let wrong_tenant = runtime
+            .status(
+                "tenant:other",
+                "principal:1",
+                &created.job_id,
+                "status:wrong-tenant",
+                20,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(wrong_tenant.code, "job_scope_mismatch");
+
+        let cancelled = runtime
+            .request_cancel(
+                "tenant:1",
+                "principal:1",
+                &created.job_id,
+                "cancel:one",
+                21,
+            )
+            .await
+            .unwrap();
+        assert!(cancelled.cancel_requested);
+        assert_eq!(cancelled.status, "queued");
+
+        runtime
+            .authz
+            .revoke(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                "revoke:one",
+                22,
+            )
+            .await
+            .unwrap();
+        let denied = runtime
+            .status(
+                "tenant:1",
+                "principal:1",
+                &created.job_id,
+                "status:revoked",
+                23,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "grant_missing");
+
+        runtime.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn download_requires_visible_publication_effect_and_current_authz() {
+        let (runtime, path) = runtime("download").await;
+        let created = runtime.create_export(create_request("client:download")).await.unwrap();
+
+        let lease = runtime
+            .queue
+            .claim_one("worker:test", 20, 10_000, &[JobKind::Export])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.job.status, JobStatus::Running);
+
+        let input = ExportPublicationInputV1 {
+            tenant_id: "tenant:1".into(),
+            job_id: created.job_id.clone(),
+            document_id: "doc:1".into(),
+            exact_revision_id: format!("sha256:{}", "a".repeat(64)),
+            canonical_revision_id: "b".repeat(64),
+            target_profile: crate::export_executor::IDML_BOUNDED_EDITABLE_PROFILE.into(),
+            layout_environment_id: format!("sha256:{}", "c".repeat(64)),
+            fence_id: format!("sha256:{}", "d".repeat(64)),
+            artifact_binding_id: "binding:artifact".into(),
+            artifact_content_hash: format!("sha256:{}", "e".repeat(64)),
+            loss_binding_id: "binding:loss".into(),
+            loss_report_hash: format!("sha256:{}", "f".repeat(64)),
+        };
+        let prepared = runtime.publications.prepare(input, 21).await.unwrap();
+        let record = match prepared {
+            ExportPublicationPrepareOutcomeV1::Prepared(record)
+            | ExportPublicationPrepareOutcomeV1::AlreadyPrepared(record) => record,
+        };
+
+        let before_effect = runtime
+            .authorize_download(
+                "tenant:1",
+                "principal:1",
+                &created.job_id,
+                "download:before-effect",
+                22,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(before_effect.code, "export_artifact_not_ready");
+
+        runtime
+            .queue
+            .publish_success(&lease, 23, &record.effect_key)
+            .await
+            .unwrap();
+
+        let download = runtime
+            .authorize_download(
+                "tenant:1",
+                "principal:1",
+                &created.job_id,
+                "download:visible",
+                24,
+            )
+            .await
+            .unwrap();
+        assert_eq!(download.artifact_binding_id, "binding:artifact");
+        assert_eq!(download.loss_binding_id, "binding:loss");
+
+        runtime
+            .authz
+            .revoke(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                "revoke:download",
+                25,
+            )
+            .await
+            .unwrap();
+        let revoked = runtime
+            .authorize_download(
+                "tenant:1",
+                "principal:1",
+                &created.job_id,
+                "download:revoked",
+                26,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(revoked.code, "grant_missing");
+
+        runtime.close().await;
+        cleanup(&path);
+    }
+}
