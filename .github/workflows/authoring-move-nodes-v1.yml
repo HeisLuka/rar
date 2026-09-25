@@ -6,6 +6,7 @@ on:
       - "services/editor-api/revision_store.py"
       - "services/editor-api/test_move_nodes.py"
       - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/src/writer_assessment.rs"
       - "vendor/producer-a/crates/pub-editor/tests/move_nodes_v1.rs"
       - "vendor/producer-a/crates/pub-editor/tests/resize_node_v1.rs"
       - ".github/workflows/authoring-move-nodes-v1.yml"
