@@ -1,37 +1,39 @@
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::{env, fs};
+use std::env;
 
 const PROTOCOL_VERSION: &str = "chaptera.desktop-source-free-smoke.v1";
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(64);
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut encoded, "{byte:02x}").expect("writing lowercase hex into String cannot fail");
+fn bound_binary_identity() -> Result<(String, u64), String> {
+    let sha256 = env::var("CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256")
+        .map_err(|_| "CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 is required".to_owned())?
+        .to_ascii_lowercase();
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("product smoke binary SHA-256 must be 64 hexadecimal characters".to_owned());
     }
-    encoded
+
+    let byte_len = env::var("CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN")
+        .map_err(|_| "CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN is required".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "product smoke binary byte length must be an unsigned integer".to_owned())?;
+    if byte_len == 0 {
+        return Err("product smoke binary byte length must be non-zero".to_owned());
+    }
+
+    Ok((sha256, byte_len))
 }
 
 pub fn run() -> Result<Value, String> {
-    let executable = env::current_exe()
-        .map_err(|error| format!("resolve current executable: {error}"))?;
-    let bytes = fs::read(&executable)
-        .map_err(|error| format!("read current executable: {error}"))?;
-    if bytes.len() < 2 || &bytes[..2] != b"MZ" {
-        return Err("current executable is not a Windows PE image".to_owned());
-    }
-
+    let (binary_sha256, binary_byte_len) = bound_binary_identity()?;
     let reader_only = cfg!(feature = "reader-only");
+
     Ok(json!({
         "protocol_version": PROTOCOL_VERSION,
         "product": if reader_only { "Chaptera PUB Reader" } else { "Chaptera Editor" },
         "reader_only": reader_only,
         "editor_controls_enabled": !reader_only,
         "native_save_pub_claimed": false,
-        "binary_sha256": sha256_hex(&bytes),
-        "binary_byte_len": bytes.len(),
+        "binary_sha256": binary_sha256,
+        "binary_byte_len": binary_byte_len,
         "runtime": {
             "checkout_required": false,
             "cargo_required": false,
@@ -39,4 +41,14 @@ pub fn run() -> Result<Value, String> {
             "external_runtime_assets_required": false
         }
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protocol_is_stable() {
+        assert_eq!(PROTOCOL_VERSION, "chaptera.desktop-source-free-smoke.v1");
+    }
 }
