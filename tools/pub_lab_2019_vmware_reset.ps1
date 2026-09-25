@@ -14,11 +14,12 @@ param(
 
     [string]$ExpectedEnvironmentFingerprint,
 
-    [string]$ReceiptOutput
+    [string]$EvidenceOutput
 )
 
 $ErrorActionPreference = "Stop"
 
+$BaselineId = "publisher-2019-build12527-golden-v1"
 $VmRun = "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
 $VmwareVmx = "C:\Program Files\VMware\VMware Workstation\x64\vmware-vmx.exe"
 $VdiskManager = "C:\Program Files\VMware\VMware Workstation\vmware-vdiskmanager.exe"
@@ -32,6 +33,16 @@ function Require-File([string]$Path, [string]$Label) {
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-TextSha256([string]$Text) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 function Assert-Sha256([string]$Value, [string]$Label) {
@@ -98,14 +109,25 @@ if ($Mode -eq "begin-revert") {
     if ($LASTEXITCODE -ne 0) {
         throw "vmrun list failed before restore"
     }
-    if ($running -contains $VmxPath) {
+    $wasRunning = $running -contains $VmxPath
+
+    $preState = [ordered]@{
+        vmx_sha256 = $vmxHash
+        was_running = [bool]$wasRunning
+        snapshot_name = $SnapshotName
+        snapshot_present = $true
+        vmware = $toolHashes
+    }
+    $preStateHash = Get-TextSha256 ($preState | ConvertTo-Json -Depth 6 -Compress)
+
+    if ($wasRunning) {
         Invoke-VmRun @("-T", "ws", "stop", $VmxPath, "hard")
     }
 
+    $requestedAt = [DateTimeOffset]::UtcNow
     Invoke-VmRun @("-T", "ws", "revertToSnapshot", $VmxPath, $SnapshotName)
 
     $nonce = [guid]::NewGuid().ToString("N")
-    $requestedAt = [DateTimeOffset]::UtcNow
     $challenge = [ordered]@{
         schema_version = "chaptera.pub-lab-2019-restore-challenge.v1"
         vm_name = "PUB-LAB-2019"
@@ -115,6 +137,7 @@ if ($Mode -eq "begin-revert") {
         restore_requested_at_utc = $requestedAt.ToString("o")
         cold_start_succeeded_at_utc = $null
         expected_environment_fingerprint = $expectedFingerprint
+        pre_restore_state_sha256 = $preStateHash
         vmware = $toolHashes
     }
 
@@ -136,8 +159,8 @@ if ($Mode -eq "begin-revert") {
 if (-not $EnvironmentManifest) {
     throw "finalize-revert requires -EnvironmentManifest"
 }
-if (-not $ReceiptOutput) {
-    throw "finalize-revert requires -ReceiptOutput"
+if (-not $EvidenceOutput) {
+    throw "finalize-revert requires -EvidenceOutput"
 }
 
 $challengePath = Require-File $challengePath "restore challenge"
@@ -162,6 +185,7 @@ if ($challenge.vmware.vmrun_sha256 -ne $toolHashes.vmrun_sha256 -or
     $challenge.vmware.vdiskmanager_sha256 -ne $toolHashes.vdiskmanager_sha256) {
     throw "restore challenge VMware tool identity mismatch"
 }
+Assert-Sha256 ([string]$challenge.pre_restore_state_sha256) "restore challenge pre_restore_state_sha256"
 
 $expectedFingerprint = ([string]$challenge.expected_environment_fingerprint).ToLowerInvariant()
 Assert-Sha256 $expectedFingerprint "restore challenge expected environment fingerprint"
@@ -190,9 +214,11 @@ if ($captured -lt $started) {
 
 $manifestHash = Get-Sha256 $manifestPath
 $challengeHash = Get-Sha256 $challengePath
+$completedAt = [DateTimeOffset]::UtcNow
 
-$receipt = [ordered]@{
-    schema_version = "chaptera.pub-lab-2019-reset-receipt.v1"
+$evidence = [ordered]@{
+    schema_version = "chaptera.pub-lab-2019-vmware-evidence.v1"
+    baseline_id = $BaselineId
     vm_identity = [ordered]@{
         name = "PUB-LAB-2019"
         config_fingerprint = $vmxHash
@@ -207,6 +233,10 @@ $receipt = [ordered]@{
     vmware = $toolHashes
     restore = [ordered]@{
         challenge_sha256 = $challengeHash
+        started_at_utc = [string]$challenge.restore_requested_at_utc
+        completed_at_utc = $completedAt.ToString("o")
+        pre_restore_state_sha256 = [string]$challenge.pre_restore_state_sha256
+        post_restore_state_sha256 = $manifestHash
         revert_succeeded = $true
         cold_start_succeeded = $true
         post_boot_capture_bound = $true
@@ -221,11 +251,11 @@ $receipt = [ordered]@{
     }
 }
 
-$out = [IO.Path]::GetFullPath($ReceiptOutput)
+$out = [IO.Path]::GetFullPath($EvidenceOutput)
 $outParent = Split-Path -Parent $out
 if ($outParent) {
     New-Item -ItemType Directory -Force -Path $outParent | Out-Null
 }
-$receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $out -Encoding utf8
+$evidence | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $out -Encoding utf8
 
-Write-Host "Verified VMware restore receipt written: $out"
+Write-Host "Verified VMware backend evidence written: $out"
