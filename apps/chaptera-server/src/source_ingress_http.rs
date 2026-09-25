@@ -779,3 +779,74 @@ fn map_baseline_error(error: SourceBaselineError) -> SourceIngressHttpError {
         _ => SourceIngressHttpError::internal(error.code),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limit_response_exposes_only_authoritative_retry_after() {
+        let response = SourceIngressHttpError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "upload_principal_capacity",
+            retry_after_seconds: Some(7),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+            Some("7")
+        );
+    }
+
+    #[test]
+    fn upload_status_json_does_not_expose_storage_or_authority_identity() {
+        let upload = UploadRecord {
+            upload_id: "upload:test".to_owned(),
+            tenant_id: "tenant-secret".to_owned(),
+            principal_id: "principal-secret".to_owned(),
+            purpose: UploadPurpose::PubSource,
+            expected_byte_len: 123,
+            declared_content_type: Some("application/octet-stream".to_owned()),
+            physical_upload_ref: "quarantine/tenant-secret/upload:test".to_owned(),
+            state: UploadState::ValidatedDurable,
+            upload_generation: 3,
+            object_version: Some("provider-generation".to_owned()),
+            object_etag: Some("provider-etag".to_owned()),
+            observed_byte_len: Some(123),
+            canonical_sha256: Some("a".repeat(64)),
+            durable_binding_id: Some("binding-secret".to_owned()),
+            created_at_ms: 1,
+            expires_at_ms: 10,
+            completed_at_ms: Some(2),
+            terminal_code: None,
+            idempotency_key: "client-secret".to_owned(),
+            request_hash: "b".repeat(64),
+        };
+
+        let encoded = serde_json::to_value(UploadStatusResponse::from(&upload)).unwrap();
+        let object = encoded.as_object().unwrap();
+        for forbidden in [
+            "tenant_id",
+            "principal_id",
+            "declared_content_type",
+            "physical_upload_ref",
+            "object_version",
+            "object_etag",
+            "canonical_sha256",
+            "durable_binding_id",
+            "created_at_ms",
+            "completed_at_ms",
+            "idempotency_key",
+            "request_hash",
+        ] {
+            assert!(!object.contains_key(forbidden), "leaked {forbidden}");
+        }
+        assert_eq!(object["upload_id"], "upload:test");
+        assert_eq!(object["upload_generation"], 3);
+    }
+}
