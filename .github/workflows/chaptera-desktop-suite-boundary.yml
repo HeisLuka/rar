@@ -7,6 +7,7 @@ on:
       - "tools/validate_chaptera_desktop_suite_manifest.py"
       - "tools/test_chaptera_desktop_suite_manifest.py"
       - "apps/chaptera-desktop/Cargo.toml"
+      - ".github/workflows/chaptera-desktop-windows.yml"
       - ".github/workflows/chaptera-desktop-suite-boundary.yml"
   workflow_dispatch:
 
@@ -26,4 +27,5 @@ jobs:
           python -m unittest tools/test_chaptera_desktop_suite_manifest.py -v
           python tools/validate_chaptera_desktop_suite_manifest.py \
             packages/product/desktop-suite/v1/product-manifest.json \
-            --editor-cargo apps/chaptera-desktop/Cargo.toml
+            --editor-cargo apps/chaptera-desktop/Cargo.toml \
+            --editor-workflow .github/workflows/chaptera-desktop-windows.yml

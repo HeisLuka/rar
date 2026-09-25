@@ -85,16 +85,32 @@ def validate_editor_cargo(path: pathlib.Path, manifest: dict[str, Any]) -> None:
     _require(names == [expected_bin], f"Editor Cargo bin must be exactly {expected_bin!r}; got {names!r}")
 
 
+def validate_editor_workflow(path: pathlib.Path) -> None:
+    workflow = path.read_text(encoding="utf-8")
+    _require(
+        "Chaptera-Editor.exe" in workflow,
+        "Editor Windows workflow must package Chaptera-Editor.exe",
+    )
+    _require(
+        "Chaptera.exe" not in workflow,
+        "Editor Windows workflow must not ship the generic Chaptera.exe entry",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", type=pathlib.Path)
     parser.add_argument("--editor-cargo", type=pathlib.Path)
+    parser.add_argument("--editor-workflow", type=pathlib.Path)
     args = parser.parse_args()
     value = json.loads(args.manifest.read_text(encoding="utf-8"))
     summary = validate_manifest(value)
     if args.editor_cargo is not None:
         validate_editor_cargo(args.editor_cargo, value)
         summary["editor_cargo_bound"] = True
+    if args.editor_workflow is not None:
+        validate_editor_workflow(args.editor_workflow)
+        summary["editor_workflow_bound"] = True
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

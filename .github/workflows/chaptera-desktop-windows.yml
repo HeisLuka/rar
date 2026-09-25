@@ -106,12 +106,12 @@ jobs:
       - name: Build portable Chaptera Editor ZIP
         shell: pwsh
         run: |
-          python tools/package_editor_live_trial.py --editor-exe target/release/chaptera-editor.exe --output-zip target/release/Chaptera-Editor-Windows-x86_64.zip --binary-entry Chaptera.exe --manifest target/release/Chaptera-Editor.package.json
+          python tools/package_editor_live_trial.py --editor-exe target/release/chaptera-editor.exe --output-zip target/release/Chaptera-Editor-Windows-x86_64.zip --binary-entry Chaptera-Editor.exe --manifest target/release/Chaptera-Editor.package.json
 
       - name: Run real packaged-product smoke and receipt
         shell: pwsh
         run: |
-          python tools/build_editor_live_trial_package_receipt.py --zip target/release/Chaptera-Editor-Windows-x86_64.zip --binary-entry Chaptera.exe --chaptera-version "0.1.0-ci${{ github.run_number }}" --fixture-kind real_pub_sanitized --output target/release/editor-live-trial-package.real.json -- python tools/run_editor_live_trial_package_smoke.py --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --rar-commit "${{ github.sha }}"
+          python tools/build_editor_live_trial_package_receipt.py --zip target/release/Chaptera-Editor-Windows-x86_64.zip --binary-entry Chaptera-Editor.exe --chaptera-version "0.1.0-ci${{ github.run_number }}" --fixture-kind real_pub_sanitized --output target/release/editor-live-trial-package.real.json -- python tools/run_editor_live_trial_package_smoke.py --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --rar-commit "${{ github.sha }}"
           python tools/validate_editor_live_trial_package_receipt.py target/release/editor-live-trial-package.real.json
 
       - name: Run real agent-control protocol
@@ -157,8 +157,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $clean | Out-Null
           Expand-Archive -Path $zip -DestinationPath $clean
 
-          $exe = Join-Path $clean "Chaptera.exe"
-          if (-not (Test-Path $exe)) { throw "portable ZIP did not contain Chaptera.exe" }
+          $exe = Join-Path $clean "Chaptera-Editor.exe"
+          if (-not (Test-Path $exe)) { throw "portable ZIP did not contain Chaptera-Editor.exe" }
           if (Test-Path (Join-Path $clean "Cargo.toml")) { throw "portable ZIP leaked a Cargo checkout" }
 
           $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
