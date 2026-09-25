@@ -8,6 +8,10 @@ on:
       - ".github/workflows/editor-project-fork.yml"
   workflow_dispatch:
 
+concurrency:
+  group: editor-project-fork-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
