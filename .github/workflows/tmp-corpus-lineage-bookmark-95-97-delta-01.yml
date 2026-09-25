@@ -394,7 +394,8 @@ jobs:
               "data_len":len(data),"data_sha256":sha(data),
               "prefix_hex":raw[:min(48,len(raw))].hex(),
               "suffix_hex":raw[max(0,len(raw)-48):].hex(),
-              "list_header_fixed_at_data":bounded_list_header(raw,data_off) if valid_off else None,\n              "list_header_position_at_data":position_list_header(raw,data_off) if valid_off else None
+              "list_header_fixed_at_data":bounded_list_header(raw,data_off) if valid_off else None,
+              "list_header_position_at_data":position_list_header(raw,data_off) if valid_off else None
             }
           opaque3_ids=[276,277,284]
           opaque3=[]
