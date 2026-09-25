@@ -278,6 +278,7 @@ fn main() -> eframe::Result<()> {
                 .with_max_inner_size([width, height])
                 .with_resizable(false)
                 .with_drag_and_drop(false),
+            renderer: eframe::Renderer::Wgpu,
             ..Default::default()
         };
         let error_output = output.with_extension("error.txt");
