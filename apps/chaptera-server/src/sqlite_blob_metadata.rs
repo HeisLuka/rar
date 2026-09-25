@@ -5,7 +5,7 @@ use std::{
 };
 
 use sqlx::{
-    Row, Sqlite, SqlitePool, Transaction,
+    Connection, Row, Sqlite, SqlitePool, Transaction,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
@@ -266,7 +266,11 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
         binding: ResourceBinding,
     ) -> Result<ResourceBinding, BlobStoreError> {
         require_binding_matches_physical(&binding, &physical)?;
-        let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
+        let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
+        let mut tx = (&mut *connection)
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlite_error)?;
 
         let existing_physical = fetch_physical_tx(&mut tx, &physical.physical_blob_id).await?;
         match existing_physical {
@@ -305,7 +309,11 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
         &self,
         binding: ResourceBinding,
     ) -> Result<ResourceBinding, BlobStoreError> {
-        let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
+        let mut connection = self.pool.acquire().await.map_err(sqlite_error)?;
+        let mut tx = (&mut *connection)
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlite_error)?;
 
         let physical = fetch_physical_tx(&mut tx, &binding.physical_blob_id)
             .await?
