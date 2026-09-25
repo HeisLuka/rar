@@ -422,8 +422,12 @@ fn prepare_job_directory(job: &Job, source: &Path) -> Result<PathBuf, String> {
 
     let canonical_source = fs::canonicalize(source)
         .map_err(|error| format!("canonicalize source {}: {error}", source.display()))?;
-    let canonical_directory = fs::canonicalize(&directory)
-        .map_err(|error| format!("canonicalize job directory {}: {error}", directory.display()))?;
+    let canonical_directory = fs::canonicalize(&directory).map_err(|error| {
+        format!(
+            "canonicalize job directory {}: {error}",
+            directory.display()
+        )
+    })?;
     if canonical_source.starts_with(&canonical_directory) {
         return Err("source must not live inside the executor output directory".to_owned());
     }
@@ -432,7 +436,8 @@ fn prepare_job_directory(job: &Job, source: &Path) -> Result<PathBuf, String> {
 
 fn directory_usage(root: &Path) -> Result<(u64, u64), String> {
     fn visit(path: &Path, bytes: &mut u64, count: &mut u64) -> Result<(), String> {
-        for entry in fs::read_dir(path).map_err(|error| format!("read {}: {error}", path.display()))?
+        for entry in
+            fs::read_dir(path).map_err(|error| format!("read {}: {error}", path.display()))?
         {
             let entry = entry.map_err(|error| format!("read directory entry: {error}"))?;
             let child = entry.path();
@@ -482,7 +487,9 @@ fn validate_minimal_producer_receipt(path: &Path, source_sha: &str) -> Result<()
         "/source_immutability/after_sha256",
     ] {
         if value.pointer(pointer).and_then(Value::as_str) != Some(source_sha) {
-            return Err("producer receipt source immutability hashes do not match the job".to_owned());
+            return Err(
+                "producer receipt source immutability hashes do not match the job".to_owned(),
+            );
         }
     }
     if value
@@ -501,7 +508,9 @@ fn validate_minimal_producer_receipt(path: &Path, source_sha: &str) -> Result<()
             .and_then(Value::as_u64)
             != Some(0)
     {
-        return Err("producer receipt must keep fabricated_bytes and silent_drops at zero".to_owned());
+        return Err(
+            "producer receipt must keep fabricated_bytes and silent_drops at zero".to_owned(),
+        );
     }
     for pointer in [
         "/privacy/raw_pub_bytes",
@@ -533,7 +542,9 @@ fn external_executor(job: &Job, source_sha: &str, config: &LaunchConfig) -> Resu
         "executor",
         "running",
         None,
-        Some("Launching the configured authorized recovery executor under the inherited worker fence."),
+        Some(
+            "Launching the configured authorized recovery executor under the inherited worker fence.",
+        ),
     )?;
 
     let status = Command::new(&config.program)
