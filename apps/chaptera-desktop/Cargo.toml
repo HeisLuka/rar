@@ -30,4 +30,4 @@ sha2.workspace = true
 rfd = { version = "=0.17.2", default-features = false }
 
 [dev-dependencies]
-egui_kittest = { version = "=0.31.1", features = ["eframe"] }
+egui_kittest = { version = "=0.31.1", features = ["eframe", "wgpu"] }
