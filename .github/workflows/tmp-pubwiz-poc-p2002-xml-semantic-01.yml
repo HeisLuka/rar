@@ -62,7 +62,26 @@ jobs:
           PY
           curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -o /tmp/xw/o12media/office12.img "$(cat /tmp/xw/o12url)"
           test "$(sha256sum /tmp/xw/o12media/office12.img | awk '{print $1}')" = '8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3'
-          7z x -y /tmp/xw/o12media/office12.img -o/tmp/xw/o12disc -r '*ProPlusWW.msi' '*ProPlsWW.CAB' >/dev/null
+          ACTUAL_SHA="$(sha256sum /tmp/xw/o12media/office12.img | awk '{print $1}')"
+          echo "office12_sha256=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = '8123988014dffb754877f74cdce9f579d2f512ac0cdda5575590cbb7e66433d3'
+          7z l -slt /tmp/xw/o12media/office12.img > /tmp/xw/o12.slt
+          python - <<'PY'
+          import pathlib,json
+          paths=[]
+          for line in pathlib.Path("/tmp/xw/o12.slt").read_text(errors="replace").splitlines():
+              if line.startswith("Path = "): paths.append(line.split(" = ",1)[1])
+          def one(base):
+              hits=[p for p in paths if pathlib.PurePosixPath(p.replace("\\","/")).name.upper()==base.upper()]
+              if len(hits)!=1: raise SystemExit(f"{base}: expected one ISO member, got {hits}")
+              return hits[0]
+          found={"msi":one("ProPlusWW.msi"),"cab":one("ProPlsWW.CAB")}
+          pathlib.Path("/tmp/xw/o12-members.json").write_text(json.dumps(found))
+          pathlib.Path("/tmp/xw/o12-msi-member").write_text(found["msi"])
+          pathlib.Path("/tmp/xw/o12-cab-member").write_text(found["cab"])
+          print(json.dumps(found))
+          PY
+          7z x -y /tmp/xw/o12media/office12.img -o/tmp/xw/o12disc "$(cat /tmp/xw/o12-msi-member)" "$(cat /tmp/xw/o12-cab-member)" >/dev/null
           MSI="$(find /tmp/xw/o12disc -type f -iname 'ProPlusWW.msi' | head -n1)"
           CAB="$(find /tmp/xw/o12disc -type f -iname 'ProPlsWW.CAB' | head -n1)"
           test -n "$MSI"; test -n "$CAB"
@@ -145,7 +164,7 @@ jobs:
 
           def u16(b,o): return int.from_bytes(b[o:o+2],"little")
           def u32(b,o): return int.from_bytes(b[o:o+4],"little")
-          FIXED={1:0,4:4,7:16,30:0}
+          FIXED={1:0,4:4,7:16}
           LEN_TYPES={16,17,19,24}
           def parse_payload(p):
               pos=0; props=[]; stop=None
@@ -269,14 +288,14 @@ jobs:
               v["poc"].get("outer_framing") is True and v["poc"].get("residual_blocks")==0
               for v in results.values()
           )
-          if not coverage_complete:
-              verdict="inconclusive_residual_coverage"
-          elif common_opys:
+          if common_opys:
               verdict="common_rule_candidate"
           elif families_with_hits==2:
               verdict="two_family_family_specific_candidates"
           elif families_with_hits==1:
               verdict="single_family_candidate_only"
+          elif not coverage_complete:
+              verdict="inconclusive_residual_coverage"
           else:
               verdict="no_exact_consecutive_scalar_stream_candidate"
           report={
