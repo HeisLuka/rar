@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/pub-lab-2019-restore-challenge.v1.json",
+  "title": "Chaptera Publisher 2019 restore challenge v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "vm_name",
+    "snapshot_name",
+    "vmx_sha256",
+    "restore_nonce",
+    "restore_requested_at_utc",
+    "cold_start_succeeded_at_utc",
+    "expected_environment_fingerprint",
+    "vmware"
+  ],
+  "properties": {
+    "schema_version": {"const": "chaptera.pub-lab-2019-restore-challenge.v1"},
+    "vm_name": {"const": "PUB-LAB-2019"},
+    "snapshot_name": {"const": "MODERN-2019-12527-GOLDEN-v1"},
+    "vmx_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "restore_nonce": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "restore_requested_at_utc": {"type": "string", "format": "date-time"},
+    "cold_start_succeeded_at_utc": {"type": "string", "format": "date-time"},
+    "expected_environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vmware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vmrun_sha256", "vmware_vmx_sha256", "vdiskmanager_sha256"],
+      "properties": {
+        "vmrun_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "vmware_vmx_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "vdiskmanager_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
