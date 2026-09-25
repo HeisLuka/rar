@@ -32,6 +32,7 @@ pub mod serve;
 pub mod shutdown;
 pub mod source_authority;
 pub mod source_ingress;
+pub mod source_ingress_sqlite;
 pub mod sqlite_blob_metadata;
 pub mod sqlite_store;
 pub mod state;
