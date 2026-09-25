@@ -14,6 +14,7 @@ on:
       - "tools/validate_editor_live_trial_package_receipt.py"
       - "tools/run_editor_live_trial_package_smoke.py"
       - "tools/validate_editor_desktop_ux_snapshots.py"
+      - "tools/smoke_resize_node_desktop_producer.py"
       - ".github/workflows/chaptera-desktop-windows.yml"
       - "packages/product/desktop-suite/**"
       - "tools/validate_chaptera_desktop_suite_manifest.py"
@@ -107,6 +108,12 @@ jobs:
             byte_len = $bytes
             source_commit = "${{ github.sha }}"
           } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-editor.desktop-build.json
+
+      - name: Smoke real ResizeNode producer bridge (non-authoritative)
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "target/release/chaptera-editor.exe").Path
+          python tools/smoke_resize_node_desktop_producer.py --producer "$exe" --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER"
 
       - name: Prove real paired ReplaceImage UI and editable export receipt
         shell: pwsh
