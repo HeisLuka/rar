@@ -16,6 +16,12 @@ EXPECTED_PRODUCTS = {
     "chaptera.migration": "chaptera-migration.exe",
 }
 GENERIC_LEGACY_BINARY = "chaptera.exe"
+EXPECTED_IMPLEMENTATION_STATE = {
+    "chaptera.reader": "current_rar_target",
+    "chaptera.rescue": "current_rar_target",
+    "chaptera.editor": "current_rar_target",
+    "chaptera.migration": "separate_target_pending",
+}
 
 
 def _require(condition: bool, message: str) -> None:
@@ -40,6 +46,7 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         executable = product.get("canonical_windows_executable")
         package = product.get("canonical_windows_package")
         capabilities = product.get("capability_surface")
+        implementation_state = product.get("implementation_state")
         _require(isinstance(executable, str), f"{product_id}: executable is required")
         _require(executable == executable.lower(), f"{product_id}: executable must be lowercase")
         _require(executable.startswith("chaptera-") and executable.endswith(".exe"), f"{product_id}: executable must be product-qualified")
@@ -51,6 +58,10 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         _require(isinstance(capabilities, list) and capabilities, f"{product_id}: capability_surface must be non-empty")
         _require(all(isinstance(item, str) and item for item in capabilities), f"{product_id}: invalid capability_surface")
         _require(len(capabilities) == len(set(capabilities)), f"{product_id}: duplicate capability_surface entries")
+        _require(
+            implementation_state in {"current_rar_target", "separate_target_pending"},
+            f"{product_id}: invalid implementation_state",
+        )
         executables.add(executable)
         packages.add(package)
         by_id[product_id] = product
@@ -58,6 +69,10 @@ def validate_manifest(value: Any) -> dict[str, Any]:
     _require(set(by_id) == set(EXPECTED_PRODUCTS), "manifest must contain exactly Reader, Rescue, Editor and Migration")
     for product_id, executable in EXPECTED_PRODUCTS.items():
         _require(by_id[product_id]["canonical_windows_executable"] == executable, f"{product_id}: unexpected canonical executable")
+        _require(
+            by_id[product_id]["implementation_state"] == EXPECTED_IMPLEMENTATION_STATE[product_id],
+            f"{product_id}: stale implementation_state",
+        )
 
     aliases = value.get("legacy_binary_aliases")
     _require(isinstance(aliases, list), "legacy_binary_aliases must be an array")
@@ -73,6 +88,10 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         "canonical_executables": sorted(executables),
         "canonical_packages": sorted(packages),
         "legacy_chaptera_exe_owner": "chaptera.editor",
+        "implementation_state": {
+            product_id: by_id[product_id]["implementation_state"]
+            for product_id in sorted(by_id)
+        },
     }
 
 
