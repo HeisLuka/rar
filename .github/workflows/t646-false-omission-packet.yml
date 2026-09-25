@@ -1,0 +1,45 @@
+name: T646 FALSE-OMISSION packet self-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/t646-false-omission-packet.yml'
+      - 'tools/false_omission_*.py'
+      - 'tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1'
+      - 'tools/windows/pub-runtime/adapters/Invoke-FalseOmission01Adapter.ps1'
+      - 'tools/windows/pub-runtime/FALSE-OMISSION-01.md'
+  push:
+    branches:
+      - research/false-omission-packet-restore-01
+    paths:
+      - '.github/workflows/t646-false-omission-packet.yml'
+      - 'tools/false_omission_*.py'
+      - 'tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1'
+      - 'tools/windows/pub-runtime/adapters/Invoke-FalseOmission01Adapter.ps1'
+      - 'tools/windows/pub-runtime/FALSE-OMISSION-01.md'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile bounded audit tools
+        run: |
+          python3 -m py_compile             tools/false_omission_packed.py             tools/false_omission_materialization_audit.py             tools/false_omission_com_escher_identity.py
+      - name: Run hosted-safe self-tests
+        run: |
+          python3 tools/false_omission_materialization_audit.py --self-test
+          python3 tools/false_omission_com_escher_identity.py --self-test
+      - name: Enforce exact fixture contract text
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'PUB_ORACLE_ID' tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1
+          grep -F 'FALSE_OMISSION_TARGET' tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1
+          grep -F 'AddShape($MsoShapeRectangle, 73, 91, 181, 103)' tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1
+          grep -F '$shape.Fill.Visible = $MsoFalse' tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1
+          grep -F '$shape.Line.Visible = $MsoFalse' tools/windows/pub-runtime/New-FalseOmissionShapeFixture.ps1
