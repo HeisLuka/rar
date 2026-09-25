@@ -678,11 +678,14 @@ impl BlobStoreService {
             .map_err(provider_error)
     }
 
+    /// Physical deletion is owned by the GC reachability + durable-fence
+    /// authority. This legacy entrypoint remains fail-closed for API
+    /// compatibility so no caller can bypass the final reachability barrier.
     pub async fn delete_physical_if_eligible(
         &self,
         tenant_id: &str,
         physical_blob_id: &str,
-        now_ms: u64,
+        _now_ms: u64,
     ) -> Result<PhysicalBlobRecord, BlobStoreError> {
         let physical = self
             .repo
@@ -698,31 +701,10 @@ impl BlobStoreService {
         if physical.deleted {
             return Ok(physical);
         }
-        let eligible = physical.delete_eligible_at_ms.ok_or_else(|| {
-            BlobStoreError::new(
-                "blob_not_delete_eligible",
-                "physical blob has no explicit delete eligibility fence",
-            )
-        })?;
-        if now_ms < eligible {
-            return Err(BlobStoreError::new(
-                "blob_not_delete_eligible",
-                "physical blob delete eligibility time has not arrived",
-            ));
-        }
-
-        match self
-            .provider
-            .delete_exact(&physical.object_locator, &physical.storage_generation)
-            .await
-        {
-            Ok(()) => {}
-            Err(error) if error.kind == ProviderErrorKind::NotFound => {}
-            Err(error) => return Err(provider_error(error)),
-        }
-        self.repo
-            .mark_physical_deleted(physical_blob_id, &physical.storage_generation)
-            .await
+        Err(BlobStoreError::new(
+            "physical_delete_requires_gc_authority",
+            "physical deletion must pass the GC reachability and durable delete-fence authority",
+        ))
     }
 
     async fn bind_existing(
@@ -1762,6 +1744,54 @@ mod tests {
                     200,
                 )
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_physical_delete_cannot_bypass_gc_authority() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, repo) = service(provider.clone());
+        let bytes = b"gc-owned-delete";
+        let mut input = Cursor::new(bytes.to_vec());
+        let binding = service
+            .create_canonical_binding(create_request("tenant-a", bytes), &mut input)
+            .await
+            .unwrap();
+
+        {
+            let mut physical = repo.physical.lock().unwrap();
+            physical
+                .get_mut(&binding.physical_blob_id)
+                .unwrap()
+                .delete_eligible_at_ms = Some(0);
+        }
+
+        let before = repo
+            .get_physical(&binding.physical_blob_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let error = service
+            .delete_physical_if_eligible("tenant-a", &binding.physical_blob_id, 1_000)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "physical_delete_requires_gc_authority");
+
+        assert!(
+            provider
+                .head_exact(&before.object_locator)
+                .await
+                .unwrap()
+                .is_some(),
+            "legacy path must not delete provider bytes"
+        );
+        assert!(
+            !repo
+                .get_physical(&binding.physical_blob_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .deleted
         );
     }
 
