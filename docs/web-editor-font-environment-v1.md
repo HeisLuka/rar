@@ -65,3 +65,17 @@ Browser composition metrics never rewrite canonical line breaks/frame geometry b
 ## Remaining closure receipts
 
 This public slice proves protocol/environment fencing and no-implicit-fallback behavior. WEB-FONT-ENV-01 remains IN PROGRESS until representative real Story frames are exercised in actual browser engines and compared to authoritative server output, including at least Chromium plus one independent engine where infrastructure permits.
+
+
+## Rar real StoryFrame closure path
+
+The current pinned real `SampleNewsletter.pub` Scene is explicitly a geometry-only typography projection:
+
+- `render.text=partial`;
+- `preview_authority=server_frame_geometry_only`;
+- browser-native text metrics are never document authority;
+- no browser/system font lookup is promoted into canonical layout state.
+
+The real closure probe therefore compares Chromium and Firefox against the same server-derived StoryFrame geometry, not against an invented claim of Publisher-equivalent browser typography. Each browser must preserve the canonical frame bounds exactly through the Scene render plan. Native text width/height observations are retained only to demonstrate that browser-local metrics can differ without changing the authoritative Scene.
+
+A future `server_positioned_glyphs` mode requires a Scene whose `render.text` capability is actually `supported`; this V1 gate fails closed rather than relabeling the current partial projection.
