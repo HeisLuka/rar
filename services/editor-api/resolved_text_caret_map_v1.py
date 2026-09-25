@@ -49,6 +49,7 @@ class InternalCaretStopV1:
     scalar_boundary: int
     page_x_emu: int
     frame_x_emu: int
+    authority_source: str = "shaping_explicit_v1"
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ class CaretStopV1:
     frame_y_top_emu: int
     frame_y_bottom_emu: int
     affinities: tuple[Literal["upstream", "downstream", "internal"], ...]
+    authority_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -255,6 +257,8 @@ def _validate_cluster(
         seen.add(stop.scalar_boundary)
         _safe_emu(stop.page_x_emu, "internal.page_x_emu")
         _safe_emu(stop.frame_x_emu, "internal.frame_x_emu")
+        if not isinstance(stop.authority_source, str) or not stop.authority_source:
+            _fail("invalid_layout", "internal caret authority_source is required")
         if not (
             cluster.page_x_start_emu
             <= stop.page_x_emu
@@ -379,6 +383,7 @@ def _build_caret_stops(
             tuple[int, int, int],
             set[str],
         ] = {}
+        internal_authority_by_key: dict[tuple[int, int, int], str] = {}
         for cluster in line.clusters:
             for scalar, page_x, frame_x, affinity in (
                 (
@@ -399,14 +404,22 @@ def _build_caret_stops(
                     set(),
                 ).add(affinity)
             for internal in cluster.internal_caret_stops:
-                candidates.setdefault(
-                    (
-                        internal.scalar_boundary,
-                        internal.page_x_emu,
-                        internal.frame_x_emu,
-                    ),
-                    set(),
-                ).add("internal")
+                key = (
+                    internal.scalar_boundary,
+                    internal.page_x_emu,
+                    internal.frame_x_emu,
+                )
+                candidates.setdefault(key, set()).add("internal")
+                previous_source = internal_authority_by_key.get(key)
+                if (
+                    previous_source is not None
+                    and previous_source != internal.authority_source
+                ):
+                    _fail(
+                        "invalid_layout",
+                        "same internal caret geometry has conflicting authority_source",
+                    )
+                internal_authority_by_key[key] = internal.authority_source
 
         ordered = sorted(
             candidates.items(),
@@ -436,6 +449,9 @@ def _build_caret_stops(
                         value
                         for value in ("upstream", "downstream", "internal")
                         if value in affinities
+                    ),
+                    authority_source=internal_authority_by_key.get(
+                        (scalar, page_x, frame_x)
                     ),
                 )
             )
@@ -759,6 +775,7 @@ def _cluster_to_dict(cluster: ResolvedClusterV1) -> dict:
                 "scalar_boundary": stop.scalar_boundary,
                 "page_x_emu": stop.page_x_emu,
                 "frame_x_emu": stop.frame_x_emu,
+                "authority_source": stop.authority_source,
             }
             for stop in cluster.internal_caret_stops
         ],
@@ -803,6 +820,11 @@ def caret_map_to_dict_v1(caret_map: ResolvedTextCaretMapV1) -> dict:
                 "frame_y_top_emu": stop.frame_y_top_emu,
                 "frame_y_bottom_emu": stop.frame_y_bottom_emu,
                 "affinities": list(stop.affinities),
+                **(
+                    {"authority_source": stop.authority_source}
+                    if stop.authority_source is not None
+                    else {}
+                ),
             }
             for stop in caret_map.caret_stops
         ],
