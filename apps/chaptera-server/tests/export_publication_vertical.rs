@@ -21,10 +21,13 @@ use chaptera_server::{
     derived_artifacts::SqliteDerivedArtifactStore,
     export_executor::{
         EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExactRevisionEditableExporter, ExactRevisionStateProvider,
-        ExportExecutorError, ExportJobPayloadV1, ExportPublishAuthFuture, ExportPublishAuthorizer,
+        ExportExecutorError, ExportJobPayloadV1, ExportPublicationCommitFuture,
+        ExportPublicationCommitter, ExportPublishAuthFuture, ExportPublishAuthorizer,
         IDML_BOUNDED_EDITABLE_PROFILE, PublishedExportJobExecutor,
     },
-    export_publication::SqliteExportPublicationStore,
+    export_publication::{
+        ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1, SqliteExportPublicationStore,
+    },
     job_queue::{EnqueueRequest, JobKind, JobStatus, SqliteJobQueue},
     job_worker::{CancellationFlag, JobExecutor, WorkerControl, WorkerLoop, WorkerLoopConfig},
     quota_admission::{SqliteQuotaAdmissionConfig, SqliteQuotaJobAdmission},
@@ -270,6 +273,49 @@ impl ExportPublishAuthorizer for AllowPublish {
     }
 }
 
+struct TestPublicationCommitter {
+    store: SqliteExportPublicationStore,
+    calls: AtomicU64,
+}
+
+impl TestPublicationCommitter {
+    fn new(store: SqliteExportPublicationStore) -> Self {
+        Self {
+            store,
+            calls: AtomicU64::new(0),
+        }
+    }
+}
+
+impl ExportPublicationCommitter for TestPublicationCommitter {
+    fn commit_authorized<'a>(
+        &'a self,
+        _job: &'a chaptera_server::job_queue::JobRecord,
+        payload: &'a ExportJobPayloadV1,
+        input: ExportPublicationInputV1,
+        created_at_ms: i64,
+    ) -> ExportPublicationCommitFuture<'a> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let store = self.store.clone();
+        Box::pin(async move {
+            if payload.requesting_principal_id != "principal:export-vertical" {
+                return Err(ExportExecutorError::new(
+                    "export_publish_unauthorized",
+                    "final publication authority lost requesting principal identity",
+                ));
+            }
+            let prepared = store
+                .prepare(input, created_at_ms)
+                .await
+                .map_err(|error| ExportExecutorError::new(error.code, error.message))?;
+            Ok(match prepared {
+                ExportPublicationPrepareOutcomeV1::Prepared(record)
+                | ExportPublicationPrepareOutcomeV1::AlreadyPrepared(record) => record.effect_key,
+            })
+        })
+    }
+}
+
 fn now_ms() -> i64 {
     i64::try_from(
         SystemTime::now()
@@ -431,11 +477,12 @@ async fn real_queue_quota_executor_blob_publication_terminal_vertical() {
         FixtureStateProvider { state },
     )));
     let authorizer = Arc::new(AllowPublish::new());
+    let publication_committer = Arc::new(TestPublicationCommitter::new(publications.clone()));
     let executor = Arc::new(PublishedExportJobExecutor::new(
         producer,
         blob_store,
         artifacts,
-        publications.clone(),
+        publication_committer.clone(),
         authorizer.clone(),
     ));
 
@@ -484,7 +531,8 @@ async fn real_queue_quota_executor_blob_publication_terminal_vertical() {
     assert_eq!(worker_receipt.succeeded, 1);
     assert_eq!(worker_receipt.failed, 0);
     assert_eq!(worker_receipt.cancelled, 0);
-    assert!(authorizer.calls.load(Ordering::SeqCst) >= 2);
+    assert!(authorizer.calls.load(Ordering::SeqCst) >= 1);
+    assert!(publication_committer.calls.load(Ordering::SeqCst) >= 1);
 
     let visible = publications
         .get_visible_by_job(&payload.tenant_id, job_id)
