@@ -1,0 +1,114 @@
+name: TEMP Publisher 2000 alternate Course Technology data pages
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect exact alternate Publisher 2000 ISBN pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import html,json,re,time
+          from pathlib import Path
+          from urllib.parse import urlencode,urljoin
+          from urllib.request import Request,urlopen
+
+          UA="rar-publisher2000-course-tech-alt/1.0"
+          books=[
+            ("0760063664",["0760063664","0-7600-6366-4"],"illustrated-introductory"),
+            ("0538723297",["0538723297","0-538-72329-7"],"quicktorial"),
+          ]
+          carrier_re=re.compile(r'\.(?:pub|zip|cab|exe|msi|iso|img|7z|rar)(?:$|[?#])',re.I)
+          rel_re=re.compile(r'(publisher|data.?file|student|download|exercise|project|practice|chapter|3664|23297)',re.I)
+          attr_re=re.compile(r'''(?is)\b(?:href|src|action)\s*=\s*["']([^"']+)["']''')
+
+          def cdx(u):
+            p=[("url",u),("matchType","exact"),("output","json"),
+               ("fl","timestamp,original,mimetype,statuscode,digest,length"),
+               ("filter","statuscode:200"),("collapse","digest"),("limit","20"),("gzip","false")]
+            q="https://web.archive.org/cdx/search/cdx?"+urlencode(p)
+            req=Request(q,headers={"User-Agent":UA,"Accept":"application/json"})
+            with urlopen(req,timeout=25) as r: data=json.load(r)
+            return [dict(zip(data[0],x)) for x in data[1:]] if data else []
+
+          targets=[]; pages=[]; observed=[]; errors=[]; seen_urls=set()
+          for isbn,forms,label in books:
+            for form in forms:
+              for helpv in ("Data+Files+for+Students","Data%20Files%20for%20Students%20%28Windows%29"):
+                for host in ("scsite.com:80","www.scsite.com:80"):
+                  u=f"http://{host}/catalog/viewtitle.cfm?isbn={form}&help={helpv}"
+                  if u.casefold() in seen_urls: continue
+                  seen_urls.add(u.casefold())
+                  try: caps=cdx(u)
+                  except Exception as e:
+                    caps=[]; errors.append({"surface":"cdx","url":u,"error":f"{type(e).__name__}: {e}"})
+                  targets.append({"isbn10":isbn,"form":form,"label":label,"url":u,"capture_count":len(caps),"captures":caps})
+                  for cap in caps[:4]:
+                    ts=cap["timestamp"]; orig=cap["original"]; replay=f"https://web.archive.org/web/{ts}id_/{orig}"
+                    row={"isbn10":isbn,"label":label,"timestamp":ts,"original":orig,"replay":replay}
+                    try:
+                      req=Request(replay,headers={"User-Agent":UA,"Accept":"text/html,*/*;q=0.1"})
+                      with urlopen(req,timeout=20) as r:
+                        body=r.read(1024*1024); row["status"]=getattr(r,"status",None)
+                      row["length"]=len(body)
+                      text=body.decode("utf-8","replace")
+                      links=[]
+                      for m in attr_re.finditer(text):
+                        v=html.unescape(m.group(1).strip())
+                        if not v or v.startswith(("#","javascript:","mailto:")): continue
+                        x=urljoin(orig,v); links.append(x)
+                        observed.append({"isbn10":isbn,"label":label,"source_timestamp":ts,"source_page":orig,"url":x})
+                      row["links"]=sorted(set(links)); row["preview"]=text[:1800]
+                    except Exception as e:
+                      row["error"]=f"{type(e).__name__}: {e}"
+                      errors.append({"surface":"replay","url":orig,"timestamp":ts,"error":row["error"]})
+                    pages.append(row)
+                    time.sleep(.12)
+
+          seen=set(); links=[]
+          for r in observed:
+            k=(r["isbn10"],r["url"].casefold())
+            if k in seen: continue
+            seen.add(k); u=r["url"]
+            links.append({**r,"carrier_like":bool(carrier_re.search(u)),"relevant_like":bool(rel_re.search(u))})
+
+          summary={
+            "schema":"chaptera.corpus-publisher2000-course-tech-alt.v1",
+            "source_safe":True,"raw_binary_retained":False,
+            "books":[{"isbn10":b[0],"forms":b[1],"label":b[2]} for b in books],
+            "targets":targets,"pages_fetched":sum("error" not in x for x in pages),
+            "unique_observed_links":len(links),
+            "carrier_rows":[x for x in links if x["carrier_like"]],
+            "relevant_rows":[x for x in links if x["relevant_like"]],
+            "errors":errors,
+            "guardrail":"Exact ISBN-specific Course Technology Publisher 2000 page variants only; no binary bodies downloaded."
+          }
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Metadata-only guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' \) | grep -q .; then exit 1; fi
+          sha256sum out/* > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-publisher2000-course-tech-alt
+          path: out/**
+          retention-days: 60
+          if-no-files-found: error
