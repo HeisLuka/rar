@@ -2020,6 +2020,13 @@ impl ViewerApp {
                 };
                 let (response, painter) =
                     ui.allocate_painter(egui::vec2(content_width, content_height), canvas_sense);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Other,
+                        !reader_only_mode(),
+                        "Document canvas",
+                    )
+                });
                 let canvas = response.rect;
                 let page_rect = egui::Rect::from_center_size(
                     canvas.center(),
@@ -2118,6 +2125,22 @@ impl ViewerApp {
                     );
                     let size = egui::vec2(width as f32 * scene_scale, height as f32 * scene_scale);
                     let node_rect = egui::Rect::from_min_size(min, size);
+                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+                        && movable_nodes.contains_key(instance_id)
+                    {
+                        let a11y = ui.interact(
+                            node_rect,
+                            ui.id().with(("movable-canvas-object", instance_id)),
+                            egui::Sense::hover(),
+                        );
+                        a11y.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Other,
+                                true,
+                                "Movable canvas object",
+                            )
+                        });
+                    }
                     let node_paint = visual
                         .paints
                         .iter()
