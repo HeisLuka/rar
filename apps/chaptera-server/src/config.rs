@@ -321,9 +321,15 @@ impl ChapteraConfig {
             ));
         }
         for (field, value) in [
-            ("worker.quota_semantic_headroom", self.worker.quota_semantic_headroom),
+            (
+                "worker.quota_semantic_headroom",
+                self.worker.quota_semantic_headroom,
+            ),
             ("worker.quota_export_cap", self.worker.quota_export_cap),
-            ("worker.quota_background_cap", self.worker.quota_background_cap),
+            (
+                "worker.quota_background_cap",
+                self.worker.quota_background_cap,
+            ),
         ] {
             if value < 0 {
                 return Err(ConfigError::new(
