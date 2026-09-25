@@ -131,7 +131,8 @@ impl EditorSession {
                 EditOperation::ReplaceTableCellText { story_id, .. } => {
                     table_touched.insert(*story_id);
                 }
-                EditOperation::ReplaceImage { .. }
+                EditOperation::BreakTextFrameForwardLink { .. }
+                | EditOperation::ReplaceImage { .. }
                 | EditOperation::MoveNode { .. }
                 | EditOperation::ResizeNode { .. } => {}
             }
@@ -219,7 +220,8 @@ impl EditorSession {
             match operation {
                 EditOperation::ReplaceStoryRange { .. }
                 | EditOperation::ReplaceStoryText { .. } => {}
-                EditOperation::ReplaceTableCellText { .. }
+                EditOperation::BreakTextFrameForwardLink { .. }
+                | EditOperation::ReplaceTableCellText { .. }
                 | EditOperation::ReplaceImage { .. }
                 | EditOperation::MoveNode { .. }
                 | EditOperation::ResizeNode { .. } => {
