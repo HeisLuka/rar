@@ -2143,8 +2143,12 @@ fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> 
                     row_span: 1,
                     column_span: 1,
                     story_id: table.story_id,
-                    utf16_start: source.map(|source| source.utf16_start),
-                    utf16_end: source.map(|source| source.utf16_end),
+                    utf16_start: table
+                        .story_id
+                        .and_then(|_| source.map(|source| source.utf16_start)),
+                    utf16_end: table
+                        .story_id
+                        .and_then(|_| source.map(|source| source.utf16_end)),
                 }
             })
             .collect::<Vec<_>>();
