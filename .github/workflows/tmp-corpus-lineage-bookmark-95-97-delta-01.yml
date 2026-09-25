@@ -45,7 +45,15 @@ jobs:
             def candidates(self):
               p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
               req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
-              with urllib.request.urlopen(req,timeout=30) as r:m=json.load(r)
+              last=None
+              for attempt in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception as e:
+                  last=e
+                  if attempt==3:raise
+                  time.sleep(2**attempt)
               d=str(m.get("dir") or "");out=[]
               for k in ("d1","d2"):
                 h=str(m.get(k) or "")
