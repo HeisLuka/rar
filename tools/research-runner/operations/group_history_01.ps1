@@ -197,22 +197,57 @@ function Group-ABC {
 
 function Get-CurrentABCNames {
     param([Parameter(Mandatory = $true)]$Page)
+
+    $expectedTags = @(
+        "GROUP_HISTORY_A",
+        "GROUP_HISTORY_B",
+        "GROUP_HISTORY_C"
+    )
     $names = @()
-    foreach ($expected in @("GH_A", "GH_B", "GH_C")) {
-        $found = $false
+
+    foreach ($expectedTag in $expectedTags) {
+        $matches = @()
         for ($i = 1; $i -le [int]$Page.Shapes.Count; $i++) {
             $shape = $Page.Shapes.Item($i)
-            if ([string]$shape.Name -eq $expected) {
-                $names += $expected
-                $found = $true
-                break
+            if ((Get-OracleTagValue -Shape $shape) -eq $expectedTag) {
+                $matches += [string]$shape.Name
             }
         }
-        if (-not $found) {
-            throw "Expected ungrouped member name '$expected' is missing"
+        if ($matches.Count -ne 1) {
+            throw "Expected exactly one current top-level shape with PUB_ORACLE_ID=$expectedTag; found $($matches.Count)"
         }
+        $names += $matches[0]
     }
+
     return [object[]]$names
+}
+
+function Get-SafeValueScalar {
+    param($SafeValue)
+    if ($null -eq $SafeValue) { return $null }
+    if ([string]$SafeValue.state -ne "value") { return $null }
+    return $SafeValue.value
+}
+
+function Get-GroupIdentityRelation {
+    param(
+        $OldGroup,
+        $RegroupResult
+    )
+
+    if ($null -eq $OldGroup -or $null -eq $RegroupResult -or [string]$RegroupResult.state -ne "success") {
+        return "unavailable"
+    }
+
+    $oldId = Get-SafeValueScalar $OldGroup.shape_id
+    $newId = Get-SafeValueScalar $RegroupResult.returned_group.shape_id
+    if ($null -eq $oldId -or $null -eq $newId) {
+        return "unavailable"
+    }
+    if ([int]$oldId -eq [int]$newId) {
+        return "same-shape-id"
+    }
+    return "new-shape-id"
 }
 
 function Try-Regroup {
@@ -405,20 +440,24 @@ function Run-S3 {
     $result = [ordered]@{
         arm = "S3"
         description = "Group→Ungroup→Save→Regroup in same session"
+        old_group = $null
         ungrouped_before_save = $null
         saved_ungrouped = $null
         after_save = $null
         regroup = $null
+        regroup_identity_relation = "unavailable"
     }
     try {
         $pair = Open-ArmDocument -Path $ctx.input_path
         $page = Add-BaseShapes -Document $pair.document
         $group = Group-ABC -Page $page
+        $result.old_group = Get-ShapeRecord -Shape $group
         [void]$group.Ungroup()
         $result.ungrouped_before_save = Get-DocumentSnapshot -Document $pair.document -Phase "S3-ungrouped-before-save"
         $result.saved_ungrouped = Save-ArmDocument -Document $pair.document -Path $ungroupedPath
         $result.after_save = Get-DocumentSnapshot -Document $pair.document -Phase "S3-after-save"
         $result.regroup = Try-Regroup -Document $pair.document -Phase "S3-regroup-after-save-same-session"
+        $result.regroup_identity_relation = Get-GroupIdentityRelation -OldGroup $result.old_group -RegroupResult $result.regroup
     }
     finally {
         Close-ArmPair $pair
@@ -435,10 +474,12 @@ function New-SavedUngroupedArm {
     $beforeSave = $null
     $afterSave = $null
     $receipt = $null
+    $oldGroup = $null
     try {
         $pair = Open-ArmDocument -Path $ctx.input_path
         $page = Add-BaseShapes -Document $pair.document
         $group = Group-ABC -Page $page
+        $oldGroup = Get-ShapeRecord -Shape $group
         [void]$group.Ungroup()
         $beforeSave = Get-DocumentSnapshot -Document $pair.document -Phase "$ArmId-ungrouped-before-save"
         $receipt = Save-ArmDocument -Document $pair.document -Path $ungroupedPath
@@ -451,6 +492,7 @@ function New-SavedUngroupedArm {
     return [ordered]@{
         path = $ungroupedPath
         receipt = $receipt
+        old_group = $oldGroup
         before_save = $beforeSave
         after_save = $afterSave
     }
@@ -463,15 +505,18 @@ function Run-S4 {
         arm = "S4"
         description = "Group→Ungroup→Save→close→reopen→Regroup"
         saved_ungrouped = $saved.receipt
+        old_group = $saved.old_group
         before_save = $saved.before_save
         after_save = $saved.after_save
         reopen = $null
         regroup = $null
+        regroup_identity_relation = "unavailable"
     }
     try {
         $pair = Open-ArmDocument -Path $saved.path
         $result.reopen = Get-DocumentSnapshot -Document $pair.document -Phase "S4-reopen"
         $result.regroup = Try-Regroup -Document $pair.document -Phase "S4-regroup-after-one-reopen"
+        $result.regroup_identity_relation = Get-GroupIdentityRelation -OldGroup $result.old_group -RegroupResult $result.regroup
     }
     finally {
         Close-ArmPair $pair
@@ -496,20 +541,75 @@ function Run-S5 {
         arm = "S5"
         description = "Group→Ungroup→Save→close/reopen twice→Regroup"
         saved_ungrouped = $saved.receipt
+        old_group = $saved.old_group
         before_save = $saved.before_save
         after_save = $saved.after_save
         first_reopen = $firstReopen
         second_reopen = $null
         regroup = $null
+        regroup_identity_relation = "unavailable"
     }
     try {
         $pair = Open-ArmDocument -Path $saved.path
         $result.second_reopen = Get-DocumentSnapshot -Document $pair.document -Phase "S5-second-reopen"
         $result.regroup = Try-Regroup -Document $pair.document -Phase "S5-regroup-after-two-reopens"
+        $result.regroup_identity_relation = Get-GroupIdentityRelation -OldGroup $result.old_group -RegroupResult $result.regroup
     }
     finally {
         Close-ArmPair $pair
     }
+    return $result
+}
+
+function Run-S6 {
+    $ctx = Initialize-Arm -ArmId "S6-independent-repeat-save"
+    $pair = $null
+    $firstPath = Join-Path $ctx.arm_root "independent-first.pub"
+    $secondPath = Join-Path $ctx.arm_root "independent-second.pub"
+    $result = [ordered]@{
+        arm = "S6"
+        description = "independent A/B/C control with repeated no-op Save/reopen; never grouped"
+        input = $ctx.input_receipt
+        before_first_save = $null
+        first_saved = $null
+        first_reopen = $null
+        before_second_save = $null
+        second_saved = $null
+        second_reopen = $null
+        control_regroup = $null
+    }
+
+    try {
+        $pair = Open-ArmDocument -Path $ctx.input_path
+        Add-BaseShapes -Document $pair.document | Out-Null
+        $result.before_first_save = Get-DocumentSnapshot -Document $pair.document -Phase "S6-before-first-save"
+        $result.first_saved = Save-ArmDocument -Document $pair.document -Path $firstPath
+    }
+    finally {
+        Close-ArmPair $pair
+    }
+
+    $pair = $null
+    try {
+        $pair = Open-ArmDocument -Path $firstPath
+        $result.first_reopen = Get-DocumentSnapshot -Document $pair.document -Phase "S6-first-reopen"
+        $result.before_second_save = Get-DocumentSnapshot -Document $pair.document -Phase "S6-before-second-save"
+        $result.second_saved = Save-ArmDocument -Document $pair.document -Path $secondPath
+    }
+    finally {
+        Close-ArmPair $pair
+    }
+
+    $pair = $null
+    try {
+        $pair = Open-ArmDocument -Path $secondPath
+        $result.second_reopen = Get-DocumentSnapshot -Document $pair.document -Phase "S6-second-reopen"
+        $result.control_regroup = Try-Regroup -Document $pair.document -Phase "S6-independent-repeat-save-regroup-control"
+    }
+    finally {
+        Close-ArmPair $pair
+    }
+
     return $result
 }
 
@@ -520,22 +620,25 @@ $results += Run-S2
 $results += Run-S3
 $results += Run-S4
 $results += Run-S5
+$results += Run-S6
 
 $s0 = $results | Where-Object { $_.arm -eq "S0" } | Select-Object -First 1
 $s2 = $results | Where-Object { $_.arm -eq "S2" } | Select-Object -First 1
 $s3 = $results | Where-Object { $_.arm -eq "S3" } | Select-Object -First 1
 $s4 = $results | Where-Object { $_.arm -eq "S4" } | Select-Object -First 1
 $s5 = $results | Where-Object { $_.arm -eq "S5" } | Select-Object -First 1
+$s6 = $results | Where-Object { $_.arm -eq "S6" } | Select-Object -First 1
 
 $classification = [ordered]@{
     independent_control_regroup_state = $s0.control_regroup.state
+    repeated_noop_control_regroup_state = $s6.control_regroup.state
     in_memory_regroup_state = $s2.regroup.state
     after_save_same_session_regroup_state = $s3.regroup.state
     after_one_reopen_regroup_state = $s4.regroup.state
     after_two_reopens_regroup_state = $s5.regroup.state
     history_scope = "unresolved"
 }
-if ($s0.control_regroup.state -eq "success") {
+if ($s0.control_regroup.state -eq "success" -or $s6.control_regroup.state -eq "success") {
     $classification.history_scope = "invalid-control-regroup-succeeded"
 }
 elseif ($s4.regroup.state -eq "success" -or $s5.regroup.state -eq "success") {
@@ -573,6 +676,7 @@ $logLines = @(
     "fixture_sha256=$fixtureHash",
     "publisher_exe_sha256=$publisherHash",
     "independent_control_regroup=$($classification.independent_control_regroup_state)",
+    "repeated_noop_control_regroup=$($classification.repeated_noop_control_regroup_state)",
     "in_memory_regroup=$($classification.in_memory_regroup_state)",
     "after_save_same_session_regroup=$($classification.after_save_same_session_regroup_state)",
     "after_one_reopen_regroup=$($classification.after_one_reopen_regroup_state)",
