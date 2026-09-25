@@ -1,0 +1,30 @@
+name: Authoring Master Rebind V1
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-editor/**"
+      - ".github/workflows/authoring-master-rebind-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pub-editor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check pub-editor formatting
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -- --check
+      - name: Check pub-editor
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --all-targets
+      - name: Lint pub-editor
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --all-targets -- -D warnings
+      - name: Test pub-editor
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
+      - name: Prove master rebind contract
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor master_rebind_tests -- --nocapture

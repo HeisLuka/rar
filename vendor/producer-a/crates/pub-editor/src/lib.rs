@@ -27,7 +27,7 @@ use pub_idml::{
     IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlEmbeddedImagePlacement,
     IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
 };
-pub use pub_model::{LengthEmu, NodeId, RectEmu, Sha256Digest, StoryId, TableCellId};
+pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_model::{
     ResourceId, SourceDerivedIdInput, StoryFrame, derive_source_canonical_id, validate_story_frames,
 };
@@ -49,7 +49,8 @@ pub const EDITOR_PROJECT_VERSION_V0_2: &str = "pub-editor-v0.2";
 pub const EDITOR_PROJECT_VERSION_V0_3: &str = "pub-editor-v0.3";
 pub const EDITOR_PROJECT_VERSION_V0_4: &str = "pub-editor-v0.4";
 pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_5;
+pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_6;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -147,6 +148,11 @@ pub enum EditOperation {
         before: RectEmu,
         after: RectEmu,
     },
+    RebindPageMaster {
+        page_id: PageId,
+        before_master_page_id: PageId,
+        after_master_page_id: PageId,
+    },
 }
 
 impl PersistenceRequirements for EditOperation {
@@ -188,6 +194,11 @@ impl PersistenceRequirements for EditOperation {
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("node.bounds".into()),
             }],
+            Self::RebindPageMaster { page_id, .. } => vec![PersistenceRequirement {
+                feature: "page.master.relation".into(),
+                origin: Some(page_id.into_canonical()),
+                property_path: Some("page.master_page_id".into()),
+            }],
         }
     }
 }
@@ -217,6 +228,12 @@ pub struct EditorReplacementAsset {
     pub sha256: Sha256Digest,
     pub mime: String,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EditorMasterContextV1 {
+    pub master_page_ids: BTreeSet<PageId>,
+    pub page_master_bindings: BTreeMap<PageId, PageId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +422,19 @@ pub enum EditorError {
     StaleNodeResize {
         node_id: NodeId,
     },
+    PageMasterUnsupported {
+        page_id: PageId,
+    },
+    MasterPageUnsupported {
+        master_page_id: PageId,
+    },
+    PageMasterNoChange {
+        page_id: PageId,
+        master_page_id: PageId,
+    },
+    StalePageMaster {
+        page_id: PageId,
+    },
     NoChange {
         story_id: StoryId,
     },
@@ -532,6 +562,30 @@ impl fmt::Display for EditorError {
                 "node {} no longer matches the resize operation precondition",
                 node_id.as_canonical()
             ),
+            Self::PageMasterUnsupported { page_id } => write!(
+                formatter,
+                "page {} is outside the bounded ordinary-page master-rebind slice",
+                page_id.as_canonical()
+            ),
+            Self::MasterPageUnsupported { master_page_id } => write!(
+                formatter,
+                "page {} is not an admitted existing master in this publication",
+                master_page_id.as_canonical()
+            ),
+            Self::PageMasterNoChange {
+                page_id,
+                master_page_id,
+            } => write!(
+                formatter,
+                "page {} is already bound to master {}",
+                page_id.as_canonical(),
+                master_page_id.as_canonical()
+            ),
+            Self::StalePageMaster { page_id } => write!(
+                formatter,
+                "page {} no longer matches the master-rebind operation precondition",
+                page_id.as_canonical()
+            ),
             Self::NoChange { story_id } => write!(
                 formatter,
                 "replacement text for story {} is identical to the current text",
@@ -574,6 +628,10 @@ impl EditorError {
             Self::NodeResizeNonPositive { .. } => "node_resize_non_positive",
             Self::NodeResizeOverflow { .. } => "node_resize_overflow",
             Self::StaleNodeResize { .. } => "stale_node_resize",
+            Self::PageMasterUnsupported { .. } => "page_master_unsupported",
+            Self::MasterPageUnsupported { .. } => "master_page_unsupported",
+            Self::PageMasterNoChange { .. } => "page_master_no_change",
+            Self::StalePageMaster { .. } => "stale_page_master",
             Self::NoChange { .. } => "no_change",
             Self::StaleOperation { .. } => "stale_operation",
             Self::NothingToUndo => "nothing_to_undo",
@@ -629,6 +687,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesResizeOperation {
         index: usize,
     },
+    LegacyProjectCarriesMasterOperation {
+        index: usize,
+    },
     MissingAssetBytes {
         sha256: Sha256Digest,
     },
@@ -666,7 +727,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, or {EDITOR_PROJECT_VERSION_V0_5:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, or {EDITOR_PROJECT_VERSION_V0_6:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -689,6 +750,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesResizeOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses ResizeNode but the project schema predates pub-editor-v0.5"
+            ),
+            Self::LegacyProjectCarriesMasterOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses RebindPageMaster but the project schema predates pub-editor-v0.6"
             ),
             Self::MissingAssetBytes { sha256 } => {
                 write!(
@@ -748,11 +813,24 @@ pub fn open_mature_0x2c_editor(
     bytes: &[u8],
     source_hash: Sha256Digest,
 ) -> Result<EditorSession, EditorOpenError> {
+    open_mature_0x2c_editor_with_master_context(
+        bytes,
+        source_hash,
+        EditorMasterContextV1::default(),
+    )
+}
+
+pub fn open_mature_0x2c_editor_with_master_context(
+    bytes: &[u8],
+    source_hash: Sha256Digest,
+    master_context: EditorMasterContextV1,
+) -> Result<EditorSession, EditorOpenError> {
     let source = build_mature_0x2c_source_graph(Cursor::new(bytes), source_hash)
         .map_err(|error| EditorOpenError::SourceGraph(error.to_string()))?;
     let resolved = resolve_pub_source_graph(&source.graph)
         .map_err(|error| EditorOpenError::Resolve(error.to_string()))?;
-    EditorSession::new(resolved.graph).map_err(EditorOpenError::Session)
+    EditorSession::new_with_master_context(resolved.graph, master_context)
+        .map_err(EditorOpenError::Session)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -872,6 +950,8 @@ impl std::error::Error for EditorExportError {}
 pub struct EditorSession {
     source_hash: Sha256Digest,
     graph: PubResolvedGraph,
+    source_master_context: EditorMasterContextV1,
+    master_bindings: BTreeMap<PageId, PageId>,
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
     undo: Vec<EditOperation>,
@@ -880,14 +960,46 @@ pub struct EditorSession {
 
 impl EditorSession {
     pub fn new(graph: PubResolvedGraph) -> Result<Self, EditorError> {
+        Self::new_with_master_context(graph, EditorMasterContextV1::default())
+    }
+
+    pub fn new_with_master_context(
+        graph: PubResolvedGraph,
+        master_context: EditorMasterContextV1,
+    ) -> Result<Self, EditorError> {
         let source_hash = graph.source.source_hash;
         if graph.document.source_hash != source_hash {
             return Err(EditorError::SourceIdentityChanged);
         }
 
+        for master_page_id in &master_context.master_page_ids {
+            if !graph.pages.contains_key(master_page_id) {
+                return Err(EditorError::MasterPageUnsupported {
+                    master_page_id: *master_page_id,
+                });
+            }
+        }
+        for (page_id, master_page_id) in &master_context.page_master_bindings {
+            if !graph.pages.contains_key(page_id)
+                || master_context.master_page_ids.contains(page_id)
+                || page_id == master_page_id
+            {
+                return Err(EditorError::PageMasterUnsupported { page_id: *page_id });
+            }
+            if !master_context.master_page_ids.contains(master_page_id)
+                || !graph.pages.contains_key(master_page_id)
+            {
+                return Err(EditorError::MasterPageUnsupported {
+                    master_page_id: *master_page_id,
+                });
+            }
+        }
+
         Ok(Self {
             source_hash,
             graph,
+            master_bindings: master_context.page_master_bindings.clone(),
+            source_master_context: master_context,
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
             undo: Vec::new(),
@@ -917,6 +1029,72 @@ impl EditorSession {
         self.image_replacements.get(&node_id).copied()
     }
 
+    pub fn master_context(&self) -> &EditorMasterContextV1 {
+        &self.source_master_context
+    }
+
+    pub fn effective_master_page_id(&self, page_id: PageId) -> Option<PageId> {
+        self.master_bindings.get(&page_id).copied()
+    }
+
+    pub fn can_rebind_page_master(
+        &self,
+        page_id: PageId,
+        after_master_page_id: PageId,
+    ) -> Result<(), EditorError> {
+        self.validate_source_identity()?;
+        if !self.graph.pages.contains_key(&page_id)
+            || self.source_master_context.master_page_ids.contains(&page_id)
+        {
+            return Err(EditorError::PageMasterUnsupported { page_id });
+        }
+        let before_master_page_id = self
+            .master_bindings
+            .get(&page_id)
+            .copied()
+            .ok_or(EditorError::PageMasterUnsupported { page_id })?;
+        if !self
+            .source_master_context
+            .master_page_ids
+            .contains(&after_master_page_id)
+            || !self.graph.pages.contains_key(&after_master_page_id)
+        {
+            return Err(EditorError::MasterPageUnsupported {
+                master_page_id: after_master_page_id,
+            });
+        }
+        if before_master_page_id == after_master_page_id {
+            return Err(EditorError::PageMasterNoChange {
+                page_id,
+                master_page_id: after_master_page_id,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn rebind_page_master(
+        &mut self,
+        page_id: PageId,
+        after_master_page_id: PageId,
+    ) -> Result<EditOperation, EditorError> {
+        self.can_rebind_page_master(page_id, after_master_page_id)?;
+        let before_master_page_id = self
+            .master_bindings
+            .get(&page_id)
+            .copied()
+            .expect("capability check verified page master binding");
+        let operation = EditOperation::RebindPageMaster {
+            page_id,
+            before_master_page_id,
+            after_master_page_id,
+        };
+        apply_master_forward(&mut self.master_bindings, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
     pub fn import_replacement_asset(
         &mut self,
         mime: impl Into<String>,
@@ -943,6 +1121,12 @@ impl EditorSession {
 
     pub fn project(&self) -> EditorProject {
         let schema_version = if self
+            .undo
+            .iter()
+            .any(|operation| matches!(operation, EditOperation::RebindPageMaster { .. }))
+        {
+            EDITOR_PROJECT_VERSION_V0_6
+        } else if self
             .undo
             .iter()
             .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
@@ -1018,6 +1202,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_3
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1039,6 +1224,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_4
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
         {
             if let Some(index) = project
                 .operations
@@ -1048,13 +1234,24 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesGeometryOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_5
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
+        {
             if let Some(index) = project
                 .operations
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesResizeOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_6 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::RebindPageMaster { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesMasterOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
@@ -1199,7 +1396,13 @@ impl EditorSession {
     ) -> Result<(ExportReport, String, ExportPlan), EditorExportError> {
         self.validate_source_identity()
             .map_err(EditorExportError::Session)?;
-        let plan = editable_export_plan(target, &self.graph, &self.image_replacements);
+        let plan = editable_export_plan(
+            target,
+            &self.graph,
+            &self.image_replacements,
+            &self.source_master_context,
+            &self.master_bindings,
+        );
         let report = build_export_report(
             &plan,
             ExportReportSource {
@@ -1793,10 +1996,14 @@ impl EditorSession {
 
     pub fn undo(&mut self) -> Result<&EditOperation, EditorError> {
         let operation = self.undo.pop().ok_or(EditorError::NothingToUndo)?;
-        if matches!(operation, EditOperation::ReplaceImage { .. }) {
-            apply_image_inverse(&mut self.image_replacements, &operation)?;
-        } else {
-            apply_inverse(&mut self.graph, &operation)?;
+        match &operation {
+            EditOperation::ReplaceImage { .. } => {
+                apply_image_inverse(&mut self.image_replacements, &operation)?;
+            }
+            EditOperation::RebindPageMaster { .. } => {
+                apply_master_inverse(&mut self.master_bindings, &operation)?;
+            }
+            _ => apply_inverse(&mut self.graph, &operation)?,
         }
         self.redo.push(operation);
         self.validate_source_identity()?;
@@ -1805,10 +2012,14 @@ impl EditorSession {
 
     pub fn redo(&mut self) -> Result<&EditOperation, EditorError> {
         let operation = self.redo.pop().ok_or(EditorError::NothingToRedo)?;
-        if matches!(operation, EditOperation::ReplaceImage { .. }) {
-            apply_image_forward(&mut self.image_replacements, &operation)?;
-        } else {
-            apply_forward(&mut self.graph, &operation)?;
+        match &operation {
+            EditOperation::ReplaceImage { .. } => {
+                apply_image_forward(&mut self.image_replacements, &operation)?;
+            }
+            EditOperation::RebindPageMaster { .. } => {
+                apply_master_forward(&mut self.master_bindings, &operation)?;
+            }
+            _ => apply_forward(&mut self.graph, &operation)?,
         }
         self.undo.push(operation);
         self.validate_source_identity()?;
@@ -1950,6 +2161,13 @@ fn replay_canonical_operation(
         EditOperation::ResizeNode { node_id, after, .. } => session
             .resize_node_to(*node_id, *after)
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::RebindPageMaster {
+            page_id,
+            after_master_page_id,
+            ..
+        } => session
+            .rebind_page_master(*page_id, *after_master_page_id)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
     }
 }
 
@@ -1973,6 +2191,8 @@ fn editable_export_plan(
     target: EditorEditableTarget,
     graph: &PubResolvedGraph,
     image_replacements: &BTreeMap<NodeId, Sha256Digest>,
+    source_master_context: &EditorMasterContextV1,
+    master_bindings: &BTreeMap<PageId, PageId>,
 ) -> ExportPlan {
     let mut features = BTreeMap::new();
     features.insert("page.geometry".into(), CapabilityLevel::Preserved);
@@ -2026,6 +2246,17 @@ fn editable_export_plan(
                 origin: Some(page_id.into_canonical()),
                 property_path: Some("page.children".into()),
                 require_preserved: false,
+            });
+        }
+    }
+
+    for (page_id, master_page_id) in master_bindings {
+        if source_master_context.page_master_bindings.get(page_id) != Some(master_page_id) {
+            requests.push(SemanticFeatureRequest {
+                feature: "page.master.relation".into(),
+                origin: Some(page_id.into_canonical()),
+                property_path: Some("page.master_page_id".into()),
+                require_preserved: true,
             });
         }
     }
@@ -2248,6 +2479,9 @@ fn apply_forward(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::RebindPageMaster { .. } => {
+            unreachable!("master rebindings are applied to editor overlay state")
+        }
     }
     Ok(())
 }
@@ -2373,7 +2607,50 @@ fn apply_inverse(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::RebindPageMaster { .. } => {
+            unreachable!("master rebindings are applied to editor overlay state")
+        }
     }
+    Ok(())
+}
+
+fn apply_master_forward(
+    bindings: &mut BTreeMap<PageId, PageId>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    let EditOperation::RebindPageMaster {
+        page_id,
+        before_master_page_id,
+        after_master_page_id,
+    } = operation
+    else {
+        unreachable!("only RebindPageMaster reaches master overlay apply")
+    };
+
+    if bindings.get(page_id).copied() != Some(*before_master_page_id) {
+        return Err(EditorError::StalePageMaster { page_id: *page_id });
+    }
+    bindings.insert(*page_id, *after_master_page_id);
+    Ok(())
+}
+
+fn apply_master_inverse(
+    bindings: &mut BTreeMap<PageId, PageId>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    let EditOperation::RebindPageMaster {
+        page_id,
+        before_master_page_id,
+        after_master_page_id,
+    } = operation
+    else {
+        unreachable!("only RebindPageMaster reaches master overlay inverse")
+    };
+
+    if bindings.get(page_id).copied() != Some(*after_master_page_id) {
+        return Err(EditorError::StalePageMaster { page_id: *page_id });
+    }
+    bindings.insert(*page_id, *before_master_page_id);
     Ok(())
 }
 
@@ -2512,4 +2789,197 @@ fn apply_table_cell_state(
     story.text.clear();
     story.text.push_str(replacement_story);
     Ok(())
+}
+
+
+#[cfg(test)]
+mod master_rebind_tests {
+    use super::*;
+    use pub_model::{CanonicalId, Document, DocumentId, Page, Size2D, SourceDescriptor};
+
+    fn page_id(byte: u8) -> PageId {
+        PageId::from_canonical(CanonicalId::from_bytes([byte; 16]))
+    }
+
+    fn graph_with_three_pages() -> PubResolvedGraph {
+        let source_hash = Sha256Digest::from_bytes([0x5a; 32]);
+        let ordinary = page_id(0x11);
+        let master_a = page_id(0x22);
+        let master_b = page_id(0x33);
+        let size = Size2D::new(LengthEmu::new(9_144_000), LengthEmu::new(12_192_000));
+        let pages = [ordinary, master_a, master_b]
+            .into_iter()
+            .map(|id| {
+                (
+                    id,
+                    Page {
+                        id,
+                        size,
+                        bleed: None,
+                        margins: None,
+                        children: Vec::new(),
+                        extensions: Vec::new(),
+                    },
+                )
+            })
+            .collect();
+
+        PubResolvedGraph {
+            cdm_version: "cdm-test".into(),
+            resolver_version: "resolver-test".into(),
+            source: SourceDescriptor {
+                format: "pub".into(),
+                format_version: Some("test".into()),
+                adapter_version: "test".into(),
+                source_hash,
+            },
+            document: Document {
+                id: DocumentId::from_canonical(CanonicalId::from_bytes([0x44; 16])),
+                format_origin: "pub".into(),
+                source_hash,
+                pages: vec![ordinary, master_a, master_b],
+                resources: Vec::new(),
+                styles: Vec::new(),
+            },
+            pages,
+            nodes: BTreeMap::new(),
+            stories: BTreeMap::new(),
+            paragraphs: BTreeMap::new(),
+            text_runs: BTreeMap::new(),
+            resources: BTreeMap::new(),
+            styles: BTreeMap::new(),
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    fn master_context() -> EditorMasterContextV1 {
+        let ordinary = page_id(0x11);
+        let master_a = page_id(0x22);
+        let master_b = page_id(0x33);
+        EditorMasterContextV1 {
+            master_page_ids: [master_a, master_b].into_iter().collect(),
+            page_master_bindings: [(ordinary, master_a)].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn rebind_changes_only_master_overlay_and_round_trips_history() {
+        let graph = graph_with_three_pages();
+        let graph_before = graph.clone();
+        let ordinary = page_id(0x11);
+        let master_a = page_id(0x22);
+        let master_b = page_id(0x33);
+        let mut session =
+            EditorSession::new_with_master_context(graph, master_context()).expect("session");
+
+        let operation = session
+            .rebind_page_master(ordinary, master_b)
+            .expect("rebind existing ordinary page to existing master");
+
+        assert_eq!(
+            operation,
+            EditOperation::RebindPageMaster {
+                page_id: ordinary,
+                before_master_page_id: master_a,
+                after_master_page_id: master_b,
+            }
+        );
+        assert_eq!(session.effective_master_page_id(ordinary), Some(master_b));
+        assert_eq!(session.graph(), &graph_before);
+        assert_eq!(session.operations().len(), 1);
+        assert_eq!(session.project().schema_version, EDITOR_PROJECT_VERSION_V0_6);
+
+        session.undo().expect("undo");
+        assert_eq!(session.effective_master_page_id(ordinary), Some(master_a));
+        assert_eq!(session.graph(), &graph_before);
+
+        session.redo().expect("redo");
+        assert_eq!(session.effective_master_page_id(ordinary), Some(master_b));
+        assert_eq!(session.graph(), &graph_before);
+    }
+
+    #[test]
+    fn rebind_project_replays_exactly_with_same_grounded_context() {
+        let graph = graph_with_three_pages();
+        let ordinary = page_id(0x11);
+        let master_b = page_id(0x33);
+        let context = master_context();
+        let mut edited =
+            EditorSession::new_with_master_context(graph.clone(), context.clone()).expect("session");
+        edited.rebind_page_master(ordinary, master_b).expect("rebind");
+        let project = edited.project();
+
+        let mut replayed =
+            EditorSession::new_with_master_context(graph.clone(), context).expect("fresh session");
+        replayed.apply_project(&project).expect("exact replay");
+
+        assert_eq!(replayed.project(), project);
+        assert_eq!(replayed.effective_master_page_id(ordinary), Some(master_b));
+        assert_eq!(replayed.graph(), &graph);
+    }
+
+    #[test]
+    fn rebind_rejects_noop_master_source_and_unadmitted_target() {
+        let graph = graph_with_three_pages();
+        let ordinary = page_id(0x11);
+        let master_a = page_id(0x22);
+        let master_b = page_id(0x33);
+        let unknown = page_id(0x77);
+        let mut session =
+            EditorSession::new_with_master_context(graph, master_context()).expect("session");
+
+        assert_eq!(
+            session.rebind_page_master(ordinary, master_a).unwrap_err().code(),
+            "page_master_no_change"
+        );
+        assert_eq!(
+            session.rebind_page_master(master_a, master_b).unwrap_err().code(),
+            "page_master_unsupported"
+        );
+        assert_eq!(
+            session.rebind_page_master(ordinary, unknown).unwrap_err().code(),
+            "master_page_unsupported"
+        );
+        assert!(session.operations().is_empty());
+    }
+
+    #[test]
+    fn stale_rebind_is_atomic_and_export_reports_explicit_loss() {
+        let graph = graph_with_three_pages();
+        let ordinary = page_id(0x11);
+        let master_a = page_id(0x22);
+        let master_b = page_id(0x33);
+        let mut session =
+            EditorSession::new_with_master_context(graph.clone(), master_context()).expect("session");
+
+        let stale = EditOperation::RebindPageMaster {
+            page_id: ordinary,
+            before_master_page_id: master_b,
+            after_master_page_id: master_a,
+        };
+        assert_eq!(
+            apply_master_forward(&mut session.master_bindings, &stale)
+                .unwrap_err()
+                .code(),
+            "stale_page_master"
+        );
+        assert_eq!(session.effective_master_page_id(ordinary), Some(master_a));
+        assert_eq!(session.graph(), &graph);
+
+        session.rebind_page_master(ordinary, master_b).expect("valid rebind");
+        assert!(session.persistence_requirements().iter().any(|requirement| {
+            requirement.feature == "page.master.relation"
+                && requirement.origin == Some(ordinary.into_canonical())
+        }));
+
+        let preview = session
+            .preview_editable_export(EditorEditableTarget::Idml, "master-rebind-test")
+            .expect("loss report");
+        assert!(!preview.report.can_serialize);
+        assert!(preview.report.items.iter().any(|item| {
+            item.feature == "page.master.relation"
+                && item.origin == Some(ordinary.into_canonical())
+                && item.severity == Some(LossSeverity::Blocking)
+        }));
+    }
 }
