@@ -300,7 +300,8 @@ jobs:
           r=json.loads(Path("out/printer29-census.json").read_text())
           assert r["source_safe"] is True and r["raw_pub_retained"] is False
           assert r["media"]["pub95"]["pagewiz_pub_count"] > 0
-          assert r["media"]["pub97"]["pagewiz_pub_count"] > 0\n          assert r["media"]["pub95"]["common_name_count"] == r["media"]["pub97"]["common_name_count"]
+          assert r["media"]["pub97"]["pagewiz_pub_count"] > 0
+          assert r["media"]["pub95"]["common_name_count"] == r["media"]["pub97"]["common_name_count"]
           PY
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
