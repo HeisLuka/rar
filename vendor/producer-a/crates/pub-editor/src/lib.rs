@@ -674,7 +674,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, or {EDITOR_PROJECT_VERSION_V0_5:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, or {EDITOR_PROJECT_VERSION_V0_6:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -697,6 +697,12 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesResizeOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses ResizeNode but the project schema predates pub-editor-v0.5"
+            ),
+            Self::LegacyProjectCarriesTableGrids => formatter.write_str(
+                "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
+            ),
+            Self::TableGridMismatch => formatter.write_str(
+                "editor project EffectiveTableGridV1 state does not match deterministic replay",
             ),
             Self::MissingAssetBytes { sha256 } => {
                 write!(
