@@ -3,7 +3,8 @@ name: Authoring CreateShape V1
 on:
   pull_request:
     paths:
-      - "crates/pub-model/**"
+      - "crates/pub-model/src/create_shape.rs"
+      - "crates/pub-model/src/shape_paint.rs"
       - "crates/pub-paint-bridge/**"
       - "services/editor-api/create_shape_v1.py"
       - "services/editor-api/revision_store.py"
