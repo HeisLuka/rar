@@ -23,6 +23,49 @@
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   });
 
+  function focusedView(snapshot, baseView = BASE_VIEW) {
+    const populated = new Set(snapshot.nodes.map((node) => node.page_id));
+    const pages = [...snapshot.pages].sort((a, b) => a.order - b.order);
+    let precedingCssPx = 0;
+    for (const page of pages) {
+      if (populated.has(page.page_id)) {
+        return {
+          view: {
+            ...baseView,
+            pan_y_css_px: baseView.pan_y_css_px - precedingCssPx
+          },
+          mode: "first_populated_page",
+          page_id: page.page_id,
+          page_order: page.order,
+          preceding_css_px: precedingCssPx
+        };
+      }
+      precedingCssPx +=
+        (page.height_emu / baseView.emu_per_css_px) * baseView.zoom
+        + baseView.page_gap_css_px;
+    }
+    return {
+      view: { ...baseView },
+      mode: "no_populated_page",
+      page_id: null,
+      page_order: null,
+      preceding_css_px: 0
+    };
+  }
+
+  function benchmarkFocus(snapshot, meta, baseView = BASE_VIEW) {
+    if (meta.focus_first_populated_page === true) {
+      return focusedView(snapshot, baseView);
+    }
+    return {
+      view: { ...baseView },
+      mode: "base_view",
+      page_id: null,
+      page_order: null,
+      preceding_css_px: 0
+    };
+  }
+
   function quantile(values, q) {
     if (!values.length) return null;
     const ordered = [...values].sort((a, b) => a - b);
@@ -51,7 +94,13 @@
     const snapshot = JSON.parse(payloadText);
     const parseMs = performance.now() - parseStart;
     const immutableBefore = JSON.stringify(snapshot);
-    const selected = snapshot.nodes[0] ?? null;
+    const focus = benchmarkFocus(snapshot, meta);
+    const benchmarkView = focus.view;
+    const selected = (
+      focus.page_id
+        ? snapshot.nodes.find((node) => node.page_id === focus.page_id)
+        : null
+    ) ?? snapshot.nodes[0] ?? null;
     const preview = selected ? {
       x: selected.bounds.x + 12700,
       y: selected.bounds.y + 12700,
@@ -63,7 +112,7 @@
     for (const kind of RENDERER_KINDS) {
       host.replaceChildren();
       const first = await constructAndPaint(() =>
-        createRenderer(kind, host, snapshot, BASE_VIEW)
+        createRenderer(kind, host, snapshot, benchmarkView)
       );
       const renderer = first.value;
       const initial = renderer.stats();
@@ -86,12 +135,17 @@
       const panZoom = [];
       for (let i = 0; i < 24; i += 1) {
         const start = performance.now();
-        renderer.setView({
+        const basePanView = {
           ...BASE_VIEW,
           zoom: i % 2 ? 1.25 : 0.85,
           pan_x_css_px: (i % 7) * 4,
           pan_y_css_px: -(i % 5) * 3
-        });
+        };
+        renderer.setView(
+          meta.focus_first_populated_page === true
+            ? focusedView(snapshot, basePanView).view
+            : basePanView
+        );
         panZoom.push(performance.now() - start);
       }
       await raf2();
@@ -144,6 +198,13 @@
       real_pub: meta.real_pub === true,
       representative_corpus: meta.representative_corpus === true,
       technology_decision_allowed: meta.technology_decision_allowed === true,
+      viewport_focus: {
+        mode: focus.mode,
+        page_id: focus.page_id,
+        page_order: focus.page_order,
+        pan_y_css_px: benchmarkView.pan_y_css_px,
+        preceding_css_px: focus.preceding_css_px
+      },
       payload_bytes: new TextEncoder().encode(payloadText).byteLength,
       parse_ms: parseMs,
       pages: snapshot.pages.length,
@@ -163,23 +224,45 @@
     };
   };
 
-  window.renderForScreenshot = async function renderForScreenshot(payloadText, kind) {
+  window.renderForScreenshot = async function renderForScreenshot(payloadText, kind, options = {}) {
     const snapshot = JSON.parse(payloadText);
     host.replaceChildren();
     if (window.__screenshotRenderer) {
       window.__screenshotRenderer.destroy();
       window.__screenshotRenderer = null;
     }
-    const renderer = createRenderer(kind, host, snapshot, BASE_VIEW);
+    const focus = options.focus_first_populated_page === true
+      ? focusedView(snapshot)
+      : {
+          view: { ...BASE_VIEW },
+          mode: "base_view",
+          page_id: null,
+          page_order: null,
+          preceding_css_px: 0
+        };
+    const renderer = createRenderer(kind, host, snapshot, focus.view);
     if (!renderer.stats().available) {
       renderer.destroy();
-      return { available: false };
+      return {
+        available: false,
+        unavailable_reason: renderer.stats().unavailable_reason ?? null,
+        focus
+      };
     }
-    if (snapshot.nodes[0]) {
+    if (options.include_overlay !== false && snapshot.nodes[0]) {
       renderer.updateOverlay({ selected_node_id: snapshot.nodes[0].node_id });
     }
     await raf2();
     window.__screenshotRenderer = renderer;
-    return { available: true };
+    return {
+      available: true,
+      focus: {
+        mode: focus.mode,
+        page_id: focus.page_id,
+        page_order: focus.page_order,
+        pan_y_css_px: focus.view.pan_y_css_px,
+        preceding_css_px: focus.preceding_css_px
+      }
+    };
   };
 </script>

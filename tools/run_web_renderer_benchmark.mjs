@@ -141,7 +141,8 @@ async function main() {
             input_class: inputClass,
             real_pub: realPub,
             representative_corpus: realPub,
-            technology_decision_allowed: false
+            technology_decision_allowed: false,
+            focus_first_populated_page: realPub
           }),
         { payloadText, fixture, inputClass, realPub: Boolean(REAL_SCENE_PATH) }
       );
@@ -154,9 +155,12 @@ async function main() {
     const screenshotLabel = REAL_SCENE_PATH ? "real-sample-newsletter" : "group-table";
     for (const renderer of ["svg", "canvas2d", "webgl2-hybrid"]) {
       const state = await page.evaluate(
-        async ({ payloadText, renderer }) =>
-          window.renderForScreenshot(payloadText, renderer),
-        { payloadText: screenshotPayload, renderer }
+        async ({ payloadText, renderer, realPub }) =>
+          window.renderForScreenshot(payloadText, renderer, {
+            focus_first_populated_page: realPub,
+            include_overlay: !realPub
+          }),
+        { payloadText: screenshotPayload, renderer, realPub: Boolean(REAL_SCENE_PATH) }
       );
       if (state.available) {
         await page.locator("#host").screenshot({
@@ -171,14 +175,14 @@ async function main() {
     const realPub = Boolean(REAL_SCENE_PATH);
     const receipt = {
       receipt_kind: realPub
-        ? "chaptera.real-pub-renderer-benchmark.v1"
+        ? "chaptera.real-pub-renderer-benchmark.v2"
         : "synthetic_renderer_benchmark_preflight",
       browser_engine: BROWSER_NAME,
       real_pub: realPub,
       representative_corpus: realPub,
       technology_decision_allowed: false,
       note: realPub
-        ? "Pinned real SampleNewsletter BrowserSceneSnapshotV1 measurement. This is a decision input; final WEB-RENDER-01 selection remains gated on WEB-COLOR-SURFACE-01."
+        ? "Pinned real SampleNewsletter BrowserSceneSnapshotV1 measurement focused on the first populated page. V2 corrects the V1 blank-page targeting bug; final WEB-RENDER-01 selection remains gated on WEB-COLOR-SURFACE-01."
         : "Protocol fixtures and synthetic stress only. Do not use this receipt as the final WEB-RENDER-01 technology decision.",
       cases
     };
