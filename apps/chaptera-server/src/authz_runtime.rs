@@ -837,8 +837,7 @@ fn require_ident(value: &str, label: &'static str) -> Result<(), AuthzError> {
     if value.is_empty()
         || value.len() > 192
         || !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(byte, b'.' | b'_' | b':' | b'@' | b'/' | b'-')
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'@' | b'/' | b'-')
         })
     {
         return Err(AuthzError::new(
@@ -890,8 +889,12 @@ fn unix_now_ms() -> Result<i64, AuthzError> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AuthzError::new("clock_before_epoch", "system clock is before UNIX epoch"))?;
-    i64::try_from(elapsed.as_millis())
-        .map_err(|_| AuthzError::new("clock_overflow", "system clock does not fit i64 milliseconds"))
+    i64::try_from(elapsed.as_millis()).map_err(|_| {
+        AuthzError::new(
+            "clock_overflow",
+            "system clock does not fit i64 milliseconds",
+        )
+    })
 }
 
 fn sqlite_error(error: impl fmt::Display) -> AuthzError {
@@ -905,7 +908,6 @@ fn export_error(error: AuthzError) -> ExportExecutorError {
     ExportExecutorError::new(error.code, error.message)
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -915,8 +917,7 @@ mod tests {
 
     use crate::{
         export_executor::{
-            EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExportPublicationCommitter,
-            IDML_BOUNDED_EDITABLE_PROFILE,
+            EXPORT_JOB_PAYLOAD_SCHEMA_V1, ExportPublicationCommitter, IDML_BOUNDED_EDITABLE_PROFILE,
         },
         job_queue::JobStatus,
         schema_migration::SqliteMigrationRuntime,
@@ -940,13 +941,7 @@ mod tests {
         }
     }
 
-    async fn stores(
-        label: &str,
-    ) -> (
-        PathBuf,
-        SqliteAuthzAuthority,
-        SqliteExportPublicationStore,
-    ) {
+    async fn stores(label: &str) -> (PathBuf, SqliteAuthzAuthority, SqliteExportPublicationStore) {
         let path = temp_db(label);
         SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
             .unwrap()
@@ -1148,6 +1143,73 @@ mod tests {
             )
             .await
             .unwrap();
+
+        publications.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn expired_grant_denies_export_and_records_bounded_audit() {
+        let (path, authority, publications) = stores("expiry").await;
+
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                DocumentRole::Editor,
+                Some(25),
+                "grant-expiring-editor",
+                10,
+            )
+            .await
+            .unwrap();
+
+        authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "export-before-expiry",
+                24,
+            )
+            .await
+            .unwrap();
+
+        let denied = authority
+            .authorize(
+                "tenant:authz",
+                "document:authz",
+                "principal:editor",
+                CAP_EXPORT,
+                "export-after-expiry",
+                25,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "grant_expired");
+
+        let audit: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT action, result, error_code
+            FROM authz_audit_events
+            WHERE operation_id=?
+            "#,
+        )
+        .bind(b"export-after-expiry".as_slice())
+        .fetch_all(&authority.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            audit,
+            vec![(
+                "authorize".to_owned(),
+                "denied".to_owned(),
+                Some("grant_expired".to_owned())
+            )]
+        );
 
         publications.close().await;
         authority.close().await;
