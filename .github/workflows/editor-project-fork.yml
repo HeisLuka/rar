@@ -1,0 +1,32 @@
+name: Editor Project Fork
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/Cargo.toml"
+      - "vendor/producer-a/crates/pub-editor/**"
+      - ".github/workflows/editor-project-fork.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-fork:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+
+      - name: Check pub-editor
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --all-targets
+
+      - name: Test project fork contract
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test project_fork_v1
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -- --check
