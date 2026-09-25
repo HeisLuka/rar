@@ -487,6 +487,27 @@ except ModuleNotFoundError:
     )
 
 
+try:
+    from hyperlink_v1 import (
+        HyperlinkAuthoringError,
+        execute_hyperlink_operation_v1,
+        validate_hyperlink_operation_v1,
+        validate_hyperlink_request_v1,
+    )
+except ModuleNotFoundError:
+    import pathlib
+
+    _hyperlink_dir = str(pathlib.Path(__file__).resolve().parent)
+    if _hyperlink_dir not in sys.path:
+        sys.path.insert(0, _hyperlink_dir)
+    from hyperlink_v1 import (
+        HyperlinkAuthoringError,
+        execute_hyperlink_operation_v1,
+        validate_hyperlink_operation_v1,
+        validate_hyperlink_request_v1,
+    )
+
+
 MAX_SAFE_EMU = 9_007_199_254_740_991
 MIN_SAFE_EMU = -MAX_SAFE_EMU
 
@@ -1180,6 +1201,44 @@ class RevisionKernel:
             request_validator=self._validate_story_range_request_shape,
             canonical_validator=self._validate_canonical_story_range,
         )
+
+    def commit_hyperlink(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor = execute_hyperlink_operation_v1,
+    ) -> dict:
+        """Commit one explicit canonical HyperlinkSpan create/update/remove."""
+
+        try:
+            return self._commit_command(
+                request,
+                executor,
+                request_validator=validate_hyperlink_request_v1,
+                canonical_validator=validate_hyperlink_operation_v1,
+            )
+        except HyperlinkAuthoringError as exc:
+            document_id = request.get("document_id")
+            client_operation_id = request.get("client_operation_id")
+            if not isinstance(document_id, str) or not isinstance(client_operation_id, str):
+                raise
+            request_digest = hash_id(request)
+            idem_key = (document_id, client_operation_id)
+            current = (
+                self._documents[document_id].current_revision_id
+                if document_id in self._documents
+                else None
+            )
+            result = self._rejected(
+                request,
+                code=exc.code,
+                current_revision_id=current,
+                retryable=False,
+            )
+            self._idempotency[idem_key] = (
+                request_digest,
+                copy.deepcopy(result),
+            )
+            return result
 
     def commit_story_edit_transaction(
         self,
