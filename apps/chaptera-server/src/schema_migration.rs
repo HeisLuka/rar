@@ -690,7 +690,10 @@ mod tests {
                 .status_report()
                 .await
                 .unwrap();
-            assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+            assert_eq!(
+                final_report.applied_versions,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+            );
 
             cleanup(&path);
         }
