@@ -48,7 +48,7 @@ class EditorMarqueeSelectV1Tests(unittest.TestCase):
         ).transaction
         update=update_marquee_select_v1(
             transaction=tx,current_document_point=PointEmu(100,100),
-            current_screen_x=13,current_screen_y=14,
+            current_screen_x=13,current_screen_y=13,
         )
         self.assertEqual("armed",update.transaction.stage)
         self.assertIsNone(update.transaction.overlay_bounds)
