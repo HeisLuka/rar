@@ -130,11 +130,19 @@ fn paint() -> AuthoredShapePaintV1 {
     AuthoredShapePaintV1 {
         fill: AuthoredSolidFillV1 {
             visible: true,
-            color: Srgb8V1 { r: 10, g: 20, b: 30 },
+            color: Srgb8V1 {
+                r: 10,
+                g: 20,
+                b: 30,
+            },
         },
         stroke: AuthoredSolidStrokeV1 {
             visible: true,
-            color: Srgb8V1 { r: 40, g: 50, b: 60 },
+            color: Srgb8V1 {
+                r: 40,
+                g: 50,
+                b: 60,
+            },
             width_emu: 12_700,
         },
         provenance: AuthoredEntityProvenanceV1::AuthorCreated,
@@ -158,16 +166,25 @@ fn create_shape_is_one_v0_10_history_unit_and_source_graph_stays_immutable() {
         .expect("CreateShape");
 
     assert!(matches!(operation, EditOperation::CreateShape { .. }));
-    assert_eq!(session.graph(), &base, "CreateShape must not mutate imported graph");
+    assert_eq!(
+        session.graph(),
+        &base,
+        "CreateShape must not mutate imported graph"
+    );
     assert!(!session.graph().nodes.contains_key(&node_id));
 
-    let authored = session.authored_shape(node_id).expect("authored overlay entity");
+    let authored = session
+        .authored_shape(node_id)
+        .expect("authored overlay entity");
     assert_eq!(authored.node_id, node_id);
     assert_eq!(authored.page_id, page_id());
     assert_eq!(authored.parent_id, page_id());
     assert_eq!(authored.shape_kind, AuthoredShapeKindV1::Rectangle);
     assert_eq!(authored.transform, AuthoredShapeTransformV1::Identity);
-    assert_eq!(authored.provenance, AuthoredEntityProvenanceV1::AuthorCreated);
+    assert_eq!(
+        authored.provenance,
+        AuthoredEntityProvenanceV1::AuthorCreated
+    );
     assert_eq!(
         authored.paint.provenance,
         AuthoredEntityProvenanceV1::AuthorCreated
@@ -184,7 +201,10 @@ fn create_shape_is_one_v0_10_history_unit_and_source_graph_stays_immutable() {
     assert!(matches!(session.undo(), Err(EditorError::NothingToUndo)));
 
     session.redo().expect("one redo");
-    assert_eq!(session.authored_shape(node_id), Some(authored_from_operation(&operation).as_ref()));
+    assert_eq!(
+        session.authored_shape(node_id),
+        Some(authored_from_operation(&operation).as_ref())
+    );
 
     let mut reopened = EditorSession::new(base).expect("reopen");
     reopened.apply_project(&project).expect("replay");
@@ -226,12 +246,7 @@ fn authored_from_operation(operation: &EditOperation) -> Box<pub_editor::Authore
 fn create_shape_wire_carries_explicit_typed_semantics() {
     let mut session = EditorSession::new(graph()).expect("session");
     let operation = session
-        .create_shape(
-            authored_node_id(),
-            page_id(),
-            rect(1, 2, 3, 4),
-            paint(),
-        )
+        .create_shape(authored_node_id(), page_id(), rect(1, 2, 3, 4), paint())
         .expect("create");
     let value = serde_json::to_value(operation).expect("wire");
     assert_eq!(value["kind"], "create_shape");
@@ -260,12 +275,7 @@ fn invalid_page_identity_bounds_paint_and_collisions_fail_closed() {
     ));
 
     assert!(matches!(
-        session.create_shape(
-            source_node_id(),
-            page_id(),
-            rect(0, 0, 10, 10),
-            paint(),
-        ),
+        session.create_shape(source_node_id(), page_id(), rect(0, 0, 10, 10), paint(),),
         Err(EditorError::CreateShapeIdCollision { .. })
     ));
 
@@ -276,42 +286,22 @@ fn invalid_page_identity_bounds_paint_and_collisions_fail_closed() {
     ));
 
     assert!(matches!(
-        session.create_shape(
-            authored_node_id(),
-            page_id(),
-            rect(0, 0, 0, 10),
-            paint(),
-        ),
+        session.create_shape(authored_node_id(), page_id(), rect(0, 0, 0, 10), paint(),),
         Err(EditorError::CreateShapeInvalidBounds { .. })
     ));
 
     let mut bad_paint = paint();
     bad_paint.stroke.width_emu = 0;
     assert!(matches!(
-        session.create_shape(
-            authored_node_id(),
-            page_id(),
-            rect(0, 0, 10, 10),
-            bad_paint,
-        ),
+        session.create_shape(authored_node_id(), page_id(), rect(0, 0, 10, 10), bad_paint,),
         Err(EditorError::CreateShapeInvalidPaint { .. })
     ));
 
     session
-        .create_shape(
-            authored_node_id(),
-            page_id(),
-            rect(0, 0, 10, 10),
-            paint(),
-        )
+        .create_shape(authored_node_id(), page_id(), rect(0, 0, 10, 10), paint())
         .expect("first create");
     assert!(matches!(
-        session.create_shape(
-            authored_node_id(),
-            page_id(),
-            rect(20, 20, 10, 10),
-            paint(),
-        ),
+        session.create_shape(authored_node_id(), page_id(), rect(20, 20, 10, 10), paint(),),
         Err(EditorError::CreateShapeIdCollision { .. })
     ));
 }
@@ -382,7 +372,10 @@ fn native_pub_persistence_does_not_overclaim_created_shape_support() {
         })
         .expect("assessment");
 
-    assert_eq!(assessment.state, PersistenceCompatibilityState::NotEvaluated);
+    assert_eq!(
+        assessment.state,
+        PersistenceCompatibilityState::NotEvaluated
+    );
     assert!(assessment.items.iter().any(|item| {
         item.requirement.feature == "node.created_identity"
             && item.state == PersistenceCompatibilityState::NotEvaluated
