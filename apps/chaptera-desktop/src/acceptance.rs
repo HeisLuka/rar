@@ -266,7 +266,7 @@ pub fn run(fixture: &Path, project_path: &Path, export_path: &Path) -> Result<Va
     let after_story_state_id_effective = state_id(&editor)?;
 
     let operations_before_drag = editor.operations().len();
-    let (instance, moved_node_id, before_rect, mut drag) = select_move(&editor, &visual)
+    let (instance, moved_node_id, before_rect, drag) = select_move(&editor, &visual)
         .ok_or_else(|| "no admitted direct page-local MoveNode target".to_owned())?;
     let after_rect = drag.preview_bounds();
     if editor.operations().len() != operations_before_drag {
