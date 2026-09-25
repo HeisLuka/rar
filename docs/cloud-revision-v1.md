@@ -37,3 +37,22 @@ The contract receipt passes the canonical child RevisionId into the existing dur
 ## Scope
 
 This slice is executable integration of the current Rar service contracts. It is not deployment proof and does not claim a durable production Scene/preview artifact provider. Final CLOUD-REVISION-01 closure still requires the same identity/fence binding in the production Chaptera persistence and worker routes.
+
+
+## Durable SQLite persistence
+
+The production-side persistence slice stores exact derived-artifact fences in the
+operator-migrated Chaptera SQLite database (`0007_derived_artifacts.sql`).
+`SqliteDerivedArtifactStore` uses the same canonical sorted-key JSON fence
+identity as the service bridge from rar#432.
+
+Publication is append-only by exact fence:
+
+- exact retry + same content returns the historical row;
+- same exact fence + different content fails as nondeterministic;
+- changed canonical revision, service revision, stage/version, environment or
+  input fingerprint produces a new fence and therefore a rebuild/cache miss;
+- older revision artifacts remain readable after newer artifacts are published.
+
+This closes the durable Scene/preview artifact-storage part of CLOUD-REVISION-01.
+It still does not claim the final deployed worker-route proof.
