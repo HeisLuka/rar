@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   glyph-runtime:
@@ -17,23 +17,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.head_ref }}
       - uses: dtolnay/rust-toolchain@stable
-      - name: Format crate snapshot
-        run: cargo fmt -p chaptera-glyph-runtime
-      - name: Commit exact rustfmt normalization to task branch
-        shell: bash
-        run: |
-          git config user.name "chaptera-glyph-runtime-ci"
-          git config user.email "chaptera-glyph-runtime-ci@users.noreply.github.com"
-          git add crates/chaptera-glyph-runtime/src/lib.rs \
-                  crates/chaptera-glyph-runtime/src/bin/glyph_runtime_receipt.rs \
-                  crates/chaptera-glyph-runtime/tests/runtime_v1.rs
-          if ! git diff --cached --quiet; then
-            git commit -m "RENDER-GLYPH-RUNTIME: apply rustfmt normalization"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
+      - name: Check formatting
+        run: cargo fmt --check -p chaptera-glyph-runtime
       - name: Check crate
         run: cargo check -p chaptera-glyph-runtime
       - name: Test cache atlas and generation laws
