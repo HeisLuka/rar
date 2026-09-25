@@ -38,13 +38,17 @@ impl QuillToknPropertyBlock {
     }
 
     pub fn property(&self, tag: u16) -> Option<&Decoded<u32>> {
-        match self {
-            Self::Properties { properties, .. } => properties
-                .iter()
-                .find(|property| property.tag.value == tag)
-                .map(|property| &property.value),
-            Self::Opaque { .. } => None,
+        let Self::Properties { properties, .. } = self else {
+            return None;
+        };
+        let mut matches = properties
+            .iter()
+            .filter(|property| property.tag.value == tag);
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
         }
+        Some(&first.value)
     }
 }
 
