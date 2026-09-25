@@ -9,9 +9,11 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def run(
@@ -38,6 +40,57 @@ def http_code(url: str) -> int:
             return response.status
     except urllib.error.HTTPError as error:
         return error.code
+
+
+class OidcFixture:
+    def __enter__(self) -> "OidcFixture":
+        fixture = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def do_GET(self) -> None:
+                if self.path == "/.well-known/openid-configuration":
+                    body = json.dumps(
+                        {
+                            "issuer": fixture.issuer,
+                            "authorization_endpoint": fixture.issuer + "/authorize",
+                            "token_endpoint": fixture.issuer + "/token",
+                            "jwks_uri": fixture.issuer + "/jwks",
+                            "response_types_supported": ["code"],
+                            "subject_types_supported": ["public"],
+                            "id_token_signing_alg_values_supported": ["RS256"],
+                            "scopes_supported": ["openid"],
+                            "token_endpoint_auth_methods_supported": [
+                                "client_secret_basic"
+                            ],
+                        }
+                    ).encode("utf-8")
+                elif self.path == "/jwks":
+                    body = b'{"keys":[]}'
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        host, port = self.server.server_address
+        self.issuer = f"http://{host}:{port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
 
 
 def main() -> int:
@@ -123,55 +176,68 @@ def main() -> int:
         if not database.exists():
             raise SystemExit("operator migration did not materialize the configured database")
 
-        server_env = os.environ.copy()
-        server_env.update(role_env)
-        server = subprocess.Popen(
-            [str(binary), "--config", str(config), "serve"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=server_env,
-        )
-        try:
-            live = None
-            for _ in range(50):
-                if server.poll() is not None:
-                    stdout, stderr = server.communicate()
-                    raise SystemExit(
-                        f"prod-config server exited early rc={server.returncode}: "
-                        f"{stdout}\n{stderr}"
-                    )
-                try:
-                    live = http_code("http://127.0.0.1:18082/live")
-                    if live == 200:
-                        break
-                except OSError:
-                    pass
-                time.sleep(0.1)
-
-            if live != 200:
-                raise SystemExit(f"prod-config /live expected 200, got {live}")
-
-            ready = http_code("http://127.0.0.1:18082/ready")
-            if ready != 503:
-                raise SystemExit(
-                    f"prod-config /ready expected 503 before producers, got {ready}"
-                )
-        finally:
-            server.terminate()
-            try:
-                stdout, stderr = server.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                server.kill()
-                stdout, stderr = server.communicate()
-                raise SystemExit("prod-config server did not stop after SIGTERM")
-
-        if server.returncode != 0:
-            raise SystemExit(
-                f"prod-config server did not shut down cleanly: rc={server.returncode}"
+        runtime_config = temp / "chaptera-runtime-smoke.toml"
+        with OidcFixture() as oidc:
+            runtime_rendered = rendered.replace(
+                "environment = \"prod\"",
+                "environment = \"test\"",
+                1,
+            ).replace(
+                'issuer = "https://id.example.invalid"',
+                f'issuer = "{oidc.issuer}"',
+                1,
             )
-        if "receipt-only-oidc-secret" in stdout or "receipt-only-oidc-secret" in stderr:
-            raise SystemExit("secret leaked into ordinary server output")
+            runtime_config.write_text(runtime_rendered, encoding="utf-8")
+
+            server_env = os.environ.copy()
+            server_env.update(role_env)
+            server = subprocess.Popen(
+                [str(binary), "--config", str(runtime_config), "serve"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=server_env,
+            )
+            try:
+                live = None
+                for _ in range(50):
+                    if server.poll() is not None:
+                        stdout, stderr = server.communicate()
+                        raise SystemExit(
+                            f"runtime-smoke server exited early rc={server.returncode}: "
+                            f"{stdout}\n{stderr}"
+                        )
+                    try:
+                        live = http_code("http://127.0.0.1:18082/live")
+                        if live == 200:
+                            break
+                    except OSError:
+                        pass
+                    time.sleep(0.1)
+
+                if live != 200:
+                    raise SystemExit(f"runtime-smoke /live expected 200, got {live}")
+
+                ready = http_code("http://127.0.0.1:18082/ready")
+                if ready != 503:
+                    raise SystemExit(
+                        f"runtime-smoke /ready expected 503 before all producers, got {ready}"
+                    )
+            finally:
+                server.terminate()
+                try:
+                    stdout, stderr = server.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    stdout, stderr = server.communicate()
+                    raise SystemExit("runtime-smoke server did not stop after SIGTERM")
+
+            if server.returncode != 0:
+                raise SystemExit(
+                    f"runtime-smoke server did not shut down cleanly: rc={server.returncode}"
+                )
+            if "receipt-only-oidc-secret" in stdout or "receipt-only-oidc-secret" in stderr:
+                raise SystemExit("secret leaked into ordinary server output")
 
     receipt = {
         "schema": "chaptera.cloud-secrets-config-01.receipt.v1",
@@ -184,8 +250,10 @@ def main() -> int:
         "worker_does_not_receive_oidc_secret": worker_isolated,
         "unmigrated_prod_config_fails_closed": unmigrated_serve_fails,
         "operator_migration_precedes_serve": True,
-        "prod_config_live_code": live,
-        "prod_config_ready_without_producers": ready,
+        "prod_config_validated_without_external_idp": True,
+        "runtime_smoke_uses_local_oidc_fixture": True,
+        "runtime_smoke_live_code": live,
+        "runtime_smoke_ready_without_all_producers": ready,
         "secret_present_in_output": False,
         "secret_sources": ["env", "file", "systemd"],
         "short_lived_key_ring_supported": True,
