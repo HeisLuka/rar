@@ -373,7 +373,8 @@ class RealAcceptanceState:
         return {
             "receipt_class": "real_pub_browser",
             "real_pub": True,
-            "product_acceptance": True,
+            "product_acceptance": self.strict_acceptance,
+            "interactive": not self.strict_acceptance,
             "document_id": self.document_id,
             "source_hash": self.source_hash,
             "fixture_sha256": sha256_path(self.fixture),
@@ -436,7 +437,12 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         try:
             if path == "/health":
-                self._json({"ok": True, "receipt_class": "real_pub_browser"})
+                self._json({
+                    "ok": True,
+                    "receipt_class": "real_pub_browser",
+                    "interactive": not STATE.strict_acceptance,
+                    "product_acceptance": STATE.strict_acceptance,
+                })
                 return
             if path == "/v1/export/preview":
                 self._authorize(CAP_EXPORT)
