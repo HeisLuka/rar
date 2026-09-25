@@ -15,6 +15,7 @@ use pub_model::{
 use serde::{Deserialize, Serialize};
 
 mod break_policy;
+mod internal_caret;
 mod resolve;
 mod shaped_flow;
 mod shaping;
@@ -24,6 +25,11 @@ mod text_flow;
 pub use break_policy::{
     BOUNDED_BREAK_POLICY_REVISION, BoundedBreakCandidate, BoundedBreakKind, BoundedBreakPolicy,
     BoundedBreakPolicyError, break_policy_for_shaped_text,
+};
+pub use internal_caret::{
+    GDEF_FORMAT1_AUTHORITY_SOURCE, INTERNAL_CARET_AUTHORITY_REVISION,
+    InternalCaretAuthorityError, InternalCaretAuthorityResultV1, InternalCaretStopAuthorityV1,
+    UnsupportedInternalCaretV1, resolve_internal_carets_ltr,
 };
 pub use resolve::{
     BoundedLayoutEnvironment, BoundedResolvedScene, ResolveBlocked, ResolveDiagnostic,
