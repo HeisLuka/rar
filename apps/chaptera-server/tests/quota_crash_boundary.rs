@@ -69,10 +69,9 @@ fn child_reserves_then_aborts_before_release_or_ack() {
         .unwrap();
 
     runtime.block_on(async {
-        let authority =
-            SqliteQuotaAuthority::open(&path, 2, Duration::from_secs(2), config())
-                .await
-                .unwrap();
+        let authority = SqliteQuotaAuthority::open(&path, 2, Duration::from_secs(2), config())
+            .await
+            .unwrap();
 
         let outcome = authority
             .reserve(request(), 1_000, Duration::from_secs(30))
@@ -126,10 +125,9 @@ fn process_crash_after_reserve_recovers_exact_active_reservation() {
         .unwrap();
 
     runtime.block_on(async {
-        let reopened =
-            SqliteQuotaAuthority::open(&path, 2, Duration::from_secs(2), config())
-                .await
-                .unwrap();
+        let reopened = SqliteQuotaAuthority::open(&path, 2, Duration::from_secs(2), config())
+            .await
+            .unwrap();
 
         let usage = reopened.usage("tenant-crash", 1_001).await.unwrap();
         assert_eq!(usage.export, 2);
