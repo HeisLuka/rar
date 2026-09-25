@@ -27,8 +27,13 @@ jobs:
           from urllib.parse import urlencode
           from urllib.request import Request, urlopen
 
-          UA="rar-publisher2002-gaskin-swf/1.0"
-          target="http://www.prenhall.com:80/gaskin/GO.swf"
+          UA="rar-publisher2002-gaskin-swf/2.0"
+          targets=[
+            "http://www.prenhall.com:80/gaskin/GO.swf",
+            "http://www.prenhall.com/gaskin/GO.swf",
+            "http://prenhall.com/gaskin/GO.swf",
+          ]
+          target=targets[0]
           parent_ts="20071226171813"
 
           def cdx(u):
@@ -43,16 +48,21 @@ jobs:
               data=json.load(r)
             return [dict(zip(data[0],x)) for x in data[1:]] if data else []
 
-          errors=[]
-          try:
-            captures=cdx(target)
-          except Exception as e:
-            captures=[]
-            errors.append({"surface":"cdx","error":f"{type(e).__name__}: {e}"})
+          errors=[]; captures=[]; cap_seen=set()
+          for u in targets:
+            try:
+              rows=cdx(u)
+            except Exception as e:
+              rows=[]
+              errors.append({"surface":"cdx","url":u,"error":f"{type(e).__name__}: {e}"})
+            for x in rows:
+              k=(x.get("timestamp"),x.get("original"),x.get("digest"))
+              if k not in cap_seen:
+                cap_seen.add(k); captures.append(x)
 
-          attempts=[{"timestamp":c["timestamp"],"original":c["original"],"capture":c,"mode":"cdx"} for c in captures]
+          attempts=[{"timestamp":x["timestamp"],"original":x["original"],"capture":x,"mode":"cdx"} for x in captures]
           if not attempts:
-            attempts=[{"timestamp":parent_ts,"original":target,"capture":{"timestamp":parent_ts,"original":target,"digest":"unindexed-direct-replay"},"mode":"direct-replay"}]
+            attempts=[{"timestamp":parent_ts,"original":u,"capture":{"timestamp":parent_ts,"original":u,"digest":"unindexed-direct-replay"},"mode":"direct-replay"} for u in targets]
 
           receipts=[]; discoveries=[]
           url_re=re.compile(rb'(?i)(?:https?|ftp)://[^\x00-\x20"\'<>]{4,300}')
@@ -107,10 +117,10 @@ jobs:
           rows=sorted(unique.values(),key=lambda x:(x["kind"],x["value"].casefold()))
           carrier=[x for x in rows if re.search(r'(?i)\.(?:pub|zip|cab|exe)(?:$|[?#])',x["value"])]
           summary={
-            "schema":"chaptera.corpus-publisher2002-gaskin-swf.v1",
+            "schema":"chaptera.corpus-publisher2002-gaskin-swf.v2",
             "source_safe":True,
             "raw_payload_retained":False,
-            "target":target,
+            "targets":targets,
             "cdx_capture_count":len(captures),
             "attempts":receipts,
             "unique_discovery_count":len(rows),
