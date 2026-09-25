@@ -1090,10 +1090,9 @@ pub fn open_mature_0x2c_editor(
 ) -> Result<EditorSession, EditorOpenError> {
     let source = build_mature_0x2c_source_graph(Cursor::new(bytes), source_hash)
         .map_err(|error| EditorOpenError::SourceGraph(error.to_string()))?;
-    let image_catalog =
-        build_mature_0x2c_image_resource_catalog(Cursor::new(bytes), &source.graph)
-            .ok()
-            .flatten();
+    let image_catalog = build_mature_0x2c_image_resource_catalog(Cursor::new(bytes), &source.graph)
+        .ok()
+        .flatten();
     let resolved = resolve_pub_source_graph(&source.graph)
         .map_err(|error| EditorOpenError::Resolve(error.to_string()))?;
     let mut session = EditorSession::new(resolved.graph).map_err(EditorOpenError::Session)?;
@@ -1279,10 +1278,7 @@ impl EditorSession {
         self.image_replacements.get(&node_id).copied()
     }
 
-    pub fn source_image_authority_for(
-        &self,
-        node_id: NodeId,
-    ) -> Option<&SourceImageAuthorityV1> {
+    pub fn source_image_authority_for(&self, node_id: NodeId) -> Option<&SourceImageAuthorityV1> {
         self.source_image_authority.get(&node_id)
     }
 
