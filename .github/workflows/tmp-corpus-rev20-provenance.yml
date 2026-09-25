@@ -1,0 +1,58 @@
+name: TEMP CORPUS rev20 provenance probe
+
+on:
+  pull_request:
+    paths:
+      - 'tools/corpus/tmp_rev20_provenance.py'
+      - '.github/workflows/tmp-corpus-rev20-provenance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Compile bounded probe
+        run: python -m py_compile tools/corpus/tmp_rev20_provenance.py
+      - name: Run exact target plus known-writer controls
+        run: |
+          set -euo pipefail
+          rm -rf out
+          python tools/corpus/tmp_rev20_provenance.py
+      - name: Enforce source-safe retained output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["schema"] == "chaptera.corpus-rev20-provenance.v1"
+          assert s["source_safe"] is True
+          assert s["raw_pub_retained"] is False
+          assert s["target_sha256"] == "e050ea777d910137fff7c160992ec026ab4f76832b6c96701b114e379abf4ca3"
+          assert s["target_size"] == 59904
+          assert s["target_revision"] == 20
+          assert s["target_producer_major"] == 12
+          assert s["controls"]["publisher2002_control"]["revision"] == 14
+          assert s["controls"]["publisher2003_control"]["revision"] == 19
+          assert s["controls"]["publisher2007_control"]["revision"] == 21
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-rev20-provenance-01-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
