@@ -1,6 +1,6 @@
 use crate::{
     BlockReadError, Contents0x2cChunk, ContentsCursor, ContentsReadError, RawContentsBlock,
-    RawContentsBlockBody, parse_confirmed_block,
+    RawContentsBlockBody, decode_packed_field_tag, parse_confirmed_block,
 };
 use pub_core::RawSpan;
 use serde::{Deserialize, Serialize};
@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 pub const CONTENTS_RAW_TYPE_STORY_CATALOG: u16 = 0x65;
-pub const STORY_CATALOG_DECLARED_COUNT_ID: u8 = 0x01;
-pub const STORY_CATALOG_ENTRY_ARRAY_ID: u8 = 0x02;
-pub const STORY_CATALOG_ENTRY_TEXT_ID: u8 = 0x01;
-pub const STORY_CATALOG_ENTRY_LAYOUT_KEY_ID: u8 = 0x07;
+pub const STORY_CATALOG_DECLARED_COUNT_ID: u16 = 0x01;
+pub const STORY_CATALOG_ENTRY_ARRAY_ID: u16 = 0x02;
+pub const STORY_CATALOG_ENTRY_TEXT_ID: u16 = 0x01;
+pub const STORY_CATALOG_ENTRY_LAYOUT_KEY_ID: u16 = 0x07;
 pub const STORY_CATALOG_WIRE_U16_SERVICE: u8 = 0x10;
 pub const STORY_CATALOG_WIRE_U32_SERVICE: u8 = 0x58;
 
@@ -52,7 +52,7 @@ pub enum StoryCatalogReadError {
     MissingEntryArray,
     DuplicateEntryArray,
     InvalidEntryArray,
-    UnexpectedEntryId { offset: u64, id: u8 },
+    UnexpectedEntryId { offset: u64, id: u16 },
     InvalidEntryContainer { offset: u64 },
     MissingTextId { entry_index: usize },
     DuplicateTextId { entry_index: usize },
@@ -201,7 +201,7 @@ pub fn parse_confirmed_mature_story_catalog(
 
 fn optional_unique_entry_scalar(
     fields: &[RawContentsBlock],
-    id: u8,
+    id: u16,
     duplicate: StoryCatalogReadError,
     invalid: StoryCatalogReadError,
 ) -> Result<(Option<u32>, Option<RawSpan>), StoryCatalogReadError> {
@@ -218,7 +218,7 @@ fn optional_unique_entry_scalar(
 
 fn unique_entry_scalar(
     fields: &[RawContentsBlock],
-    id: u8,
+    id: u16,
     missing: StoryCatalogReadError,
     duplicate: StoryCatalogReadError,
     invalid: StoryCatalogReadError,
@@ -314,8 +314,15 @@ fn parse_story_catalog_block(
 
     let mut probe = cursor.clone();
     let start = probe.position();
-    let (id, id_source) = probe.read_u8()?;
-    let (block_type, _) = probe.read_u8()?;
+    let (tag0, tag0_source) = probe.read_u8()?;
+    let (tag1, _) = probe.read_u8()?;
+    let raw_tag = [tag0, tag1];
+    let (id, block_type) = decode_packed_field_tag(raw_tag);
+    let tag_source = RawSpan {
+        stream: tag0_source.stream.clone(),
+        offset: tag0_source.offset,
+        len: 2,
+    };
 
     let body = match block_type {
         STORY_CATALOG_WIRE_U16_SERVICE => {
@@ -346,9 +353,11 @@ fn parse_story_catalog_block(
     let block = RawContentsBlock {
         id,
         block_type,
+        raw_tag,
+        tag_source,
         source: RawSpan {
-            stream: id_source.stream,
-            offset: id_source.offset,
+            stream: tag0_source.stream,
+            offset: tag0_source.offset,
             len: (end - start) as u64,
         },
         body,
