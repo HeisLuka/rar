@@ -328,25 +328,28 @@ impl WorkerLoop {
                     return self.finish_execution(lease, result).await;
                 }
                 _ = heartbeat.tick() => {
-                    reservation.renew().await?;
                     let now_ms = unix_now_ms()?;
-                    match self.queue.heartbeat(
+                    let job = match self.queue.heartbeat(
                         &lease.job.job_id,
                         &lease.lease_owner,
                         lease.lease_generation,
                         now_ms,
                         self.config.lease_ms()?,
                     ).await {
-                        Ok(job) => {
-                            if job.cancel_requested_at_ms.is_some() {
-                                cancellation.cancel();
-                            }
-                        }
+                        Ok(job) => job,
                         Err(error) if error.code == "stale_lease" => {
                             cancellation.cancel();
                             return Ok(ExecutionCompletion::LeaseLost);
                         }
                         Err(error) => return Err(queue_error(error)),
+                    };
+
+                    if job.cancel_requested_at_ms.is_some() {
+                        cancellation.cancel();
+                    }
+                    if let Err(error) = reservation.renew().await {
+                        cancellation.cancel();
+                        return Err(error);
                     }
                 }
                 _ = self.control.wait_for_drain(), if !drain_started => {
@@ -461,6 +464,7 @@ mod tests {
         },
     };
 
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
     use tokio::sync::Notify;
 
     use super::*;
@@ -743,6 +747,68 @@ mod tests {
         assert_eq!(receipt.succeeded, 1);
         assert!(counters.renews.load(Ordering::SeqCst) >= 1);
         assert_eq!(counters.releases.load(Ordering::SeqCst), 1);
+
+        queue.close().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn stale_job_lease_does_not_renew_quota_reservation() {
+        let (queue, path) = queue().await;
+        enqueue(&queue, "job-stale").await;
+        let counters = Arc::new(ReservationCounters::default());
+        let started = Arc::new(Notify::new());
+        let cancelled_seen = Arc::new(AtomicBool::new(false));
+        let control = WorkerControl::default();
+        let worker = Arc::new(
+            WorkerLoop::new(
+                queue.clone(),
+                Arc::new(HangingExecutor {
+                    started: started.clone(),
+                    cancelled_seen: cancelled_seen.clone(),
+                }),
+                Arc::new(Allow {
+                    counters: counters.clone(),
+                }),
+                control.clone(),
+                config("worker-stale"),
+            )
+            .unwrap(),
+        );
+
+        let task = {
+            let worker = worker.clone();
+            tokio::spawn(async move { worker.run().await.unwrap() })
+        };
+
+        tokio::time::timeout(Duration::from_secs(1), started.notified())
+            .await
+            .unwrap();
+
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(false);
+        let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query(
+            "UPDATE jobs SET lease_generation=lease_generation+1 WHERE job_id=?",
+        )
+        .bind(b"job-stale".as_slice())
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        drop(connection);
+
+        sleep(Duration::from_millis(90)).await;
+        control.request_drain();
+        let receipt = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(receipt.lease_lost, 1);
+        assert_eq!(counters.renews.load(Ordering::SeqCst), 0);
+        assert_eq!(counters.releases.load(Ordering::SeqCst), 0);
+        assert!(cancelled_seen.load(Ordering::SeqCst));
 
         queue.close().await;
         let _ = std::fs::remove_file(path);
