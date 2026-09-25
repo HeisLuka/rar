@@ -5,8 +5,8 @@ use std::{
 };
 
 use sqlx::{
-    Row, SqlitePool, Transaction,
-    sqlite::{Sqlite, SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+    Row, Sqlite, SqlitePool, Transaction,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
 use crate::blob_store::{
@@ -416,7 +416,7 @@ async fn insert_physical_tx(
     .bind(&record.storage_generation)
     .bind(to_i64(record.created_at_ms, "created_at_ms")?)
     .bind(record.delete_eligible_at_ms.map(|value| to_i64(value, "delete_eligible_at_ms")).transpose()?)
-    .bind(i64::from(record.deleted))
+    .bind(if record.deleted { 1_i64 } else { 0_i64 })
     .execute(&mut **tx)
     .await;
 
