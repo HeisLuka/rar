@@ -4,22 +4,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-autobins = false
 
 [[bin]]
 name = "chaptera-editor"
 path = "src/main.rs"
 
-[[bin]]
-name = "chaptera-resize-producer"
-path = "src/bin/resize_node_producer.rs"
-required-features = ["resize-producer"]
-
 [features]
 default = []
 reader-only = []
 embedded-fixture-tests = []
-resize-producer = ["dep:zip"]
 
 [dependencies]
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
@@ -33,7 +26,6 @@ pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-zip = { version = "=2.4.2", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
