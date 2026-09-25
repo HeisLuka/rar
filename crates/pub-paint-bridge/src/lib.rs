@@ -6,7 +6,8 @@
 
 use pub_model::{
     ShapePaintProvenanceV1, ShapePaintV1, ShapePaintValidationError, SolidFillV1, SolidStrokeV1,
-    SourceRefV1, Srgb8, validate_shape_paint_v1,
+    SourceRefV1, Srgb8, TableCellBordersV1, TableCellId, TableCellPaintV1,
+    TableCellPaintValidationError, validate_shape_paint_v1, validate_table_cell_paint_v1,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +61,58 @@ pub struct EditableExportShapePaintV1 {
     pub fill: Option<SolidFillV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<SolidStrokeV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SceneTableCellBordersV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<ViewerSolidLineV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<ViewerSolidLineV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<ViewerSolidLineV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<ViewerSolidLineV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneTableCellPaintV1 {
+    pub cell_id: TableCellId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid_fill_rgb: Option<[u8; 3]>,
+    #[serde(default)]
+    pub borders: SceneTableCellBordersV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutTableCellPaintV1 {
+    pub cell_id: TableCellId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<SolidFillV1>,
+    #[serde(default)]
+    pub borders: TableCellBordersV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableCellPaintExportCapabilitiesV1 {
+    pub solid_fill: bool,
+    pub independent_border_sides: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum TableCellPaintExportProjectionV1 {
+    Supported {
+        cell_id: TableCellId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<SolidFillV1>,
+        #[serde(default)]
+        borders: TableCellBordersV1,
+    },
+    Loss {
+        cell_id: TableCellId,
+        code: String,
+    },
 }
 
 pub fn promote_explicit_source_paint_v1(
@@ -146,6 +199,74 @@ pub fn project_editable_export_shape_paint_v1(paint: &ShapePaintV1) -> EditableE
         fill: paint.fill.clone(),
         stroke: paint.stroke.clone(),
     }
+}
+
+pub fn project_scene_table_cell_paint_v1(
+    paint: &TableCellPaintV1,
+) -> Result<SceneTableCellPaintV1, TableCellPaintValidationError> {
+    validate_table_cell_paint_v1(paint)?;
+    let line = |value: &Option<SolidStrokeV1>| {
+        value
+            .as_ref()
+            .filter(|stroke| stroke.visible)
+            .map(|stroke| ViewerSolidLineV1 {
+                rgb: stroke.color.into(),
+                width_emu: stroke.width_emu,
+            })
+    };
+    Ok(SceneTableCellPaintV1 {
+        cell_id: paint.cell_id.clone(),
+        solid_fill_rgb: paint
+            .fill
+            .as_ref()
+            .filter(|fill| fill.visible)
+            .map(|fill| fill.color.into()),
+        borders: SceneTableCellBordersV1 {
+            top: line(&paint.borders.top),
+            right: line(&paint.borders.right),
+            bottom: line(&paint.borders.bottom),
+            left: line(&paint.borders.left),
+        },
+    })
+}
+
+pub fn project_layout_table_cell_paint_v1(
+    paint: &TableCellPaintV1,
+) -> Result<LayoutTableCellPaintV1, TableCellPaintValidationError> {
+    validate_table_cell_paint_v1(paint)?;
+    Ok(LayoutTableCellPaintV1 {
+        cell_id: paint.cell_id.clone(),
+        fill: paint.fill.clone(),
+        borders: paint.borders.clone(),
+    })
+}
+
+pub fn project_export_table_cell_paint_v1(
+    paint: &TableCellPaintV1,
+    capabilities: TableCellPaintExportCapabilitiesV1,
+) -> Result<TableCellPaintExportProjectionV1, TableCellPaintValidationError> {
+    validate_table_cell_paint_v1(paint)?;
+    if paint.fill.is_some() && !capabilities.solid_fill {
+        return Ok(TableCellPaintExportProjectionV1::Loss {
+            cell_id: paint.cell_id.clone(),
+            code: "table_cell_solid_fill_unsupported".to_owned(),
+        });
+    }
+    let has_border = paint.borders.top.is_some()
+        || paint.borders.right.is_some()
+        || paint.borders.bottom.is_some()
+        || paint.borders.left.is_some();
+    if has_border && !capabilities.independent_border_sides {
+        return Ok(TableCellPaintExportProjectionV1::Loss {
+            cell_id: paint.cell_id.clone(),
+            code: "table_cell_independent_borders_unsupported".to_owned(),
+        });
+    }
+    Ok(TableCellPaintExportProjectionV1::Supported {
+        cell_id: paint.cell_id.clone(),
+        fill: paint.fill.clone(),
+        borders: paint.borders.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -456,6 +577,111 @@ mod tests {
         let export = project_editable_export_shape_paint_v1(&painted);
         assert_eq!(export.fill, painted.fill);
         assert_eq!(export.stroke, painted.stroke);
+    }
+
+    #[test]
+    fn table_cell_paint_projects_by_cell_identity_without_shape_aliasing() {
+        use pub_model::{TABLE_CELL_PAINT_SCHEMA_V1, TableCellClassV1, TableCellPaintV1};
+        let cell_id = TableCellId::parse("00112233-4455-6677-8899-aabbccddeeff").expect("cell id");
+        let paint = TableCellPaintV1 {
+            schema_version: TABLE_CELL_PAINT_SCHEMA_V1.to_owned(),
+            cell_id: cell_id.clone(),
+            table_class: TableCellClassV1::SimpleUnmergedRectangular,
+            fill: Some(SolidFillV1 {
+                visible: true,
+                color: Srgb8 { r: 1, g: 2, b: 3 },
+            }),
+            borders: TableCellBordersV1 {
+                top: Some(SolidStrokeV1 {
+                    visible: true,
+                    color: Srgb8 { r: 4, g: 5, b: 6 },
+                    width_emu: 12_700,
+                }),
+                right: None,
+                bottom: None,
+                left: None,
+            },
+        };
+
+        let scene = project_scene_table_cell_paint_v1(&paint).expect("scene");
+        assert_eq!(scene.cell_id, cell_id);
+        assert_eq!(scene.solid_fill_rgb, Some([1, 2, 3]));
+        assert_eq!(
+            scene.borders.top,
+            Some(ViewerSolidLineV1 {
+                rgb: [4, 5, 6],
+                width_emu: 12_700,
+            })
+        );
+
+        let layout = project_layout_table_cell_paint_v1(&paint).expect("layout");
+        assert_eq!(layout.cell_id, paint.cell_id);
+        assert_eq!(layout.fill, paint.fill);
+        assert_eq!(layout.borders, paint.borders);
+    }
+
+    #[test]
+    fn table_cell_export_is_supported_or_reports_explicit_loss() {
+        use pub_model::{TABLE_CELL_PAINT_SCHEMA_V1, TableCellClassV1, TableCellPaintV1};
+        let paint = TableCellPaintV1 {
+            schema_version: TABLE_CELL_PAINT_SCHEMA_V1.to_owned(),
+            cell_id: TableCellId::parse("11111111-2222-3333-4444-555555555555").expect("cell id"),
+            table_class: TableCellClassV1::SimpleUnmergedRectangular,
+            fill: Some(SolidFillV1 {
+                visible: true,
+                color: Srgb8 { r: 7, g: 8, b: 9 },
+            }),
+            borders: TableCellBordersV1 {
+                top: None,
+                right: Some(SolidStrokeV1 {
+                    visible: false,
+                    color: Srgb8 { r: 1, g: 1, b: 1 },
+                    width_emu: 25_400,
+                }),
+                bottom: None,
+                left: None,
+            },
+        };
+
+        assert!(matches!(
+            project_export_table_cell_paint_v1(
+                &paint,
+                TableCellPaintExportCapabilitiesV1 {
+                    solid_fill: true,
+                    independent_border_sides: true,
+                },
+            )
+            .expect("projection"),
+            TableCellPaintExportProjectionV1::Supported { .. }
+        ));
+        assert_eq!(
+            project_export_table_cell_paint_v1(
+                &paint,
+                TableCellPaintExportCapabilitiesV1 {
+                    solid_fill: true,
+                    independent_border_sides: false,
+                },
+            )
+            .expect("loss"),
+            TableCellPaintExportProjectionV1::Loss {
+                cell_id: paint.cell_id.clone(),
+                code: "table_cell_independent_borders_unsupported".to_owned(),
+            }
+        );
+        assert_eq!(
+            project_export_table_cell_paint_v1(
+                &paint,
+                TableCellPaintExportCapabilitiesV1 {
+                    solid_fill: false,
+                    independent_border_sides: true,
+                },
+            )
+            .expect("loss"),
+            TableCellPaintExportProjectionV1::Loss {
+                cell_id: paint.cell_id.clone(),
+                code: "table_cell_solid_fill_unsupported".to_owned(),
+            }
+        );
     }
 
     #[test]
