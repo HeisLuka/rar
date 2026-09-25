@@ -1,0 +1,116 @@
+name: TEMP SoftwareEducation Publisher exercise-file recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-training-softwareeducation-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Discover historical PUB captures on SoftwareEducation.co.nz
+        run: |
+          set -euo pipefail
+          mkdir -p out/discovery
+          python tools/corpus/wayback_pub_seed.py \
+            --domain softwareeducation.co.nz \
+            --max-domains 1 \
+            --domain-limit 2500 \
+            --exact-limit 20 \
+            --delay 0.5 \
+            --timeout 60 \
+            --retries 2 \
+            --out out/discovery/wayback_seed.csv \
+            --summary out/discovery/wayback_seed.summary.json
+          cat out/discovery/wayback_seed.summary.json
+
+      - name: Recover discovered PUB captures as untrusted data
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, json, pathlib
+          p=pathlib.Path('out/discovery/wayback_seed.csv')
+          rows=list(csv.DictReader(p.open(encoding='utf-8'))) if p.exists() else []
+          pathlib.Path('out/discovery/locator-count.json').write_text(
+              json.dumps({'locator_rows':len(rows)},indent=2),encoding='utf-8')
+          print('locator_rows=',len(rows))
+          PY
+          if [ "$(python - <<'PY'
+          import csv
+          with open('out/discovery/wayback_seed.csv',encoding='utf-8') as f:
+              print(sum(1 for _ in csv.DictReader(f)))
+          PY
+          )" -gt 0 ]; then
+            python tools/corpus/harvest_pub.py \
+              --seed out/discovery/wayback_seed.csv \
+              --out out/harvest \
+              --max-files -1 \
+              --timeout 30 \
+              --max-bytes 104857600 \
+              --per-host-delay 0.2
+          else
+            mkdir -p out/harvest
+            printf '[]\n' > out/harvest/manifest.json
+            printf 'source_page,direct_url,candidate_filename,fetch_status,classification,sha256\n' > out/harvest/manifest.csv
+          fi
+
+      - name: Summarize and strip raw payloads
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          from collections import Counter
+          p=pathlib.Path('out/harvest/manifest.json')
+          rows=json.loads(p.read_text(encoding='utf-8')) if p.exists() else []
+          complete=[r for r in rows if r.get('classification')=='cfb_publisher_hint']
+          summary={
+              'schema':'chaptera.corpus-training-softwareeducation-wayback.v1',
+              'source_safe':True,
+              'raw_pub_retained':False,
+              'source_domain':'softwareeducation.co.nz',
+              'historical_source_basis':'Publisher 2000/2002 training books explicitly documented free retrievable exercise files on SoftwareEducation.co.nz',
+              'manifest_rows':len(rows),
+              'unique_sha256':len({r.get('sha256') for r in rows if r.get('sha256')}),
+              'complete_publisher_sha256':len({r.get('sha256') for r in complete if r.get('sha256')}),
+              'fetch_status':dict(Counter(r.get('fetch_status','') for r in rows)),
+              'classification':dict(Counter(r.get('classification','') for r in rows)),
+              'complete_files':[{
+                  'filename':r.get('candidate_filename'),
+                  'sha256':r.get('sha256'),
+                  'size':r.get('size'),
+                  'source_page':r.get('source_page'),
+                  'direct_url':r.get('direct_url'),
+                  'wayback_original_url':r.get('wayback_original_url'),
+                  'wayback_timestamp':r.get('wayback_timestamp')
+              } for r in complete],
+              'guardrail':'Historical source/book version is provenance only; recovered file writer/creator version remains independent.'
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+          find out/harvest -type f \
+            ! -name 'manifest.json' \
+            ! -name 'manifest.csv' \
+            -delete
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into artifact' >&2
+            exit 1
+          fi
+          sha256sum out/discovery/* out/harvest/* out/summary.json | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-softwareeducation-wayback-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
