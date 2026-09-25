@@ -394,6 +394,13 @@ async fn exact_prefix_materializes_r0_r1_r2_and_ignores_corrupt_future_tail_for_
     assert_eq!(r1.authoring_root_hash, Some(hash_char('a')));
     assert_eq!(r1.canonical_authoring_revision_id, hash_char('2'));
 
+    let r1_state = m
+        .materialize_state("tenant-a", "doc-a", "r1")
+        .await
+        .unwrap();
+    assert_eq!(r1_state.receipt, r1);
+    assert_eq!(r1_state.source_bytes, bytes);
+
     let r2 = m.materialize("tenant-a", "doc-a", "r2").await.unwrap();
     assert_eq!(r2.replayed_edges, 2);
     assert_eq!(r2.project, p2);
