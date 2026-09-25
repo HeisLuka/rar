@@ -635,11 +635,7 @@ mod tests {
                     .expect("test upload generation");
                 upload = self
                     .repo
-                    .compare_and_swap(
-                        &upload.upload_id,
-                        upload.upload_generation,
-                        validating,
-                    )
+                    .compare_and_swap(&upload.upload_id, upload.upload_generation, validating)
                     .await?;
             }
 
@@ -663,11 +659,7 @@ mod tests {
                 validated.terminal_code = None;
                 upload = self
                     .repo
-                    .compare_and_swap(
-                        &upload.upload_id,
-                        upload.upload_generation,
-                        validated,
-                    )
+                    .compare_and_swap(&upload.upload_id, upload.upload_generation, validated)
                     .await?;
             }
             Ok(upload)
