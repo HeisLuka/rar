@@ -334,6 +334,41 @@ class BufferResidencyV1:
         self.metrics["page_revisits"] += count
         return count
 
+    def memory_entries(self) -> list[dict[str, Any]]:
+        """Public governor adapter surface; physical offsets stay private."""
+        return [
+            {
+                "identity": slot.logical_id,
+                "resident_bytes": slot.length if slot.state == "resident" else 0,
+                "reclaimable": slot.state == "resident",
+                "state": slot.state,
+                "page_id": slot.page_id,
+                "generation": slot.generation,
+                "placement_generation": slot.placement_generation,
+            }
+            for slot in sorted(self._slots.values(), key=lambda row: row.logical_id)
+            if slot.state != "free"
+        ]
+
+    def evict_logical(self, logical_id: str) -> dict[str, Any]:
+        slot_id = self._logical_to_slot.get(logical_id)
+        if slot_id is None:
+            return {"bytes_reclaimed": 0, "identity": logical_id}
+        slot = self._slots[slot_id]
+        if slot.state != "resident" or slot.offset is None:
+            return {"bytes_reclaimed": 0, "identity": logical_id}
+        reclaimed = slot.length
+        self._free_range(slot.offset, slot.length)
+        slot.offset = None
+        slot.state = "evicted"
+        slot.placement_generation += 1
+        return {"bytes_reclaimed": reclaimed, "identity": logical_id}
+
+    def invalidate_logical(self, logical_id: str) -> dict[str, Any]:
+        result = self.evict_logical(logical_id)
+        result["invalidated"] = logical_id
+        return result
+
     def reset_device(self):
         resident = [slot for slot in self._slots.values() if slot.state == "resident"]
         self.device_generation += 1

@@ -53,6 +53,41 @@ class TextureResidencyV1:
         e=self._entries[key]; e.placements=max(0,e.placements-1)
     def evict(self,key):
         e=self._entries[key]; e.state="Evicted"; e.resident_bytes=0; e.placements=0; self._handles.pop(key,None); self.metrics["evictions"]+=1
+    def identity_for_key(self,key):
+        return "texture:"+sha256(repr(key).encode()).hexdigest()
+
+    def entry_for_identity(self,identity):
+        for key,entry in self._entries.items():
+            if self.identity_for_key(key)==identity:
+                return entry
+        raise KeyError(identity)
+
+    def memory_entries(self):
+        return [
+            {
+                "identity":self.identity_for_key(key),
+                "resident_bytes":entry.resident_bytes if entry.state=="Resident" else 0,
+                "reclaimable":entry.state=="Resident" and entry.placements==0,
+                "state":entry.state,
+                "demand_count":entry.placements,
+                "generation":entry.generation,
+            }
+            for key,entry in sorted(self._entries.items(),key=lambda row:self.identity_for_key(row[0]))
+        ]
+
+    def evict_identity(self,identity):
+        for key,entry in self._entries.items():
+            if self.identity_for_key(key)!=identity:
+                continue
+            reclaimed=entry.resident_bytes if entry.state=="Resident" else 0
+            if entry.state=="Resident":
+                self.evict(key)
+            return {"bytes_reclaimed":reclaimed,"identity":identity}
+        return {"bytes_reclaimed":0,"identity":identity}
+
+    def invalidate_identity(self,identity):
+        result=self.evict_identity(identity); result["invalidated"]=identity; return result
+
     def reset_device(self):
         self.device_generation+=1; self.metrics["device_resets"]+=1
         for e in self._entries.values(): e.state="Evicted"; e.resident_bytes=0; e.placements=0
