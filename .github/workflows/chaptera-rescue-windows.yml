@@ -6,6 +6,7 @@ on:
       - "apps/chaptera-rescue/**"
       - "packages/product/rescue-recovery/**"
       - ".github/workflows/chaptera-rescue-windows.yml"
+      - "tools/probe_chaptera_rescue_desktop_v1.py"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +29,8 @@ jobs:
         run: cargo test --manifest-path apps/chaptera-rescue/Cargo.toml
       - name: Build standalone Rescue executable
         run: cargo build --manifest-path apps/chaptera-rescue/Cargo.toml --release
+      - name: Probe source-hash + receipt/report path
+        run: python tools/probe_chaptera_rescue_desktop_v1.py --exe apps/chaptera-rescue/target/release/chaptera-rescue.exe
       - name: Verify product-qualified executable
         shell: pwsh
         run: |
