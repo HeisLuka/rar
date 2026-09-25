@@ -789,13 +789,11 @@ mod tests {
             .filename(&path)
             .create_if_missing(false);
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::query(
-            "UPDATE jobs SET lease_generation=lease_generation+1 WHERE job_id=?",
-        )
-        .bind(b"job-stale".as_slice())
-        .execute(&mut connection)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE jobs SET lease_generation=lease_generation+1 WHERE job_id=?")
+            .bind(b"job-stale".as_slice())
+            .execute(&mut connection)
+            .await
+            .unwrap();
         drop(connection);
 
         sleep(Duration::from_millis(90)).await;
