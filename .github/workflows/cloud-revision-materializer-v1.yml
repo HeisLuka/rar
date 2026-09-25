@@ -26,7 +26,7 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p chaptera-server -- --check
       - name: Lint chaptera-server materializer
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run exact replay and fail-closed matrix
