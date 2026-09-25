@@ -2,9 +2,7 @@ use pub_model::{
     AuthorityClass, CanonicalId, EMU_PER_INCH, LengthEmu, Page, PageId, PublisherGuideRole,
     ReadConfidence, RulerGuideAxis, Sha256Digest, Size2D, SourceDescriptor, SourceRef, SourceRole,
 };
-use pub_reader::{
-    PubGuideObservation, PubGuideProjectionDiagnostic, materialize_grounded_guides,
-};
+use pub_reader::{PubGuideObservation, PubGuideProjectionDiagnostic, materialize_grounded_guides};
 use std::collections::BTreeMap;
 
 fn page_id() -> PageId {

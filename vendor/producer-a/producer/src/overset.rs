@@ -7,8 +7,8 @@ use pub_layout::{
 };
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, EMU_PER_POINT, LengthEmu, Node, NodeHeader,
-    NodeId, NodeKind, Page, PageId, RectEmu, ResolvedGraph, Sha256Digest, Size2D,
-    SourceDescriptor, Story, StoryFrame, StoryId,
+    NodeId, NodeKind, Page, PageId, RectEmu, ResolvedGraph, Sha256Digest, Size2D, SourceDescriptor,
+    Story, StoryFrame, StoryId,
 };
 use pub_reader::{
     PubExplicitShapePaintSource, PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame,
@@ -60,7 +60,9 @@ fn hash_id(text: &str) -> String {
 }
 
 fn parse_source_hash(value: &str) -> Result<Sha256Digest> {
-    value.parse().map_err(|_| anyhow!("source_hash must be lowercase SHA-256"))
+    value
+        .parse()
+        .map_err(|_| anyhow!("source_hash must be lowercase SHA-256"))
 }
 
 fn synthetic_graph(source_hash_text: &str) -> Result<PubResolvedGraph> {

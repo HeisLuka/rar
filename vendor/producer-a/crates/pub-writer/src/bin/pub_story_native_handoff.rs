@@ -121,10 +121,7 @@ fn generate(output_dir: &Path) -> Result<(), Box<dyn Error>> {
             "build_prefix": "12527"
         }
     });
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
 
     let verified = verify_pub_bytes(&candidate.bytes, &manifest)?;
     println!(

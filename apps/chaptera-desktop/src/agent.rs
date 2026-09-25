@@ -14,7 +14,8 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 const PROTOCOL_VERSION: &str = "chaptera.agent-control.v1";
-const AGENT_CONTROL_CATALOG_JSON: &str = include_str!("../../../packages/protocol/editor-agent-control/v1.catalog.json");
+const AGENT_CONTROL_CATALOG_JSON: &str =
+    include_str!("../../../packages/protocol/editor-agent-control/v1.catalog.json");
 
 struct AgentSession {
     source_path: PathBuf,
@@ -157,7 +158,9 @@ impl AgentServer {
             Err((code, message)) => vec![error_envelope(
                 request_id.as_deref(),
                 Some(command),
-                self.session.as_ref().map(|session| session.session_id.as_str()),
+                self.session
+                    .as_ref()
+                    .map(|session| session.session_id.as_str()),
                 self.session
                     .as_ref()
                     .map(|session| session.visual.document.source.source_hash.to_string())
@@ -176,13 +179,10 @@ impl AgentServer {
         match command {
             "protocol.describe" => {
                 let catalog = agent_control_catalog()?;
-                let command_contracts = catalog
-                    .get("commands")
-                    .cloned()
-                    .ok_or((
-                        "agent_catalog_invalid",
-                        "embedded agent catalog has no commands object".to_owned(),
-                    ))?;
+                let command_contracts = catalog.get("commands").cloned().ok_or((
+                    "agent_catalog_invalid",
+                    "embedded agent catalog has no commands object".to_owned(),
+                ))?;
                 Ok((
                     json!({
                         "protocol_version": PROTOCOL_VERSION,
@@ -221,7 +221,7 @@ impl AgentServer {
                     }),
                     vec![("observed", json!({"surface":"protocol"}))],
                 ))
-            },
+            }
             "open" => {
                 let path = required_string(object, "path")?;
                 self.open_document(Path::new(path))?;
@@ -267,7 +267,10 @@ impl AgentServer {
                         })
                     })
                     .collect::<Vec<_>>();
-                Ok((json!({"pages":pages}), vec![("observed", json!({"surface":"pages"}))]))
+                Ok((
+                    json!({"pages":pages}),
+                    vec![("observed", json!({"surface":"pages"}))],
+                ))
             }
             "stories.list" => {
                 let session = self.require_session()?;
@@ -287,17 +290,18 @@ impl AgentServer {
                         })
                     })
                     .collect::<Vec<_>>();
-                Ok((json!({"stories":stories}), vec![("observed", json!({"surface":"stories"}))]))
+                Ok((
+                    json!({"stories":stories}),
+                    vec![("observed", json!({"surface":"stories"}))],
+                ))
             }
             "story.inspect" => {
                 let story_id = parse_story_id(required_string(object, "story_id")?)?;
                 let session = self.require_session()?;
-                let story = session
-                    .editor
-                    .graph()
-                    .stories
-                    .get(&story_id)
-                    .ok_or(("story_not_found", "story_id is not present in the current graph".to_owned()))?;
+                let story = session.editor.graph().stories.get(&story_id).ok_or((
+                    "story_not_found",
+                    "story_id is not present in the current graph".to_owned(),
+                ))?;
                 let capability = session.editor.can_replace_story_text(story_id);
                 let frame_count = session
                     .visual
@@ -320,7 +324,10 @@ impl AgentServer {
                         "capability_reason": capability.err().map(|error| error.code().to_owned()),
                         "content": "redacted_use_story.read_local"
                     }),
-                    vec![("observed", json!({"surface":"story","story_id":story_id.as_canonical().to_string()}))],
+                    vec![(
+                        "observed",
+                        json!({"surface":"story","story_id":story_id.as_canonical().to_string()}),
+                    )],
                 ))
             }
             "story.read_local" => {
@@ -332,12 +339,10 @@ impl AgentServer {
                 }
                 let story_id = parse_story_id(required_string(object, "story_id")?)?;
                 let session = self.require_session()?;
-                let story = session
-                    .editor
-                    .graph()
-                    .stories
-                    .get(&story_id)
-                    .ok_or(("story_not_found", "story_id is not present in the current graph".to_owned()))?;
+                let story = session.editor.graph().stories.get(&story_id).ok_or((
+                    "story_not_found",
+                    "story_id is not present in the current graph".to_owned(),
+                ))?;
                 Ok((
                     json!({
                         "story_id": story_id.as_canonical().to_string(),
@@ -345,7 +350,10 @@ impl AgentServer {
                         "text_sha256": sha256_hex(story.text.as_bytes()),
                         "local_only": true
                     }),
-                    vec![("content_read_local", json!({"story_id":story_id.as_canonical().to_string()}))],
+                    vec![(
+                        "content_read_local",
+                        json!({"story_id":story_id.as_canonical().to_string()}),
+                    )],
                 ))
             }
             "scene.instances.list" => {
@@ -384,7 +392,13 @@ impl AgentServer {
                         "instance is not an admitted direct_page_local SceneInstance".to_owned(),
                     ));
                 };
-                Ok((view, vec![("observed", json!({"surface":"instance","instance_id":instance_id}))]))
+                Ok((
+                    view,
+                    vec![(
+                        "observed",
+                        json!({"surface":"instance","instance_id":instance_id}),
+                    )],
+                ))
             }
             "capabilities.get" => {
                 let target_kind = required_string(object, "target_kind")?;
@@ -407,10 +421,17 @@ impl AgentServer {
                         }
                     }
                     "instance" => {
-                        if let Some((instance, node_id, bounds)) = find_direct_instance(session, target_id) {
-                            let move_scene = admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
-                            let move_editor = session.editor.can_move_node_to(node_id, bounds.x, bounds.y);
-                            let replace_scene = admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage);
+                        if let Some((instance, node_id, bounds)) =
+                            find_direct_instance(session, target_id)
+                        {
+                            let move_scene =
+                                admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                            let move_editor =
+                                session.editor.can_move_node_to(node_id, bounds.x, bounds.y);
+                            let replace_scene = admit_object_mutation_v1(
+                                &instance,
+                                ObjectMutationKindV1::ReplaceImage,
+                            );
                             json!({
                                 "target_kind":"instance",
                                 "target_id":target_id,
@@ -438,20 +459,26 @@ impl AgentServer {
                         return Err((
                             "unsupported_target_kind",
                             "target_kind must be story or instance".to_owned(),
-                        ))
+                        ));
                     }
                 };
-                Ok((payload, vec![("observed", json!({"surface":"capabilities","target_kind":target_kind}))]))
+                Ok((
+                    payload,
+                    vec![(
+                        "observed",
+                        json!({"surface":"capabilities","target_kind":target_kind}),
+                    )],
+                ))
             }
             "edit.apply" => {
-                let operation = object
-                    .get("operation")
-                    .and_then(Value::as_object)
-                    .ok_or(("missing_operation", "operation must be an object".to_owned()))?;
-                let kind = operation
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .ok_or(("missing_operation_kind", "operation.kind must be a string".to_owned()))?;
+                let operation = object.get("operation").and_then(Value::as_object).ok_or((
+                    "missing_operation",
+                    "operation must be an object".to_owned(),
+                ))?;
+                let kind = operation.get("kind").and_then(Value::as_str).ok_or((
+                    "missing_operation_kind",
+                    "operation.kind must be a string".to_owned(),
+                ))?;
                 let intent = json!({"operation_kind":kind});
                 let (payload, commit_payload) = match kind {
                     "replace_story_range" => self.apply_story_range(operation)?,
@@ -460,7 +487,7 @@ impl AgentServer {
                         return Err((
                             "unsupported_operation",
                             "agent V1 supports replace_story_range and move_node".to_owned(),
-                        ))
+                        ));
                     }
                 };
                 Ok((
@@ -510,7 +537,10 @@ impl AgentServer {
                         "artifact":{"kind":"editor_project","sha256":sha256_hex(&bytes),"byte_len":bytes.len()},
                         "operation_count":session.editor.operations().len()
                     }),
-                    vec![("project_persisted", json!({"sha256":sha256_hex(&bytes),"byte_len":bytes.len()}))],
+                    vec![(
+                        "project_persisted",
+                        json!({"sha256":sha256_hex(&bytes),"byte_len":bytes.len()}),
+                    )],
                 ))
             }
             "project.reopen" => {
@@ -522,8 +552,9 @@ impl AgentServer {
                 let project: EditorProject = serde_json::from_slice(&bytes)
                     .map_err(|error| ("project_parse_failed", error.to_string()))?;
                 let source_hash = session.visual.document.source.source_hash;
-                let mut reopened = pub_editor::open_mature_0x2c_editor(&session.source_bytes, source_hash)
-                    .map_err(|error| ("editor_reopen_failed", error.to_string()))?;
+                let mut reopened =
+                    pub_editor::open_mature_0x2c_editor(&session.source_bytes, source_hash)
+                        .map_err(|error| ("editor_reopen_failed", error.to_string()))?;
                 reopened
                     .apply_project(&project)
                     .map_err(|error| ("project_replay_failed", error.to_string()))?;
@@ -562,7 +593,10 @@ impl AgentServer {
                     .preview_editable_export(target, "agent.pub")
                     .map_err(|error| ("loss_preview_failed", error.to_string()))?;
                 if !preview.report.can_serialize {
-                    return Err(("export_blocked", "editable export is blocked by loss preview".to_owned()));
+                    return Err((
+                        "export_blocked",
+                        "editable export is blocked by loss preview".to_owned(),
+                    ));
                 }
                 let export = session
                     .editor
@@ -581,7 +615,10 @@ impl AgentServer {
                         },
                         "loss_report":serde_json::to_value(&export.report).map_err(|error| ("export_report_serialize_failed", error.to_string()))?
                     }),
-                    vec![("exported", json!({"format":target.extension(),"sha256":sha256_hex(&export.bytes),"byte_len":export.bytes.len()}))],
+                    vec![(
+                        "exported",
+                        json!({"format":target.extension(),"sha256":sha256_hex(&export.bytes),"byte_len":export.bytes.len()}),
+                    )],
                 ))
             }
             "snapshot.get" => Ok((
@@ -593,10 +630,7 @@ impl AgentServer {
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
-                Ok((
-                    json!({"subscribed":self.trace_subscribed}),
-                    Vec::new(),
-                ))
+                Ok((json!({"subscribed":self.trace_subscribed}), Vec::new()))
             }
             "diagnostics.deep" => {
                 let Some(receipt_path) = object.get("receipt_path").and_then(Value::as_str) else {
@@ -606,7 +640,10 @@ impl AgentServer {
                             "reason":"deep_diagnostics_receipt_not_loaded",
                             "provider":"operation_blast_radius_v1_local_receipt"
                         }),
-                        vec![("observed", json!({"surface":"diagnostics_deep","available":false}))],
+                        vec![(
+                            "observed",
+                            json!({"surface":"diagnostics_deep","available":false}),
+                        )],
                     ));
                 };
                 if receipt_path.is_empty() {
@@ -642,20 +679,26 @@ impl AgentServer {
                     deep_diagnostics_summary(Path::new(receipt_path), joined_path, &source_hash)?;
                 Ok((
                     summary,
-                    vec![("observed", json!({"surface":"diagnostics_deep","available":true,"native_join":joined_path.is_some()}))],
+                    vec![(
+                        "observed",
+                        json!({"surface":"diagnostics_deep","available":true,"native_join":joined_path.is_some()}),
+                    )],
                 ))
-            },
+            }
             "shutdown" => {
                 self.shutdown = true;
                 Ok((json!({"shutdown":true}), vec![("shutdown", json!({}))]))
             }
-            _ => Err(("unknown_command", format!("unsupported command {command:?}"))),
+            _ => Err((
+                "unknown_command",
+                format!("unsupported command {command:?}"),
+            )),
         }
     }
 
     fn open_document(&mut self, path: &Path) -> Result<(), (&'static str, String)> {
-        let source_bytes =
-            fs::read(path).map_err(|error| ("source_read_failed", format!("read source: {error}")))?;
+        let source_bytes = fs::read(path)
+            .map_err(|error| ("source_read_failed", format!("read source: {error}")))?;
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &source_bytes,
             pub_viewer::viewer_geometry_environment_v0_1(),
@@ -780,12 +823,10 @@ impl AgentServer {
         };
         let admission = admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
         if !admission.admitted
-            || geometry_sync_policy_v1(&instance) != GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
+            || geometry_sync_policy_v1(&instance)
+                != GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
         {
-            return Err((
-                "scene_instance_mutation_denied",
-                admission.reason,
-            ));
+            return Err(("scene_instance_mutation_denied", admission.reason));
         }
 
         let before_state_id = state_id(&session.editor)?;
@@ -800,7 +841,10 @@ impl AgentServer {
             .nodes
             .get(&node_id)
             .map(|node| node.header.bounds)
-            .ok_or(("node_missing_after_move", "moved node disappeared from graph".to_owned()))?;
+            .ok_or((
+                "node_missing_after_move",
+                "moved node disappeared from graph".to_owned(),
+            ))?;
         let operation_id = operation_id(&applied);
         let summary = operation_summary(&applied);
         let commit = json!({
@@ -833,15 +877,17 @@ impl AgentServer {
     }
 
     fn require_session(&self) -> Result<&AgentSession, (&'static str, String)> {
-        self.session
-            .as_ref()
-            .ok_or(("no_open_document", "open a PUB before this command".to_owned()))
+        self.session.as_ref().ok_or((
+            "no_open_document",
+            "open a PUB before this command".to_owned(),
+        ))
     }
 
     fn require_session_mut(&mut self) -> Result<&mut AgentSession, (&'static str, String)> {
-        self.session
-            .as_mut()
-            .ok_or(("no_open_document", "open a PUB before this command".to_owned()))
+        self.session.as_mut().ok_or((
+            "no_open_document",
+            "open a PUB before this command".to_owned(),
+        ))
     }
 }
 
@@ -853,13 +899,18 @@ fn deep_diagnostics_summary(
     joined_path: Option<&Path>,
     current_source_hash: &str,
 ) -> Result<Value, (&'static str, String)> {
-    let bytes = fs::read(path)
-        .map_err(|error| ("deep_diagnostics_read_failed", format!("read diagnostic receipt: {error}")))?;
+    let bytes = fs::read(path).map_err(|error| {
+        (
+            "deep_diagnostics_read_failed",
+            format!("read diagnostic receipt: {error}"),
+        )
+    })?;
     let value = serde_json::from_slice::<Value>(&bytes)
         .map_err(|error| ("deep_diagnostics_invalid_json", error.to_string()))?;
-    let root = value
-        .as_object()
-        .ok_or(("deep_diagnostics_invalid_receipt", "receipt must be a JSON object".to_owned()))?;
+    let root = value.as_object().ok_or((
+        "deep_diagnostics_invalid_receipt",
+        "receipt must be a JSON object".to_owned(),
+    ))?;
 
     require_exact_object_keys(
         root,
@@ -943,9 +994,11 @@ fn deep_diagnostics_summary(
         "invariants",
     )?;
 
-    let counts = diagnostic_classification_counts(
-        required_object_value(root, "classification_counts", "receipt")?,
-    )?;
+    let counts = diagnostic_classification_counts(required_object_value(
+        root,
+        "classification_counts",
+        "receipt",
+    )?)?;
     let cfb = required_object_value(root, "cfb", "receipt")?;
     require_exact_object_keys(
         cfb,
@@ -960,45 +1013,66 @@ fn deep_diagnostics_summary(
     )?;
 
     let operation = required_object_value(root, "operation", "receipt")?;
-    let operation_summary = allowlisted_object(
-        operation,
-        &["kind", "operation_id", "node_id"],
-    );
+    let operation_summary = allowlisted_object(operation, &["kind", "operation_id", "node_id"]);
 
     let parser_outcomes =
         diagnostic_parser_outcomes(required_object_value(root, "parser_outcomes", "receipt")?)?;
-    let second_save = diagnostic_second_save_summary(
-        required_object_value(root, "second_save_convergence", "receipt")?,
-    )?;
+    let second_save = diagnostic_second_save_summary(required_object_value(
+        root,
+        "second_save_convergence",
+        "receipt",
+    )?)?;
 
     let parsed_record_family_delta = diagnostic_classified_array(
-        root.get("parsed_record_family_delta")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing parsed_record_family_delta".to_owned()))?,
-        &["family", "id", "before_sha256", "after_sha256", "classification"],
+        root.get("parsed_record_family_delta").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing parsed_record_family_delta".to_owned(),
+        ))?,
+        &[
+            "family",
+            "id",
+            "before_sha256",
+            "after_sha256",
+            "classification",
+        ],
         "parsed_record_family_delta",
     )?;
     let semantic_graph_delta = diagnostic_classified_array(
-        root.get("semantic_graph_delta")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing semantic_graph_delta".to_owned()))?,
-        &["kind", "id", "before_sha256", "after_sha256", "classification"],
+        root.get("semantic_graph_delta").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing semantic_graph_delta".to_owned(),
+        ))?,
+        &[
+            "kind",
+            "id",
+            "before_sha256",
+            "after_sha256",
+            "classification",
+        ],
         "semantic_graph_delta",
     )?;
 
     let source_control_topology_delta = diagnostic_classified_array(
-        cfb.get("source_control_topology_delta")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing source_control_topology_delta".to_owned()))?,
+        cfb.get("source_control_topology_delta").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing source_control_topology_delta".to_owned(),
+        ))?,
         &["stream_id", "change", "classification"],
         "source_control_topology_delta",
     )?;
     let control_mutation_topology_delta = diagnostic_classified_array(
-        cfb.get("control_mutation_topology_delta")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing control_mutation_topology_delta".to_owned()))?,
+        cfb.get("control_mutation_topology_delta").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing control_mutation_topology_delta".to_owned(),
+        ))?,
         &["stream_id", "change", "classification"],
         "control_mutation_topology_delta",
     )?;
     let source_control_stream_delta = diagnostic_classified_array(
-        cfb.get("source_control_stream_delta")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing source_control_stream_delta".to_owned()))?,
+        cfb.get("source_control_stream_delta").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing source_control_stream_delta".to_owned(),
+        ))?,
         &[
             "stream_id",
             "before_sha256",
@@ -1010,8 +1084,10 @@ fn deep_diagnostics_summary(
         "source_control_stream_delta",
     )?;
     let control_mutation_stream_delta = diagnostic_classified_array(
-        cfb.get("control_mutation_stream_delta")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing control_mutation_stream_delta".to_owned()))?,
+        cfb.get("control_mutation_stream_delta").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing control_mutation_stream_delta".to_owned(),
+        ))?,
         &[
             "stream_id",
             "before_sha256",
@@ -1023,8 +1099,10 @@ fn deep_diagnostics_summary(
         "control_mutation_stream_delta",
     )?;
     let control_mutation_byte_ranges = diagnostic_classified_array(
-        cfb.get("control_mutation_byte_ranges")
-            .ok_or(("deep_diagnostics_invalid_receipt", "missing control_mutation_byte_ranges".to_owned()))?,
+        cfb.get("control_mutation_byte_ranges").ok_or((
+            "deep_diagnostics_invalid_receipt",
+            "missing control_mutation_byte_ranges".to_owned(),
+        ))?,
         &["offset", "length", "physical_label", "classification"],
         "control_mutation_byte_ranges",
     )?;
@@ -1063,8 +1141,7 @@ fn deep_diagnostics_summary(
         }
     });
     if let Some(joined_path) = joined_path {
-        let native_join =
-            joined_movenode_summary(joined_path, &bytes, root, current_source_hash)?;
+        let native_join = joined_movenode_summary(joined_path, &bytes, root, current_source_hash)?;
         summary
             .as_object_mut()
             .expect("deep diagnostics summary is an object")
@@ -1103,9 +1180,7 @@ fn joined_movenode_summary(
         ],
         "joined_receipt",
     )?;
-    if root.get("receipt_version").and_then(Value::as_str)
-        != Some(MOVENODE_JOIN_RECEIPT_VERSION)
-    {
+    if root.get("receipt_version").and_then(Value::as_str) != Some(MOVENODE_JOIN_RECEIPT_VERSION) {
         return Err((
             "deep_diagnostics_join_schema_mismatch",
             "joined receipt is not MoveNodeDiagnosticReceiptV1".to_owned(),
@@ -1292,11 +1367,8 @@ fn joined_movenode_summary(
             ))?;
             let convergence =
                 required_object_value(blast_root, "second_save_convergence", "receipt")?;
-            let artifact = required_object_value(
-                convergence,
-                "artifact",
-                "second_save_convergence",
-            )?;
+            let artifact =
+                required_object_value(convergence, "artifact", "second_save_convergence")?;
             if artifact.get("sha256").and_then(Value::as_str) != Some(joined_second) {
                 return Err((
                     "deep_diagnostics_join_second_save_mismatch",
@@ -1421,11 +1493,7 @@ fn joined_rect_emu(
         "deep_diagnostics_join_invalid_receipt",
         format!("{label} must be an object"),
     ))?;
-    require_exact_object_keys(
-        object,
-        &["x", "y", "width", "height"],
-        label,
-    )?;
+    require_exact_object_keys(object, &["x", "y", "width", "height"], label)?;
     let read = |field: &str| {
         object.get(field).and_then(Value::as_i64).ok_or((
             "deep_diagnostics_join_invalid_receipt",
@@ -1450,11 +1518,7 @@ fn joined_native_geometry(
         "deep_diagnostics_join_invalid_receipt",
         format!("{label} must be an object"),
     ))?;
-    require_exact_object_keys(
-        object,
-        &["left", "top", "width", "height"],
-        label,
-    )?;
+    require_exact_object_keys(object, &["left", "top", "width", "height"], label)?;
     let read = |field: &str| {
         let raw = object.get(field).and_then(Value::as_str).ok_or((
             "deep_diagnostics_join_invalid_receipt",
@@ -1489,10 +1553,14 @@ fn verify_join_geometry(
     axis: &str,
     tolerance_emu: i64,
 ) -> Result<(), (&'static str, String)> {
-    let c_before =
-        joined_rect_emu(chaptera.get("before").unwrap_or(&Value::Null), "chaptera.before")?;
-    let c_after =
-        joined_rect_emu(chaptera.get("after").unwrap_or(&Value::Null), "chaptera.after")?;
+    let c_before = joined_rect_emu(
+        chaptera.get("before").unwrap_or(&Value::Null),
+        "chaptera.before",
+    )?;
+    let c_after = joined_rect_emu(
+        chaptera.get("after").unwrap_or(&Value::Null),
+        "chaptera.after",
+    )?;
     if c_before.2 != c_after.2 || c_before.3 != c_after.3 {
         return Err((
             "deep_diagnostics_join_geometry_mismatch",
@@ -1500,8 +1568,12 @@ fn verify_join_geometry(
         ));
     }
 
-    let control = control.as_object().expect("joined_native_arm returns object");
-    let mutation = mutation.as_object().expect("joined_native_arm returns object");
+    let control = control
+        .as_object()
+        .expect("joined_native_arm returns object");
+    let mutation = mutation
+        .as_object()
+        .expect("joined_native_arm returns object");
     let n_control_before = joined_native_geometry(
         control.get("before").unwrap_or(&Value::Null),
         "native.control.before",
@@ -1546,7 +1618,7 @@ fn verify_join_geometry(
             return Err((
                 "deep_diagnostics_join_geometry_mismatch",
                 "canonical/native mutation is not the same one-axis move".to_owned(),
-            ))
+            ));
         }
     };
     if error > tolerance_emu as f64 + 1e-6 {
@@ -1565,13 +1637,10 @@ fn required_object_value<'a>(
     field: &str,
     label: &str,
 ) -> Result<&'a Map<String, Value>, (&'static str, String)> {
-    object
-        .get(field)
-        .and_then(Value::as_object)
-        .ok_or((
-            "deep_diagnostics_invalid_receipt",
-            format!("{label}.{field} must be an object"),
-        ))
+    object.get(field).and_then(Value::as_object).ok_or((
+        "deep_diagnostics_invalid_receipt",
+        format!("{label}.{field} must be an object"),
+    ))
 }
 
 fn require_exact_object_keys(
@@ -1579,8 +1648,14 @@ fn require_exact_object_keys(
     expected: &[&str],
     label: &str,
 ) -> Result<(), (&'static str, String)> {
-    let actual = object.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>();
-    let wanted = expected.iter().copied().collect::<std::collections::BTreeSet<_>>();
+    let actual = object
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let wanted = expected
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
     if actual != wanted {
         return Err((
             "deep_diagnostics_invalid_receipt",
@@ -1609,26 +1684,20 @@ fn diagnostic_artifact_summary(
     artifact: &Map<String, Value>,
     label: &str,
 ) -> Result<Value, (&'static str, String)> {
-    let hash = artifact
-        .get("sha256")
-        .and_then(Value::as_str)
-        .ok_or((
-            "deep_diagnostics_invalid_receipt",
-            format!("artifacts.{label}.sha256 missing"),
-        ))?;
+    let hash = artifact.get("sha256").and_then(Value::as_str).ok_or((
+        "deep_diagnostics_invalid_receipt",
+        format!("artifacts.{label}.sha256 missing"),
+    ))?;
     if !is_sha256_hex(hash) {
         return Err((
             "deep_diagnostics_invalid_receipt",
             format!("artifacts.{label}.sha256 invalid"),
         ));
     }
-    let byte_len = artifact
-        .get("byte_len")
-        .and_then(Value::as_u64)
-        .ok_or((
-            "deep_diagnostics_invalid_receipt",
-            format!("artifacts.{label}.byte_len invalid"),
-        ))?;
+    let byte_len = artifact.get("byte_len").and_then(Value::as_u64).ok_or((
+        "deep_diagnostics_invalid_receipt",
+        format!("artifacts.{label}.byte_len invalid"),
+    ))?;
     Ok(json!({"sha256":hash,"byte_len":byte_len}))
 }
 
@@ -1669,10 +1738,13 @@ fn diagnostic_classified_array(
             "deep_diagnostics_invalid_receipt",
             format!("{label}[{index}] must be an object"),
         ))?;
-        let classification = object.get("classification").and_then(Value::as_str).ok_or((
-            "deep_diagnostics_invalid_receipt",
-            format!("{label}[{index}].classification missing"),
-        ))?;
+        let classification = object
+            .get("classification")
+            .and_then(Value::as_str)
+            .ok_or((
+                "deep_diagnostics_invalid_receipt",
+                format!("{label}[{index}].classification missing"),
+            ))?;
         if !matches!(
             classification,
             "requested_semantic"
@@ -1694,11 +1766,19 @@ fn diagnostic_classified_array(
 fn diagnostic_parser_outcomes(
     object: &Map<String, Value>,
 ) -> Result<Value, (&'static str, String)> {
-    require_exact_object_keys(object, &["source", "control", "mutation"], "parser_outcomes")?;
+    require_exact_object_keys(
+        object,
+        &["source", "control", "mutation"],
+        "parser_outcomes",
+    )?;
     let mut out = Map::new();
     for arm in ["source", "control", "mutation"] {
         let value = required_object_value(object, arm, "parser_outcomes")?;
-        require_exact_object_keys(value, &["status", "diagnostic_codes"], &format!("parser_outcomes.{arm}"))?;
+        require_exact_object_keys(
+            value,
+            &["status", "diagnostic_codes"],
+            &format!("parser_outcomes.{arm}"),
+        )?;
         let status = value.get("status").and_then(Value::as_str).ok_or((
             "deep_diagnostics_invalid_receipt",
             format!("parser_outcomes.{arm}.status missing"),
@@ -1709,17 +1789,23 @@ fn diagnostic_parser_outcomes(
                 format!("parser_outcomes.{arm}.status invalid"),
             ));
         }
-        let codes = value.get("diagnostic_codes").and_then(Value::as_array).ok_or((
-            "deep_diagnostics_invalid_receipt",
-            format!("parser_outcomes.{arm}.diagnostic_codes invalid"),
-        ))?;
+        let codes = value
+            .get("diagnostic_codes")
+            .and_then(Value::as_array)
+            .ok_or((
+                "deep_diagnostics_invalid_receipt",
+                format!("parser_outcomes.{arm}.diagnostic_codes invalid"),
+            ))?;
         if !codes.iter().all(|value| value.as_str().is_some()) {
             return Err((
                 "deep_diagnostics_invalid_receipt",
                 format!("parser_outcomes.{arm}.diagnostic_codes must be strings"),
             ));
         }
-        out.insert(arm.to_owned(), json!({"status":status,"diagnostic_codes":codes}));
+        out.insert(
+            arm.to_owned(),
+            json!({"status":status,"diagnostic_codes":codes}),
+        );
     }
     Ok(Value::Object(out))
 }
@@ -1785,8 +1871,7 @@ fn agent_control_catalog() -> Result<Value, (&'static str, String)> {
         "agent_catalog_invalid",
         "embedded agent catalog must be a JSON object".to_owned(),
     ))?;
-    if object.get("schema").and_then(Value::as_str)
-        != Some("chaptera.agent-control.catalog.v1")
+    if object.get("schema").and_then(Value::as_str) != Some("chaptera.agent-control.catalog.v1")
         || object.get("protocol_version").and_then(Value::as_str) != Some(PROTOCOL_VERSION)
         || object.get("executable").and_then(Value::as_str) != Some("chaptera-editor.exe")
         || !object.get("commands").is_some_and(Value::is_object)
@@ -1808,17 +1893,20 @@ fn required_string<'a>(
         .get(field)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or(("invalid_argument", format!("{field} must be a non-empty string")))
+        .ok_or((
+            "invalid_argument",
+            format!("{field} must be a non-empty string"),
+        ))
 }
 
 fn required_u32(
     object: &Map<String, Value>,
     field: &'static str,
 ) -> Result<u32, (&'static str, String)> {
-    let value = object
-        .get(field)
-        .and_then(Value::as_u64)
-        .ok_or(("invalid_argument", format!("{field} must be an unsigned integer")))?;
+    let value = object.get(field).and_then(Value::as_u64).ok_or((
+        "invalid_argument",
+        format!("{field} must be an unsigned integer"),
+    ))?;
     u32::try_from(value).map_err(|_| ("invalid_argument", format!("{field} does not fit u32")))
 }
 
@@ -1846,7 +1934,10 @@ fn parse_export_target(value: &str) -> Result<EditorEditableTarget, (&'static st
     match value {
         "idml" => Ok(EditorEditableTarget::Idml),
         "odg" => Ok(EditorEditableTarget::Odg),
-        _ => Err(("unsupported_export_target", "target must be idml or odg".to_owned())),
+        _ => Err((
+            "unsupported_export_target",
+            "target must be idml or odg".to_owned(),
+        )),
     }
 }
 
@@ -1966,7 +2057,8 @@ fn state_id(editor: &EditorSession) -> Result<String, (&'static str, String)> {
 }
 
 fn operation_id(operation: &EditOperation) -> String {
-    let bytes = serde_json::to_vec(operation).expect("EditOperation JSON serialization is infallible");
+    let bytes =
+        serde_json::to_vec(operation).expect("EditOperation JSON serialization is infallible");
     format!("sha256:{}", sha256_hex(&bytes))
 }
 
@@ -1987,7 +2079,11 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "before_story_state_id":before_story_state_id,
             "after_story_state_id":after_story_state_id
         }),
-        EditOperation::ReplaceStoryText { story_id, before, after } => json!({
+        EditOperation::ReplaceStoryText {
+            story_id,
+            before,
+            after,
+        } => json!({
             "kind":"replace_story_text",
             "story_id":story_id.as_canonical().to_string(),
             "before_text_sha256":sha256_hex(before.as_bytes()),
@@ -2006,19 +2102,32 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "downstream_frame_id":downstream_frame_id.as_canonical().to_string(),
             "new_story_id":new_story_id.as_canonical().to_string()
         }),
-        EditOperation::ReplaceTableCellText { node_id, story_id, cell_id, .. } => json!({
+        EditOperation::ReplaceTableCellText {
+            node_id,
+            story_id,
+            cell_id,
+            ..
+        } => json!({
             "kind":"replace_table_cell_text",
             "node_id":node_id.as_canonical().to_string(),
             "story_id":story_id.as_canonical().to_string(),
             "cell_id":cell_id.as_canonical().to_string()
         }),
-        EditOperation::ReplaceImage { node_id, before_asset, after_asset } => json!({
+        EditOperation::ReplaceImage {
+            node_id,
+            before_asset,
+            after_asset,
+        } => json!({
             "kind":"replace_image",
             "node_id":node_id.as_canonical().to_string(),
             "before_asset":before_asset.as_ref().map(|value| value.to_string()),
             "after_asset":after_asset.to_string()
         }),
-        EditOperation::MoveNode { node_id, before, after } => json!({
+        EditOperation::MoveNode {
+            node_id,
+            before,
+            after,
+        } => json!({
             "kind":"move_node",
             "node_id":node_id.as_canonical().to_string(),
             "before":rect_json(*before),
@@ -2033,7 +2142,11 @@ fn operation_summary(operation: &EditOperation) -> Value {
                 "after":rect_json(entry.after)
             })).collect::<Vec<_>>()
         }),
-        EditOperation::ResizeNode { node_id, before, after } => json!({
+        EditOperation::ResizeNode {
+            node_id,
+            before,
+            after,
+        } => json!({
             "kind":"resize_node",
             "node_id":node_id.as_canonical().to_string(),
             "before":rect_json(*before),
@@ -2070,8 +2183,14 @@ fn diagnostic_codes(visual: &ViewerGeometryDocument) -> Vec<String> {
 }
 
 fn set_delta(before: &[String], after: &[String]) -> (Vec<String>, Vec<String>) {
-    let before_set = before.iter().cloned().collect::<std::collections::BTreeSet<_>>();
-    let after_set = after.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let before_set = before
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let after_set = after
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     (
         after_set.difference(&before_set).cloned().collect(),
         before_set.difference(&after_set).cloned().collect(),
@@ -2249,13 +2368,13 @@ mod tests {
     #[test]
     fn embedded_agent_catalog_identity_is_valid() {
         let catalog = agent_control_catalog().expect("valid embedded catalog");
-        assert_eq!(
-            catalog["schema"],
-            "chaptera.agent-control.catalog.v1"
-        );
+        assert_eq!(catalog["schema"], "chaptera.agent-control.catalog.v1");
         assert_eq!(catalog["protocol_version"], PROTOCOL_VERSION);
         assert_eq!(catalog["executable"], "chaptera-editor.exe");
-        assert_eq!(catalog["global_laws"]["projected_object_mutation"], "fail_closed");
+        assert_eq!(
+            catalog["global_laws"]["projected_object_mutation"],
+            "fail_closed"
+        );
     }
 
     #[test]
@@ -2265,10 +2384,7 @@ mod tests {
             r#"{"request_id":"r1","command":"story.read_local","story_id":"00112233-4455-6677-8899-aabbccddeeff"}"#,
         );
         assert_eq!(responses[0]["ok"], false);
-        assert_eq!(
-            responses[0]["error"]["code"],
-            "content_consent_required"
-        );
+        assert_eq!(responses[0]["error"]["code"], "content_consent_required");
     }
 
     #[test]
@@ -2386,17 +2502,13 @@ mod tests {
             r#"{"request_id":"r1","command":"diagnostics.deep","receipt_path":"receipt.json"}"#,
         );
         assert_eq!(responses[0]["ok"], false);
-        assert_eq!(
-            responses[0]["error"]["code"],
-            "local_file_consent_required"
-        );
+        assert_eq!(responses[0]["error"]["code"], "local_file_consent_required");
     }
 
     #[test]
     fn deep_diagnostics_without_receipt_is_explicitly_not_loaded() {
         let mut server = AgentServer::default();
-        let responses =
-            server.handle_line(r#"{"request_id":"r1","command":"diagnostics.deep"}"#);
+        let responses = server.handle_line(r#"{"request_id":"r1","command":"diagnostics.deep"}"#);
         assert_eq!(responses[0]["ok"], true);
         assert_eq!(responses[0]["result"]["available"], false);
         assert_eq!(
@@ -2407,8 +2519,7 @@ mod tests {
 
     #[test]
     fn deep_diagnostics_summary_is_source_bound_and_source_free() {
-        let source_hash =
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let source_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let fixture = deep_receipt(source_hash);
         let path = write_deep_receipt(&fixture, "allowlist");
         let summary =
@@ -2416,10 +2527,7 @@ mod tests {
         let encoded = serde_json::to_string(&summary).expect("serialize summary");
         assert_eq!(summary["available"], true);
         assert_eq!(summary["source_hash"], source_hash);
-        assert_eq!(
-            summary["operation"]["kind"],
-            "MoveNode"
-        );
+        assert_eq!(summary["operation"]["kind"], "MoveNode");
         assert!(!encoded.contains("SECRET"));
         assert!(!encoded.contains("private"));
         assert!(!encoded.contains(path.to_string_lossy().as_ref()));
@@ -2428,10 +2536,8 @@ mod tests {
 
     #[test]
     fn deep_diagnostics_rejects_receipt_for_another_pub() {
-        let receipt_hash =
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let current_hash =
-            "9999999999999999999999999999999999999999999999999999999999999999";
+        let receipt_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let current_hash = "9999999999999999999999999999999999999999999999999999999999999999";
         let fixture = deep_receipt(receipt_hash);
         let path = write_deep_receipt(&fixture, "mismatch");
         let error = deep_diagnostics_summary(&path, None, current_hash)
@@ -2442,8 +2548,7 @@ mod tests {
 
     #[test]
     fn deep_diagnostics_rejects_writer_capability_escalation() {
-        let source_hash =
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let source_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let mut fixture = deep_receipt(source_hash);
         fixture["invariants"]["native_pub_writer_capability_granted"] = Value::Bool(true);
         let path = write_deep_receipt(&fixture, "writer-escalation");
@@ -2518,20 +2623,15 @@ mod tests {
 
     #[test]
     fn deep_diagnostics_join_is_hash_bound_and_source_free() {
-        let source_hash =
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let source_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let blast = deep_receipt(source_hash);
         let blast_bytes = serde_json::to_vec(&blast).expect("serialize blast");
         let blast_path = write_deep_receipt(&blast, "join-blast");
         let joined = joined_receipt(source_hash, &blast, &blast_bytes);
         let joined_path = write_deep_receipt(&joined, "join-receipt");
 
-        let summary = deep_diagnostics_summary(
-            &blast_path,
-            Some(&joined_path),
-            source_hash,
-        )
-        .expect("valid joined diagnostics");
+        let summary = deep_diagnostics_summary(&blast_path, Some(&joined_path), source_hash)
+            .expect("valid joined diagnostics");
         assert_eq!(summary["native_join"]["available"], true);
         assert_eq!(summary["native_join"]["binding_verified"], true);
         assert_eq!(
@@ -2541,7 +2641,10 @@ mod tests {
         let encoded = serde_json::to_string(&summary).expect("serialize joined summary");
         assert!(!encoded.contains(blast_path.to_string_lossy().as_ref()));
         assert!(!encoded.contains(joined_path.to_string_lossy().as_ref()));
-        assert_eq!(summary["native_join"]["invariants"]["native_pub_write"], false);
+        assert_eq!(
+            summary["native_join"]["invariants"]["native_pub_write"],
+            false
+        );
 
         let _ = fs::remove_file(blast_path);
         let _ = fs::remove_file(joined_path);
@@ -2549,8 +2652,7 @@ mod tests {
 
     #[test]
     fn deep_diagnostics_join_rejects_changed_blast_bytes() {
-        let source_hash =
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let source_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let blast = deep_receipt(source_hash);
         let original_bytes = serde_json::to_vec(&blast).expect("serialize blast");
         let joined = joined_receipt(source_hash, &blast, &original_bytes);
@@ -2559,12 +2661,8 @@ mod tests {
         let mut changed_blast = blast.clone();
         changed_blast["classification_counts"]["unexplained_collateral"] = Value::from(9);
         let blast_path = write_deep_receipt(&changed_blast, "tampered-blast");
-        let error = deep_diagnostics_summary(
-            &blast_path,
-            Some(&joined_path),
-            source_hash,
-        )
-        .expect_err("changed blast bytes must break joined binding");
+        let error = deep_diagnostics_summary(&blast_path, Some(&joined_path), source_hash)
+            .expect_err("changed blast bytes must break joined binding");
         assert_eq!(error.0, "deep_diagnostics_join_blast_hash_mismatch");
 
         let _ = fs::remove_file(blast_path);
