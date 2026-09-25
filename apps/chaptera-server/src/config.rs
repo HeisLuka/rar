@@ -591,7 +591,10 @@ fn validate_source_ingress(
             "source_ingress.scanner.isolation_harness",
             &scanner.isolation_harness,
         ),
-        ("source_ingress.scanner.worker_binary", &scanner.worker_binary),
+        (
+            "source_ingress.scanner.worker_binary",
+            &scanner.worker_binary,
+        ),
         ("source_ingress.scanner.temp_root", &scanner.temp_root),
     ] {
         validate_runtime_path(mode, field, path)?;
