@@ -1,0 +1,31 @@
+name: Chaptera Rescue Windows worker fence V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/probe_rescue_worker_windows_fence.py"
+      - "tools/test_rescue_worker_windows_fence.py"
+      - "docs/chaptera-rescue-worker-v1.md"
+      - ".github/workflows/rescue-worker-windows-fence-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-job-object-fence:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Windows Job Object acceptance
+        run: python -m unittest tools/test_rescue_worker_windows_fence.py -v
+      - name: Emit acceptance receipt
+        run: python tools/probe_rescue_worker_windows_fence.py --output-json rescue-worker-win-fence.acceptance.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rescue-worker-win-fence-v1
+          path: rescue-worker-win-fence.acceptance.json
+          if-no-files-found: error
