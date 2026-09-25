@@ -2,7 +2,11 @@
 import copy
 import unittest
 
-from page_extent_v1 import PageExtentV1Error, apply_set_page_extent_v1
+from page_extent_v1 import (
+    PageExtentV1Error,
+    apply_set_page_extent_v1,
+    validate_page_extent_authority_v1,
+)
 from revision_store import RevisionKernel
 
 
@@ -79,8 +83,14 @@ class PageExtentV1Tests(unittest.TestCase):
 
     @staticmethod
     def admitted_customer_page(command):
-        if command["page_id"] != PAGE_ID:
-            raise ValueError("page_role_unresolved")
+        validate_page_extent_authority_v1(
+            command,
+            {
+                "page_id": PAGE_ID,
+                "page_role": "customer_page",
+                "tracking_morph": "absent",
+            },
+        )
 
     def test_commit_changes_only_page_extent_and_preserves_objects_and_story(self):
         accepted = self.kernel.commit_page_extent(
@@ -97,19 +107,51 @@ class PageExtentV1Tests(unittest.TestCase):
         self.assertEqual(1, len(current["operations"]))
         self.assertEqual("keep_objects_fixed", accepted["canonical_operation"]["semantics"])
 
-    def test_external_authority_gate_rejects_master_service_and_unsafe_morph_before_execution(self):
-        for reason in ("master_page", "service_page", "tracking_morph_unknown"):
-            def reject(_command, reason=reason):
-                raise ValueError(reason)
+    def test_external_authority_gate_rejects_noncustomer_roles_and_unsafe_morph_before_execution(self):
+        cases = [
+            (
+                {"page_id": PAGE_ID, "page_role": "master_page", "tracking_morph": "absent"},
+                "role is not authorable",
+            ),
+            (
+                {"page_id": PAGE_ID, "page_role": "service_page", "tracking_morph": "absent"},
+                "role is not authorable",
+            ),
+            (
+                {"page_id": PAGE_ID, "page_role": "customer_page", "tracking_morph": "unknown"},
+                "not classified safe",
+            ),
+        ]
+        for index, (authority, message) in enumerate(cases):
+            def reject(command, authority=authority):
+                validate_page_extent_authority_v1(command, authority)
 
-            with self.assertRaisesRegex(ValueError, reason):
+            with self.assertRaisesRegex(PageExtentV1Error, message):
                 self.kernel.commit_page_extent(
-                    request(self.baseline.revision_id, f"page-size-{reason}-0001"),
+                    request(self.baseline.revision_id, f"page-size-authority-{index:04d}"),
                     self.executor,
                     pre_execute_validator=reject,
                 )
         self.assertEqual(0, self.executor.calls)
         self.assertEqual(self.baseline.revision_id, self.kernel.current_revision(DOCUMENT_ID).revision_id)
+
+    def test_explicit_classified_safe_imported_customer_page_is_admitted(self):
+        def admitted(command):
+            validate_page_extent_authority_v1(
+                command,
+                {
+                    "page_id": PAGE_ID,
+                    "page_role": "customer_page",
+                    "tracking_morph": "classified_safe",
+                },
+            )
+
+        accepted = self.kernel.commit_page_extent(
+            request(self.baseline.revision_id, "page-size-safe-import-0001"),
+            self.executor,
+            pre_execute_validator=admitted,
+        )
+        self.assertEqual("chaptera.commit-accepted.v1", accepted["protocol_version"])
 
     def test_stale_before_state_rejects_without_mutating_base(self):
         bad = command(before=extent(1, 2))
