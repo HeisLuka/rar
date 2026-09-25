@@ -88,29 +88,37 @@ fn select_move(
             .iter()
             .filter(|node| node.parent_origin == page_origin)
         {
-            let instance = direct_instance(editor, &target_page_id, scene_node.origin)?;
+            let Some(instance) = direct_instance(editor, &target_page_id, scene_node.origin) else {
+                continue;
+            };
             let admission = admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+            let origin_node_id = scene_node.origin.as_canonical().to_string();
             if !admission.admitted
-                || admission.origin_node_id.as_deref()
-                    != Some(scene_node.origin.as_canonical().to_string().as_str())
+                || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
                 || geometry_sync_policy_v1(&instance)
                     != GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
             {
                 continue;
             }
 
-            let authored = editor.graph().nodes.get(&scene_node.origin)?;
+            let Some(authored) = editor.graph().nodes.get(&scene_node.origin) else {
+                continue;
+            };
             let before = authored.header.bounds;
             for &(dx, dy) in DELTAS {
-                let mut drag = MoveTransaction::begin(
+                let Ok(mut drag) = MoveTransaction::begin(
                     scene_node.origin,
                     before,
                     DocumentPoint::new(LengthEmu::ZERO, LengthEmu::ZERO),
-                )
-                .ok()?;
-                let preview = drag
-                    .update(DocumentPoint::new(LengthEmu::new(dx), LengthEmu::new(dy)))
-                    .ok()?;
+                ) else {
+                    continue;
+                };
+                let Ok(preview) = drag.update(DocumentPoint::new(
+                    LengthEmu::new(dx),
+                    LengthEmu::new(dy),
+                )) else {
+                    continue;
+                };
                 if editor
                     .can_move_node_to(scene_node.origin, preview.x, preview.y)
                     .is_ok()
