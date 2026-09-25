@@ -923,6 +923,66 @@ mod tests {
 
 
     #[test]
+    fn duplicate_known_property_clears_effective_value_instead_of_inheriting() {
+        let mut bytes = type12_prefix(2, 0, &[0, 5, 10]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_TEXT_LENGTH, 5),
+            (TOKN_PROPERTY_KIND, 7),
+        ]));
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_TEXT_LENGTH, 4),
+            (TOKN_PROPERTY_TEXT_LENGTH, 5),
+        ]));
+        bytes.extend(property_block(&[]));
+        bytes.extend(property_block(&[]));
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(66)],
+        )
+        .unwrap();
+
+        assert_eq!(parsed[0].effective_tokens[0].text_length_utf16, Some(5));
+        assert_eq!(parsed[0].effective_tokens[1].text_length_utf16, None);
+        assert_eq!(parsed[0].effective_tokens[1].kind_i32(), Some(7));
+    }
+
+    #[test]
+    fn unknown_kind_target_is_not_guessed_as_string_even_when_utf16_is_valid() {
+        let mut bytes = type12_prefix(1, 0, &[0, 1]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_TEXT_LENGTH, 1),
+            (TOKN_PROPERTY_KIND, 99),
+        ]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_STATE, 0)]));
+
+        w32(&mut bytes, 8);
+        w32(&mut bytes, 1);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 4);
+        w16(&mut bytes, 1);
+        w16(&mut bytes, b'X' as u16);
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(77)],
+        )
+        .unwrap();
+
+        let target = parsed[0].target_section.as_ref().unwrap();
+        assert!(matches!(
+            target.records[0],
+            QuillToknTargetRecord::Unknown { .. }
+        ));
+    }
+
+    #[test]
     fn malformed_target_section_is_preserved_as_exact_opaque_tail() {
         let mut bytes = type12_prefix(1, 0, &[0, 1]);
         bytes.extend(property_block(&[
