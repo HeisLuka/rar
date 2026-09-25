@@ -1,9 +1,11 @@
 use std::{process::Command, sync::Arc, time::Duration};
 
 use axum::{
+    Router,
     body::Body,
     extract::ConnectInfo,
     http::{Request, StatusCode},
+    routing::get,
 };
 use chaptera_server::{
     build_info::BUILD_IDENTITY,
@@ -123,6 +125,35 @@ async fn local_dashboard_requires_explicit_local_mode_and_loopback_peer() {
     ));
     let response = app.oneshot(remote).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn product_router_is_merged_under_the_same_edge_boundary() {
+    let product = Router::new().route(
+        "/product-probe",
+        get(|| async { StatusCode::NO_CONTENT }),
+    );
+    let app = serve::router_with_edge_auth_local_and_product(
+        ready_state(),
+        chaptera_server::edge::EdgePolicy::development(),
+        None,
+        false,
+        Some(product),
+    );
+
+    let mut request = Request::builder()
+        .uri("/product-probe")
+        .header("host", "127.0.0.1:8080")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(ConnectInfo(
+        "127.0.0.1:49000"
+            .parse::<std::net::SocketAddr>()
+            .unwrap(),
+    ));
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
