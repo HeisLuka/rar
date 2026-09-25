@@ -1172,6 +1172,7 @@ impl ViewerApp {
         }
 
         if !reader_only_mode() {
+            self.show_object_edit_controls(ui);
             self.show_editor_controls(ui);
         }
 
@@ -1816,6 +1817,156 @@ impl ViewerApp {
         }
     }
 
+    fn selected_direct_replace_image_target(&self) -> Result<pub_editor::NodeId, String> {
+        let selected_instance = self
+            .canvas_selection
+            .primary()
+            .ok_or_else(|| "Select an image object on the current page first.".to_owned())?;
+        let visual = self
+            .visual
+            .as_ref()
+            .ok_or_else(|| "Document scene is unavailable.".to_owned())?;
+        let page = visual
+            .document
+            .pages
+            .get(self.selected_page)
+            .ok_or_else(|| "Selected page is unavailable.".to_owned())?;
+        let editor = self
+            .editor
+            .as_ref()
+            .ok_or_else(|| "Editor session is unavailable.".to_owned())?;
+        let page_origin = page.id.into_canonical();
+        let page_id_text = page.id.as_canonical().to_string();
+
+        for scene_node in visual
+            .scene
+            .nodes
+            .iter()
+            .filter(|node| node.parent_origin == page_origin)
+        {
+            let Some(instance) = direct_scene_instance(editor, &page_id_text, scene_node.origin)
+            else {
+                continue;
+            };
+            if instance.instance_id != selected_instance {
+                continue;
+            }
+
+            let admission =
+                admit_object_mutation_v1(&instance, ObjectMutationKindV1::ReplaceImage);
+            let origin_node_id = scene_node.origin.as_canonical().to_string();
+            if !admission.admitted
+                || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
+            {
+                return Err("This visual instance is projected/read-only for image replacement."
+                    .to_owned());
+            }
+
+            let authored = editor
+                .graph()
+                .nodes
+                .get(&scene_node.origin)
+                .ok_or_else(|| "Selected object has no authored node.".to_owned())?;
+            if authored.payload.image_slot.is_none() {
+                return Err("Selected object is not an image placement.".to_owned());
+            }
+            if authored.payload.explicit_image_crop.is_some() {
+                return Err(
+                    "Replace image is disabled for placements with explicit crop in this V0 slice."
+                        .to_owned(),
+                );
+            }
+            if authored.header.bounds.width.get() <= 0
+                || authored.header.bounds.height.get() <= 0
+                || authored.header.bounds.right().is_none()
+                || authored.header.bounds.bottom().is_none()
+            {
+                return Err("Selected image placement has invalid bounds.".to_owned());
+            }
+
+            return Ok(scene_node.origin);
+        }
+
+        Err("Selected visual instance is not a direct page-local object.".to_owned())
+    }
+
+    fn replace_selected_image_from_path(&mut self, path: &Path) -> Result<(), String> {
+        let node_id = self.selected_direct_replace_image_target()?;
+        let mime = replacement_image_mime(path)
+            .ok_or_else(|| "Choose a PNG or JPEG replacement image.".to_owned())?;
+        let bytes =
+            fs::read(path).map_err(|error| format!("read replacement {}: {error}", path.display()))?;
+
+        let editor = self
+            .editor
+            .as_ref()
+            .ok_or_else(|| "Editor session is unavailable.".to_owned())?;
+        let operation_count_before = editor.operations().len();
+        let mut candidate = editor.clone();
+        let replacement_asset = candidate
+            .import_replacement_asset(mime, bytes)
+            .map_err(|error| format!("Replacement image import rejected: {error}"))?;
+        candidate
+            .can_replace_image(node_id, replacement_asset)
+            .map_err(|error| format!("Replace image is unavailable: {} ({})", error, error.code()))?;
+        candidate
+            .replace_image(node_id, replacement_asset)
+            .map_err(|error| format!("Replace image rejected: {} ({})", error, error.code()))?;
+
+        if candidate.operations().len() != operation_count_before + 1 {
+            return Err("Replace image must append exactly one authoring operation.".to_owned());
+        }
+
+        self.editor = Some(candidate);
+        self.finish_authoring_change(
+            "Replaced the selected image in the Chaptera project. Source PUB bytes were not written.",
+        );
+        Ok(())
+    }
+
+    fn show_object_edit_controls(&mut self, ui: &mut egui::Ui) {
+        if self.canvas_selection.primary().is_none() {
+            return;
+        }
+
+        ui.add_space(16.0);
+        ui.heading("Object");
+        ui.separator();
+
+        match self.selected_direct_replace_image_target() {
+            Ok(_) => {
+                ui.small(
+                    "Direct page-local image placement. PNG/JPEG replacement preserves source PUB bytes and is saved with the EditorProject.",
+                );
+                if ui.button("Replace image…").clicked() {
+                    #[cfg(target_os = "windows")]
+                    {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Images", &["png", "jpg", "jpeg"])
+                            .pick_file()
+                        {
+                            if let Err(error) = self.replace_selected_image_from_path(&path) {
+                                self.edit_status = Some(error);
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        self.edit_status = Some(
+                            "The native replacement picker is part of Windows Editor V0.".to_owned(),
+                        );
+                    }
+                }
+            }
+            Err(reason) => {
+                let response =
+                    ui.add_enabled(false, egui::Button::new("Replace image…"));
+                response.on_disabled_hover_text(&reason);
+                ui.weak(reason);
+            }
+        }
+    }
+
     fn commit_canvas_drag(&mut self, drag: MoveTransaction) {
         self.canvas_drag = None;
         if !drag.has_moved() {
@@ -1872,6 +2023,33 @@ impl ViewerApp {
                 egui::TextureOptions::LINEAR,
             );
             self.image_textures.insert(key, texture);
+        }
+
+        if let Some(editor) = &self.editor {
+            for asset in editor.replacement_assets() {
+                let key = format!("replacement:{:?}", asset.sha256);
+                if self.image_textures.contains_key(&key) {
+                    continue;
+                }
+
+                let format = match asset.mime.as_str() {
+                    "image/png" => image::ImageFormat::Png,
+                    "image/jpeg" => image::ImageFormat::Jpeg,
+                    _ => continue,
+                };
+                let Ok(decoded) = image::load_from_memory_with_format(&asset.bytes, format) else {
+                    continue;
+                };
+                let rgba = decoded.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                let texture = ctx.load_texture(
+                    format!("chaptera-{key}"),
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.image_textures.insert(key, texture);
+            }
         }
     }
 
@@ -2154,23 +2332,32 @@ impl ViewerApp {
                         );
                     }
 
-                    if let Some(embedded) = visual
+                    let replacement_key = self
+                        .editor
+                        .as_ref()
+                        .and_then(|editor| editor.image_replacement_for(node.origin))
+                        .map(|sha256| format!("replacement:{:?}", sha256));
+                    let replacement_texture = replacement_key
+                        .as_ref()
+                        .and_then(|key| self.image_textures.get(key));
+                    let source_texture = visual
                         .images
                         .iter()
                         .find(|embedded| embedded.node_ids.contains(&node.origin))
-                    {
-                        let key = format!("{:?}", embedded.resource_id);
-                        if let Some(texture) = self.image_textures.get(&key) {
-                            painter.image(
-                                texture.id(),
-                                node_rect.shrink(1.0),
-                                egui::Rect::from_min_max(
-                                    egui::pos2(0.0, 0.0),
-                                    egui::pos2(1.0, 1.0),
-                                ),
-                                egui::Color32::WHITE,
-                            );
-                        }
+                        .and_then(|embedded| {
+                            let key = format!("{:?}", embedded.resource_id);
+                            self.image_textures.get(&key)
+                        });
+                    if let Some(texture) = replacement_texture.or(source_texture) {
+                        painter.image(
+                            texture.id(),
+                            node_rect.shrink(1.0),
+                            egui::Rect::from_min_max(
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2(1.0, 1.0),
+                            ),
+                            egui::Color32::WHITE,
+                        );
                     }
 
                     painter.rect_stroke(
@@ -2497,6 +2684,19 @@ fn editor_project_asset_dir_path(source_path: &Path) -> Option<PathBuf> {
     let mut asset_dir_name = file_name.to_os_string();
     asset_dir_name.push(".pub-editor.assets");
     Some(source_path.with_file_name(asset_dir_name))
+}
+
+fn replacement_image_mime(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg" | "jpeg") => Some("image/jpeg"),
+        _ => None,
+    }
 }
 
 fn search_result_preview(text: &str) -> String {
