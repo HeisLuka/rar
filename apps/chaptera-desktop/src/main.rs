@@ -3178,6 +3178,7 @@ mod tests {
 
     #[cfg(not(feature = "reader-only"))]
     #[test]
+    #[ignore = "runtime UX evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER and snapshot output env"]
     fn headless_wgpu_ux_snapshots_render_current_viewer_app() {
         use egui_kittest::Harness;
 
@@ -3221,6 +3222,7 @@ mod tests {
 
     #[cfg(not(feature = "reader-only"))]
     #[test]
+    #[ignore = "runtime GUI evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER"]
     fn gui_only_v0_walkthrough_uses_real_widgets() {
         use egui_kittest::{Harness, kittest::Queryable};
 
