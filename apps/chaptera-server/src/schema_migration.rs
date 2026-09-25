@@ -32,6 +32,7 @@ const AUTHZ_PRINCIPAL_GRANTS_SQL: &str =
     include_str!("../migrations/0011_authz_principal_grants.sql");
 const BLOB_GC_DELETE_FENCE_SQL: &str = include_str!("../migrations/0012_blob_gc_delete_fence.sql");
 const PROJECT_PERSISTENCE_SQL: &str = include_str!("../migrations/0013_project_persistence.sql");
+const WORKSPACE_CONTEXT_SQL: &str = include_str!("../migrations/0014_workspace_context.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -106,9 +107,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "project_persistence",
         sql: PROJECT_PERSISTENCE_SQL,
     },
+    MigrationSpec {
+        version: 14,
+        name: "workspace_context",
+        sql: WORKSPACE_CONTEXT_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 13;
+pub const CURRENT_SCHEMA_VERSION: i64 = 14;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -530,7 +536,9 @@ async fn known_schema_tables_present(
             'authz_principal_grants',
             'authz_audit_events',
             'projects',
-            'documents'
+            'documents',
+            'workspaces',
+            'workspace_memberships'
           )
         "#,
     )
@@ -619,7 +627,7 @@ mod tests {
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(
             report.pending_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
         );
         assert!(!path.exists());
     }
@@ -633,7 +641,7 @@ mod tests {
         assert_eq!(first.state, "current");
         assert_eq!(
             first.applied_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
         );
 
         let second = runtime.migrate_up().await.unwrap();
@@ -729,7 +737,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 final_report.applied_versions,
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
             );
 
             cleanup(&path);
