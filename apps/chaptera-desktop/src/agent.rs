@@ -606,13 +606,27 @@ impl AgentServer {
                             .to_owned(),
                     ));
                 }
+                let joined_path = object
+                    .get("joined_receipt_path")
+                    .and_then(Value::as_str)
+                    .map(Path::new);
+                if object
+                    .get("joined_receipt_path")
+                    .and_then(Value::as_str)
+                    .is_some_and(str::is_empty)
+                {
+                    return Err((
+                        "invalid_argument",
+                        "joined_receipt_path must be a non-empty string".to_owned(),
+                    ));
+                }
                 let session = self.require_session()?;
                 let source_hash = session.visual.document.source.source_hash.to_string();
                 let summary =
-                    deep_diagnostics_summary(Path::new(receipt_path), &source_hash)?;
+                    deep_diagnostics_summary(Path::new(receipt_path), joined_path, &source_hash)?;
                 Ok((
                     summary,
-                    vec![("observed", json!({"surface":"diagnostics_deep","available":true}))],
+                    vec![("observed", json!({"surface":"diagnostics_deep","available":true,"native_join":joined_path.is_some()}))],
                 ))
             },
             "shutdown" => {
@@ -816,9 +830,11 @@ impl AgentServer {
 }
 
 const BLAST_RADIUS_SCHEMA_VERSION: &str = "chaptera.operation-blast-radius.v1";
+const MOVENODE_JOIN_RECEIPT_VERSION: &str = "chaptera.movenode-diagnostic-receipt.v1";
 
 fn deep_diagnostics_summary(
     path: &Path,
+    joined_path: Option<&Path>,
     current_source_hash: &str,
 ) -> Result<Value, (&'static str, String)> {
     let bytes = fs::read(path)
@@ -997,7 +1013,7 @@ fn deep_diagnostics_summary(
         "control_mutation_byte_ranges",
     )?;
 
-    Ok(json!({
+    let mut summary = json!({
         "available":true,
         "provider":"operation_blast_radius_v1_local_receipt",
         "receipt_sha256":sha256_hex(&bytes),
@@ -1029,7 +1045,503 @@ fn deep_diagnostics_summary(
             "local_path_emitted":false,
             "native_pub_write":false
         }
+    });
+    if let Some(joined_path) = joined_path {
+        let native_join =
+            joined_movenode_summary(joined_path, &bytes, root, current_source_hash)?;
+        summary
+            .as_object_mut()
+            .expect("deep diagnostics summary is an object")
+            .insert("native_join".to_owned(), native_join);
+    }
+    Ok(summary)
+}
+
+fn joined_movenode_summary(
+    path: &Path,
+    blast_bytes: &[u8],
+    blast_root: &Map<String, Value>,
+    current_source_hash: &str,
+) -> Result<Value, (&'static str, String)> {
+    let bytes = fs::read(path).map_err(|error| {
+        (
+            "deep_diagnostics_join_read_failed",
+            format!("read joined diagnostic receipt: {error}"),
+        )
+    })?;
+    let value = serde_json::from_slice::<Value>(&bytes)
+        .map_err(|error| ("deep_diagnostics_join_invalid_json", error.to_string()))?;
+    let root = value.as_object().ok_or((
+        "deep_diagnostics_join_invalid_receipt",
+        "joined receipt must be a JSON object".to_owned(),
+    ))?;
+    require_exact_object_keys(
+        root,
+        &[
+            "receipt_version",
+            "source_sha256",
+            "chaptera",
+            "native_experiment",
+            "blast_radius",
+            "invariants",
+        ],
+        "joined_receipt",
+    )?;
+    if root.get("receipt_version").and_then(Value::as_str)
+        != Some(MOVENODE_JOIN_RECEIPT_VERSION)
+    {
+        return Err((
+            "deep_diagnostics_join_schema_mismatch",
+            "joined receipt is not MoveNodeDiagnosticReceiptV1".to_owned(),
+        ));
+    }
+    if root.get("source_sha256").and_then(Value::as_str) != Some(current_source_hash) {
+        return Err((
+            "deep_diagnostics_join_source_mismatch",
+            "joined receipt belongs to a different source PUB".to_owned(),
+        ));
+    }
+
+    let invariants = required_object_value(root, "invariants", "joined_receipt")?;
+    require_exact_object_keys(
+        invariants,
+        &[
+            "exactly_one_durable_movenode",
+            "native_pub_writer_capability_granted",
+        ],
+        "joined_receipt.invariants",
+    )?;
+    require_bool(
+        invariants,
+        "exactly_one_durable_movenode",
+        true,
+        "joined_receipt.invariants",
+    )?;
+    require_bool(
+        invariants,
+        "native_pub_writer_capability_granted",
+        false,
+        "joined_receipt.invariants",
+    )?;
+
+    let blast_binding = required_object_value(root, "blast_radius", "joined_receipt")?;
+    require_allowed_required_keys(
+        blast_binding,
+        &[
+            "receipt_sha256",
+            "schema_version",
+            "source_sha256",
+            "control_sha256",
+            "mutation_sha256",
+        ],
+        &[
+            "receipt_sha256",
+            "schema_version",
+            "source_sha256",
+            "control_sha256",
+            "mutation_sha256",
+            "second_save_sha256",
+        ],
+        "joined_receipt.blast_radius",
+    )?;
+    if blast_binding.get("schema_version").and_then(Value::as_str)
+        != Some(BLAST_RADIUS_SCHEMA_VERSION)
+    {
+        return Err((
+            "deep_diagnostics_join_blast_schema_mismatch",
+            "joined receipt references the wrong blast schema".to_owned(),
+        ));
+    }
+    if blast_binding.get("receipt_sha256").and_then(Value::as_str)
+        != Some(sha256_hex(blast_bytes).as_str())
+    {
+        return Err((
+            "deep_diagnostics_join_blast_hash_mismatch",
+            "joined receipt does not bind the exact loaded blast receipt".to_owned(),
+        ));
+    }
+
+    let blast_artifacts = required_object_value(blast_root, "artifacts", "receipt")?;
+    let blast_source = required_object_value(blast_artifacts, "source", "artifacts")?;
+    let blast_control = required_object_value(blast_artifacts, "control", "artifacts")?;
+    let blast_mutation = required_object_value(blast_artifacts, "mutation", "artifacts")?;
+    for (field, expected) in [
+        (
+            "source_sha256",
+            blast_source.get("sha256").and_then(Value::as_str),
+        ),
+        (
+            "control_sha256",
+            blast_control.get("sha256").and_then(Value::as_str),
+        ),
+        (
+            "mutation_sha256",
+            blast_mutation.get("sha256").and_then(Value::as_str),
+        ),
+    ] {
+        if blast_binding.get(field).and_then(Value::as_str) != expected {
+            return Err((
+                "deep_diagnostics_join_artifact_mismatch",
+                format!("joined receipt {field} differs from loaded blast receipt"),
+            ));
+        }
+    }
+
+    let chaptera = required_object_value(root, "chaptera", "joined_receipt")?;
+    require_exact_object_keys(
+        chaptera,
+        &[
+            "operation_kind",
+            "node_id",
+            "scene_instance_id",
+            "admission",
+            "base_revision_id",
+            "result_revision_id",
+            "before",
+            "after",
+        ],
+        "joined_receipt.chaptera",
+    )?;
+    if chaptera.get("operation_kind").and_then(Value::as_str) != Some("MoveNode") {
+        return Err((
+            "deep_diagnostics_join_operation_mismatch",
+            "joined receipt operation is not MoveNode".to_owned(),
+        ));
+    }
+    if chaptera.get("admission").and_then(Value::as_str) != Some("direct_page_local") {
+        return Err((
+            "deep_diagnostics_join_admission_mismatch",
+            "joined MoveNode was not admitted as direct_page_local".to_owned(),
+        ));
+    }
+    let blast_operation = required_object_value(blast_root, "operation", "receipt")?;
+    if chaptera.get("node_id").and_then(Value::as_str)
+        != blast_operation.get("node_id").and_then(Value::as_str)
+    {
+        return Err((
+            "deep_diagnostics_join_node_mismatch",
+            "joined MoveNode NodeId differs from loaded blast operation".to_owned(),
+        ));
+    }
+
+    let native = required_object_value(root, "native_experiment", "joined_receipt")?;
+    require_exact_object_keys(
+        native,
+        &[
+            "publisher_version",
+            "publisher_build",
+            "shape_identity",
+            "axis",
+            "emu_per_point",
+            "tolerance_emu",
+            "control",
+            "mutation",
+        ],
+        "joined_receipt.native_experiment",
+    )?;
+    if native.get("emu_per_point").and_then(Value::as_i64) != Some(12700) {
+        return Err((
+            "deep_diagnostics_join_unit_mismatch",
+            "joined receipt has an unexpected EMU/point constant".to_owned(),
+        ));
+    }
+    let tolerance = native
+        .get("tolerance_emu")
+        .and_then(Value::as_i64)
+        .filter(|value| (0..=127).contains(value))
+        .ok_or((
+            "deep_diagnostics_join_invalid_receipt",
+            "joined tolerance_emu must be 0..127".to_owned(),
+        ))?;
+    let axis = native.get("axis").and_then(Value::as_str).ok_or((
+        "deep_diagnostics_join_invalid_receipt",
+        "joined axis missing".to_owned(),
+    ))?;
+    if !matches!(axis, "x" | "y") {
+        return Err((
+            "deep_diagnostics_join_invalid_receipt",
+            "joined axis must be x or y".to_owned(),
+        ));
+    }
+
+    let control = joined_native_arm(native, "control")?;
+    let mutation = joined_native_arm(native, "mutation")?;
+    verify_join_geometry(chaptera, &control, &mutation, axis, tolerance)?;
+
+    if let Some(joined_second) = blast_binding.get("second_save_sha256") {
+        if !joined_second.is_null() {
+            let joined_second = joined_second.as_str().ok_or((
+                "deep_diagnostics_join_invalid_receipt",
+                "joined second_save_sha256 must be string or null".to_owned(),
+            ))?;
+            let convergence =
+                required_object_value(blast_root, "second_save_convergence", "receipt")?;
+            let artifact = required_object_value(
+                convergence,
+                "artifact",
+                "second_save_convergence",
+            )?;
+            if artifact.get("sha256").and_then(Value::as_str) != Some(joined_second) {
+                return Err((
+                    "deep_diagnostics_join_second_save_mismatch",
+                    "joined second Save hash differs from loaded blast receipt".to_owned(),
+                ));
+            }
+        }
+    }
+
+    Ok(json!({
+        "available":true,
+        "binding_verified":true,
+        "receipt_version":MOVENODE_JOIN_RECEIPT_VERSION,
+        "receipt_sha256":sha256_hex(&bytes),
+        "blast_receipt_sha256":sha256_hex(blast_bytes),
+        "chaptera":{
+            "operation_kind":"MoveNode",
+            "node_id":chaptera.get("node_id"),
+            "scene_instance_id":chaptera.get("scene_instance_id"),
+            "admission":"direct_page_local",
+            "base_revision_id":chaptera.get("base_revision_id"),
+            "result_revision_id":chaptera.get("result_revision_id"),
+            "before":chaptera.get("before"),
+            "after":chaptera.get("after")
+        },
+        "native":{
+            "publisher_version":native.get("publisher_version"),
+            "publisher_build":native.get("publisher_build"),
+            "shape_identity":native.get("shape_identity"),
+            "axis":axis,
+            "emu_per_point":12700,
+            "tolerance_emu":tolerance,
+            "control":control,
+            "mutation":mutation
+        },
+        "invariants":{
+            "source_bound":true,
+            "exactly_one_durable_movenode":true,
+            "blast_binding_verified":true,
+            "parser_reopen_verified":true,
+            "cross_layer_geometry_verified":true,
+            "raw_document_content_emitted":false,
+            "local_path_emitted":false,
+            "native_pub_write":false
+        }
     }))
+}
+
+fn require_allowed_required_keys(
+    object: &Map<String, Value>,
+    required: &[&str],
+    allowed: &[&str],
+    label: &str,
+) -> Result<(), (&'static str, String)> {
+    let actual = object
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let required = required
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let allowed = allowed
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if !required.is_subset(&actual) || !actual.is_subset(&allowed) {
+        return Err((
+            "deep_diagnostics_join_invalid_receipt",
+            format!("{label} fields do not match MoveNodeDiagnosticReceiptV1"),
+        ));
+    }
+    Ok(())
+}
+
+fn joined_native_arm(
+    native: &Map<String, Value>,
+    arm: &str,
+) -> Result<Value, (&'static str, String)> {
+    let value = required_object_value(native, arm, "joined_receipt.native_experiment")?;
+    require_exact_object_keys(
+        value,
+        &[
+            "baseline_source_sha256",
+            "first_save_sha256",
+            "second_save_sha256",
+            "before",
+            "after",
+            "parser_accepted",
+            "publisher_reopen_accepted",
+        ],
+        &format!("joined_receipt.native_experiment.{arm}"),
+    )?;
+    require_bool(
+        value,
+        "parser_accepted",
+        true,
+        &format!("joined_receipt.native_experiment.{arm}"),
+    )?;
+    require_bool(
+        value,
+        "publisher_reopen_accepted",
+        true,
+        &format!("joined_receipt.native_experiment.{arm}"),
+    )?;
+    Ok(json!({
+        "baseline_source_sha256":value.get("baseline_source_sha256"),
+        "first_save_sha256":value.get("first_save_sha256"),
+        "second_save_sha256":value.get("second_save_sha256"),
+        "before":value.get("before"),
+        "after":value.get("after"),
+        "parser_accepted":true,
+        "publisher_reopen_accepted":true
+    }))
+}
+
+fn joined_rect_emu(
+    value: &Value,
+    label: &str,
+) -> Result<(i64, i64, i64, i64), (&'static str, String)> {
+    let object = value.as_object().ok_or((
+        "deep_diagnostics_join_invalid_receipt",
+        format!("{label} must be an object"),
+    ))?;
+    require_exact_object_keys(
+        object,
+        &["x", "y", "width", "height"],
+        label,
+    )?;
+    let read = |field: &str| {
+        object.get(field).and_then(Value::as_i64).ok_or((
+            "deep_diagnostics_join_invalid_receipt",
+            format!("{label}.{field} must be an integer"),
+        ))
+    };
+    let rect = (read("x")?, read("y")?, read("width")?, read("height")?);
+    if rect.2 <= 0 || rect.3 <= 0 {
+        return Err((
+            "deep_diagnostics_join_invalid_receipt",
+            format!("{label} must have positive size"),
+        ));
+    }
+    Ok(rect)
+}
+
+fn joined_native_geometry(
+    value: &Value,
+    label: &str,
+) -> Result<(f64, f64, f64, f64), (&'static str, String)> {
+    let object = value.as_object().ok_or((
+        "deep_diagnostics_join_invalid_receipt",
+        format!("{label} must be an object"),
+    ))?;
+    require_exact_object_keys(
+        object,
+        &["left", "top", "width", "height"],
+        label,
+    )?;
+    let read = |field: &str| {
+        let raw = object.get(field).and_then(Value::as_str).ok_or((
+            "deep_diagnostics_join_invalid_receipt",
+            format!("{label}.{field} must be a decimal string"),
+        ))?;
+        raw.parse::<f64>().map_err(|_| {
+            (
+                "deep_diagnostics_join_invalid_receipt",
+                format!("{label}.{field} is not a finite decimal"),
+            )
+        })
+    };
+    let rect = (read("left")?, read("top")?, read("width")?, read("height")?);
+    if ![rect.0, rect.1, rect.2, rect.3]
+        .into_iter()
+        .all(f64::is_finite)
+        || rect.2 <= 0.0
+        || rect.3 <= 0.0
+    {
+        return Err((
+            "deep_diagnostics_join_invalid_receipt",
+            format!("{label} contains invalid geometry"),
+        ));
+    }
+    Ok(rect)
+}
+
+fn verify_join_geometry(
+    chaptera: &Map<String, Value>,
+    control: &Value,
+    mutation: &Value,
+    axis: &str,
+    tolerance_emu: i64,
+) -> Result<(), (&'static str, String)> {
+    let c_before =
+        joined_rect_emu(chaptera.get("before").unwrap_or(&Value::Null), "chaptera.before")?;
+    let c_after =
+        joined_rect_emu(chaptera.get("after").unwrap_or(&Value::Null), "chaptera.after")?;
+    if c_before.2 != c_after.2 || c_before.3 != c_after.3 {
+        return Err((
+            "deep_diagnostics_join_geometry_mismatch",
+            "canonical MoveNode changed width/height".to_owned(),
+        ));
+    }
+
+    let control = control.as_object().expect("joined_native_arm returns object");
+    let mutation = mutation.as_object().expect("joined_native_arm returns object");
+    let n_control_before = joined_native_geometry(
+        control.get("before").unwrap_or(&Value::Null),
+        "native.control.before",
+    )?;
+    let n_control_after = joined_native_geometry(
+        control.get("after").unwrap_or(&Value::Null),
+        "native.control.after",
+    )?;
+    if n_control_before != n_control_after {
+        return Err((
+            "deep_diagnostics_join_geometry_mismatch",
+            "native control is not a geometry no-op".to_owned(),
+        ));
+    }
+    let n_before = joined_native_geometry(
+        mutation.get("before").unwrap_or(&Value::Null),
+        "native.mutation.before",
+    )?;
+    let n_after = joined_native_geometry(
+        mutation.get("after").unwrap_or(&Value::Null),
+        "native.mutation.after",
+    )?;
+    if n_before.2 != n_after.2 || n_before.3 != n_after.3 {
+        return Err((
+            "deep_diagnostics_join_geometry_mismatch",
+            "native mutation changed width/height".to_owned(),
+        ));
+    }
+
+    let dx_emu = c_after.0 - c_before.0;
+    let dy_emu = c_after.1 - c_before.1;
+    let dx_points = n_after.0 - n_before.0;
+    let dy_points = n_after.1 - n_before.1;
+    let error = match axis {
+        "x" if dx_emu != 0 && dy_emu == 0 && dx_points != 0.0 && dy_points == 0.0 => {
+            (dx_emu as f64 - dx_points * 12700.0).abs()
+        }
+        "y" if dy_emu != 0 && dx_emu == 0 && dy_points != 0.0 && dx_points == 0.0 => {
+            (dy_emu as f64 - dy_points * 12700.0).abs()
+        }
+        _ => {
+            return Err((
+                "deep_diagnostics_join_geometry_mismatch",
+                "canonical/native mutation is not the same one-axis move".to_owned(),
+            ))
+        }
+    };
+    if error > tolerance_emu as f64 + 1e-6 {
+        return Err((
+            "deep_diagnostics_join_geometry_mismatch",
+            format!(
+                "canonical/native movement differs by {error} EMU beyond tolerance {tolerance_emu}"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn required_object_value<'a>(
@@ -1765,7 +2277,7 @@ mod tests {
         let fixture = deep_receipt(source_hash);
         let path = write_deep_receipt(&fixture, "allowlist");
         let summary =
-            deep_diagnostics_summary(&path, source_hash).expect("valid deep receipt");
+            deep_diagnostics_summary(&path, None, source_hash).expect("valid deep receipt");
         let encoded = serde_json::to_string(&summary).expect("serialize summary");
         assert_eq!(summary["available"], true);
         assert_eq!(summary["source_hash"], source_hash);
@@ -1787,7 +2299,7 @@ mod tests {
             "9999999999999999999999999999999999999999999999999999999999999999";
         let fixture = deep_receipt(receipt_hash);
         let path = write_deep_receipt(&fixture, "mismatch");
-        let error = deep_diagnostics_summary(&path, current_hash)
+        let error = deep_diagnostics_summary(&path, None, current_hash)
             .expect_err("different source must fail");
         assert_eq!(error.0, "deep_diagnostics_source_mismatch");
         let _ = fs::remove_file(path);
@@ -1800,9 +2312,127 @@ mod tests {
         let mut fixture = deep_receipt(source_hash);
         fixture["invariants"]["native_pub_writer_capability_granted"] = Value::Bool(true);
         let path = write_deep_receipt(&fixture, "writer-escalation");
-        let error = deep_diagnostics_summary(&path, source_hash)
+        let error = deep_diagnostics_summary(&path, None, source_hash)
             .expect_err("writer capability escalation must fail");
         assert_eq!(error.0, "deep_diagnostics_invalid_receipt");
         let _ = fs::remove_file(path);
+    }
+
+    fn joined_receipt(source_hash: &str, blast: &Value, blast_bytes: &[u8]) -> Value {
+        let source_sha = blast["artifacts"]["source"]["sha256"]
+            .as_str()
+            .expect("source sha");
+        let control_sha = blast["artifacts"]["control"]["sha256"]
+            .as_str()
+            .expect("control sha");
+        let mutation_sha = blast["artifacts"]["mutation"]["sha256"]
+            .as_str()
+            .expect("mutation sha");
+        json!({
+            "receipt_version":"chaptera.movenode-diagnostic-receipt.v1",
+            "source_sha256":source_hash,
+            "chaptera":{
+                "operation_kind":"MoveNode",
+                "node_id":"node-1",
+                "scene_instance_id":"scene-instance-1",
+                "admission":"direct_page_local",
+                "base_revision_id":"sha256:before",
+                "result_revision_id":"sha256:after",
+                "before":{"x":100000,"y":200000,"width":300000,"height":400000},
+                "after":{"x":112700,"y":200000,"width":300000,"height":400000}
+            },
+            "native_experiment":{
+                "publisher_version":"16.0",
+                "publisher_build":"12527.22145",
+                "shape_identity":"pageid:1|tag:PUB_ORACLE_ID=SHAPE_A",
+                "axis":"x",
+                "emu_per_point":12700,
+                "tolerance_emu":0,
+                "control":{
+                    "baseline_source_sha256":source_sha,
+                    "first_save_sha256":control_sha,
+                    "second_save_sha256":null,
+                    "before":{"left":"10","top":"20","width":"30","height":"40"},
+                    "after":{"left":"10","top":"20","width":"30","height":"40"},
+                    "parser_accepted":true,
+                    "publisher_reopen_accepted":true
+                },
+                "mutation":{
+                    "baseline_source_sha256":source_sha,
+                    "first_save_sha256":mutation_sha,
+                    "second_save_sha256":null,
+                    "before":{"left":"10","top":"20","width":"30","height":"40"},
+                    "after":{"left":"11","top":"20","width":"30","height":"40"},
+                    "parser_accepted":true,
+                    "publisher_reopen_accepted":true
+                }
+            },
+            "blast_radius":{
+                "receipt_sha256":sha256_hex(blast_bytes),
+                "schema_version":"chaptera.operation-blast-radius.v1",
+                "source_sha256":source_sha,
+                "control_sha256":control_sha,
+                "mutation_sha256":mutation_sha
+            },
+            "invariants":{
+                "exactly_one_durable_movenode":true,
+                "native_pub_writer_capability_granted":false
+            }
+        })
+    }
+
+    #[test]
+    fn deep_diagnostics_join_is_hash_bound_and_source_free() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let blast = deep_receipt(source_hash);
+        let blast_bytes = serde_json::to_vec(&blast).expect("serialize blast");
+        let blast_path = write_deep_receipt(&blast, "join-blast");
+        let joined = joined_receipt(source_hash, &blast, &blast_bytes);
+        let joined_path = write_deep_receipt(&joined, "join-receipt");
+
+        let summary = deep_diagnostics_summary(
+            &blast_path,
+            Some(&joined_path),
+            source_hash,
+        )
+        .expect("valid joined diagnostics");
+        assert_eq!(summary["native_join"]["available"], true);
+        assert_eq!(summary["native_join"]["binding_verified"], true);
+        assert_eq!(
+            summary["native_join"]["invariants"]["cross_layer_geometry_verified"],
+            true
+        );
+        let encoded = serde_json::to_string(&summary).expect("serialize joined summary");
+        assert!(!encoded.contains(blast_path.to_string_lossy().as_ref()));
+        assert!(!encoded.contains(joined_path.to_string_lossy().as_ref()));
+        assert_eq!(summary["native_join"]["invariants"]["native_pub_write"], false);
+
+        let _ = fs::remove_file(blast_path);
+        let _ = fs::remove_file(joined_path);
+    }
+
+    #[test]
+    fn deep_diagnostics_join_rejects_changed_blast_bytes() {
+        let source_hash =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let blast = deep_receipt(source_hash);
+        let original_bytes = serde_json::to_vec(&blast).expect("serialize blast");
+        let joined = joined_receipt(source_hash, &blast, &original_bytes);
+        let joined_path = write_deep_receipt(&joined, "tampered-join");
+
+        let mut changed_blast = blast.clone();
+        changed_blast["classification_counts"]["unexplained_collateral"] = Value::from(9);
+        let blast_path = write_deep_receipt(&changed_blast, "tampered-blast");
+        let error = deep_diagnostics_summary(
+            &blast_path,
+            Some(&joined_path),
+            source_hash,
+        )
+        .expect_err("changed blast bytes must break joined binding");
+        assert_eq!(error.0, "deep_diagnostics_join_blast_hash_mismatch");
+
+        let _ = fs::remove_file(blast_path);
+        let _ = fs::remove_file(joined_path);
     }
 }
