@@ -7,9 +7,9 @@ use pub_core::RawSpan;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub const TRAILER_SLOT_COUNT_ID: u8 = 0x01;
-pub const TRAILER_MAX_ORDINAL_ID: u8 = 0x02;
-pub const TRAILER_DIRECTORY_ID: u8 = 0x03;
+pub const TRAILER_SLOT_COUNT_ID: u16 = 0x01;
+pub const TRAILER_MAX_ORDINAL_ID: u16 = 0x02;
+pub const TRAILER_DIRECTORY_ID: u16 = 0x03;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contents0x2cTrailerRoot {
@@ -74,8 +74,8 @@ pub enum TrailerRootReadError {
     UnexpectedRootId {
         index: usize,
         offset: u64,
-        id: u8,
-        expected: u8,
+        id: u16,
+        expected: u16,
     },
     UnexpectedRootType {
         index: usize,
@@ -286,7 +286,7 @@ pub fn parse_confirmed_0x2c_trailer_root(
 fn validate_root(
     block: &RawContentsBlock,
     index: usize,
-    expected_id: u8,
+    expected_id: u16,
     expected_type: u8,
 ) -> Result<(), TrailerRootReadError> {
     if block.id != expected_id {
