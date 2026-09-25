@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import pathlib
 
@@ -32,6 +33,29 @@ def _instant(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def measured_environment(manifest: dict) -> dict:
+    return {
+        "os_build": manifest["os_build"],
+        "system_locale": manifest["system_locale"],
+        "user_locale": manifest["user_locale"],
+        "code_page": manifest["code_page"],
+        "time_zone": manifest["time_zone"],
+        "default_printer": manifest["default_printer"],
+        "font_set_sha256": manifest["font_set_sha256"],
+        "publisher": manifest["publisher"],
+    }
+
+
+def compute_environment_fingerprint(manifest: dict) -> str:
+    encoded = json.dumps(
+        measured_environment(manifest),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def validate_restore_pair(challenge: dict, manifest: dict) -> dict:
     _validate_schema(challenge, _load_schema(CHALLENGE_SCHEMA), "challenge")
     _validate_schema(manifest, _load_schema(ENV_SCHEMA), "manifest")
@@ -46,17 +70,25 @@ def validate_restore_pair(challenge: dict, manifest: dict) -> dict:
         raise AssertionError("EnvironmentManifest predates successful cold start")
     if manifest["restore_nonce"] != challenge["restore_nonce"]:
         raise AssertionError("EnvironmentManifest restore nonce mismatch")
-    if manifest["environment_fingerprint"] != challenge["expected_environment_fingerprint"]:
-        raise AssertionError("EnvironmentManifest fingerprint differs from pre-start challenge")
+
+    recomputed = compute_environment_fingerprint(manifest)
+    if manifest["environment_fingerprint"] != recomputed:
+        raise AssertionError("EnvironmentManifest fingerprint is not derived from measured fields")
+    if recomputed != challenge["expected_environment_fingerprint"]:
+        raise AssertionError("measured environment differs from pre-start challenge")
 
     return {
         "schema_version": "chaptera.pub-lab-2019-restore-pair-validation.v1",
         "vm_name": challenge["vm_name"],
         "snapshot_name": challenge["snapshot_name"],
-        "publisher_build": manifest["publisher_build"],
+        "publisher_build": manifest["publisher"]["build"],
+        "publisher_bitness": manifest["publisher"]["bitness"],
+        "publisher_process_count": manifest["publisher"]["process_count"],
         "challenge_bound": True,
         "post_boot_capture": True,
+        "measured_environment": True,
         "environment_match": True,
+        "environment_fingerprint": recomputed,
     }
 
 
