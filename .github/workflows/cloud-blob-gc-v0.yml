@@ -5,8 +5,13 @@ on:
     paths:
       - "apps/chaptera-server/src/blob_gc.rs"
       - "apps/chaptera-server/src/blob_store.rs"
+      - "apps/chaptera-server/src/sqlite_blob_metadata.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/tests/sqlite_blob_metadata.rs"
       - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/migrations/0004_blob_gc.sql"
+      - "apps/chaptera-server/migrations/0012_blob_gc_delete_fence.sql"
+      - "tools/run_cloud_migration_receipt.py"
       - ".github/workflows/cloud-blob-gc-v0.yml"
   workflow_dispatch:
 
@@ -28,5 +33,12 @@ jobs:
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run Blob GC tests
         run: cargo test -p chaptera-server blob_gc::
+      - name: Run durable blob metadata fence regressions
+        run: cargo test -p chaptera-server --test sqlite_blob_metadata -- --nocapture
       - name: Run migration ownership regressions
         run: cargo test -p chaptera-server schema_migration::
+      - name: Build operator binary
+        run: cargo build -p chaptera-server
+      - name: Prove migration chain through GC fence v12
+        run: |
+          python tools/run_cloud_migration_receipt.py             --binary target/debug/chaptera             --out target/cloud-blob-gc/migration
