@@ -257,6 +257,7 @@ def run_isolated_worker(
     limits: WorkerLimits | None = None,
     input_path: pathlib.Path | None = None,
     extra_env: Mapping[str, str] | None = None,
+    inherit_environment: bool = True,
 ) -> WorkerResult:
     """Run one worker and publish its staging directory only on success."""
 
@@ -293,7 +294,7 @@ def run_isolated_worker(
             stderr_tail="",
         )
 
-    env = os.environ.copy()
+    env = os.environ.copy() if inherit_environment else {}
     env["CHAPTERA_WORKER_OUTPUT_DIR"] = str(staging)
     env["CHAPTERA_NETWORK_POLICY"] = "seccomp_default_deny"
     if input_path is not None:
@@ -461,6 +462,11 @@ def main() -> int:
     run.add_argument("--cpu-seconds", type=int, default=10)
     run.add_argument("--open-files", type=int, default=64)
     run.add_argument("--output-file-mb", type=int, default=32)
+    run.add_argument(
+        "--clear-environment",
+        action="store_true",
+        help="do not pass the parent process environment into the isolated worker",
+    )
     run.add_argument("command", nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
@@ -488,6 +494,7 @@ def main() -> int:
             output_file_bytes=args.output_file_mb * 1024 * 1024,
         ),
         input_path=args.input,
+        inherit_environment=not args.clear_environment,
     )
     print(json.dumps({**asdict(result), "limits": asdict(result.limits)}, indent=2))
     return 0 if result.succeeded else 1
