@@ -3325,6 +3325,49 @@ mod tests {
 
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
+    fn headless_wgpu_ux_snapshots_render_current_viewer_app() {
+        use egui_kittest::Harness;
+
+        let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let output_dir = std::env::var_os("CHAPTERA_UX_SNAPSHOT_DIR")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_UX_SNAPSHOT_DIR must name the retained screenshot directory");
+        fs::create_dir_all(&output_dir).expect("create UX snapshot output directory");
+
+        for (width, height, name) in [
+            (1280.0_f32, 820.0_f32, "chaptera-editor-ux-1280x820.png"),
+            (900.0_f32, 600.0_f32, "chaptera-editor-ux-900x600.png"),
+        ] {
+            let fixture_for_app = fixture.clone();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .with_pixels_per_point(1.0)
+                .with_max_steps(20)
+                .wgpu()
+                .build_eframe(move |cc| {
+                    ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+                });
+            harness.run_ok();
+
+            let image = harness
+                .render()
+                .expect("headless WGPU render of the current ViewerApp must succeed");
+            assert_eq!(image.width(), width as u32);
+            assert_eq!(image.height(), height as u32);
+
+            let output = output_dir.join(name);
+            image.save(&output).expect("write retained UX PNG");
+            assert!(
+                output.metadata().expect("UX PNG metadata").len() >= 16_384,
+                "UX snapshot is implausibly small"
+            );
+        }
+    }
+
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
     fn gui_only_v0_walkthrough_uses_real_widgets() {
         use egui_kittest::{Harness, kittest::Queryable};
 
