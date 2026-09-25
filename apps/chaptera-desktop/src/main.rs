@@ -1374,7 +1374,8 @@ impl ViewerApp {
             ) else {
                 continue;
             };
-            if geometry_sync_policy_v1(&instance) != GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
+            if geometry_sync_policy_v1(&instance)
+                != GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
             {
                 continue;
             }
@@ -1539,7 +1540,8 @@ impl ViewerApp {
                         .iter()
                         .enumerate()
                         .filter_map(|(paint_order, node)| {
-                            let instance = direct_scene_instance(editor, &page_id_text, node.origin)?;
+                            let instance =
+                                direct_scene_instance(editor, &page_id_text, node.origin)?;
                             Some(SceneHitEntry {
                                 instance_id: instance.instance_id,
                                 node_id: node.origin,
@@ -2688,11 +2690,9 @@ mod tests {
             .and_then(|visual| visual.document.pages.first())
             .map(|page| page.id.as_canonical().to_string())
             .expect("fixture page");
-        let instance = direct_page_local_instance_v1(
-            &node_id.as_canonical().to_string(),
-            &target_page_id,
-        )
-        .expect("direct test scene instance");
+        let instance =
+            direct_page_local_instance_v1(&node_id.as_canonical().to_string(), &target_page_id)
+                .expect("direct test scene instance");
         app.canvas_selection.select_only(instance.instance_id);
 
         let pointer_start = pub_interaction::DocumentPoint::new(
