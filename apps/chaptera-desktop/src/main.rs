@@ -23,6 +23,7 @@ use pub_viewer::{
     ViewerGeometryDocument, ViewerTextMatch, classify_failure_candidate,
     exact_file_intake_eligible,
 };
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
