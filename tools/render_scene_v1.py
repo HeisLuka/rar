@@ -4,6 +4,7 @@ import hashlib
 import json
 
 from render_effect_ir_v1 import canonical_effect_tables_v1, effect_diagnostics_v1
+from render_path_ir_v1 import build_path_table
 
 def canonical_json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -29,6 +30,7 @@ def compile_render_scene(source):
     )
     effects, effect_groups = canonical_effect_tables_v1(source)
     effect_group_ids = {group["effect_group_id"] for group in effect_groups}
+    path_table, path_lookup = build_path_table(copy.deepcopy(source.get("path_geometries", [])))
 
     transform_index = {}
     transforms = []
@@ -39,7 +41,7 @@ def compile_render_scene(source):
             transforms.append(copy.deepcopy(value))
         return transform_index[key]
 
-    rects, images, glyph_atoms, atom_map, paint_seq, diagnostics = [], [], [], [], [], []
+    rects, images, path_atoms, glyph_atoms, atom_map, paint_seq, diagnostics = [], [], [], [], [], [], []
     node_atoms = {}
 
     node_effect_groups = {}
@@ -75,6 +77,24 @@ def compile_render_scene(source):
                 "effect_group_id": effect_group_id,
             }
             images.append(atom)
+            created.append(atom["atom_id"])
+        elif kind == "path":
+            path_id = node.get("path_id")
+            ref = path_lookup.get(path_id)
+            if ref is None:
+                raise ValueError(f"path node references unknown path_id: {path_id}")
+            atom = {
+                "atom_id": atom_id(node["node_id"], 0, "path"),
+                "node_id": node["node_id"],
+                "page_id": node["page_id"],
+                "bounds": copy.deepcopy(node["bounds"]),
+                "transform_index": tid,
+                "paint_id": node.get("paint_id"),
+                "effect_group_id": effect_group_id,
+                "path_index": ref["path_index"],
+                "path_digest": ref["path_digest"],
+            }
+            path_atoms.append(atom)
             created.append(atom["atom_id"])
         elif kind == "text_frame":
             pass
@@ -134,10 +154,12 @@ def compile_render_scene(source):
             "resources": resources,
             "effects": effects,
             "effect_groups": effect_groups,
+            "paths": path_table,
         },
         "primitives": {
             "rects": rects,
             "images": images,
+            "paths": path_atoms,
             "glyph_runs": glyph_atoms,
         },
         "paint_seq": paint_seq,
