@@ -268,6 +268,16 @@ pub struct DirectUploadGrant {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuarantineObjectMetadata {
+    pub tenant_id: String,
+    pub upload_id: String,
+    pub object_locator: String,
+    pub storage_generation: String,
+    pub etag: String,
+    pub byte_len: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadGrant {
     pub tenant_id: String,
     pub binding_id: String,
@@ -580,6 +590,95 @@ impl BlobStoreService {
             opaque_url: grant.opaque_url,
             expires_at_ms,
         })
+    }
+
+    pub async fn inspect_quarantine_upload(
+        &self,
+        tenant_id: &str,
+        upload_id: &str,
+    ) -> Result<Option<QuarantineObjectMetadata>, BlobStoreError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(upload_id, "upload_id")?;
+        let object_locator = object_locator(BlobNamespace::Quarantine, tenant_id, upload_id);
+        let metadata = match self
+            .provider
+            .head_exact(&object_locator)
+            .await
+            .map_err(provider_error)?
+        {
+            Some(metadata) => metadata,
+            None => return Ok(None),
+        };
+        require_ident(&metadata.generation, "storage_generation")?;
+        require_ident(&metadata.etag, "object_etag")?;
+        if metadata.byte_len == 0 {
+            return Err(BlobStoreError::new(
+                "quarantine_object_empty",
+                "quarantine object must contain at least one byte",
+            ));
+        }
+
+        Ok(Some(QuarantineObjectMetadata {
+            tenant_id: tenant_id.to_owned(),
+            upload_id: upload_id.to_owned(),
+            object_locator,
+            storage_generation: metadata.generation,
+            etag: metadata.etag,
+            byte_len: metadata.byte_len,
+        }))
+    }
+
+    pub async fn open_quarantine_exact(
+        &self,
+        tenant_id: &str,
+        upload_id: &str,
+        expected_generation: &str,
+        expected_etag: &str,
+        expected_byte_len: u64,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, BlobStoreError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(upload_id, "upload_id")?;
+        require_ident(expected_generation, "storage_generation")?;
+        require_ident(expected_etag, "object_etag")?;
+        if expected_byte_len == 0 {
+            return Err(BlobStoreError::new(
+                "invalid_upload_size",
+                "expected quarantine byte length must be positive",
+            ));
+        }
+
+        let metadata = self
+            .inspect_quarantine_upload(tenant_id, upload_id)
+            .await?
+            .ok_or_else(|| {
+                BlobStoreError::new(
+                    "quarantine_object_missing",
+                    "quarantine object is missing",
+                )
+            })?;
+        if metadata.storage_generation != expected_generation {
+            return Err(BlobStoreError::new(
+                "quarantine_generation_mismatch",
+                "quarantine object generation changed",
+            ));
+        }
+        if metadata.etag != expected_etag {
+            return Err(BlobStoreError::new(
+                "quarantine_etag_mismatch",
+                "quarantine object etag changed",
+            ));
+        }
+        if metadata.byte_len != expected_byte_len {
+            return Err(BlobStoreError::new(
+                "quarantine_length_mismatch",
+                "quarantine object byte length changed",
+            ));
+        }
+
+        self.provider
+            .open_read(&metadata.object_locator, &metadata.storage_generation)
+            .await
+            .map_err(provider_error)
     }
 
     pub async fn delete_physical_if_eligible(
@@ -1476,6 +1575,109 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output, bytes);
+    }
+
+    #[tokio::test]
+    async fn quarantine_inspect_and_exact_read_preserve_object_identity() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, _repo) = service(provider.clone());
+        let bytes = b"quarantine-pub";
+        let locator = "quarantine/tenant-a/upload-1";
+
+        provider
+            .create_immutable(locator, bytes.len() as u64, Box::new(Cursor::new(bytes.to_vec())))
+            .await
+            .unwrap();
+
+        let metadata = service
+            .inspect_quarantine_upload("tenant-a", "upload-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.object_locator, locator);
+        assert_eq!(metadata.byte_len, bytes.len() as u64);
+
+        let mut reader = service
+            .open_quarantine_exact(
+                "tenant-a",
+                "upload-1",
+                &metadata.storage_generation,
+                &metadata.etag,
+                metadata.byte_len,
+            )
+            .await
+            .unwrap();
+        let mut observed = Vec::new();
+        reader.read_to_end(&mut observed).await.unwrap();
+        assert_eq!(observed, bytes);
+    }
+
+    #[tokio::test]
+    async fn quarantine_exact_read_fails_closed_on_identity_drift() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, _repo) = service(provider.clone());
+        let bytes = b"quarantine-pub";
+        provider
+            .create_immutable(
+                "quarantine/tenant-a/upload-1",
+                bytes.len() as u64,
+                Box::new(Cursor::new(bytes.to_vec())),
+            )
+            .await
+            .unwrap();
+
+        let metadata = service
+            .inspect_quarantine_upload("tenant-a", "upload-1")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let error = service
+            .open_quarantine_exact(
+                "tenant-a",
+                "upload-1",
+                "generation-stale",
+                &metadata.etag,
+                metadata.byte_len,
+            )
+            .await
+            .err()
+            .expect("stale generation must fail closed");
+        assert_eq!(error.code, "quarantine_generation_mismatch");
+
+        let error = service
+            .open_quarantine_exact(
+                "tenant-a",
+                "upload-1",
+                &metadata.storage_generation,
+                "etag-stale",
+                metadata.byte_len,
+            )
+            .await
+            .err()
+            .expect("stale etag must fail closed");
+        assert_eq!(error.code, "quarantine_etag_mismatch");
+
+        let error = service
+            .open_quarantine_exact(
+                "tenant-a",
+                "upload-1",
+                &metadata.storage_generation,
+                &metadata.etag,
+                metadata.byte_len + 1,
+            )
+            .await
+            .err()
+            .expect("stale length must fail closed");
+        assert_eq!(error.code, "quarantine_length_mismatch");
+
+        assert!(
+            service
+                .inspect_quarantine_upload("tenant-b", "upload-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
