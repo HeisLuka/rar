@@ -106,14 +106,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             } else {
                 drop(secrets);
                 let state = AppState::new(RuntimePorts::unconfigured());
-                serve::run_with_auth_local(
-                    config.runtime_config(),
-                    edge_policy,
-                    state,
-                    None,
-                    true,
-                )
-                .await?;
+                serve::run_with_auth_local(config.runtime_config(), edge_policy, state, None, true)
+                    .await?;
             }
         }
         Command::Worker => {
