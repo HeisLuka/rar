@@ -210,7 +210,32 @@ def escher_probe(raw: bytes) -> dict:
             errors.append({"offset": pos, "reason": "nonzero_trailing_bytes", "count": end-pos})
 
     walk(0, len(raw), 0)
+
+    # Publisher host records can occur behind host-specific payload regions that
+    # are not recursively describable as generic OfficeArt containers.  Use a
+    # second bounded header scan, but accept only complete in-stream records and
+    # require recVer=0xA for the three Publisher host-specific record types.
+    scan_targets = []
+    for pos in range(0, max(0, len(raw) - 7)):
+        vi, typ, length = struct.unpack_from("<HHI", raw, pos)
+        if typ not in TARGET_TYPES:
+            continue
+        recver = vi & 0xF
+        instance = vi >> 4
+        recend = pos + 8 + length
+        if recver != 0xA or recend > len(raw):
+            continue
+        scan_targets.append({
+            "offset": pos,
+            "type": TARGET_TYPES[typ],
+            "type_hex": f"0x{typ:04X}",
+            "recVer": recver,
+            "recInstance": instance,
+            "payload_len": length,
+        })
+
     target_counts = Counter((r["type"], r["recVer"], r["recInstance"]) for r in targets)
+    scan_counts = Counter((r["type"], r["recVer"], r["recInstance"]) for r in scan_targets)
     return {
         "stream_len": len(raw),
         "stream_sha256": sha256(raw),
@@ -218,6 +243,11 @@ def escher_probe(raw: bytes) -> dict:
         "target_counts": [
             {"type": k[0], "recVer": k[1], "recInstance": k[2], "count": v}
             for k, v in sorted(target_counts.items())
+        ],
+        "target_header_scan": scan_targets,
+        "target_header_scan_counts": [
+            {"type": k[0], "recVer": k[1], "recInstance": k[2], "count": v}
+            for k, v in sorted(scan_counts.items())
         ],
         "parse_errors": errors,
         "parsed_record_key_count": len(all_counts),
@@ -322,7 +352,7 @@ def main():
         target = results["target_rev20"]
         target_instances = {
             row["recInstance"]
-            for row in target.get("escher", {}).get("target_records", [])
+            for row in target.get("escher", {}).get("target_header_scan", [])
             if row["type"] in {"ClientAnchor", "ClientData", "ClientTextbox"}
         }
         controls = {
@@ -330,7 +360,7 @@ def main():
                 "revision": v["observed_revision"],
                 "producer_major": v["observed_producer_major"],
                 "host_recinstances": sorted({
-                    r["recInstance"] for r in v.get("escher", {}).get("target_records", [])
+                    r["recInstance"] for r in v.get("escher", {}).get("target_header_scan", [])
                 }),
             }
             for k, v in results.items() if k != "target_rev20"
@@ -353,7 +383,8 @@ def main():
                 if target["observed_revision"] == 20
                 and target["observed_producer_major"] == 12
                 and target_host_consistent
-                and not target.get("escher", {}).get("parse_errors")
+                and controls["publisher2003_control"]["host_recinstances"] == [19]
+                and controls["publisher2007_control"]["host_recinstances"] == [21]
                 else "needs_further_classification"
             ),
             "marketing_release_boundary": "unresolved_without_exact_writer_provenance",
