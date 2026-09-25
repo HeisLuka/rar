@@ -45,8 +45,8 @@ assert fixture.is_file()
 
 story = "10000000-0000-4000-8000-000000000001"
 node = "20000000-0000-4000-8000-000000000001"
-before = {"x": 10, "y": 20, "width": 300, "height": 400}
-after = {"x": 110, "y": 220, "width": 300, "height": 400}
+before = {"x": 12700, "y": 25400, "width": 38100, "height": 50800}
+after = {"x": 127000, "y": 254000, "width": 38100, "height": 50800}
 
 project = {
     "schema_version": "pub-editor-v0.4",
@@ -72,6 +72,15 @@ project_path.write_text(json.dumps(project, sort_keys=True), encoding="utf-8")
 with zipfile.ZipFile(export_path, "w") as archive:
     archive.writestr("designmap.xml", "<Document/>")
     archive.writestr("Stories/Story_u1.xml", "<Story/>")
+    archive.writestr(
+        "Spreads/Spread_u1.xml",
+        '<Spread><TextFrame Self="uf20000000000040008000000000000001">'
+        '<PathPointType Anchor="10 20"/>'
+        '<PathPointType Anchor="10 24"/>'
+        '<PathPointType Anchor="13 24"/>'
+        '<PathPointType Anchor="13 20"/>'
+        '</TextFrame></Spread>'
+    )
 
 observation = {
     "protocol_version": "chaptera.editor-desktop-vertical-observation.v1",
