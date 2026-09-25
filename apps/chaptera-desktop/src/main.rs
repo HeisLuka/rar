@@ -7,6 +7,7 @@
 #[allow(dead_code)]
 mod supporter;
 mod acceptance;
+mod product_smoke;
 
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
@@ -162,6 +163,27 @@ fn direct_scene_instance(
 fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--product-smoke-v1")) {
+        if args.next().is_some() {
+            eprintln!("product smoke mode accepts no path arguments");
+            std::process::exit(2);
+        }
+        match product_smoke::run() {
+            Ok(receipt) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&receipt)
+                        .expect("product smoke receipt is JSON-serializable")
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+    }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--desktop-acceptance-v1")) {
         let Some(fixture) = args.next().map(PathBuf::from) else {
