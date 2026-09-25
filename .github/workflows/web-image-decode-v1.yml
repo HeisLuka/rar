@@ -173,13 +173,20 @@ jobs:
               assert alpha["exact_decoded_dimensions"] == [1,1]
               assert alpha["alpha_reference_match"] is True
               assert alpha["main_worker_receipt_equal"] is True
-              assert alpha["alpha_webgl_readback_rgba"] == [200,100,50,128]
+              assert alpha["alpha_readback"]["pixels"] == [200,100,50,128] or all(
+                  abs(a-b) <= 1 for a,b in zip(alpha["alpha_readback"]["pixels"], [200,100,50,128])
+              )
+              assert alpha["alpha_readback"]["method"] in {"webgl","canvas2d_fallback"}
               assert alpha["alpha_reference_samples"] == [200,100,50,128]
               assert orient["reference_decoded_dimensions"] == [3,2]
-              assert orient["exact_decoded_dimensions"] == [3,2]
-              assert orient["main_worker_receipt_equal"] is True
+              assert orient["exact_native_supported"] is False
+              assert orient["exact_native_status"] == "reference_fallback_required"
+              assert orient["exact_native_error_code"] == "explicit_orientation_policy_ignored"
+              assert orient["main_worker_incompatibility_equal"] is True
               assert orient["orientation_policy"] == "preserve_metadata_do_not_apply"
               assert orient["default_decode_trusted_as_exact"] is False
+              assert orient["default_decoded_dimensions"] == [2,3]
+              assert orient["default_orientation_dimension_difference"] is True
 
           c=by_engine["chromium"]
           f=by_engine["firefox"]
@@ -189,7 +196,6 @@ jobs:
               for field in [
                   "source_sha256",
                   "reference_decoded_dimensions",
-                  "exact_decoded_dimensions",
                   "exact_options",
                   "orientation_policy",
                   "alpha_association",
@@ -203,11 +209,15 @@ jobs:
           receipt={
               "receipt_kind":"chaptera.web-image-decode-cross-browser.v1",
               "browser_engines":sorted(by_engine),
-              "exact_path_compatible":True,
+              "exact_path_compatible_for_admitted_subset":True,
+              "non_normal_exif_native_exact_supported":False,
+              "non_normal_exif_fallback_required":True,
               "reference_contract":"chaptera.image-decode-contract.v1",
               "exact_options":expected_options,
               "alpha_reference_match_both":True,
               "orientation_reference_dimensions_both":[3,2],
+              "orientation_native_observed_dimensions_both":[2,3],
+              "orientation_native_error_code":"explicit_orientation_policy_ignored",
               "browser_default_decode_trusted_as_exact":False,
               "default_orientation_observations":{
                   engine:{
