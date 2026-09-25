@@ -1,0 +1,116 @@
+name: TEMP CORPUS version identity matrix v3 production replay
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-version-identity-matrix-v3.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned generic CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Restore accepted T645 source-free artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/t645
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/10853776519/zip" > /tmp/t645.zip
+          unzip -q /tmp/t645.zip -d /tmp/t645
+          test -f /tmp/t645/cohorts/phase1/fingerprints.json
+      - name: Build durable matrix v3
+        run: |
+          set -euo pipefail
+          python tools/corpus/version_identity_matrix.py build \
+            --input /tmp/t645/cohorts \
+            --out out/matrix \
+            --media-roots tools/corpus/version_identity_matrix_media_roots.json \
+            --family-overrides tools/corpus/version_identity_matrix_family_overrides.json \
+            --producer-dsi-map tools/corpus/version_identity_matrix_producer_dsi.json
+      - name: Verify V2 invariants plus producer axis
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          out=Path("out/matrix")
+          s=json.loads((out/"summary.json").read_text())
+          rows=json.loads((out/"logical_identities.json").read_text())
+
+          assert s["schema"] == "chaptera.corpus-version-identity-matrix.v3"
+          assert s["physical_sha_count"] == 1486
+          assert s["successful_physical_sha_count"] == 1474
+          assert s["logical_identity_count"] == 1314
+          assert s["surplus_physical_sha_count"] == 160
+          assert s["contents_family_logical_counts"] == {
+              "0x22": 768,
+              "0x2c": 542,
+              "malformed_or_invalid_family": 1,
+              "unknown_due_to_raw_unavailable": 3,
+          }
+          assert s["distribution_media_version_logical_counts"] == {
+              "Publisher 2.0": 20,
+              "Publisher 3.0 / Windows 95": 128,
+              "Publisher 97": 520,
+              "unknown": 646,
+          }
+          assert s["producer_evidence_state_logical_counts"] == {
+              "dsi_stream_absent": 763,
+              "dsi_stream_empty": 1,
+              "valid_pid_dsi_vt_i4": 550,
+          }
+          assert s["producer_major_logical_counts"] == {
+              "10": 26,
+              "11": 124,
+              "12": 66,
+              "14": 82,
+              "15": 122,
+              "16": 130,
+          }
+          assert s["valid_producer_major_logical_count"] == 550
+          assert s["producer_cross_revision_dsi_hash_count"] == 3
+
+          by_dsi={}
+          for row in rows:
+              sha=row.get("producer_dsi_sha256")
+              if sha:
+                  by_dsi.setdefault(sha, []).append(row)
+              assert row["creator_version"] == "unknown"
+              assert row["writer_version"] == "unknown"
+
+          for sha, expected_major in {
+              "ac4f8d12127c45f757b9681ca0af31bc12e74d1bf1cf7677e2e82bdeebad8ec1": 12,
+              "c1e61d45dd70af3fb76a32acd3f52f8d20777d725c513e1928be2e61763db021": 14,
+          }.items():
+              assert sha in by_dsi
+              assert {row["producer_major"] for row in by_dsi[sha]} == {expected_major}
+
+          spans={}
+          for sha, group in by_dsi.items():
+              spans[sha]={(row["contents_family"], str(row["contents_serialization_revision"])) for row in group}
+          cross={sha:v for sha,v in spans.items() if len(v)>1}
+          assert set(cross) == {
+              "f774e800ba23da43fd1c0d827794894919915c7555ed5484d839c6bcc93672e4",
+              "ac4f8d12127c45f757b9681ca0af31bc12e74d1bf1cf7677e2e82bdeebad8ec1",
+              "ec24346f14ac82fb5f8c9c50e3ba48766ae114ed470edd498aa80069f01ef5b6",
+          }
+          PY
+          sha256sum out/matrix/*.json | tee out/matrix/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-version-identity-matrix-v3-receipt
+          path: out/matrix/**
+          if-no-files-found: error
+          retention-days: 90
