@@ -34,7 +34,7 @@ jobs:
           rm -rf out/pub-save-roundtrip-handoff
           cargo run --manifest-path vendor/producer-a/Cargo.toml \
             -p pub-writer \
-            --bin pub-story-native-handoff \
+            --bin pub_story_native_handoff \
             -- generate \
             --output-dir out/pub-save-roundtrip-handoff
 
@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           cargo run --manifest-path vendor/producer-a/Cargo.toml \
             -p pub-writer \
-            --bin pub-story-native-handoff \
+            --bin pub_story_native_handoff \
             -- verify \
             --pub out/pub-save-roundtrip-handoff/candidate.pub \
             --manifest out/pub-save-roundtrip-handoff/handoff.json
