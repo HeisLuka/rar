@@ -245,6 +245,9 @@ pub enum EffectiveTableGridError {
     IncompleteStoryRange {
         id: TableCellId,
     },
+    StoryRangeWithoutStory {
+        id: TableCellId,
+    },
     InvalidStoryRange {
         id: TableCellId,
         start: u32,
