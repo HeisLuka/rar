@@ -1650,6 +1650,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streamed_quarantine_fallback_is_exact_create_once_and_reopenable() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, _repo) = service(provider);
+        let bytes = b"streamed-quarantine";
+        let mut input = Cursor::new(bytes.to_vec());
+
+        let metadata = service
+            .create_quarantine_streamed(
+                "tenant-a",
+                "upload-streamed-1",
+                bytes.len() as u64,
+                &mut input,
+            )
+            .await
+            .unwrap();
+        assert_eq!(metadata.byte_len, bytes.len() as u64);
+        assert_eq!(
+            metadata.object_locator,
+            "quarantine/tenant-a/upload-streamed-1"
+        );
+
+        let mut reopened = service
+            .open_quarantine_exact(
+                "tenant-a",
+                "upload-streamed-1",
+                &metadata.storage_generation,
+                &metadata.etag,
+                metadata.byte_len,
+            )
+            .await
+            .unwrap();
+        let mut observed = Vec::new();
+        reopened.read_to_end(&mut observed).await.unwrap();
+        assert_eq!(observed, bytes);
+
+        let mut duplicate = Cursor::new(bytes.to_vec());
+        let error = service
+            .create_quarantine_streamed(
+                "tenant-a",
+                "upload-streamed-1",
+                bytes.len() as u64,
+                &mut duplicate,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "quarantine_object_exists");
+    }
+
+    #[tokio::test]
+    async fn streamed_quarantine_fallback_rejects_length_mismatch() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, _repo) = service(provider);
+
+        let mut too_long = Cursor::new(b"four".to_vec());
+        let error = service
+            .create_quarantine_streamed("tenant-a", "upload-long", 3, &mut too_long)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "blob_input_failed");
+
+        let mut too_short = Cursor::new(b"two".to_vec());
+        let error = service
+            .create_quarantine_streamed("tenant-a", "upload-short", 4, &mut too_short)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "blob_length_mismatch");
+    }
+
+    #[tokio::test]
     async fn quarantine_inspect_and_exact_read_preserve_object_identity() {
         let provider = Arc::new(FakeProvider::new(capabilities()));
         let (service, _repo) = service(provider.clone());
