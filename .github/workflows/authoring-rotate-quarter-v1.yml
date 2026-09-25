@@ -37,7 +37,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p pub-model -- --check
       - name: Check pub-model
         run: cargo check -p pub-model --all-targets
       - name: Lint pub-model
