@@ -55,8 +55,10 @@ pub const EDITOR_PROJECT_VERSION_V0_5: &str = "pub-editor-v0.5";
 pub const EDITOR_PROJECT_VERSION_V0_6: &str = "pub-editor-v0.6";
 pub const EDITOR_PROJECT_VERSION_V0_7: &str = "pub-editor-v0.7";
 pub const EDITOR_PROJECT_VERSION_V0_8: &str = "pub-editor-v0.8";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_8;
+pub const EDITOR_PROJECT_VERSION_V0_9: &str = "pub-editor-v0.9";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_9;
 pub const MAX_MOVE_NODES_V1: usize = 1024;
+pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
 pub const PUB_MATURE_0X2C_SCHEMA_FENCE: &str = "pub-family-0x2c";
 
@@ -120,6 +122,13 @@ pub struct MoveNodeBatchEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResizeNodeBatchEntry {
+    pub node_id: NodeId,
+    pub before: RectEmu,
+    pub after: RectEmu,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
     ReplaceStoryRange {
@@ -172,6 +181,10 @@ pub enum EditOperation {
         node_id: NodeId,
         before: RectEmu,
         after: RectEmu,
+    },
+    ResizeNodes {
+        page_id: PageId,
+        entries: Vec<ResizeNodeBatchEntry>,
     },
 }
 
@@ -238,6 +251,14 @@ impl PersistenceRequirements for EditOperation {
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("node.bounds".into()),
             }],
+            Self::ResizeNodes { entries, .. } => entries
+                .iter()
+                .map(|entry| PersistenceRequirement {
+                    feature: "node.geometry.bounds".into(),
+                    origin: Some(entry.node_id.into_canonical()),
+                    property_path: Some("node.bounds".into()),
+                })
+                .collect(),
         }
     }
 }
@@ -466,6 +487,20 @@ pub enum EditorError {
         node_id: NodeId,
         page_id: PageId,
     },
+    ResizeNodesInvalidCount {
+        found: usize,
+    },
+    ResizeNodesDuplicate {
+        node_id: NodeId,
+    },
+    ResizeNodesNotCanonical {
+        node_id: NodeId,
+    },
+    ResizeNodesPageMismatch {
+        node_id: NodeId,
+        page_id: PageId,
+    },
+    ResizeNodesNoSizeChange,
     NodeResizeUnsupported {
         node_id: NodeId,
     },
@@ -626,6 +661,29 @@ impl fmt::Display for EditorError {
                 node_id.as_canonical(),
                 page_id.as_canonical()
             ),
+            Self::ResizeNodesInvalidCount { found } => write!(
+                formatter,
+                "ResizeNodes contains {found} entries; expected 2..={MAX_RESIZE_NODES_V1}"
+            ),
+            Self::ResizeNodesDuplicate { node_id } => write!(
+                formatter,
+                "ResizeNodes contains duplicate node {}",
+                node_id.as_canonical()
+            ),
+            Self::ResizeNodesNotCanonical { node_id } => write!(
+                formatter,
+                "ResizeNodes entries are not in canonical NodeId order at node {}",
+                node_id.as_canonical()
+            ),
+            Self::ResizeNodesPageMismatch { node_id, page_id } => write!(
+                formatter,
+                "ResizeNodes node {} is not directly owned by page {}",
+                node_id.as_canonical(),
+                page_id.as_canonical()
+            ),
+            Self::ResizeNodesNoSizeChange => formatter.write_str(
+                "ResizeNodes must include at least one genuine width or height change"
+            ),
             Self::NodeResizeUnsupported { node_id } => write!(
                 formatter,
                 "node {} is outside the bounded directly-page-owned resize slice",
@@ -701,6 +759,11 @@ impl EditorError {
             Self::MoveNodesDuplicate { .. } => "move_nodes_duplicate",
             Self::MoveNodesSizeChanged { .. } => "move_nodes_size_changed",
             Self::MoveNodesPageMismatch { .. } => "move_nodes_page_mismatch",
+            Self::ResizeNodesInvalidCount { .. } => "resize_nodes_invalid_count",
+            Self::ResizeNodesDuplicate { .. } => "resize_nodes_duplicate",
+            Self::ResizeNodesNotCanonical { .. } => "resize_nodes_not_canonical",
+            Self::ResizeNodesPageMismatch { .. } => "resize_nodes_page_mismatch",
+            Self::ResizeNodesNoSizeChange => "resize_nodes_no_size_change",
             Self::NodeResizeUnsupported { .. } => "node_resize_unsupported",
             Self::NodeResizeNoChange { .. } => "node_resize_no_change",
             Self::NodeResizeNoSizeChange { .. } => "node_resize_no_size_change",
@@ -768,6 +831,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesMoveNodesOperation {
         index: usize,
     },
+    LegacyProjectCarriesResizeNodesOperation {
+        index: usize,
+    },
     LegacyProjectCarriesTableGrids,
     TableGridMismatch,
     MissingAssetBytes {
@@ -807,7 +873,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, or {EDITOR_PROJECT_VERSION_V0_8:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, or {EDITOR_PROJECT_VERSION_V0_9:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -838,6 +904,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesMoveNodesOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses MoveNodes but the project schema predates pub-editor-v0.8"
+            ),
+            Self::LegacyProjectCarriesResizeNodesOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses ResizeNodes but the project schema predates pub-editor-v0.9"
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
@@ -1102,6 +1172,12 @@ impl EditorSession {
             if self
                 .undo
                 .iter()
+                .any(|operation| matches!(operation, EditOperation::ResizeNodes { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_9
+            } else if self
+                .undo
+                .iter()
                 .any(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
             {
                 EDITOR_PROJECT_VERSION_V0_8
@@ -1191,6 +1267,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1215,6 +1292,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
         {
             if let Some(index) = project
                 .operations
@@ -1228,6 +1306,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
         {
             if let Some(index) = project
                 .operations
@@ -1240,12 +1319,14 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_6
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_7
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
         {
             if let Some(index) = project.operations.iter().position(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
@@ -1253,13 +1334,24 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesBreakLinkOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_8 {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_8
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
+        {
             if let Some(index) = project
                 .operations
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesMoveNodesOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_9 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::ResizeNodes { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesResizeNodesOperation { index });
             }
         }
         if project.source_hash != self.source_hash {
@@ -1321,6 +1413,7 @@ impl EditorSession {
         if project.schema_version == EDITOR_PROJECT_VERSION_V0_6
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_7
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_8
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_9
         {
             let actual_grids = effective_table_grids(&candidate.graph);
             if actual_grids != project.table_grids {
@@ -2020,6 +2113,30 @@ impl EditorSession {
         Ok(operation)
     }
 
+
+    /// Consume one already-authorized canonical ResizeNodesV1 operation.
+    ///
+    /// Author-created provenance admission belongs to the source-neutral
+    /// canonical authoring layer. The producer runtime revalidates only the
+    /// persisted physical invariants required for atomic replay.
+    fn consume_canonical_resize_nodes(
+        &mut self,
+        page_id: PageId,
+        mut entries: Vec<ResizeNodeBatchEntry>,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+
+        entries.sort_by_key(|entry| entry.node_id);
+        validate_resize_nodes_transition(&self.graph, page_id, &entries, true)?;
+
+        let operation = EditOperation::ResizeNodes { page_id, entries };
+        apply_forward(&mut self.graph, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
     pub fn can_resize_node(&self, node_id: NodeId) -> Result<(), EditorError> {
         self.validate_source_identity()?;
 
@@ -2440,6 +2557,9 @@ fn replay_canonical_operation(
             .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ResizeNode { node_id, after, .. } => session
             .resize_node_to(*node_id, *after)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::ResizeNodes { page_id, entries } => session
+            .consume_canonical_resize_nodes(*page_id, entries.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
     }
 }
@@ -2963,6 +3083,87 @@ fn validate_move_nodes_transition(
     Ok(())
 }
 
+
+fn validate_resize_nodes_transition(
+    graph: &PubResolvedGraph,
+    page_id: PageId,
+    entries: &[ResizeNodeBatchEntry],
+    forward: bool,
+) -> Result<(), EditorError> {
+    if entries.len() < 2 || entries.len() > MAX_RESIZE_NODES_V1 {
+        return Err(EditorError::ResizeNodesInvalidCount {
+            found: entries.len(),
+        });
+    }
+
+    let page_parent = page_id.into_canonical();
+    let mut previous = None;
+    let mut has_size_change = false;
+    for entry in entries {
+        if let Some(previous_id) = previous {
+            if previous_id == entry.node_id {
+                return Err(EditorError::ResizeNodesDuplicate {
+                    node_id: entry.node_id,
+                });
+            }
+            if previous_id > entry.node_id {
+                return Err(EditorError::ResizeNodesNotCanonical {
+                    node_id: entry.node_id,
+                });
+            }
+        }
+        previous = Some(entry.node_id);
+
+        let node = graph
+            .nodes
+            .get(&entry.node_id)
+            .ok_or(EditorError::NodeResizeUnsupported {
+                node_id: entry.node_id,
+            })?;
+        if node.header.parent_id != page_parent {
+            return Err(EditorError::ResizeNodesPageMismatch {
+                node_id: entry.node_id,
+                page_id,
+            });
+        }
+        if node.header.transform != pub_model::Affine2D::identity()
+            || entry.before.width.get() <= 0
+            || entry.before.height.get() <= 0
+            || entry.before.right().is_none()
+            || entry.before.bottom().is_none()
+        {
+            return Err(EditorError::NodeResizeUnsupported {
+                node_id: entry.node_id,
+            });
+        }
+        if entry.after.width.get() <= 0 || entry.after.height.get() <= 0 {
+            return Err(EditorError::NodeResizeNonPositive {
+                node_id: entry.node_id,
+            });
+        }
+        if entry.after.right().is_none() || entry.after.bottom().is_none() {
+            return Err(EditorError::NodeResizeOverflow {
+                node_id: entry.node_id,
+            });
+        }
+        if entry.before.width != entry.after.width || entry.before.height != entry.after.height {
+            has_size_change = true;
+        }
+
+        let expected = if forward { entry.before } else { entry.after };
+        if node.header.bounds != expected {
+            return Err(EditorError::StaleNodeResize {
+                node_id: entry.node_id,
+            });
+        }
+    }
+
+    if !has_size_change {
+        return Err(EditorError::ResizeNodesNoSizeChange);
+    }
+    Ok(())
+}
+
 fn apply_forward(
     graph: &mut PubResolvedGraph,
     operation: &EditOperation,
@@ -3121,6 +3322,17 @@ fn apply_forward(
                 return Err(EditorError::StaleNodeResize { node_id: *node_id });
             }
             node.header.bounds = *after;
+        }
+        EditOperation::ResizeNodes { page_id, entries } => {
+            validate_resize_nodes_transition(graph, *page_id, entries, true)?;
+            for entry in entries {
+                graph
+                    .nodes
+                    .get_mut(&entry.node_id)
+                    .expect("validated ResizeNodes node")
+                    .header
+                    .bounds = entry.after;
+            }
         }
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
@@ -3313,6 +3525,17 @@ fn apply_inverse(
                 return Err(EditorError::StaleNodeResize { node_id: *node_id });
             }
             node.header.bounds = *before;
+        }
+        EditOperation::ResizeNodes { page_id, entries } => {
+            validate_resize_nodes_transition(graph, *page_id, entries, false)?;
+            for entry in entries {
+                graph
+                    .nodes
+                    .get_mut(&entry.node_id)
+                    .expect("validated ResizeNodes node")
+                    .header
+                    .bounds = entry.before;
+            }
         }
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
