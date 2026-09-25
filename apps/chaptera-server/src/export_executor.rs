@@ -586,6 +586,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sqlite_authz_storage_failure_is_retryable_internal_not_denial() {
+        let failure = job_failure(ExportExecutorError::new(
+            "sqlite_authz_error",
+            "synthetic storage fault",
+        ));
+        assert!(failure.retryable);
+        assert_eq!(failure.terminal_code, "export_transient_failure");
+
+        let denial = job_failure(ExportExecutorError::new(
+            "export_publish_unauthorized",
+            "synthetic denial",
+        ));
+        assert!(!denial.retryable);
+        assert_eq!(denial.terminal_code, "export_publish_unauthorized");
+    }
+
+    #[test]
     fn payload_rejects_reference_pdf_profile_until_edited_pdf_is_proven() {
         let payload = ExportJobPayloadV1 {
             schema_version: EXPORT_JOB_PAYLOAD_SCHEMA_V1.into(),
