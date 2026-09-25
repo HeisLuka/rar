@@ -3550,9 +3550,18 @@ mod tests {
             assert_eq!(editor.graph().nodes[&moved_node_id].header.bounds, after_move);
         }
 
-        harness.get_by_label("Export").click();
+        {
+            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
+            export.click();
+        }
         harness.step();
-        harness.get_by_label("Preview IDML").click();
+        {
+            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
+            export
+                .get_by_role(egui::accesskit::Role::Menu)
+                .get_by_label("Preview IDML")
+                .click();
+        }
         harness.step();
         assert!(
             harness
@@ -3566,9 +3575,18 @@ mod tests {
                 }),
             "GUI IDML preview must admit the current edited state"
         );
-        harness.get_by_label("Export").click();
+        {
+            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
+            export.click();
+        }
         harness.step();
-        harness.get_by_label("Export edited IDML copy").click();
+        {
+            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
+            export
+                .get_by_role(egui::accesskit::Role::Menu)
+                .get_by_label("Export edited IDML copy")
+                .click();
+        }
         harness.step();
 
         let exported =
