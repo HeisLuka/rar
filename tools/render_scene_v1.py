@@ -3,6 +3,8 @@ import copy
 import hashlib
 import json
 
+from render_effect_ir_v1 import canonical_effect_tables_v1, effect_diagnostics_v1
+
 def canonical_json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -25,6 +27,8 @@ def compile_render_scene(source):
         copy.deepcopy(source.get("glyph_runs", [])),
         key=lambda g: (page_order[g["page_id"]], g["frame_node_id"], g["story_id"], g["scalar_start"], g["scalar_end"]),
     )
+    effects, effect_groups = canonical_effect_tables_v1(source)
+    effect_group_ids = {group["effect_group_id"] for group in effect_groups}
 
     transform_index = {}
     transforms = []
@@ -38,10 +42,15 @@ def compile_render_scene(source):
     rects, images, glyph_atoms, atom_map, paint_seq, diagnostics = [], [], [], [], [], []
     node_atoms = {}
 
+    node_effect_groups = {}
     for node in nodes:
         tid = intern_transform(node["transform"])
         kind = node["kind"]
         created = []
+        effect_group_id = node.get("effect_group_id")
+        if effect_group_id is not None and effect_group_id not in effect_group_ids:
+            raise ValueError(f'node references unknown effect_group_id: {effect_group_id}')
+        node_effect_groups[node["node_id"]] = effect_group_id
         if kind in {"shape", "unknown"}:
             atom = {
                 "atom_id": atom_id(node["node_id"], 0, "rect"),
@@ -50,6 +59,7 @@ def compile_render_scene(source):
                 "bounds": copy.deepcopy(node["bounds"]),
                 "transform_index": tid,
                 "paint_id": node.get("paint_id"),
+                "effect_group_id": effect_group_id,
             }
             rects.append(atom)
             created.append(atom["atom_id"])
@@ -62,6 +72,7 @@ def compile_render_scene(source):
                 "transform_index": tid,
                 "resource_id": node.get("resource_id"),
                 "paint_id": node.get("paint_id"),
+                "effect_group_id": effect_group_id,
             }
             images.append(atom)
             created.append(atom["atom_id"])
@@ -97,6 +108,7 @@ def compile_render_scene(source):
             "font_resource_id": run["font_resource_id"],
             "glyphs": copy.deepcopy(run["glyphs"]),
             "paint_id": run.get("paint_id"),
+            "effect_group_id": node_effect_groups.get(node_id),
         }
         glyph_atoms.append(atom)
         if node_id not in node_atoms:
@@ -105,6 +117,7 @@ def compile_render_scene(source):
         node_atoms[node_id].append(aid)
         paint_seq.append(aid)
 
+    diagnostics.extend(effect_diagnostics_v1(effects))
     diagnostics.extend(copy.deepcopy(source.get("diagnostics", [])))
     diagnostics.sort(key=lambda d: (d["code"], d.get("origin_node_id") or "", d.get("detail") or ""))
     atom_map.sort(key=lambda x: x["node_id"])
@@ -119,6 +132,8 @@ def compile_render_scene(source):
             "clips": sorted(copy.deepcopy(source.get("clips", [])), key=lambda c: c["clip_id"]),
             "paints": paints,
             "resources": resources,
+            "effects": effects,
+            "effect_groups": effect_groups,
         },
         "primitives": {
             "rects": rects,

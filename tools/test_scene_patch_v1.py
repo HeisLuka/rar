@@ -41,6 +41,10 @@ def _legacy_diff_render_scenes(base,target):
         "upsert_nodes":upserts,
         "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
         "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "effect_deltas": {
+            "effects": None,
+            "effect_groups": None,
+        },
         "order_deltas": None if (base["order_authority"],base["paint_seq"])==(target["order_authority"],target["paint_seq"]) else {
             "order_authority":target["order_authority"],
             "paint_seq":copy.deepcopy(target["paint_seq"]),
