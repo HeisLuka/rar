@@ -29,7 +29,7 @@ pub struct QuillChunk {
 }
 
 pub use tokn::{
-    TOKN_PLC_TYPE, TOKN_PROPERTY_KIND, TOKN_PROPERTY_STATE, TOKN_PROPERTY_TEXT_LENGTH,
     QuillToknChunk, QuillToknEffectiveToken, QuillToknProperty, QuillToknPropertyBlock,
-    QuillToknTargetRecord, QuillToknTargetSection, QuillToknTargetSectionHeader,
+    QuillToknTargetRecord, QuillToknTargetSection, QuillToknTargetSectionHeader, TOKN_PLC_TYPE,
+    TOKN_PROPERTY_KIND, TOKN_PROPERTY_STATE, TOKN_PROPERTY_TEXT_LENGTH,
 };

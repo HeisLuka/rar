@@ -164,11 +164,20 @@ impl<'a> Cursor<'a> {
                 requested: len,
                 available: bytes.len().saturating_sub(start),
             })?;
-        Ok(Self { stream, bytes, position: start, limit: end })
+        Ok(Self {
+            stream,
+            bytes,
+            position: start,
+            limit: end,
+        })
     }
 
-    fn position(&self) -> usize { self.position }
-    fn remaining(&self) -> usize { self.limit.saturating_sub(self.position) }
+    fn position(&self) -> usize {
+        self.position
+    }
+    fn remaining(&self) -> usize {
+        self.limit.saturating_sub(self.position)
+    }
 
     fn take(&mut self, len: usize) -> Result<(&'a [u8], RawSpan), QuillStoryReadError> {
         let start = self.position;
@@ -181,7 +190,10 @@ impl<'a> Cursor<'a> {
                 available: self.remaining(),
             })?;
         self.position = end;
-        Ok((&self.bytes[start..end], span(self.stream.clone(), start, len)))
+        Ok((
+            &self.bytes[start..end],
+            span(self.stream.clone(), start, len),
+        ))
     }
 
     fn u16(&mut self) -> Result<Decoded<u16>, QuillStoryReadError> {
@@ -232,13 +244,14 @@ fn parse_tokn_chunk(
     syid_ids: &[Decoded<QuillSyid>],
 ) -> Result<QuillToknChunk, QuillStoryReadError> {
     let ordinal = usize::from(descriptor.option_a.value);
-    let story_syid = syid_ids
-        .get(ordinal)
-        .cloned()
-        .ok_or(QuillStoryReadError::ToknStoryOrdinalOutOfBounds {
-            story_ordinal: descriptor.option_a.value,
-            story_count: u32::try_from(syid_ids.len()).unwrap_or(u32::MAX),
-        })?;
+    let story_syid =
+        syid_ids
+            .get(ordinal)
+            .cloned()
+            .ok_or(QuillStoryReadError::ToknStoryOrdinalOutOfBounds {
+                story_ordinal: descriptor.option_a.value,
+                story_count: u32::try_from(syid_ids.len()).unwrap_or(u32::MAX),
+            })?;
 
     let (start, len) = chunk_range(bytes, descriptor)?;
     let mut cursor = Cursor::bounded(stream.clone(), bytes, start, len)?;
@@ -249,8 +262,8 @@ fn parse_tokn_chunk(
             found: plc_type.value,
         });
     }
-    let count = usize::try_from(plc_count.value)
-        .map_err(|_| QuillStoryReadError::ToknCountOverflow {
+    let count =
+        usize::try_from(plc_count.value).map_err(|_| QuillStoryReadError::ToknCountOverflow {
             count: plc_count.value,
         })?;
     if count > 100_000 {
@@ -282,11 +295,7 @@ fn parse_tokn_chunk(
         second_phase.push(parse_property_block(&mut cursor)?);
     }
 
-    let effective_tokens = effective_tokens(
-        &first_phase,
-        &second_phase,
-        &boundaries_utf16,
-    )?;
+    let effective_tokens = effective_tokens(&first_phase, &second_phase, &boundaries_utf16)?;
 
     let has_target_refs = effective_tokens
         .iter()
@@ -354,13 +363,12 @@ fn effective_tokens(
         let start = boundaries[index].clone();
         let end = boundaries[index + 1].clone();
         if let Some(length) = text_length {
-            let expected_end = start
-                .value
-                .checked_add(length)
-                .ok_or(QuillStoryReadError::ToknTokenSpanOverflow {
+            let expected_end = start.value.checked_add(length).ok_or(
+                QuillStoryReadError::ToknTokenSpanOverflow {
                     start: start.value,
                     length,
-                })?;
+                },
+            )?;
             if expected_end > end.value {
                 return Err(QuillStoryReadError::ToknTokenLengthExceedsBoundary {
                     start: start.value,
@@ -375,9 +383,8 @@ fn effective_tokens(
             .map(|value| value.value as i32);
 
         result.push(QuillToknEffectiveToken {
-            index: u32::try_from(index).map_err(|_| QuillStoryReadError::ToknCountOverflow {
-                count: u32::MAX,
-            })?,
+            index: u32::try_from(index)
+                .map_err(|_| QuillStoryReadError::ToknCountOverflow { count: u32::MAX })?,
             start_utf16: start,
             next_boundary_utf16: end,
             state_raw,
@@ -400,11 +407,12 @@ fn parse_property_block(
             length: length.value,
         });
     }
-    let payload_len = usize::try_from(length.value - 4)
-        .map_err(|_| QuillStoryReadError::ToknInvalidBlockLength {
+    let payload_len = usize::try_from(length.value - 4).map_err(|_| {
+        QuillStoryReadError::ToknInvalidBlockLength {
             offset: length.source.offset,
             length: length.value,
-        })?;
+        }
+    })?;
     if payload_len > cursor.remaining() {
         return Err(QuillStoryReadError::TooShort {
             offset: cursor.position(),
@@ -416,7 +424,11 @@ fn parse_property_block(
     if payload_len % 6 != 0 {
         let (payload, payload_source) = cursor.take(payload_len)?;
         return Ok(QuillToknPropertyBlock::Opaque {
-            source: span(cursor.stream.clone(), start, usize::try_from(length.value).unwrap_or(0)),
+            source: span(
+                cursor.stream.clone(),
+                start,
+                usize::try_from(length.value).unwrap_or(0),
+            ),
             length,
             payload_source,
             payload: payload.to_vec(),
@@ -432,7 +444,11 @@ fn parse_property_block(
         });
     }
     Ok(QuillToknPropertyBlock::Properties {
-        source: span(cursor.stream.clone(), start, usize::try_from(length.value).unwrap_or(0)),
+        source: span(
+            cursor.stream.clone(),
+            start,
+            usize::try_from(length.value).unwrap_or(0),
+        ),
         length,
         properties,
     })
@@ -460,8 +476,8 @@ fn parse_target_section(
         return Ok(None);
     }
 
-    let count_usize = usize::try_from(count.value)
-        .map_err(|_| QuillStoryReadError::ToknTargetSectionOverflow)?;
+    let count_usize =
+        usize::try_from(count.value).map_err(|_| QuillStoryReadError::ToknTargetSectionOverflow)?;
     let nonnegative_refs = tokens
         .iter()
         .filter_map(|token| token.attached_target_index)
@@ -480,10 +496,11 @@ fn parse_target_section(
     let minimum_offset = count_usize
         .checked_mul(4)
         .ok_or(QuillStoryReadError::ToknTargetSectionOverflow)?;
-    if offsets
-        .iter()
-        .any(|offset| usize::try_from(offset.value).ok().is_none_or(|value| value < minimum_offset))
-    {
+    if offsets.iter().any(|offset| {
+        usize::try_from(offset.value)
+            .ok()
+            .is_none_or(|value| value < minimum_offset)
+    }) {
         cursor.position = start;
         return Ok(None);
     }
@@ -505,8 +522,10 @@ fn parse_target_section(
     let mut records = Vec::with_capacity(count_usize);
     for index in 0..count_usize {
         let record_start = base
-            .checked_add(usize::try_from(offsets[index].value)
-                .map_err(|_| QuillStoryReadError::ToknTargetSectionOverflow)?)
+            .checked_add(
+                usize::try_from(offsets[index].value)
+                    .map_err(|_| QuillStoryReadError::ToknTargetSectionOverflow)?,
+            )
             .ok_or(QuillStoryReadError::ToknTargetSectionOverflow)?;
         let record_end = if index + 1 < count_usize {
             base.checked_add(
@@ -526,7 +545,10 @@ fn parse_target_section(
             cursor.bytes,
             record_start,
             record_end,
-            token_kinds_by_target.get(&index).map(Vec::as_slice).unwrap_or(&[]),
+            token_kinds_by_target
+                .get(&index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
         ));
     }
 
@@ -592,10 +614,8 @@ fn decode_target_record(
         };
     }
 
-    let string_class = !referring_kinds.is_empty()
-        && referring_kinds
-            .iter()
-            .all(|kind| matches!(*kind, 1 | 4));
+    let string_class =
+        !referring_kinds.is_empty() && referring_kinds.iter().all(|kind| matches!(*kind, 1 | 4));
     if string_class {
         let utf16 = payload
             .chunks_exact(2)
@@ -659,7 +679,6 @@ fn span(stream: StreamPath, start: usize, len: usize) -> RawSpan {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -674,10 +693,7 @@ mod tests {
 
     fn property_block(properties: &[(u16, u32)]) -> Vec<u8> {
         let mut bytes = Vec::new();
-        w32(
-            &mut bytes,
-            u32::try_from(4 + properties.len() * 6).unwrap(),
-        );
+        w32(&mut bytes, u32::try_from(4 + properties.len() * 6).unwrap());
         for (tag, value) in properties {
             w16(&mut bytes, *tag);
             w32(&mut bytes, *value);
@@ -685,11 +701,7 @@ mod tests {
         bytes
     }
 
-    fn type12_prefix(
-        count: u32,
-        service: u32,
-        boundaries: &[u32],
-    ) -> Vec<u8> {
+    fn type12_prefix(count: u32, service: u32, boundaries: &[u32]) -> Vec<u8> {
         assert_eq!(boundaries.len(), usize::try_from(count).unwrap() + 1);
         let mut bytes = Vec::new();
         w32(&mut bytes, count);
@@ -937,7 +949,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn duplicate_known_property_clears_effective_value_instead_of_inheriting() {
         let mut bytes = type12_prefix(2, 0, &[0, 5, 10]);
@@ -1039,7 +1050,6 @@ mod tests {
         );
         assert_eq!(tokn.opaque_tail, bytes[tail_start..].to_vec());
     }
-
 
     #[test]
     fn descriptor_ordinal_joins_exact_parallel_syid() {

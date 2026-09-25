@@ -1,7 +1,5 @@
 use pub_core::StreamPath;
-use pub_quill::{
-    QuillToknTargetRecord, TOKN_PROPERTY_STATE, parse_confirmed_story_catalog,
-};
+use pub_quill::{QuillToknTargetRecord, TOKN_PROPERTY_STATE, parse_confirmed_story_catalog};
 
 fn decode_base64(input: &str) -> Vec<u8> {
     let mut output = Vec::with_capacity(input.len() * 3 / 4);
@@ -37,11 +35,8 @@ fn parse_fixture(encoded: &str) -> pub_quill::QuillStoryCatalog {
         "/Quill/QuillSub/CONTENTS",
     )
     .expect("read pinned Publisher Quill stream");
-    parse_confirmed_story_catalog(
-        StreamPath("/Quill/QuillSub/CONTENTS".into()),
-        &quill,
-    )
-    .expect("parse pinned Publisher Quill Story/TOKN catalog")
+    parse_confirmed_story_catalog(StreamPath("/Quill/QuillSub/CONTENTS".into()), &quill)
+        .expect("parse pinned Publisher Quill Story/TOKN catalog")
 }
 
 #[test]
