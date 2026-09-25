@@ -13,6 +13,8 @@ on:
       - "tools/test_build_viewer_geometry_receipt.py"
       - "tools/run_local_viewer_geometry_cli.py"
       - "tools/test_run_local_viewer_geometry_cli.py"
+      - "tools/validate_viewer_geometry_receipt.py"
+      - "apps/web/acceptance/receipts/viewer-geometry.real.json"
       - ".github/workflows/web-scene-protocol.yml"
   workflow_dispatch:
 
@@ -43,6 +45,83 @@ jobs:
 
       - name: Prove local Viewer engine launcher
         run: python tools/test_run_local_viewer_geometry_cli.py -v
+
+      - name: Measure pinned real PUB Scene V1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/scene-protocol-real
+          python tools/validate_viewer_geometry_receipt.py \
+            apps/web/acceptance/receipts/viewer-geometry.real.json
+          python tools/adapt_viewer_scene_v1.py \
+            apps/web/acceptance/receipts/viewer-geometry.real.json \
+            target/scene-protocol-real/SampleNewsletter.scene.json \
+            --document-id 9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001 \
+            --revision-id sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+          from jsonschema import Draft202012Validator
+
+          sys.path.insert(0, "tools")
+          from validate_scene_protocol import canonical_json, check_refs, normalize, walk_forbidden
+
+          scene_path = pathlib.Path("target/scene-protocol-real/SampleNewsletter.scene.json")
+          scene = json.loads(scene_path.read_text(encoding="utf-8"))
+          schema = json.loads(pathlib.Path("packages/protocol/scene/v1/snapshot.schema.json").read_text(encoding="utf-8"))
+          validator = Draft202012Validator(schema)
+          errors = sorted(validator.iter_errors(scene), key=lambda e: list(e.path))
+          if errors:
+              detail = "\n".join(f"{list(e.path)}: {e.message}" for e in errors)
+              raise AssertionError("real Scene schema errors\n" + detail)
+
+          normalized = normalize(scene)
+          if canonical_json(scene) != canonical_json(normalized):
+              raise AssertionError("real Scene is not canonical/normalized")
+          walk_forbidden(scene)
+          check_refs(scene, "SampleNewsletter.real")
+
+          canonical = canonical_json(scene)
+          receipt = {
+              "receipt_kind": "chaptera.scene-v1-real-measurement.v1",
+              "protocol_version": scene["protocol_version"],
+              "real_pub_measurement": True,
+              "fixture": {
+                  "name": "SampleNewsletter.pub",
+                  "source_hash": scene["source_hash"],
+                  "source_byte_len": 291840,
+              },
+              "document_id": scene["document_id"],
+              "revision_id": scene["revision_id"],
+              "snapshot_id": scene["snapshot_id"],
+              "canonical_bytes": len(canonical),
+              "serialized_file_bytes": scene_path.stat().st_size,
+              "counts": {
+                  "pages": len(scene["pages"]),
+                  "nodes": len(scene["nodes"]),
+                  "stories": len(scene["stories"]),
+                  "story_frames": len(scene["story_frames"]),
+                  "paints": len(scene["paints"]),
+                  "resources": len(scene["resources"]),
+                  "diagnostics": len(scene["diagnostics"]),
+                  "capabilities": len(scene["capabilities"]),
+              },
+              "stacking_fidelity": scene["stacking_fidelity"],
+              "fidelity_state": scene["fidelity"]["state"],
+              "viewer_allowlist_valid": True,
+              "forbidden_field_scan": "pass",
+          }
+          out = pathlib.Path("target/scene-protocol-real/receipt.json")
+          out.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload real PUB Scene measurement
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-scene-protocol-v1-real-measurement
+          path: target/scene-protocol-real/
 
       - name: Upload synthetic protocol receipts
         uses: actions/upload-artifact@v4
