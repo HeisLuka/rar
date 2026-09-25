@@ -361,6 +361,12 @@ def main() -> int:
                     raise SampleNewsletterSceneEngineError("nothing to undo")
                 removed = copy.deepcopy(operations[-1])
                 result["operations"] = copy.deepcopy(operations[:-1])
+                # Match the canonical EditorProject law used by Producer B:
+                # an operation-free project is the v0.2 baseline, while any
+                # MoveNode-bearing project requires v0.4.
+                result["schema_version"] = (
+                    "pub-editor-v0.4" if result["operations"] else "pub-editor-v0.2"
+                )
                 redo_path.write_text(
                     json.dumps(removed, sort_keys=True, separators=(",", ":")) + "\n",
                     encoding="utf-8",
@@ -370,6 +376,7 @@ def main() -> int:
                     raise SampleNewsletterSceneEngineError("nothing to redo")
                 operation = load_json(redo_path, "redo operation")
                 result["operations"] = list(copy.deepcopy(operations)) + [operation]
+                result["schema_version"] = "pub-editor-v0.4"
             _, scene = project_for_scene(graph, result, projection_context)
             return emit({
                 "resulting_project": result,
