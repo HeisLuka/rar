@@ -3457,7 +3457,7 @@ mod tests {
             "Story edit must be admitted through the real GUI button"
         );
 
-        let movable_page_label = {
+        let (movable_page_label, movable_document_point) = {
             let app = harness.state();
             let visual = app.visual.as_ref().expect("visual loaded");
             let editor = app.editor.as_ref().expect("editor loaded");
@@ -3468,49 +3468,101 @@ mod tests {
                 .find_map(|page| {
                     let page_origin = page.id.into_canonical();
                     let page_id_text = page.id.as_canonical().to_string();
-                    let has_movable = visual
+                    let page_nodes = visual
                         .scene
                         .nodes
                         .iter()
                         .filter(|node| node.parent_origin == page_origin)
-                        .any(|node| {
-                            let Some(instance) =
-                                direct_scene_instance(editor, &page_id_text, node.origin)
-                            else {
-                                return false;
-                            };
-                            let admission =
-                                admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
-                            if !admission.admitted
-                                || admission.origin_node_id.as_deref()
-                                    != Some(node.origin.as_canonical().to_string().as_str())
-                            {
-                                return false;
-                            }
-                            let Some(authored) = editor.graph().nodes.get(&node.origin) else {
-                                return false;
-                            };
-                            let bounds = authored.header.bounds;
-                            editor
-                                .can_move_node_to(node.origin, bounds.x, bounds.y)
-                                .is_ok()
-                        });
-                    has_movable.then(|| format!("Page {}", page.index))
+                        .collect::<Vec<_>>();
+                    let hit_index = SceneHitTestIndex::new(
+                        page_nodes
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(paint_order, node)| {
+                                let instance =
+                                    direct_scene_instance(editor, &page_id_text, node.origin)?;
+                                Some(SceneHitEntry {
+                                    instance_id: instance.instance_id,
+                                    node_id: node.origin,
+                                    bounds: node.bounds,
+                                    z_order: 0,
+                                    paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+                                })
+                            })
+                            .collect(),
+                    );
+
+                    hit_index.entries.iter().rev().find_map(|hit| {
+                        let instance =
+                            direct_scene_instance(editor, &page_id_text, hit.node_id)?;
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                        if !admission.admitted
+                            || admission.origin_node_id.as_deref()
+                                != Some(hit.node_id.as_canonical().to_string().as_str())
+                        {
+                            return None;
+                        }
+                        let authored = editor.graph().nodes.get(&hit.node_id)?;
+                        let bounds = authored.header.bounds;
+                        editor
+                            .can_move_node_to(hit.node_id, bounds.x, bounds.y)
+                            .ok()?;
+                        let point = pub_interaction::DocumentPoint::new(
+                            pub_editor::LengthEmu::new(
+                                hit.bounds.x.get() + hit.bounds.width.get() / 2,
+                            ),
+                            pub_editor::LengthEmu::new(
+                                hit.bounds.y.get() + hit.bounds.height.get() / 2,
+                            ),
+                        );
+                        hit_index
+                            .topmost_at(point)
+                            .filter(|top| top.instance_id == hit.instance_id)
+                            .map(|_| (format!("Page {}", page.index), point))
+                    })
                 })
-                .expect("real fixture exposes a page with a movable direct page-local object")
+                .expect("real fixture exposes a topmost movable direct page-local object")
         };
         harness.get_by_label(&movable_page_label).click();
         harness.step();
 
         let (start, end) = {
-            let object = harness
-                .get_all_by_label("Movable canvas object")
-                .last()
-                .expect("selected movable page exposes at least one movable object");
-            let bounds = object.raw_bounds().expect("movable object has screen bounds");
+            let canvas = harness
+                .get_by_label("Document canvas")
+                .raw_bounds()
+                .expect("document canvas has screen bounds");
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let page = visual
+                .document
+                .pages
+                .get(app.selected_page)
+                .expect("selected movable page remains available");
+            let surface = visual
+                .scene
+                .surfaces
+                .iter()
+                .find(|surface| surface.origin == page.id)
+                .expect("selected movable page has a scene surface");
+            let viewport = egui::vec2(
+                (canvas.x1 - canvas.x0) as f32,
+                (canvas.y1 - canvas.y0) as f32,
+            );
+            let fit_scale = fitted_scale(
+                surface.size.width.get(),
+                surface.size.height.get(),
+                viewport,
+            )
+            .expect("selected movable page has valid fit scale");
+            let scene_scale = fit_scale * app.zoom;
+            let page_width = surface.size.width.get() as f32 * scene_scale;
+            let page_height = surface.size.height.get() as f32 * scene_scale;
+            let page_left = ((canvas.x0 + canvas.x1) as f32 - page_width) / 2.0;
+            let page_top = ((canvas.y0 + canvas.y1) as f32 - page_height) / 2.0;
             let start = egui::pos2(
-                ((bounds.x0 + bounds.x1) / 2.0) as f32,
-                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+                page_left + movable_document_point.x.get() as f32 * scene_scale,
+                page_top + movable_document_point.y.get() as f32 * scene_scale,
             );
             (start, start + egui::vec2(18.0, 12.0))
         };
