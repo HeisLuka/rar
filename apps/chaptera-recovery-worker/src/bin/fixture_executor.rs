@@ -86,7 +86,9 @@ fn run() -> Result<(), String> {
     let canonical_receipt_parent = fs::canonicalize(receipt_parent)
         .map_err(|error| format!("canonicalize receipt parent: {error}"))?;
     if canonical_receipt_parent != canonical_job {
-        return Err("fixture receipt must be written directly inside the admitted job directory".to_owned());
+        return Err(
+            "fixture receipt must be written directly inside the admitted job directory".to_owned(),
+        );
     }
 
     let after = sha256_file(&source)?;
