@@ -24,8 +24,20 @@ const BEFORE = { x: 526710, y: 1191292, width: 4436165, height: 587274 };
 const AFTER = { x: 653710, y: 1445292, width: 4436165, height: 587274 };
 const EMU_PER_CSS_PX = 12700;
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalJson(item)).join(",") + "]";
+  }
+  if (value !== null && typeof value === "object") {
+    return "{" + Object.keys(value).sort().map(
+      (key) => JSON.stringify(key) + ":" + canonicalJson(value[key]),
+    ).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
 function sameJson(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonicalJson(a) === canonicalJson(b);
 }
 
 function mimeFor(filePath) {
