@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("preflight", "revert")]
+    [ValidateSet("preflight", "begin-revert", "finalize-revert")]
     [string]$Mode,
 
     [Parameter(Mandatory = $true)]
@@ -8,9 +8,11 @@ param(
 
     [string]$SnapshotName = "MODERN-2019-12527-GOLDEN-v1",
 
+    [string]$ChallengeFile,
+
     [string]$EnvironmentManifest,
 
-    [string]$ExpectedEnvironmentManifestSha256,
+    [string]$ExpectedEnvironmentFingerprint,
 
     [string]$ReceiptOutput
 )
@@ -65,42 +67,98 @@ if ($Mode -eq "preflight") {
 if ($SnapshotName -ne "MODERN-2019-12527-GOLDEN-v1") {
     throw "refusing non-authoritative snapshot: $SnapshotName"
 }
-if (-not $EnvironmentManifest) {
-    throw "revert mode requires -EnvironmentManifest"
+if (-not $ChallengeFile) {
+    throw "$Mode requires -ChallengeFile"
 }
-if (-not $ExpectedEnvironmentManifestSha256) {
-    throw "revert mode requires -ExpectedEnvironmentManifestSha256"
+
+$challengePath = [IO.Path]::GetFullPath($ChallengeFile)
+
+if ($Mode -eq "begin-revert") {
+    $snapshots = & $VmRun -T ws listSnapshots $VmxPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "vmrun listSnapshots failed"
+    }
+    if (-not ($snapshots -contains $SnapshotName)) {
+        throw "authoritative snapshot not found: $SnapshotName"
+    }
+
+    & $VmRun -T ws stop $VmxPath hard 2>$null | Out-Null
+    Invoke-VmRun @("-T", "ws", "revertToSnapshot", $VmxPath, $SnapshotName)
+
+    $nonce = [guid]::NewGuid().ToString("N")
+    $started = [DateTimeOffset]::UtcNow
+    Invoke-VmRun @("-T", "ws", "start", $VmxPath, "nogui")
+
+    $challenge = [ordered]@{
+        schema_version = "chaptera.pub-lab-2019-restore-challenge.v1"
+        vm_name = "PUB-LAB-2019"
+        snapshot_name = $SnapshotName
+        vmx_sha256 = $vmxHash
+        restore_nonce = $nonce
+        cold_start_requested_at_utc = $started.ToString("o")
+        vmware = $toolHashes
+    }
+    $parent = Split-Path -Parent $challengePath
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $challenge | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $challengePath -Encoding utf8
+
+    Write-Host "Cold restore started. Capture a fresh guest EnvironmentManifest bound to restore_nonce=$nonce, then run finalize-revert."
+    exit 0
+}
+
+if (-not $EnvironmentManifest) {
+    throw "finalize-revert requires -EnvironmentManifest"
+}
+if (-not $ExpectedEnvironmentFingerprint) {
+    throw "finalize-revert requires -ExpectedEnvironmentFingerprint"
 }
 if (-not $ReceiptOutput) {
-    throw "revert mode requires -ReceiptOutput"
+    throw "finalize-revert requires -ReceiptOutput"
 }
 
-$manifestPath = Require-File $EnvironmentManifest "EnvironmentManifest"
-$expected = $ExpectedEnvironmentManifestSha256.ToLowerInvariant()
-if ($expected -notmatch '^[0-9a-f]{64}$') {
-    throw "ExpectedEnvironmentManifestSha256 must be lowercase SHA-256"
+$challengePath = Require-File $challengePath "restore challenge"
+$manifestPath = Require-File $EnvironmentManifest "post-restore EnvironmentManifest"
+$challenge = Get-Content -LiteralPath $challengePath -Raw | ConvertFrom-Json
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+if ($challenge.schema_version -ne "chaptera.pub-lab-2019-restore-challenge.v1") {
+    throw "unsupported restore challenge schema"
+}
+if ($challenge.vm_name -ne "PUB-LAB-2019" -or $challenge.snapshot_name -ne $SnapshotName) {
+    throw "restore challenge VM/snapshot identity mismatch"
+}
+if ($challenge.vmx_sha256 -ne $vmxHash) {
+    throw "restore challenge VMX identity mismatch"
+}
+if ($manifest.schema_version -ne "chaptera.publisher2019-environment-manifest.v1") {
+    throw "unsupported EnvironmentManifest schema"
+}
+if ($manifest.vm_name -ne "PUB-LAB-2019") {
+    throw "EnvironmentManifest VM identity mismatch"
+}
+if ($manifest.restore_nonce -ne $challenge.restore_nonce) {
+    throw "EnvironmentManifest is not bound to this restore challenge"
+}
+if ($manifest.publisher_version -ne "16.0" -or $manifest.publisher_build -ne "16.0.12527.22145") {
+    throw "EnvironmentManifest Publisher build mismatch"
 }
 
-# Snapshot identity must exist before any mutation.
-$snapshots = & $VmRun -T ws listSnapshots $VmxPath
-if ($LASTEXITCODE -ne 0) {
-    throw "vmrun listSnapshots failed"
-}
-if (-not ($snapshots -contains $SnapshotName)) {
-    throw "authoritative snapshot not found: $SnapshotName"
+$started = [DateTimeOffset]::Parse($challenge.cold_start_requested_at_utc)
+$captured = [DateTimeOffset]::Parse($manifest.captured_at_utc)
+if ($captured -lt $started) {
+    throw "EnvironmentManifest predates this cold restore"
 }
 
-# Stop is intentionally fail-closed but tolerant of an already-stopped guest.
-& $VmRun -T ws stop $VmxPath hard 2>$null | Out-Null
-
-Invoke-VmRun @("-T", "ws", "revertToSnapshot", $VmxPath, $SnapshotName)
-Invoke-VmRun @("-T", "ws", "start", $VmxPath, "nogui")
-
-$currentManifestHash = Sha256 $manifestPath
-if ($currentManifestHash -ne $expected) {
-    throw "EnvironmentManifest hash mismatch after cold restore"
+$expectedFingerprint = $ExpectedEnvironmentFingerprint.ToLowerInvariant()
+if ($expectedFingerprint -notmatch '^[0-9a-f]{64}$') {
+    throw "ExpectedEnvironmentFingerprint must be lowercase SHA-256"
+}
+if ($manifest.environment_fingerprint -ne $expectedFingerprint) {
+    throw "EnvironmentManifest environment fingerprint mismatch"
 }
 
+$manifestHash = Sha256 $manifestPath
+$challengeHash = Sha256 $challengePath
 $receipt = [ordered]@{
     schema_version = "chaptera.pub-lab-2019-reset-receipt.v1"
     vm_identity = [ordered]@{
@@ -112,11 +170,14 @@ $receipt = [ordered]@{
         generation = 1
     }
     vmx_sha256 = $vmxHash
-    environment_manifest_sha256 = $currentManifestHash
+    environment_manifest_sha256 = $manifestHash
+    environment_fingerprint = $manifest.environment_fingerprint
     vmware = $toolHashes
     restore = [ordered]@{
+        challenge_sha256 = $challengeHash
         revert_succeeded = $true
         cold_start_succeeded = $true
+        post_boot_capture_bound = $true
         environment_match = $true
         restore_verified = $true
     }
@@ -124,6 +185,7 @@ $receipt = [ordered]@{
         local_paths_serialized = $false
         credentials_serialized = $false
         licensed_media_serialized = $false
+        restore_nonce_serialized = $false
     }
 }
 
