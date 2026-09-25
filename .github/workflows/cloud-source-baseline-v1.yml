@@ -1,0 +1,106 @@
+name: CLOUD-SOURCE-BASELINE-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/Cargo.toml"
+      - "apps/chaptera-server/src/lib.rs"
+      - "apps/chaptera-server/src/cli.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/source_baseline.rs"
+      - "apps/chaptera-server/src/revision_materializer.rs"
+      - "crates/pub-model/**"
+      - "tools/migration_pdf_worker_isolation.py"
+      - ".github/workflows/cloud-source-baseline-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FIXTURE_SHA256: 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf
+      FIXTURE_BYTES: "291840"
+      DOCUMENT_ID: 9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001
+      SERVICE_BASELINE_ID: sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c
+      AUTHORING_BASELINE_ID: 5e246c364ec168c876ed07306a1ff99d5b2eb78913f5bd36777bc2863a5360f3
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Materialize pinned SampleNewsletter.pub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source"
+          curl --fail --location --retry 4 --retry-delay 2 \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$RUNNER_TEMP/source/SampleNewsletter.pub"
+          printf '%s  %s\n' "$FIXTURE_SHA256" "$RUNNER_TEMP/source/SampleNewsletter.pub" | sha256sum -c -
+          test "$(stat -c %s "$RUNNER_TEMP/source/SampleNewsletter.pub")" = "$FIXTURE_BYTES"
+
+      - name: Check formatting
+        run: cargo fmt -p chaptera-server -- --check
+
+      - name: Lint baseline authority
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+
+      - name: Run baseline identity unit tests
+        run: cargo test -p chaptera-server source_baseline
+
+      - name: Build isolated baseline worker
+        run: cargo build -p chaptera-server --bin chaptera
+
+      - name: Run real PUB through canonical isolated baseline worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/migration_pdf_worker_isolation.py run \
+            --output-dir "$RUNNER_TEMP/baseline-result" \
+            --input "$RUNNER_TEMP/source/SampleNewsletter.pub" \
+            --timeout 30 \
+            --address-space-mb 2048 \
+            --cpu-seconds 20 \
+            --open-files 64 \
+            --output-file-mb 4 \
+            --clear-environment \
+            -- \
+            "$GITHUB_WORKSPACE/target/debug/chaptera" source-baseline \
+            --document-id "$DOCUMENT_ID" \
+            --expected-sha256 "$FIXTURE_SHA256" \
+            --expected-byte-len "$FIXTURE_BYTES"
+
+      - name: Verify bounded real-PUB baseline receipt
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(os.environ["RUNNER_TEMP"]) / "baseline-result" / "result.json"
+          receipt = json.loads(p.read_text(encoding="utf-8"))
+          assert receipt["protocol_version"] == "chaptera.source-baseline-identity.v1", receipt
+          assert receipt["document_id"] == os.environ["DOCUMENT_ID"], receipt
+          assert receipt["source_sha256"] == os.environ["FIXTURE_SHA256"], receipt
+          assert receipt["source_byte_len"] == int(os.environ["FIXTURE_BYTES"]), receipt
+          assert receipt["project_schema_version"] == "pub-editor-v0.2", receipt
+          assert receipt["project_hash"] == "sha256:575fbcb664f2a6b672a05861a4d2aff6aca339204a50e3401d04e1920d946348", receipt
+          assert receipt["state_id"] == "sha256:ce6753aab36f31db5508763601d078d2d5a2766541ef6d3377eaab9ed02be191", receipt
+          assert receipt["service_revision_id"] == os.environ["SERVICE_BASELINE_ID"], receipt
+          assert receipt["canonical_schema_version"] == "chaptera.cdm.authoring-revision.v1", receipt
+          assert receipt["canonical_authoring_revision_id"] == os.environ["AUTHORING_BASELINE_ID"], receipt
+          assert receipt["filesystem_confinement"] is True, receipt
+          assert p.stat().st_size < 4096, p.stat().st_size
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          PY
