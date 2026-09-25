@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::{
         Arc,
@@ -167,7 +167,7 @@ async fn open_store(label: &str) -> (SqliteRevisionStore, PathBuf) {
     (store, path)
 }
 
-async fn cleanup_store(store: &SqliteRevisionStore, path: &PathBuf) {
+async fn cleanup_store(store: &SqliteRevisionStore, path: &Path) {
     store.close().await;
     for candidate in [
         path.clone(),
@@ -233,6 +233,7 @@ fn authority(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn edge_for(
     document_id: &str,
     parent_revision: &str,
