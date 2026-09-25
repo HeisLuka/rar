@@ -1,0 +1,144 @@
+name: TEMP Office 2013 Step by Step Publisher-file recovery
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-new-pub-office2013-sbs-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install inspection tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y unzip file
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Recover official Microsoft Press companion ZIP
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/t712-p2013
+          URL='https://www.microsoftpressstore.com/content/images/9780735669413/downloads/9780735669413_files.zip'
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -A 'Mozilla/5.0' \
+            -e 'https://www.microsoftpressstore.com/store/microsoft-office-professional-2013-step-by-step-9780735669413' \
+            -o /tmp/t712-p2013/practice.zip "$URL"
+          sha256sum /tmp/t712-p2013/practice.zip | tee out/archive-sha256.txt
+          unzip -l /tmp/t712-p2013/practice.zip > out/zip-listing.txt
+          unzip -q /tmp/t712-p2013/practice.zip -d /tmp/t712-p2013/extracted
+
+      - name: Inspect Publisher practice files
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, pathlib, olefile, struct
+
+          root=pathlib.Path('/tmp/t712-p2013/extracted')
+          pubs=sorted([p for p in root.rglob('*') if p.is_file() and p.suffix.lower()=='.pub'])
+
+          def digest(path):
+              h=hashlib.sha256()
+              with path.open('rb') as f:
+                  while True:
+                      b=f.read(1024*1024)
+                      if not b: break
+                      h.update(b)
+              return h.hexdigest()
+
+          rows=[]
+          for p in pubs:
+              raw=p.read_bytes()
+              is_cfb=(raw[:8]==bytes.fromhex('d0cf11e0a1b11ae1'))
+              streams=[]
+              contents_size=None
+              contents_prefix=None
+              contents_revision_u16_at_2=None
+              ole_ok=False
+              error=None
+              try:
+                  if is_cfb:
+                      ole=olefile.OleFileIO(str(p))
+                      ole_ok=True
+                      streams=['/'.join(x) for x in ole.listdir(streams=True,storages=False)]
+                      if ole.exists('Contents'):
+                          data=ole.openstream('Contents').read()
+                          contents_size=len(data)
+                          contents_prefix=data[:32].hex()
+                          if len(data)>=4:
+                              contents_revision_u16_at_2=struct.unpack_from('<H',data,2)[0]
+                      ole.close()
+              except Exception as e:
+                  error=repr(e)
+              rows.append({
+                  'source_archive_path':str(p.relative_to(root)).replace('\\','/'),
+                  'filename':p.name,
+                  'size':p.stat().st_size,
+                  'sha256':digest(p),
+                  'is_cfb':is_cfb,
+                  'ole_open_ok':ole_ok,
+                  'publisher_stream_signal':('Contents' in streams),
+                  'stream_count':len(streams),
+                  'streams':streams,
+                  'contents_size':contents_size,
+                  'contents_prefix32_hex':contents_prefix,
+                  'contents_revision_u16_at_2':contents_revision_u16_at_2,
+                  'inspection_error':error,
+              })
+
+          if not pubs:
+              raise SystemExit('no .pub files recovered from Office 2013 practice ZIP')
+          if any(not r['is_cfb'] or not r['ole_open_ok'] or not r['publisher_stream_signal'] for r in rows):
+              raise SystemExit('one or more .pub candidates failed strict CFB/Contents validation')
+
+          receipt={
+              'schema':'chaptera.corpus-version-labelled-office2013-sbs.v1',
+              'source_safe':True,
+              'raw_pub_retained':False,
+              'source_page':'https://www.microsoftpressstore.com/store/microsoft-office-professional-2013-step-by-step-9780735669413',
+              'source_download':'https://www.microsoftpressstore.com/content/images/9780735669413/downloads/9780735669413_files.zip',
+              'source_title':'Microsoft Office Professional 2013 Step by Step',
+              'source_published_date':'2013-05-15',
+              'source_version_wording':'Publisher 2013 chapters 41-43 in the official Microsoft Press practice-file package',
+              'provenance_guardrail':'Source wording is distribution/training provenance only and is not by itself writer-version authority.',
+              'pub_count':len(rows),
+              'files':rows,
+          }
+          pathlib.Path('out/receipt.json').write_text(json.dumps(receipt,indent=2))
+          print(json.dumps(receipt,indent=2))
+          PY
+
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo 'raw PUB leaked into artifact' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          r=json.load(open('out/receipt.json'))
+          assert r['source_safe'] is True
+          assert r['raw_pub_retained'] is False
+          assert r['pub_count'] >= 1
+          for x in r['files']:
+              assert x['is_cfb'] is True
+              assert x['ole_open_ok'] is True
+              assert x['publisher_stream_signal'] is True
+              assert len(x['sha256']) == 64
+          PY
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-version-labelled-office2013-sbs-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
