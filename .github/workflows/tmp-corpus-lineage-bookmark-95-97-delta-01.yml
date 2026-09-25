@@ -346,6 +346,39 @@ jobs:
             capacity=((len(raw)-data_start)//data_size) if data_size else None
             valid = (data_size==0 or capacity>=n)
             return {"valid":valid,"pointer_size":pointer_size,"n":n,"maxn":maxn,"data_size":data_size,"value0":v0,"value1":v1,"data_start":data_start,"capacity":capacity}
+          def position_list_header(raw,off):
+            if off<0 or off+10>len(raw):return None
+            n16=int.from_bytes(raw[off:off+2],"little"); m16=int.from_bytes(raw[off+2:off+4],"little")
+            if m16>=n16:
+              pointer_size=2; n=n16; maxn=m16; cursor=off+4
+              cursor+=2
+              if cursor+4>len(raw):return {"valid":False,"reason":"short-u16-position-header"}
+              v0=int.from_bytes(raw[cursor:cursor+2],"little"); cursor+=2
+              v1=int.from_bytes(raw[cursor:cursor+2],"little",signed=True); cursor+=2
+            else:
+              if off+18>len(raw):return {"valid":False,"reason":"short-u32-position-header"}
+              pointer_size=4
+              n=int.from_bytes(raw[off:off+4],"little"); maxn=int.from_bytes(raw[off+4:off+8],"little")
+              if maxn<n:return {"valid":False,"reason":"maxn-lt-n","n":n,"maxn":maxn}
+              cursor=off+8
+              cursor+=4
+              v0=int.from_bytes(raw[cursor:cursor+2],"little"); cursor+=2
+              v1=int.from_bytes(raw[cursor:cursor+4],"little",signed=True); cursor+=4
+            data_start=cursor
+            need=(n+1)*pointer_size
+            if data_start+need>len(raw):return {"valid":False,"reason":"short-position-table","pointer_size":pointer_size,"n":n,"maxn":maxn,"data_start":data_start}
+            rel=[]
+            for i in range(n+1):
+              p=data_start+i*pointer_size
+              rel.append(int.from_bytes(raw[p:p+pointer_size],"little"))
+            monotonic=all(rel[i]<=rel[i+1] for i in range(len(rel)-1))
+            in_bounds=all(0<=x<=len(raw)-data_start for x in rel)
+            segments=[]
+            if monotonic and in_bounds:
+              for i in range(n):
+                a=data_start+rel[i]; b=data_start+rel[i+1]; seg=raw[a:b]
+                segments.append({"index":i,"rel_start":rel[i],"rel_end":rel[i+1],"len":len(seg),"sha256":sha(seg),"hex":seg.hex() if len(seg)<=32 else None})
+            return {"valid":monotonic and in_bounds,"pointer_size":pointer_size,"n":n,"maxn":maxn,"value0":v0,"value1":v1,"data_start":data_start,"relative_positions":rel,"monotonic":monotonic,"in_bounds":in_bounds,"segments":segments}
           def chunk_split(raw):
             data_off=raw[3] if len(raw)>=4 else 0
             valid_off=4<=data_off<=len(raw)
@@ -361,7 +394,7 @@ jobs:
               "data_len":len(data),"data_sha256":sha(data),
               "prefix_hex":raw[:min(48,len(raw))].hex(),
               "suffix_hex":raw[max(0,len(raw)-48):].hex(),
-              "list_header_at_data":bounded_list_header(raw,data_off) if valid_off else None
+              "list_header_fixed_at_data":bounded_list_header(raw,data_off) if valid_off else None,\n              "list_header_position_at_data":position_list_header(raw,data_off) if valid_off else None
             }
           opaque3_ids=[276,277,284]
           opaque3=[]
