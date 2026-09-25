@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/protocol/font-environment/v1/font-environment.schema.json",
+  "title": "Chaptera BrowserFontEnvironmentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "document_id",
+    "revision_id",
+    "scene_snapshot_id",
+    "layout_environment_id",
+    "font_set_fingerprint",
+    "preview_authority",
+    "fonts",
+    "diagnostics"
+  ],
+  "properties": {
+    "protocol_version": {"const": "chaptera.font-environment.v1"},
+    "document_id": {"$ref": "#/$defs/uuid"},
+    "revision_id": {"$ref": "#/$defs/hashId"},
+    "scene_snapshot_id": {"$ref": "#/$defs/hashId"},
+    "layout_environment_id": {"$ref": "#/$defs/hashId"},
+    "font_set_fingerprint": {"$ref": "#/$defs/hashId"},
+    "preview_authority": {
+      "type": "string",
+      "enum": [
+        "server_positioned_glyphs",
+        "server_frame_geometry_only",
+        "server_render_only"
+      ]
+    },
+    "fonts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/font"}
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagnostic"}
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "opaqueHandle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "font_fingerprint",
+        "content_hash",
+        "face_index",
+        "family",
+        "style",
+        "resource_id",
+        "fetch_handle"
+      ],
+      "properties": {
+        "font_fingerprint": {"$ref": "#/$defs/hashId"},
+        "content_hash": {"$ref": "#/$defs/sha256"},
+        "face_index": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "family": {"type": "string", "minLength": 1, "maxLength": 128},
+        "style": {"type": "string", "minLength": 1, "maxLength": 128},
+        "resource_id": {"$ref": "#/$defs/uuid"},
+        "fetch_handle": {"$ref": "#/$defs/opaqueHandle"}
+      }
+    },
+    "font": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "font_fingerprint",
+        "content_hash",
+        "face_index",
+        "family",
+        "style",
+        "delivery",
+        "reason_code",
+        "resource_id",
+        "fetch_handle",
+        "fallback"
+      ],
+      "properties": {
+        "font_fingerprint": {"$ref": "#/$defs/hashId"},
+        "content_hash": {
+          "anyOf": [
+            {"$ref": "#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "face_index": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "family": {"type": ["string", "null"], "maxLength": 128},
+        "style": {"type": ["string", "null"], "maxLength": 128},
+        "delivery": {
+          "type": "string",
+          "enum": [
+            "deliver_exact",
+            "deliver_subset",
+            "substitute_explicit",
+            "server_render_only",
+            "blocked"
+          ]
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[a-z0-9._-]+$"
+        },
+        "resource_id": {
+          "anyOf": [
+            {"$ref": "#/$defs/uuid"},
+            {"type": "null"}
+          ]
+        },
+        "fetch_handle": {
+          "anyOf": [
+            {"$ref": "#/$defs/opaqueHandle"},
+            {"type": "null"}
+          ]
+        },
+        "fallback": {
+          "anyOf": [
+            {"$ref": "#/$defs/fallback"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "code", "message_key", "font_fingerprint"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "error"]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[a-z0-9._-]+$"
+        },
+        "message_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9._-]+$"
+        },
+        "font_fingerprint": {"$ref": "#/$defs/hashId"}
+      }
+    }
+  }
+}
