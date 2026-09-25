@@ -1,0 +1,184 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chaptera Real Font Environment Probe</title>
+<style>
+  html, body { margin: 0; background: #eee; font-family: system-ui, sans-serif; }
+  #host { width: 1200px; height: 800px; overflow: hidden; position: relative; }
+</style>
+<div id="host"></div>
+<script type="module">
+  import { createRenderer } from "./render-v1.mjs";
+  import {
+    assertFontEnvironmentMatchesScene,
+    browserTextMetricAuthority,
+  } from "./font-environment-v1.mjs";
+
+  const VIEW = Object.freeze({
+    emu_per_css_px: 9525,
+    zoom: 1,
+    pan_x_css_px: 0,
+    pan_y_css_px: 0,
+    page_gap_css_px: 32,
+    page_margin_css_px: 24,
+  });
+
+  function sameJson(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function nearlyEqual(a, b, epsilon = 1e-6) {
+    return Math.abs(a - b) <= epsilon;
+  }
+
+  function chooseRepresentativeFrames(scene) {
+    const nodeById = new Map(scene.nodes.map((node) => [node.node_id, node]));
+    const storyById = new Map(scene.stories.map((story) => [story.story_id, story]));
+    const candidates = scene.story_frames.map((frame) => {
+      const node = nodeById.get(frame.node_id);
+      const story = storyById.get(frame.story_id);
+      if (!node || !story) throw new Error("StoryFrame reference is incomplete");
+      return { frame, node, story };
+    });
+
+    const selected = [];
+    const seen = new Set();
+    for (const page of [...scene.pages].sort((a, b) => a.order - b.order)) {
+      const onPage = candidates
+        .filter((item) => item.node.page_id === page.page_id)
+        .sort((a, b) => b.story.text.length - a.story.text.length || a.frame.node_id.localeCompare(b.frame.node_id));
+      if (onPage[0]) {
+        selected.push(onPage[0]);
+        seen.add(onPage[0].frame.node_id);
+      }
+    }
+
+    const longest = [...candidates].sort(
+      (a, b) => b.story.text.length - a.story.text.length || a.frame.node_id.localeCompare(b.frame.node_id),
+    )[0];
+    if (longest && !seen.has(longest.frame.node_id)) selected.push(longest);
+    return selected;
+  }
+
+  function nativeTextMetric(text, widthCssPx) {
+    const probe = document.createElement("div");
+    probe.style.position = "absolute";
+    probe.style.left = "-10000px";
+    probe.style.top = "0";
+    probe.style.visibility = "hidden";
+    probe.style.boxSizing = "border-box";
+    probe.style.width = Math.max(1, widthCssPx) + "px";
+    probe.style.whiteSpace = "pre-wrap";
+    probe.style.overflowWrap = "break-word";
+    probe.style.font = "12px sans-serif";
+    probe.textContent = text;
+    document.body.appendChild(probe);
+    const rect = probe.getBoundingClientRect();
+    const result = {
+      css_width_px: rect.width,
+      css_height_px: rect.height,
+      scroll_width_px: probe.scrollWidth,
+      scroll_height_px: probe.scrollHeight,
+      font_css: getComputedStyle(probe).font,
+    };
+    probe.remove();
+    return result;
+  }
+
+  window.runRealFontEnvironmentProbe = async function(sceneText, environmentText) {
+    const scene = JSON.parse(sceneText);
+    const fontEnvironment = JSON.parse(environmentText);
+    const immutableScene = JSON.stringify(scene);
+    const immutableEnvironment = JSON.stringify(fontEnvironment);
+
+    assertFontEnvironmentMatchesScene(scene, fontEnvironment);
+    const authority = browserTextMetricAuthority(fontEnvironment);
+    if (authority.browser_metrics_authoritative !== false) {
+      throw new Error("browser text metrics became authoritative");
+    }
+    if (fontEnvironment.preview_authority !== "server_frame_geometry_only") {
+      throw new Error("real geometry-only Scene must remain server_frame_geometry_only");
+    }
+
+    const renderText = scene.capabilities.find((item) => item.key === "render.text");
+    if (!renderText || !["partial", "unsupported"].includes(renderText.state)) {
+      throw new Error("real Scene text authority changed unexpectedly");
+    }
+
+    const host = document.getElementById("host");
+    const renderer = createRenderer("svg", host, scene, VIEW);
+    if (!renderer.stats().available) throw new Error("SVG renderer is unavailable");
+
+    const representative = chooseRepresentativeFrames(scene);
+    if (representative.length < 3) {
+      throw new Error("expected representative StoryFrames across the real document");
+    }
+
+    const frames = representative.map(({ frame, node, story }) => {
+      const planNode = renderer.plan.nodeById.get(frame.node_id);
+      if (!planNode || !planNode.story) throw new Error("renderer lost real StoryFrame");
+      if (!sameJson(planNode.canonical_bounds, node.bounds)) {
+        throw new Error("render plan changed authoritative frame geometry");
+      }
+
+      const rect = host.querySelector('rect[data-node-id="' + frame.node_id + '"]');
+      if (!rect) throw new Error("SVG renderer did not materialize StoryFrame geometry");
+      const actual = {
+        x: Number(rect.getAttribute("x")),
+        y: Number(rect.getAttribute("y")),
+        width: Number(rect.getAttribute("width")),
+        height: Number(rect.getAttribute("height")),
+      };
+      const expected = {
+        x: planNode.x,
+        y: planNode.y,
+        width: planNode.width,
+        height: planNode.height,
+      };
+      if (!Object.keys(expected).every((key) => nearlyEqual(actual[key], expected[key]))) {
+        throw new Error("browser SVG frame geometry differs from server-derived render plan");
+      }
+
+      return {
+        node_id: frame.node_id,
+        story_id: frame.story_id,
+        page_id: node.page_id,
+        frame_ordinal: frame.frame_ordinal,
+        story_text_chars: story.text.length,
+        authoritative_bounds_emu: structuredClone(node.bounds),
+        browser_svg_geometry_css_px: actual,
+        authoritative_geometry_match: true,
+        native_text_metric_observation: nativeTextMetric(story.text, planNode.width),
+      };
+    });
+
+    if (JSON.stringify(scene) !== immutableScene) {
+      throw new Error("browser font/render probe mutated the Scene");
+    }
+    if (JSON.stringify(fontEnvironment) !== immutableEnvironment) {
+      throw new Error("browser font/render probe mutated the font environment");
+    }
+
+    renderer.destroy();
+    return {
+      receipt_kind: "chaptera.web-font-environment-real-browser.v1",
+      real_pub: true,
+      document_id: scene.document_id,
+      source_hash: scene.source_hash,
+      revision_id: scene.revision_id,
+      scene_snapshot_id: scene.snapshot_id,
+      layout_environment_id: scene.layout_environment.environment_id,
+      font_set_fingerprint: scene.layout_environment.font_set_fingerprint,
+      preview_authority: fontEnvironment.preview_authority,
+      font_descriptor_count: fontEnvironment.fonts.length,
+      authoritative_comparison: "server_frame_geometry_exact",
+      browser_text_metrics_authoritative: false,
+      browser_text_metric_rule: authority.rule,
+      scene_text_capability: renderText.state,
+      selected_story_frame_count: frames.length,
+      all_authoritative_geometry_matches: frames.every((item) => item.authoritative_geometry_match),
+      scene_mutated: false,
+      font_environment_mutated: false,
+      frames,
+    };
+  };
+</script>
