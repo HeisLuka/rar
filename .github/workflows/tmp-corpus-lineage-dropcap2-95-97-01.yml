@@ -33,14 +33,14 @@ jobs:
           UA="rar-dropcap2-lawcheck/1.0";SECTOR=2048
           SPECS={
             "pub95":{
-              "sha256":"32e6e798eedb9eb60cce2d876323626957a6f0cf8d98b956c0a4549276cc8ed5",
+              "sha256":"32e6e798a6350dd78634005a0b90b319a9dca4a3bba1120e9c96ecdcc0a59264",
               "member":"PAGEWIZ/DROPCAP2.PUB",
               "url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
               "root_sha256":"36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a","root_size":47730688,
               "source_page":"https://archive.org/details/microsoft-home-collection-1993-1995-"
             },
             "pub97":{
-              "sha256":"3c4a3c2a277f02e68d21e02cd8859e47d1ae05f29f7bdf49ca677b49ccf224e3",
+              "sha256":"3c4a3c2a897466f8df74b316faba55c6c7201c876b1798041c7bd31c74285909",
               "member":"PAGEWIZ/DROPCAP2.PUB",
               "url":"https://archive.org/download/PUB40CD/PUB_40_CD.ISO",
               "root_sha256":"cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59","root_size":138551296,
