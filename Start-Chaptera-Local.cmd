@@ -20,6 +20,7 @@ if defined LOCALAPPDATA (
   set "CHAPTERA_LOCAL_STATE_ROOT=%~dp0.chaptera-local"
 )
 set "CHAPTERA_LOCAL_PACKAGED=1"
+set "PYTHONDONTWRITEBYTECODE=1"
 "%~dp0runtime\python\python.exe" "%~dp0launcher\run_local_full_stack.py" %*
 
 :done
