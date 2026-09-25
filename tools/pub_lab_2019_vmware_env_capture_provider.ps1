@@ -75,7 +75,7 @@ try {
         throw "VMware Tools guest operations did not become ready"
     }
 
-    Invoke-GuestVmRun "createDirectoryInGuest" @($guestRoot)
+    Invoke-GuestVmRun "runProgramInGuest" @("C:\\Windows\\System32\\cmd.exe", "/c", "mkdir $guestRoot")
     Invoke-GuestVmRun "copyFileFromHostToGuest" @($ChallengeFile, $guestChallenge)
     Invoke-GuestVmRun "copyFileFromHostToGuest" @($probe, $guestProbe)
     Invoke-GuestVmRun "runProgramInGuest" @(
