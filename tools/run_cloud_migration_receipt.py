@@ -49,14 +49,24 @@ def main() -> int:
 
         assert before["state"] == "pending"
         assert before["current_version"] == 0
-        assert before["pending_versions"] == [1, 2, 3, 4, 5]
+        assert before["pending_versions"] == [1, 2, 3, 4, 5, 6]
 
         assert up["state"] == "current"
-        assert up["current_version"] == 5
-        assert up["applied_versions"] == [1, 2, 3, 4, 5]
+        assert up["current_version"] == 6
+        assert up["applied_versions"] == [1, 2, 3, 4, 5, 6]
         assert current == up
 
         with sqlite3.connect(db) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            for required in {"principals", "principal_identities", "sessions"}:
+                if required not in tables:
+                    raise SystemExit(f"authn migration did not materialize {required}")
+
             connection.execute(
                 "UPDATE chaptera_schema_migrations "
                 "SET checksum_sha256='tampered' WHERE version=2"
