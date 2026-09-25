@@ -1,0 +1,283 @@
+name: TEMP CORPUS CHECKS 95-97 natural lineage
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-lineage-checks-95-97-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parsers
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check olefile==0.47
+          sudo apt-get update -qq
+          sudo apt-get install -y libmspub-tools
+      - name: Verify CHECKS Publisher95 to 97 lineage
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib,json,subprocess,tempfile,time,urllib.parse,urllib.request
+          from pathlib import Path
+          import olefile
+
+          UA="rar-checks-lineage/1.0";SECTOR=2048
+          SPECS={
+            "pub95":{
+              "sha256":"5f09d894eb6c6f4888807590c11f4cdcabc4583ed3716c68c7dc361fbd7ff4be",
+              "size":12288,"member":"PAGEWIZ/CHECKS.PUB",
+              "url":"https://archive.org/download/microsoft-home-collection-1993-1995-/Productivity/Microsoft%20Publisher%203.0%20for%20Windows%2095.iso",
+              "root_sha256":"36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a","root_size":47730688,
+              "source_page":"https://archive.org/details/microsoft-home-collection-1993-1995-",
+              "additional_exact_media":[
+                {"source_page":"https://archive.org/details/microsoft-publisher-for-windows-95","root_sha256":"9f2c6ceac75be6fb051e04e41ff23dda1b721c6ddf8ce4fe648eb904509d2a76"},
+                {"source_page":"https://archive.org/details/publishercddeluxeen","root_sha256":"5354a83e568ab16cdae48d50dda0966a99e0ca1d5ec6ace992b66fc8adff134e"}
+              ]
+            },
+            "pub97":{
+              "sha256":"4ab9b74e2f15b6f12e82fac111fb7c524dd44742d883ef52a72922428cdd106b",
+              "size":12288,"member":"PAGEWIZ/CHECKS.PUB",
+              "url":"https://archive.org/download/MSPublisher97-EN/PUB_40_CD.iso",
+              "root_sha256":"41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab","root_size":138315776,
+              "source_page":"https://archive.org/details/MSPublisher97-EN",
+              "additional_exact_media":[
+                {"source_page":"https://archive.org/details/MSPublisher97ThaiEdition","root_sha256":"0e30e5f0817cb94ff78780ac34b386c4c87c475ead40227758c387e985560e4c"},
+                {"source_page":"https://archive.org/details/PUB40CD","root_sha256":"cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59"}
+              ]
+            }
+          }
+          def sha(b):return hashlib.sha256(b).hexdigest()
+          def u16(b,o):return int.from_bytes(b[o:o+2],"little")
+          def u32(b,o):return int.from_bytes(b[o:o+4],"little")
+
+          class ISO:
+            def __init__(self,url):
+              self.url=url;self.cache={};self.delivery=self._choose()
+            def candidates(self):
+              p=urllib.parse.urlparse(self.url);q=p.path.split("/");ident=q[2];fn="/".join(q[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              for a in range(4):
+                try:
+                  with urllib.request.urlopen(req,timeout=45) as r:m=json.load(r)
+                  break
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+              out=[];d=str(m.get("dir") or "")
+              for k in ("d1","d2"):
+                h=str(m.get(k) or "")
+                if h and d:out.append("https://"+h+d.rstrip("/")+"/"+urllib.parse.quote(fn,safe="/"))
+              out += [self.url,self.url+"?download=1"]
+              return list(dict.fromkeys(out))
+            def rr(self,url,start,n):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+n-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"):raise ValueError("range unsupported")
+                d=r.read(n+1)
+              if len(d)!=n:raise ValueError(f"range length {len(d)} != {n}")
+              return d
+            def _choose(self):
+              last=None
+              for url in self.candidates():
+                for a in range(3):
+                  try:
+                    p=self.rr(url,16*SECTOR,SECTOR)
+                    if p[:6]!=b"\x01CD001":raise ValueError("bad pvd")
+                    return url
+                  except Exception as e:
+                    last=e
+                    if a<2:time.sleep(2**a)
+              raise last
+            def read(self,start,n):
+              for a in range(4):
+                try:return self.rr(self.delivery,start,n)
+                except Exception:
+                  if a==3:raise
+                  time.sleep(2**a)
+            @staticmethod
+            def rec(r):return r[33:33+r[32]].decode("ascii","replace"),int.from_bytes(r[2:6],"little"),int.from_bytes(r[10:14],"little"),r[25]
+            def directory(self,e,s):
+              k=(e,s)
+              if k in self.cache:return self.cache[k]
+              d=self.read(e*SECTOR,s);out={};p=0
+              while p<len(d):
+                n=d[p]
+                if not n:p=((p//SECTOR)+1)*SECTOR;continue
+                name,ex,sz,fl=self.rec(d[p:p+n])
+                if name not in ("\x00","\x01"):out[name.split(";")[0].upper()]=(ex,sz,fl)
+                p+=n
+              self.cache[k]=out;return out
+            def member(self,path):
+              p=self.read(16*SECTOR,SECTOR);rl=p[156];_,e,s,fl=self.rec(p[156:156+rl])
+              parts=[x.upper() for x in path.strip("/").split("/") if x]
+              for i,x in enumerate(parts):
+                e,s,fl=self.directory(e,s)[x]
+                if i+1<len(parts) and not fl&2:raise ValueError(f"{x} not dir")
+              if fl&2:raise ValueError("target dir")
+              return self.read(e*SECTOR,s)
+
+          def cfb(pub):
+            with olefile.OleFileIO(pub) as ole:
+              ss={}
+              for parts in ole.listdir(streams=True,storages=False):
+                p="/"+"/".join(parts);ss[p]=ole.openstream(parts).read()
+              sts=sorted("/"+"/".join(parts) for parts in ole.listdir(streams=False,storages=True))
+            return ss,sts
+
+          def parse_dir(c):
+            off=u32(c,0x16);n=u16(c,off);rows=[]
+            if not (0<off<len(c)-2) or n>512:return None
+            for i in range(n):
+              p=off+2+i*10
+              if p+10>len(c):return None
+              row={"service":u16(c,p),"id":u16(c,p+2),"parent":u16(c,p+4),"offset":u32(c,p+6)}
+              if row["offset"]+2>len(c):return None
+              row["marker"]=u16(c,row["offset"]);rows.append(row)
+            offs=sorted(set(r["offset"] for r in rows));chunks={}
+            for r in rows:
+              nxt=[x for x in offs if x>r["offset"]]
+              e=min(nxt) if nxt else len(c);raw=c[r["offset"]:e]
+              chunks[r["id"]]={"len":len(raw),"sha256":sha(raw),"raw":raw}
+            return {"offset":off,"rows":rows,"by_id":{r["id"]:r for r in rows},"chunks":chunks}
+
+          def text_meta(c):
+            root=u32(c,0x12)
+            if root+30>len(c):return None
+            m=root+14
+            return {"root":root,"start":u32(c,m),"end":u32(c,m+4),"char":u16(c,m+8),"para":u16(c,m+10),"cell":u16(c,m+12),"prop_end":u16(c,m+14)}
+
+          def page_shape(c,index,kind,text_start):
+            base=index*0x200
+            if base+0x200>len(c):return {"valid":False}
+            page=c[base:base+0x200];n=page[-1]
+            if kind=="char":
+              if 4*(n+1)>511:return {"valid":False}
+              anchor=u32(page,0);positions=[u32(page,4*i)-anchor for i in range(1,n+1)];style0=4*(n+1)
+            else:
+              if 4*n>511:return {"valid":False}
+              positions=[u32(page,4*i)-text_start for i in range(n)];style0=4*n
+            styles=list(page[style0:style0+n])
+            return {"valid":True,"n":n,"positions":positions,"styles":styles,"page_sha256":sha(page)}
+
+          def normalize(raw,mp):
+            b=bytearray(raw)
+            for p in range(0,max(0,len(b)-3)):
+              v=int.from_bytes(b[p:p+4],"little")
+              if v in mp:b[p:p+4]=mp[v].to_bytes(4,"little")
+            return bytes(b)
+
+          pubs={};deliveries={};probes={};storages={}
+          for k,s in SPECS.items():
+            iso=ISO(s["url"]);pub=iso.member(s["member"])
+            if len(pub)!=s["size"] or sha(pub)!=s["sha256"]:raise ValueError(k+" member drift")
+            pubs[k]=pub;deliveries[k]=iso.delivery
+            probes[k],storages[k]=cfb(pub)
+
+          if sorted(probes["pub95"])!=sorted(probes["pub97"]):raise ValueError("CFB path drift")
+          changed=[p for p in sorted(probes["pub95"]) if probes["pub95"][p]!=probes["pub97"][p]]
+          if changed!=["/Contents"]:raise ValueError(f"unexpected stream delta {changed}")
+          if storages["pub95"]!=storages["pub97"]:raise ValueError("storage topology drift")
+
+          parsed={}
+          for k in ("pub95","pub97"):
+            c=probes[k]["/Contents"]
+            if c[:4]!=b"\xe8\xac\x22\x00":raise ValueError(k+" not old22")
+            tm=text_meta(c);di=parse_dir(c)
+            if not tm or not di:raise ValueError(k+" old22 parse failed")
+            sig=c[0x0c:0x0e].hex();cv=u16(c,4)
+            gen={("7d00",300):"Publisher95",("8800",300):"Publisher97"}.get((sig,cv),"unknown")
+            text=c[tm["start"]:tm["end"]] if 0<=tm["start"]<=tm["end"]<=len(c) else b""
+            parsed[k]={"contents":c,"sig":sig,"cv":cv,"generation":gen,"text":tm,"text_sha256":sha(text),"text_len":len(text),"dir":di,
+              "char":page_shape(c,tm["char"],"char",tm["start"]),
+              "para":page_shape(c,tm["para"],"para",tm["start"]),
+              "cell":page_shape(c,tm["cell"],"cell",tm["start"])}
+
+          L,R=parsed["pub95"],parsed["pub97"]
+          if L["generation"]!="Publisher95" or R["generation"]!="Publisher97":raise ValueError("generation signature drift")
+          l_ids=set(L["dir"]["by_id"]);r_ids=set(R["dir"]["by_id"]);common=sorted(l_ids&r_ids)
+          added=sorted(r_ids-l_ids);removed=sorted(l_ids-r_ids)
+          tuple_changed=[]
+          for oid in common:
+            a=L["dir"]["by_id"][oid];b=R["dir"]["by_id"][oid]
+            at=(a["service"],a["id"],a["parent"],a["marker"]);bt=(b["service"],b["id"],b["parent"],b["marker"])
+            if at!=bt:tuple_changed.append({"id":oid,"left":at,"right":bt})
+
+          lmap={L["text"]["root"]:0xF1000001,L["text"]["start"]:0xF1000002,L["text"]["end"]:0xF1000003,L["dir"]["offset"]:0xF1000004}
+          rmap={R["text"]["root"]:0xF1000001,R["text"]["start"]:0xF1000002,R["text"]["end"]:0xF1000003,R["dir"]["offset"]:0xF1000004}
+          for oid in common:
+            token=0xF2000000|(oid&0xffff)
+            lmap[L["dir"]["by_id"][oid]["offset"]]=token;rmap[R["dir"]["by_id"][oid]["offset"]]=token
+          raw_equal=[];norm_equal=[];residual=[]
+          for oid in common:
+            a=L["dir"]["chunks"][oid]["raw"];b=R["dir"]["chunks"][oid]["raw"]
+            if a==b:raw_equal.append(oid)
+            elif normalize(a,lmap)==normalize(b,rmap):norm_equal.append(oid)
+            else:residual.append({"id":oid,"left_len":len(a),"right_len":len(b),"service":L["dir"]["by_id"][oid]["service"],"parent":L["dir"]["by_id"][oid]["parent"],"marker":L["dir"]["by_id"][oid]["marker"]})
+
+          with tempfile.TemporaryDirectory(prefix="checks-lineage-") as td:
+            td=Path(td);render={}
+            for k,pub in pubs.items():
+              p=td/(k+".pub");p.write_bytes(pub)
+              proc=subprocess.run(["pub2xhtml",str(p)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+              render[k]={"returncode":proc.returncode,"stdout_len":len(proc.stdout),"stdout_sha256":sha(proc.stdout),"stderr_len":len(proc.stderr)}
+
+          text_equal=L["text_sha256"]==R["text_sha256"] and L["text_len"]==R["text_len"]
+          normalized_text_topology_equal=(
+            L["char"]["valid"] and R["char"]["valid"] and L["char"]["positions"]==R["char"]["positions"] and L["char"]["styles"]==R["char"]["styles"]
+            and L["para"]["valid"] and R["para"]["valid"] and L["para"]["positions"]==R["para"]["positions"]
+            and L["cell"]["valid"] and R["cell"]["valid"] and L["cell"]["positions"]==R["cell"]["positions"]
+          )
+          preserved_fraction=len(common)/max(len(l_ids),len(r_ids))
+          if text_equal and not tuple_changed and preserved_fraction>=0.85 and all(v["returncode"]==0 for v in render.values()):
+            classification="confirmed-natural-same-template-lineage"
+          else:
+            classification="structural-resemblance-or-nontrivial-rewrite"
+
+          summary={
+            "schema":"chaptera.checks-95-97-lineage-summary.v1","source_safe":True,"all_exact_members_verified":True,
+            "generations":{"pub95":L["generation"],"pub97":R["generation"]},"changed_streams":changed,
+            "directory_counts":{"pub95":len(l_ids),"pub97":len(r_ids),"common":len(common)},
+            "added_ids":added,"removed_ids":removed,"tuple_changed_count":len(tuple_changed),
+            "text_equal":text_equal,"text_len":{"pub95":L["text_len"],"pub97":R["text_len"]},
+            "normalized_text_topology_equal":normalized_text_topology_equal,
+            "raw_equal_common_chunk_count":len(raw_equal),"relocation_normalized_equal_count":len(norm_equal),"residual_changed_common_count":len(residual),
+            "residual_changed_common_ids":[x["id"] for x in residual],
+            "libmspub_returncodes":{k:v["returncode"] for k,v in render.items()},
+            "libmspub_xhtml_equal":render["pub95"]["stdout_sha256"]==render["pub97"]["stdout_sha256"],
+            "classification":classification
+          }
+          receipt={"schema":"chaptera.checks-95-97-lineage.v1","files":{k:{"sha256":s["sha256"],"byte_len":s["size"],"member":s["member"],"source_page":s["source_page"],"root_sha256":s["root_sha256"],"root_size":s["root_size"],"delivery_url":deliveries[k],"additional_exact_media":s.get("additional_exact_media",[])} for k,s in SPECS.items()},"summary":summary,"tuple_changed":tuple_changed,"residual_changed_common":residual,"page_shapes":{"pub95":{"char":L["char"],"para":L["para"],"cell":L["cell"]},"pub97":{"char":R["char"],"para":R["para"],"cell":R["cell"]}},"libmspub":render,"raw_pub_retained":False,"source_safe":True}
+          out=Path("out");out.mkdir(exist_ok=True)
+          (out/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          (out/"receipt.json").write_text(json.dumps(receipt,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Enforce source-safe result
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["all_exact_members_verified"] is True
+          assert s["generations"]=={"pub95":"Publisher95","pub97":"Publisher97"}
+          assert s["changed_streams"]==["/Contents"]
+          assert s["source_safe"] is True
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-lineage-checks-95-97-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
