@@ -4276,16 +4276,64 @@ mod tests {
                 .collect()
         }
 
-        fn package_contains_sha256(package: &[u8], expected: &str) -> bool {
+        fn encode_base64(bytes: &[u8]) -> String {
+            const TABLE: &[u8; 64] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+            for chunk in bytes.chunks(3) {
+                let b0 = chunk[0];
+                let b1 = chunk.get(1).copied().unwrap_or(0);
+                let b2 = chunk.get(2).copied().unwrap_or(0);
+
+                output.push(char::from(TABLE[(b0 >> 2) as usize]));
+                output.push(char::from(
+                    TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize],
+                ));
+                if chunk.len() > 1 {
+                    output.push(char::from(
+                        TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize],
+                    ));
+                } else {
+                    output.push('=');
+                }
+                if chunk.len() > 2 {
+                    output.push(char::from(TABLE[(b2 & 0x3f) as usize]));
+                } else {
+                    output.push('=');
+                }
+            }
+            output
+        }
+
+        fn idml_package_contains_exact_embedded_bytes(package: &[u8], expected: &[u8]) -> bool {
+            let encoded = encode_base64(expected);
+            let needle = format!("<Contents><![CDATA[{encoded}]]></Contents>");
             let mut archive =
-                zip::ZipArchive::new(Cursor::new(package)).expect("editable export is a ZIP");
+                zip::ZipArchive::new(Cursor::new(package)).expect("IDML export is a ZIP");
             for index in 0..archive.len() {
-                let mut part = archive.by_index(index).expect("read export ZIP entry");
+                let mut part = archive.by_index(index).expect("read IDML ZIP entry");
                 if part.is_dir() {
                     continue;
                 }
                 let mut bytes = Vec::new();
-                part.read_to_end(&mut bytes).expect("read export ZIP payload");
+                part.read_to_end(&mut bytes).expect("read IDML ZIP payload");
+                if std::str::from_utf8(&bytes).is_ok_and(|text| text.contains(&needle)) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn odg_package_contains_sha256(package: &[u8], expected: &str) -> bool {
+            let mut archive =
+                zip::ZipArchive::new(Cursor::new(package)).expect("ODG export is a ZIP");
+            for index in 0..archive.len() {
+                let mut part = archive.by_index(index).expect("read ODG ZIP entry");
+                if part.is_dir() {
+                    continue;
+                }
+                let mut bytes = Vec::new();
+                part.read_to_end(&mut bytes).expect("read ODG ZIP payload");
                 if hex_sha256(&bytes) == expected {
                     return true;
                 }
@@ -4655,12 +4703,12 @@ mod tests {
             .export_editable(pub_editor::EditorEditableTarget::Odg, "receipt.pub")
             .expect("real ODG export");
         assert!(
-            package_contains_sha256(&idml.bytes, &replacement_sha256),
-            "IDML package must contain exact replacement bytes"
+            idml_package_contains_exact_embedded_bytes(&idml.bytes, &replacement_bytes),
+            "IDML package must contain exact replacement bytes in embedded Contents"
         );
         assert!(
-            package_contains_sha256(&odg.bytes, &replacement_sha256),
-            "ODG package must contain exact replacement bytes"
+            odg_package_contains_sha256(&odg.bytes, &replacement_sha256),
+            "ODG package must contain an exact replacement binary part"
         );
 
         // Prove the generic loss-gated exporter blocks an unadvertised target
