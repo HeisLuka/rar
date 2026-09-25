@@ -3696,15 +3696,10 @@ mod tests {
             preview.summary
         );
         {
-            let export = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export");
-            export.click();
-        }
-        harness.step();
-        {
             let export_idml = harness
                 .get_all_by_label("Export edited IDML copy")
                 .last()
-                .expect("Export popup exposes edited IDML action");
+                .expect("Preview keeps the Export popup open with the edited IDML action");
             export_idml.click();
         }
         harness.step();
