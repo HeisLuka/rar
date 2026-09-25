@@ -77,7 +77,11 @@ impl SqliteBlobBindingRepository {
     }
 
     async fn require_schema(&self) -> Result<(), BlobStoreError> {
-        for table in ["chaptera_schema_migrations", "physical_blobs", "resource_bindings"] {
+        for table in [
+            "chaptera_schema_migrations",
+            "physical_blobs",
+            "resource_bindings",
+        ] {
             let exists: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
             )
@@ -339,9 +343,7 @@ impl BlobBindingRepository for SqliteBlobBindingRepository {
         let current = self
             .read_physical_by_id(physical_blob_id)
             .await?
-            .ok_or_else(|| {
-                BlobStoreError::new("physical_blob_missing", "physical blob missing")
-            })?;
+            .ok_or_else(|| BlobStoreError::new("physical_blob_missing", "physical blob missing"))?;
         if current.storage_generation != expected_generation {
             return Err(BlobStoreError::new(
                 "storage_generation_mismatch",
@@ -415,7 +417,12 @@ async fn insert_physical_tx(
     .bind(&record.object_locator)
     .bind(&record.storage_generation)
     .bind(to_i64(record.created_at_ms, "created_at_ms")?)
-    .bind(record.delete_eligible_at_ms.map(|value| to_i64(value, "delete_eligible_at_ms")).transpose()?)
+    .bind(
+        record
+            .delete_eligible_at_ms
+            .map(|value| to_i64(value, "delete_eligible_at_ms"))
+            .transpose()?,
+    )
     .bind(if record.deleted { 1_i64 } else { 0_i64 })
     .execute(&mut **tx)
     .await;
@@ -467,7 +474,12 @@ async fn insert_binding_tx(
     .bind(&record.validation_profile)
     .bind(lifecycle_text(record.lifecycle_state))
     .bind(to_i64(record.created_at_ms, "created_at_ms")?)
-    .bind(record.retired_at_ms.map(|value| to_i64(value, "retired_at_ms")).transpose()?)
+    .bind(
+        record
+            .retired_at_ms
+            .map(|value| to_i64(value, "retired_at_ms"))
+            .transpose()?,
+    )
     .execute(&mut **tx)
     .await;
 
