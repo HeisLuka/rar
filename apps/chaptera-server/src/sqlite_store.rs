@@ -274,7 +274,6 @@ impl SqliteRevisionStore {
         Ok(edges)
     }
 
-
     /// Load exactly the contiguous RevisionStream prefix from one authorized
     /// baseline to the requested revision.
     ///
