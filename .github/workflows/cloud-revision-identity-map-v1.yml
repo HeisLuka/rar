@@ -5,6 +5,8 @@ on:
     paths:
       - "apps/chaptera-server/migrations/0009_revision_identity_bindings.sql"
       - "apps/chaptera-server/src/revision_identity.rs"
+      - "apps/chaptera-server/src/revision_materializer.rs"
+      - "apps/chaptera-server/tests/revision_materializer.rs"
       - "apps/chaptera-server/src/schema_migration.rs"
       - "apps/chaptera-server/src/lib.rs"
       - "tools/run_cloud_migration_receipt.py"
@@ -29,5 +31,7 @@ jobs:
         run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Test revision identity bindings
         run: cargo test -p chaptera-server revision_identity::
+      - name: Test materializer identity receipt
+        run: cargo test -p chaptera-server --test revision_materializer
       - name: Test migration chain
         run: cargo test -p chaptera-server schema_migration::
