@@ -2,6 +2,7 @@ use std::{process::Command, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
+    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use chaptera_server::{
@@ -72,6 +73,56 @@ async fn injected_required_dependencies_make_runtime_ready() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn local_dashboard_is_disabled_by_default() {
+    let response = serve::router(ready_state())
+        .oneshot(
+            Request::builder()
+                .uri("/local")
+                .header("host", "127.0.0.1:8080")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn local_dashboard_requires_explicit_local_mode_and_loopback_peer() {
+    let app = serve::router_with_edge_auth_and_local(
+        ready_state(),
+        chaptera_server::edge::EdgePolicy::development(),
+        None,
+        true,
+    );
+
+    let mut request = Request::builder()
+        .uri("/local")
+        .header("host", "127.0.0.1:8080")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(ConnectInfo(
+        "127.0.0.1:49000".parse::<std::net::SocketAddr>().unwrap(),
+    ));
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut remote = Request::builder()
+        .uri("/local")
+        .header("host", "127.0.0.1:8080")
+        .body(Body::empty())
+        .unwrap();
+    remote.extensions_mut().insert(ConnectInfo(
+        "192.168.10.20:49000"
+            .parse::<std::net::SocketAddr>()
+            .unwrap(),
+    ));
+    let response = app.oneshot(remote).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
