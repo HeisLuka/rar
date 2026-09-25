@@ -7,10 +7,12 @@
 #[allow(dead_code)]
 mod supporter;
 
-use eframe::egui;
-use pub_interaction::{
-    HitTestEntry, HitTestIndex, MoveTransaction, ScreenPoint, SelectionState, ViewTransform,
+use chaptera_scene_instance::{
+    GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
+    direct_page_local_instance_v1, geometry_sync_policy_v1,
 };
+use eframe::egui;
+use pub_interaction::{MoveTransaction, ScreenPoint, ViewTransform};
 use pub_viewer::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, ViewerDiagnosticSeverity, ViewerFidelityStatus,
@@ -54,6 +56,111 @@ struct DesktopExportPreview {
     operation_count: usize,
     can_serialize: bool,
     summary: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SceneSelectionState {
+    selected: BTreeSet<String>,
+    primary: Option<String>,
+}
+
+impl SceneSelectionState {
+    fn clear(&mut self) {
+        self.selected.clear();
+        self.primary = None;
+    }
+
+    fn len(&self) -> usize {
+        self.selected.len()
+    }
+
+    fn primary(&self) -> Option<&str> {
+        self.primary.as_deref()
+    }
+
+    fn select_only(&mut self, instance_id: String) {
+        self.selected.clear();
+        self.selected.insert(instance_id.clone());
+        self.primary = Some(instance_id);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SceneHitEntry {
+    instance_id: String,
+    node_id: pub_editor::NodeId,
+    bounds: pub_editor::RectEmu,
+    z_order: i64,
+    paint_order: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SceneHitTestIndex {
+    entries: Vec<SceneHitEntry>,
+}
+
+impl SceneHitTestIndex {
+    fn new(mut entries: Vec<SceneHitEntry>) -> Self {
+        entries.sort_by(|left, right| {
+            (left.z_order, left.paint_order, left.instance_id.as_str()).cmp(&(
+                right.z_order,
+                right.paint_order,
+                right.instance_id.as_str(),
+            ))
+        });
+        Self { entries }
+    }
+
+    fn topmost_at(&self, point: pub_interaction::DocumentPoint) -> Option<&SceneHitEntry> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| scene_bounds_contains(entry.bounds, point))
+    }
+
+    fn node_for_instance(&self, instance_id: &str) -> Option<pub_editor::NodeId> {
+        self.entries
+            .iter()
+            .find(|entry| entry.instance_id == instance_id)
+            .map(|entry| entry.node_id)
+    }
+
+    fn instance_for_node(&self, node_id: pub_editor::NodeId) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|entry| entry.node_id == node_id)
+            .map(|entry| entry.instance_id.as_str())
+    }
+}
+
+fn scene_bounds_contains(
+    bounds: pub_editor::RectEmu,
+    point: pub_interaction::DocumentPoint,
+) -> bool {
+    if bounds.width.get() <= 0 || bounds.height.get() <= 0 {
+        return false;
+    }
+    let (Some(right), Some(bottom)) = (bounds.right(), bounds.bottom()) else {
+        return false;
+    };
+    point.x >= bounds.x && point.x <= right && point.y >= bounds.y && point.y <= bottom
+}
+
+fn direct_scene_instance(
+    editor: &pub_editor::EditorSession,
+    target_page: pub_editor::PageId,
+    node_id: pub_editor::NodeId,
+) -> Option<SceneInstanceV1> {
+    let authored = editor.graph().nodes.get(&node_id)?;
+    let target_parent = target_page.into_canonical();
+    if authored.header.parent_id != target_parent {
+        return None;
+    }
+    direct_page_local_instance_v1(
+        &node_id.as_canonical().to_string(),
+        &target_page.as_canonical().to_string(),
+    )
+    .ok()
 }
 
 fn main() -> eframe::Result<()> {
@@ -114,7 +221,7 @@ struct ViewerApp {
     source_path: Option<PathBuf>,
     visual: Option<ViewerGeometryDocument>,
     selected_page: usize,
-    canvas_selection: SelectionState,
+    canvas_selection: SceneSelectionState,
     canvas_drag: Option<MoveTransaction>,
     zoom: f32,
     load_error: Option<ViewerLoadFailure>,
@@ -154,7 +261,7 @@ impl ViewerApp {
             source_path: None,
             visual: None,
             selected_page: 0,
-            canvas_selection: SelectionState::default(),
+            canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             zoom: 1.0,
             load_error: None,
@@ -584,12 +691,12 @@ impl ViewerApp {
         ui.label(format!("Stories: {}", visual.document.stories.len()));
         ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
         if !reader_only_mode() {
-            if let Some(node_id) = self.canvas_selection.primary() {
+            if let Some(instance_id) = self.canvas_selection.primary() {
                 ui.label(format!(
-                    "Canvas selection: {} object(s)",
+                    "Canvas selection: {} visual instance(s)",
                     self.canvas_selection.len()
                 ));
-                ui.monospace(format!("{node_id:?}"));
+                ui.monospace(instance_id);
             } else {
                 ui.label("Canvas selection: none");
             }
@@ -1260,14 +1367,28 @@ impl ViewerApp {
         };
 
         for scene_node in &mut visual.scene.nodes {
-            if let Some(authored_node) = editor.graph().nodes.get(&scene_node.origin) {
-                let bounds = authored_node.header.bounds;
-                if editor
-                    .can_move_node_to(scene_node.origin, bounds.x, bounds.y)
-                    .is_ok()
-                {
-                    scene_node.bounds = bounds;
-                }
+            let Some(authored_node) = editor.graph().nodes.get(&scene_node.origin) else {
+                continue;
+            };
+            if authored_node.header.parent_id != scene_node.parent_origin {
+                continue;
+            }
+            let Ok(instance) = direct_page_local_instance_v1(
+                &scene_node.origin.as_canonical().to_string(),
+                &scene_node.parent_origin.to_string(),
+            ) else {
+                continue;
+            };
+            if geometry_sync_policy_v1(&instance) != GeometrySyncPolicyV1::ApplyAuthoredOriginGeometry
+            {
+                continue;
+            }
+            let bounds = authored_node.header.bounds;
+            if editor
+                .can_move_node_to(scene_node.origin, bounds.x, bounds.y)
+                .is_ok()
+            {
+                scene_node.bounds = bounds;
             }
         }
     }
@@ -1400,9 +1521,9 @@ impl ViewerApp {
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
         let mut preview_clipped_story_keys = BTreeSet::new();
-        let selected_canvas_node = self.canvas_selection.primary();
+        let selected_canvas_instance = self.canvas_selection.primary().map(str::to_owned);
         let mut canvas_clicked = false;
-        let mut canvas_hit = None;
+        let mut canvas_hit: Option<String> = None;
         let mut next_canvas_drag = self.canvas_drag;
         let mut drag_commit = None;
         let mut drag_error = None;
@@ -1413,31 +1534,52 @@ impl ViewerApp {
             .iter()
             .filter(|node| node.parent_origin == page_origin)
             .collect::<Vec<_>>();
-        let hit_index = HitTestIndex::new(
-            page_nodes
-                .iter()
-                .enumerate()
-                .map(|(paint_order, node)| HitTestEntry {
-                    node_id: node.origin,
-                    bounds: node.bounds,
-                    z_order: 0,
-                    paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+
+        let hit_index = SceneHitTestIndex::new(
+            self.editor
+                .as_ref()
+                .map(|editor| {
+                    page_nodes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(paint_order, node)| {
+                            let instance = direct_scene_instance(editor, page.id, node.origin)?;
+                            Some(SceneHitEntry {
+                                instance_id: instance.instance_id,
+                                node_id: node.origin,
+                                bounds: node.bounds,
+                                z_order: 0,
+                                paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+                            })
+                        })
+                        .collect()
                 })
-                .collect(),
+                .unwrap_or_default(),
         );
+
         let movable_nodes = self
             .editor
             .as_ref()
             .map(|editor| {
-                page_nodes
+                hit_index
+                    .entries
                     .iter()
-                    .filter_map(|scene_node| {
-                        let authored_node = editor.graph().nodes.get(&scene_node.origin)?;
+                    .filter_map(|hit| {
+                        let instance = direct_scene_instance(editor, page.id, hit.node_id)?;
+                        let admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                        if !admission.admitted
+                            || admission.origin_node_id.as_deref()
+                                != Some(hit.node_id.as_canonical().to_string().as_str())
+                        {
+                            return None;
+                        }
+                        let authored_node = editor.graph().nodes.get(&hit.node_id)?;
                         let bounds = authored_node.header.bounds;
                         editor
-                            .can_move_node_to(scene_node.origin, bounds.x, bounds.y)
+                            .can_move_node_to(hit.node_id, bounds.x, bounds.y)
                             .ok()
-                            .map(|_| (scene_node.origin, bounds))
+                            .map(|_| (hit.instance_id.clone(), (hit.node_id, bounds)))
                     })
                     .collect::<BTreeMap<_, _>>()
             })
@@ -1472,10 +1614,10 @@ impl ViewerApp {
                     && response.drag_started_by(egui::PointerButton::Primary)
                     && let (Some(pointer_start), Some(pointer_current)) =
                         (press_document, pointer_document)
-                    && let Some(node_id) = hit_index.topmost_at(pointer_start)
+                    && let Some(hit) = hit_index.topmost_at(pointer_start)
                 {
-                    canvas_hit = Some(node_id);
-                    if let Some(before) = movable_nodes.get(&node_id).copied() {
+                    canvas_hit = Some(hit.instance_id.clone());
+                    if let Some((node_id, before)) = movable_nodes.get(&hit.instance_id).copied() {
                         match MoveTransaction::begin(node_id, before, pointer_start).and_then(
                             |mut drag| {
                                 drag.update(pointer_current)?;
@@ -1521,7 +1663,9 @@ impl ViewerApp {
                     && let Some(point) = pointer_document
                 {
                     canvas_clicked = true;
-                    canvas_hit = hit_index.topmost_at(point);
+                    canvas_hit = hit_index
+                        .topmost_at(point)
+                        .map(|hit| hit.instance_id.clone());
                 }
 
                 painter.rect_filled(page_rect, 0, egui::Color32::WHITE);
@@ -1663,7 +1807,9 @@ impl ViewerApp {
                     }
                 }
 
-                if let Some(selected_node_id) = selected_canvas_node
+                if let Some(selected_instance_id) = selected_canvas_instance.as_deref()
+                    && let Some(selected_node_id) =
+                        hit_index.node_for_instance(selected_instance_id)
                     && let Some(node) = page_nodes
                         .iter()
                         .copied()
@@ -1687,11 +1833,14 @@ impl ViewerApp {
                 }
             });
 
+        let drag_instance = next_canvas_drag.and_then(|drag| {
+            hit_index
+                .instance_for_node(drag.node_id())
+                .map(str::to_owned)
+        });
         if canvas_clicked || drag_commit.is_some() || next_canvas_drag.is_some() {
-            if let Some(node_id) =
-                canvas_hit.or_else(|| next_canvas_drag.map(|drag| drag.node_id()))
-            {
-                self.canvas_selection.select_only(node_id);
+            if let Some(instance_id) = canvas_hit.or(drag_instance) {
+                self.canvas_selection.select_only(instance_id);
             } else if canvas_clicked {
                 self.canvas_selection.clear();
             }
@@ -2158,7 +2307,7 @@ mod tests {
             source_path: None,
             visual: None,
             selected_page: 0,
-            canvas_selection: SelectionState::default(),
+            canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             zoom: 1.0,
             load_error: Some(ViewerLoadFailure {
@@ -2201,7 +2350,7 @@ mod tests {
             source_path: None,
             visual: None,
             selected_page: 0,
-            canvas_selection: SelectionState::default(),
+            canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             zoom: 1.0,
             load_error: Some(ViewerLoadFailure {
@@ -2442,7 +2591,7 @@ mod tests {
             source_path: Some(PathBuf::from("SampleNewsletter.pub")),
             visual: Some(visual),
             selected_page: 0,
-            canvas_selection: SelectionState::default(),
+            canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             zoom: 1.0,
             load_error: None,
