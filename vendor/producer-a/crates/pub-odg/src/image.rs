@@ -347,6 +347,65 @@ mod tests {
     }
 
     #[test]
+    fn materializes_image_resource_and_draw_frame() {
+        let node_id = NodeId::from_canonical(id(1));
+        let resource_id = ResourceId::from_canonical(id(2));
+        let page_id = PageId::from_canonical(id(3));
+        let plan = plan(node_id, resource_id);
+        let page_name = crate::semantic::page_name(page_id);
+        let content = format!(
+            "<?xml version=\"1.0\"?><office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"><office:body><office:drawing><draw:page draw:name=\"{page_name}\">\n      </draw:page></office:drawing></office:body></office:document-content>"
+        );
+        let mut package = OdgPackage {
+            target: plan.target.clone(),
+            conversion_fence: None,
+            parts: vec![OdgPart {
+                path: crate::ODG_CONTENT_PATH.into(),
+                kind: OdgPartKind::Content,
+                media_type: "text/xml".into(),
+                content: content.into_bytes(),
+            }],
+        };
+        let replacement = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        let placement = OdgEmbeddedImagePlacement {
+            node_id,
+            page_id,
+            resource_id,
+            frame_bounds: RectEmu::new(
+                LengthEmu::new(10),
+                LengthEmu::new(20),
+                LengthEmu::new(30),
+                LengthEmu::new(40),
+            ),
+            z_index: 2,
+            mime: "image/png".into(),
+            bytes: replacement.clone(),
+        };
+
+        add_embedded_images_to_odg(&plan, &mut package, &[placement])
+            .expect("bounded ODG image projection");
+
+        let resource = package
+            .parts
+            .iter()
+            .find(|part| part.kind == OdgPartKind::Resource)
+            .expect("image resource part");
+        assert_eq!(resource.media_type, "image/png");
+        assert_eq!(resource.content, replacement);
+        assert!(resource.path.starts_with("Pictures/"));
+
+        let content = package
+            .parts
+            .iter()
+            .find(|part| part.kind == OdgPartKind::Content)
+            .and_then(|part| std::str::from_utf8(&part.content).ok())
+            .expect("UTF-8 content.xml");
+        assert!(content.contains("<draw:image"));
+        assert!(content.contains(&format!("xlink:href=\"{}\"", resource.path)));
+        assert!(content.contains("draw:z-index=\"2\""));
+    }
+
+    #[test]
     fn validates_bounded_image_plan_contract() {
         let node_id = NodeId::from_canonical(id(1));
         let resource_id = ResourceId::from_canonical(id(2));
