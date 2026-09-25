@@ -58,3 +58,75 @@ jobs:
             target/release/chaptera.exe
             target/release/chaptera.desktop-build.json
           if-no-files-found: error
+
+  source-free-product-smoke:
+    needs: build-windows-editor
+    runs-on: windows-latest
+    steps:
+      - name: Download Chaptera desktop artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chaptera-editor-windows-x86_64
+          path: artifact
+
+      - name: Move artifact outside workspace and remove workspace copy
+        shell: pwsh
+        run: |
+          $clean = Join-Path $env:RUNNER_TEMP "chaptera-source-free-smoke"
+          if (Test-Path $clean) {
+            Remove-Item -Recurse -Force $clean
+          }
+          New-Item -ItemType Directory -Path $clean | Out-Null
+          Copy-Item artifact/chaptera.exe $clean/chaptera.exe
+          Copy-Item artifact/chaptera.desktop-build.json $clean/chaptera.desktop-build.json
+          Remove-Item -Recurse -Force artifact
+          "CHAPTERA_CLEAN_DIR=$clean" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run source-free product smoke
+        shell: pwsh
+        run: |
+          Push-Location $env:CHAPTERA_CLEAN_DIR
+          try {
+            $raw = & .\chaptera.exe --product-smoke-check
+            if ($LASTEXITCODE -ne 0) {
+              throw "chaptera.exe product smoke failed with exit code $LASTEXITCODE"
+            }
+            $receipt = $raw | ConvertFrom-Json
+            if ($receipt.schema_version -ne "chaptera.desktop-product-smoke.v1") {
+              throw "unexpected smoke schema"
+            }
+            if (-not $receipt.editor_enabled -or $receipt.reader_only) {
+              throw "artifact is not editor-enabled"
+            }
+            if ($receipt.runtime_boundary.source_checkout_required) {
+              throw "product smoke claims source checkout dependency"
+            }
+            if ($receipt.runtime_boundary.cargo_required) {
+              throw "product smoke claims Cargo dependency"
+            }
+            if ($receipt.runtime_boundary.repo_relative_assets_required_by_smoke_path) {
+              throw "product smoke claims repo-relative smoke dependency"
+            }
+
+            $actualHash = (Get-FileHash .\chaptera.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($receipt.executable_sha256 -ne $actualHash) {
+              throw "smoke receipt executable hash mismatch"
+            }
+
+            $build = Get-Content .\chaptera.desktop-build.json -Raw | ConvertFrom-Json
+            if ($build.sha256 -ne $actualHash) {
+              throw "build receipt executable hash mismatch"
+            }
+
+            $raw | Set-Content -Encoding utf8 chaptera.desktop-product-smoke.json
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Upload source-free smoke receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-editor-source-free-smoke
+          path: ${{ env.CHAPTERA_CLEAN_DIR }}/chaptera.desktop-product-smoke.json
+          if-no-files-found: error
