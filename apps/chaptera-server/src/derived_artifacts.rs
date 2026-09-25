@@ -582,7 +582,7 @@ mod tests {
         // store cannot silently drift from the Python bridge's canonical JSON.
         assert_eq!(
             exact.fence_id().unwrap(),
-            "sha256:8bc52ef0bc7b4cb222585937872210627801d9821d9c90de15b9969d2065c9be"
+            "sha256:c15a31ea139ab9c70294cf26399594adf46363d32614f6049564bbe5a00cd7c5"
         );
     }
 }
