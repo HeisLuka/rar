@@ -377,7 +377,7 @@ fn sorted_story_contains(
     let mut high = stories.len();
     while low < high {
         let mid = low + (high - low) / 2;
-        *comparisons = comparisons.saturating_add(1);
+        *comparisons = (*comparisons).saturating_add(1);
         match stories[mid].origin.cmp(&target) {
             std::cmp::Ordering::Less => low = mid + 1,
             std::cmp::Ordering::Equal => return true,
@@ -396,7 +396,7 @@ fn sorted_node_geometry_contains(
     let mut high = nodes.len();
     while low < high {
         let mid = low + (high - low) / 2;
-        *comparisons = comparisons.saturating_add(1);
+        *comparisons = (*comparisons).saturating_add(1);
         match nodes[mid].origin.cmp(&target) {
             std::cmp::Ordering::Less => low = mid + 1,
             std::cmp::Ordering::Equal => return true,
