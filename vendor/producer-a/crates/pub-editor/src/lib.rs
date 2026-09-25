@@ -36,7 +36,7 @@ use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
-    PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame, build_mature_0x2c_source_graph,
+    PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
     materialize_bounded_simple_table_cells, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
