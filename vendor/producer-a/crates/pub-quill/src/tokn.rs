@@ -106,7 +106,7 @@ pub enum QuillToknTargetRecord {
         payload_units: Decoded<u16>,
         payload_source: RawSpan,
         payload: Vec<u8>,
-        physical_target_value: Option<u16>,
+        physical_target_value: Option<u32>,
     },
     Unknown {
         source: RawSpan,
@@ -578,11 +578,10 @@ fn decode_target_record(
     let payload_source = span(stream.clone(), start + 2, payload.len());
 
     if !referring_kinds.is_empty() && referring_kinds.iter().all(|kind| *kind == 3) {
-        let physical_target_value = if units == 2 && payload.len() == 4 {
-            let marker = u16::from_le_bytes([payload[0], payload[1]]);
-            (marker == 1).then(|| u16::from_le_bytes([payload[2], payload[3]]))
-        } else {
-            None
+        let physical_target_value = match (units, payload.as_slice()) {
+            (1, [lo, hi]) => Some(u32::from(u16::from_le_bytes([*lo, *hi]))),
+            (2, [b0, b1, b2, b3]) => Some(u32::from_le_bytes([*b0, *b1, *b2, *b3])),
+            _ => None,
         };
         return QuillToknTargetRecord::CompactPayload {
             source,
@@ -861,8 +860,7 @@ mod tests {
         assert!(tokn.opaque_tail.is_empty());
     }
 
-    #[test]
-    fn kind3_internal_page_target_preserves_payload_units_and_physical_seqnum() {
+    fn parse_internal_page_target(units: u16, payload: &[u8]) -> QuillToknTargetRecord {
         let mut bytes = type12_prefix(1, 0x0001_ffff, &[20, 21]);
         bytes.extend(property_block(&[
             (TOKN_PROPERTY_STATE, 0x08c0),
@@ -871,16 +869,15 @@ mod tests {
         ]));
         bytes.extend(property_block(&[(TOKN_PROPERTY_STATE, 0)]));
 
-        // offset table (4) + compact record: u16 units + [u16 marker=1,u16 pageSeq=266]
-        w32(&mut bytes, 10);
+        let record_len = 2 + payload.len();
+        w32(&mut bytes, u32::try_from(4 + record_len).unwrap());
         w32(&mut bytes, 1);
         w32(&mut bytes, 0);
         w32(&mut bytes, 0);
         w32(&mut bytes, 0);
         w32(&mut bytes, 4);
-        w16(&mut bytes, 2);
-        w16(&mut bytes, 1);
-        w16(&mut bytes, 266);
+        w16(&mut bytes, units);
+        bytes.extend_from_slice(payload);
 
         let parsed = parse_tokn_chunks(
             StreamPath("/Quill/QuillSub/CONTENTS".into()),
@@ -889,15 +886,34 @@ mod tests {
             &[syid(33)],
         )
         .unwrap();
-        let target = parsed[0].target_section.as_ref().unwrap();
+        parsed[0].target_section.as_ref().unwrap().records[0].clone()
+    }
+
+    #[test]
+    fn kind3_units1_internal_page_target_preserves_u16_physical_seqnum() {
+        let target = parse_internal_page_target(1, &266_u16.to_le_bytes());
         assert!(matches!(
-            &target.records[0],
+            target,
             QuillToknTargetRecord::CompactPayload {
                 payload_units,
                 payload,
                 physical_target_value: Some(266),
                 ..
-            } if payload_units.value == 2 && payload == &vec![1, 0, 10, 1]
+            } if payload_units.value == 1 && payload == 266_u16.to_le_bytes().to_vec()
+        ));
+    }
+
+    #[test]
+    fn kind3_units2_internal_page_target_preserves_u32_physical_seqnum() {
+        let target = parse_internal_page_target(2, &266_u32.to_le_bytes());
+        assert!(matches!(
+            target,
+            QuillToknTargetRecord::CompactPayload {
+                payload_units,
+                payload,
+                physical_target_value: Some(266),
+                ..
+            } if payload_units.value == 2 && payload == 266_u32.to_le_bytes().to_vec()
         ));
     }
 
