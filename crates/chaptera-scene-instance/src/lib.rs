@@ -362,6 +362,39 @@ mod tests {
     }
 
     #[test]
+    fn exact_carlton_shape380_has_three_read_only_customer_page_instances() {
+        use pub_model::{derive_pub_node_id_v1, derive_pub_page_id_v1};
+
+        let source_hash =
+            "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3";
+        let origin = derive_pub_node_id_v1(source_hash, 380).expect("shape380");
+        let master = derive_pub_page_id_v1(source_hash, 263).expect("PAGE263");
+        let page_specs = [(266_u32, "PAGE266"), (361, "PAGE361"), (406, "PAGE406")];
+        let mut instance_ids = std::collections::BTreeSet::new();
+
+        for (seq, _label) in page_specs {
+            let target = derive_pub_page_id_v1(source_hash, seq).expect("customer page");
+            let relation = MasterProjectionRelationV1 {
+                source_page_id: target.clone(),
+                source_page_seq_num: seq,
+                master_page_id: master.clone(),
+                master_page_seq_num: 263,
+            };
+            let instance =
+                inherited_master_instance_v1(&origin, &master, &target, &relation)
+                    .expect("Carlton inherited footer instance");
+            assert!(instance_ids.insert(instance.instance_id.clone()));
+            assert_eq!(instance.origin_node_id, origin);
+            assert_eq!(instance.target_page_id, target);
+            assert!(
+                !admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode).admitted
+            );
+        }
+
+        assert_eq!(instance_ids.len(), 3);
+    }
+
+    #[test]
     fn cmo_instances_at_distinct_slots_are_distinct_even_with_same_origin() {
         let carrier = "30000000-0000-4000-8000-000000000441";
         let target_story = "40000000-0000-4000-8000-000000000049";
