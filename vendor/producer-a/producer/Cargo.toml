@@ -12,3 +12,6 @@ pub-model = { path = "../crates/pub-model" }
 pub-reader = { path = "../crates/pub-reader" }
 pub-viewer = { path = "../crates/pub-viewer" }
 pub-editor = { path = "../crates/pub-editor" }
+pub-layout = { path = "../crates/pub-layout" }
+sha2.workspace = true
+font-test-data = "=0.8.0"
