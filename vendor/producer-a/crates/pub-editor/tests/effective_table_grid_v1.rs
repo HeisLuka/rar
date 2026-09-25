@@ -225,3 +225,19 @@ fn effective_grid_roundtrips_and_replays_exactly() {
     replay_edited.apply_project(&edited).unwrap();
     assert_eq!(replay_edited.project(), edited);
 }
+
+
+#[test]
+fn legacy_v0_5_project_replays_on_table_source_without_v0_6_grid_payload() {
+    let baseline_session = EditorSession::new(graph()).unwrap();
+    let mut legacy = baseline_session.project();
+    legacy.schema_version = "pub-editor-v0.5".into();
+    legacy.table_grids.clear();
+
+    let mut replay = EditorSession::new(graph()).unwrap();
+    replay.apply_project(&legacy).unwrap();
+
+    let current = replay.project();
+    assert_eq!(current.schema_version, EDITOR_PROJECT_VERSION_V0_6);
+    assert_eq!(current.table_grids.len(), 1);
+}
