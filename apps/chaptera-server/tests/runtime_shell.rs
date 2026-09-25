@@ -105,9 +105,9 @@ async fn local_dashboard_requires_explicit_local_mode_and_loopback_peer() {
         .header("host", "127.0.0.1:8080")
         .body(Body::empty())
         .unwrap();
-    request
-        .extensions_mut()
-        .insert(ConnectInfo("127.0.0.1:49000".parse::<std::net::SocketAddr>().unwrap()));
+    request.extensions_mut().insert(ConnectInfo(
+        "127.0.0.1:49000".parse::<std::net::SocketAddr>().unwrap(),
+    ));
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -116,9 +116,11 @@ async fn local_dashboard_requires_explicit_local_mode_and_loopback_peer() {
         .header("host", "127.0.0.1:8080")
         .body(Body::empty())
         .unwrap();
-    remote
-        .extensions_mut()
-        .insert(ConnectInfo("192.168.10.20:49000".parse::<std::net::SocketAddr>().unwrap()));
+    remote.extensions_mut().insert(ConnectInfo(
+        "192.168.10.20:49000"
+            .parse::<std::net::SocketAddr>()
+            .unwrap(),
+    ));
     let response = app.oneshot(remote).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
