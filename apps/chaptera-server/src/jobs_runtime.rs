@@ -93,7 +93,10 @@ mod tests {
         let mut config = ChapteraConfig::development_from_env().unwrap();
         config.sqlite.path = path.clone();
 
-        let missing = JobsAdmissionRuntime::open(&config).await.unwrap_err();
+        let missing = JobsAdmissionRuntime::open(&config)
+            .await
+            .err()
+            .expect("unmigrated jobs runtime must fail closed");
         assert!(matches!(
             missing.code,
             "job_queue_database_missing" | "sqlite_database_missing"
