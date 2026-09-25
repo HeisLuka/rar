@@ -690,6 +690,20 @@ mod tests {
     }
 
     #[test]
+    fn web_hash_id_matches_python_revision_kernel_canonical_json_edge_vector() {
+        let value = serde_json::json!({
+            "z": null,
+            "á": "é",
+            "a": [1, true, false, "x\n"],
+            "nested": {"β": "λ", "A": -5}
+        });
+        assert_eq!(
+            web_hash_id(&value).unwrap(),
+            "sha256:56e793bb77713d4b72f2aecdf4c86a6e70462f2d91ca06bab301c8e14622eaee"
+        );
+    }
+
+    #[test]
     fn receipt_rejects_any_authority_identity_mismatch() {
         let receipt = SourceBaselineReceiptV1 {
             protocol_version: SOURCE_BASELINE_RECEIPT_V1.into(),
