@@ -7,8 +7,15 @@
       "application_kind": "interactive",
       "canonical_windows_executable": "chaptera-reader.exe",
       "canonical_windows_package": "Chaptera-Reader-Windows-x86_64.zip",
-      "capability_surface": ["open", "inspect", "navigate", "search", "copy", "extract"],
-      "implementation_state": "separate_target_pending"
+      "capability_surface": [
+        "open",
+        "inspect",
+        "navigate",
+        "search",
+        "copy",
+        "extract"
+      ],
+      "implementation_state": "current_rar_target"
     },
     {
       "product_id": "chaptera.rescue",
@@ -16,8 +23,14 @@
       "application_kind": "interactive_with_isolated_jobs",
       "canonical_windows_executable": "chaptera-rescue.exe",
       "canonical_windows_package": "Chaptera-Rescue-Windows-x86_64.zip",
-      "capability_surface": ["damaged_file_intake", "triage", "recovery", "loss_report", "recovery_bundle"],
-      "implementation_state": "separate_target_pending"
+      "capability_surface": [
+        "damaged_file_intake",
+        "triage",
+        "recovery",
+        "loss_report",
+        "recovery_bundle"
+      ],
+      "implementation_state": "current_rar_target"
     },
     {
       "product_id": "chaptera.editor",
@@ -25,7 +38,13 @@
       "application_kind": "interactive",
       "canonical_windows_executable": "chaptera-editor.exe",
       "canonical_windows_package": "Chaptera-Editor-Windows-x86_64.zip",
-      "capability_surface": ["open", "edit", "undo_redo", "project_persistence", "export"],
+      "capability_surface": [
+        "open",
+        "edit",
+        "undo_redo",
+        "project_persistence",
+        "export"
+      ],
       "implementation_state": "current_rar_target"
     },
     {
@@ -34,7 +53,13 @@
       "application_kind": "batch_orchestrator",
       "canonical_windows_executable": "chaptera-migration.exe",
       "canonical_windows_package": "Chaptera-Migration-Windows-x86_64.zip",
-      "capability_surface": ["inventory", "classify", "batch_convert", "manifest", "exception_route"],
+      "capability_surface": [
+        "inventory",
+        "classify",
+        "batch_convert",
+        "manifest",
+        "exception_route"
+      ],
       "implementation_state": "separate_target_pending"
     }
   ],
