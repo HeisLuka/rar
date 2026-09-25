@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.example/schemas/pub-lab-2019-vmware-evidence.v1.json",
+  "title": "Chaptera Publisher 2019 VMware restore evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "baseline_id",
+    "vm_identity",
+    "snapshot_identity",
+    "vmx_sha256",
+    "environment_manifest_sha256",
+    "environment_fingerprint",
+    "vmware",
+    "restore",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {"const": "chaptera.pub-lab-2019-vmware-evidence.v1"},
+    "baseline_id": {"const": "publisher-2019-build12527-golden-v1"},
+    "vm_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "config_fingerprint"],
+      "properties": {
+        "name": {"const": "PUB-LAB-2019"},
+        "config_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "snapshot_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "generation"],
+      "properties": {
+        "name": {"const": "MODERN-2019-12527-GOLDEN-v1"},
+        "generation": {"type": "integer", "minimum": 1}
+      }
+    },
+    "vmx_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "environment_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vmware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vmrun_sha256", "vmware_vmx_sha256", "vdiskmanager_sha256"],
+      "properties": {
+        "vmrun_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "vmware_vmx_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "vdiskmanager_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "restore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "challenge_sha256",
+        "started_at_utc",
+        "completed_at_utc",
+        "pre_restore_state_sha256",
+        "post_restore_state_sha256",
+        "revert_succeeded",
+        "cold_start_succeeded",
+        "post_boot_capture_bound",
+        "environment_match",
+        "restore_verified"
+      ],
+      "properties": {
+        "challenge_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "started_at_utc": {"type": "string", "format": "date-time"},
+        "completed_at_utc": {"type": "string", "format": "date-time"},
+        "pre_restore_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "post_restore_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "revert_succeeded": {"const": true},
+        "cold_start_succeeded": {"const": true},
+        "post_boot_capture_bound": {"const": true},
+        "environment_match": {"const": true},
+        "restore_verified": {"const": true}
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_paths_serialized", "credentials_serialized", "licensed_media_serialized", "restore_nonce_serialized"],
+      "properties": {
+        "local_paths_serialized": {"const": false},
+        "credentials_serialized": {"const": false},
+        "licensed_media_serialized": {"const": false},
+        "restore_nonce_serialized": {"const": false}
+      }
+    }
+  }
+}
