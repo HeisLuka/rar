@@ -27,7 +27,7 @@ jobs:
           from urllib.parse import urlencode
           from urllib.request import Request, urlopen
 
-          UA="rar-pub-pspp-publisher-logo-recovery/1.0"
+          UA="rar-pub-pspp-publisher-logo-recovery/2.0"
           target="http://office.microsoft.com:80/publisher/prepress/publisher_logo.zip"
           params=[
             ("url",target),("matchType","exact"),("output","json"),
@@ -39,6 +39,10 @@ jobs:
           with urlopen(req,timeout=30) as r:
             data=json.load(r)
           captures=[dict(zip(data[0],x)) for x in data[1:]] if data else []
+          # #739 observed this exact href inside the 2002-04-06 archived HTML. If CDX has no row, probe the raw replay at that proven source timestamp once.
+          direct_replay_fallback = not captures
+          if direct_replay_fallback:
+            captures=[{"timestamp":"20020406004115","original":target,"mimetype":"unknown","statuscode":"unknown","digest":"unindexed-direct-replay","length":"unknown","source":"html-observed-direct-replay"}]
 
           receipts=[]; all_members=[]; cfb_members=[]
           for cap in captures:
@@ -81,11 +85,13 @@ jobs:
             time.sleep(.3)
 
           summary={
-            "schema":"chaptera.corpus-pspp-publisher-logo-recovery.v1",
+            "schema":"chaptera.corpus-pspp-publisher-logo-recovery.v2",
             "source_safe":True,
             "raw_payload_retained":False,
             "target":target,
-            "capture_count":len(captures),
+            "cdx_capture_count":0 if direct_replay_fallback else len(captures),
+            "direct_replay_fallback":direct_replay_fallback,
+            "attempt_count":len(captures),
             "receipts":receipts,
             "member_count":len(all_members),
             "cfb_or_pub_member_count":len(cfb_members),
