@@ -8,8 +8,9 @@
 //! families before a broader layout contract is stabilized.
 
 use pub_model::{
-    Affine2D, BoxEdges, CanonicalId, LengthEmu, NodeId, Page, PageId, ParagraphId, RectEmu,
-    RulerGuide, RulerGuideAxis, SimpleRectangularTable, Size2D, Story, StoryFrame, StoryId,
+    Affine2D, BoxEdges, CanonicalId, GroundedRulerGuide, LengthEmu, NodeId, Page, PageId,
+    ParagraphId, PublisherGuideRole, RectEmu, RulerGuide, RulerGuideAxis, SimpleRectangularTable,
+    Size2D, Story, StoryFrame, StoryId,
     TableCellAddress, TableCellId, TextRunId,
 };
 use serde::{Deserialize, Serialize};
@@ -79,9 +80,18 @@ pub struct BoundedTableInput {
 pub struct BoundedGuideInput {
     pub page_id: PageId,
     pub guide: RulerGuide<LengthEmu>,
-    /// A ruler/editor guide crosses the boundary only when an upstream semantic
-    /// constraint has proven that it affects layout.
-    pub affects_layout: bool,
+    /// Semantic provenance only. Raw source carriers remain upstream.
+    pub provenance: PublisherGuideRole,
+}
+
+impl From<GroundedRulerGuide<LengthEmu>> for BoundedGuideInput {
+    fn from(value: GroundedRulerGuide<LengthEmu>) -> Self {
+        Self {
+            page_id: value.page_id,
+            guide: value.guide,
+            provenance: value.role,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +164,7 @@ pub struct ProjectedGuide {
     pub page_origin: PageId,
     pub axis: RulerGuideAxis,
     pub position: LengthEmu,
+    pub provenance: PublisherGuideRole,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,11 +201,13 @@ pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProject
     input.guides.sort_by(|left, right| {
         (
             left.page_id,
+            guide_role_order(left.provenance),
             guide_axis_order(left.guide.axis),
             left.guide.position,
         )
             .cmp(&(
                 right.page_id,
+                guide_role_order(right.provenance),
                 guide_axis_order(right.guide.axis),
                 right.guide.position,
             ))
@@ -306,11 +319,11 @@ pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProject
     let guides = input
         .guides
         .into_iter()
-        .filter(|guide| guide.affects_layout)
         .map(|guide| ProjectedGuide {
             page_origin: guide.page_id,
             axis: guide.guide.axis,
             position: guide.guide.position,
+            provenance: guide.provenance,
         })
         .collect();
 
@@ -331,6 +344,13 @@ pub fn project_bounded(mut input: BoundedAuthoringSlice) -> BoundedLayoutProject
         tables,
         guides,
         diagnostics,
+    }
+}
+
+fn guide_role_order(role: PublisherGuideRole) -> u8 {
+    match role {
+        PublisherGuideRole::PublicationLayoutGuides => 0,
+        PublisherGuideRole::PageRulerGuide => 1,
     }
 }
 
@@ -520,7 +540,7 @@ mod tests {
                     axis: RulerGuideAxis::Vertical,
                     position: LengthEmu::new(20 * EMU_PER_MILLIMETER),
                 },
-                affects_layout: false,
+                provenance: PublisherGuideRole::PageRulerGuide,
             },
             BoundedGuideInput {
                 page_id: page_id(1),
@@ -528,7 +548,7 @@ mod tests {
                     axis: RulerGuideAxis::Horizontal,
                     position: LengthEmu::new(15 * EMU_PER_MILLIMETER),
                 },
-                affects_layout: true,
+                provenance: PublisherGuideRole::PublicationLayoutGuides,
             },
         ];
 
@@ -657,14 +677,27 @@ mod tests {
     }
 
     #[test]
-    fn editor_only_ruler_guide_does_not_cross_boundary() {
+    fn grounded_publication_and_page_guides_cross_with_semantic_provenance() {
         let projection = project_bounded(fixture(false));
 
-        assert_eq!(projection.guides.len(), 1);
+        assert_eq!(projection.guides.len(), 2);
+        assert_eq!(
+            projection.guides[0].provenance,
+            PublisherGuideRole::PublicationLayoutGuides
+        );
         assert_eq!(projection.guides[0].axis, RulerGuideAxis::Horizontal);
         assert_eq!(
             projection.guides[0].position,
             LengthEmu::new(15 * EMU_PER_MILLIMETER)
+        );
+        assert_eq!(
+            projection.guides[1].provenance,
+            PublisherGuideRole::PageRulerGuide
+        );
+        assert_eq!(projection.guides[1].axis, RulerGuideAxis::Vertical);
+        assert_eq!(
+            projection.guides[1].position,
+            LengthEmu::new(20 * EMU_PER_MILLIMETER)
         );
     }
 
