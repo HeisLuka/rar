@@ -5,12 +5,16 @@ on:
     paths:
       - 'tools/corpus/structural_novelty.py'
       - 'tools/corpus/version_identity_matrix.py'
+      - 'tools/corpus/version_identity_matrix_media_roots.json'
+      - 'tools/corpus/version_identity_matrix_family_overrides.json'
       - '.github/workflows/corpus-version-identity-matrix.yml'
   push:
     branches: [main]
     paths:
       - 'tools/corpus/structural_novelty.py'
       - 'tools/corpus/version_identity_matrix.py'
+      - 'tools/corpus/version_identity_matrix_media_roots.json'
+      - 'tools/corpus/version_identity_matrix_family_overrides.json'
       - '.github/workflows/corpus-version-identity-matrix.yml'
   workflow_dispatch:
 
