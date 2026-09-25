@@ -78,7 +78,7 @@ jobs:
 
           def xml_rows(path):
               raw=pathlib.Path(path).read_bytes()
-              root=ET.fromstring(raw)
+              root=ET.fromstring(raw.decode("utf-16"))
               rows=[]
               for it in root.findall("item"):
                   m=re.search(r"(\d+)='(\d+)=(\d+)'",it.attrib["opl"])
