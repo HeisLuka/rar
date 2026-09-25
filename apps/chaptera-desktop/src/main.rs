@@ -2250,7 +2250,7 @@ mod tests {
     #[test]
     fn editor_project_json_reopens_real_authoring_state() {
         let bytes = decode_base64_fixture(include_str!(
-            "../../../crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
         ));
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
@@ -2511,7 +2511,7 @@ mod tests {
     #[test]
     fn real_pub_exposes_decodable_exact_image_bound_to_scene_node() {
         let pub_bytes = decode_base64_fixture(include_str!(
-            "../../../crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
         ));
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &pub_bytes,
@@ -2550,7 +2550,7 @@ mod tests {
     #[test]
     fn desktop_editor_session_updates_overlay_without_mutating_pub_bytes() {
         let bytes = decode_base64_fixture(include_str!(
-            "../../../crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
         ));
         let original_bytes = bytes.clone();
         let visual = pub_viewer::open_mature_0x2c_geometry(
@@ -2657,7 +2657,7 @@ mod tests {
     #[test]
     fn canvas_drag_commits_exactly_one_move_and_syncs_undo_redo() {
         let bytes = decode_base64_fixture(include_str!(
-            "../../../crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
         ));
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
@@ -2798,7 +2798,7 @@ mod tests {
     #[test]
     fn replayed_move_project_synchronizes_scene_geometry_by_canonical_node_id() {
         let bytes = decode_base64_fixture(include_str!(
-            "../../../crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
+            "../../../vendor/producer-a/crates/pub-quill/tests/fixtures/SampleNewsletter.pub.b64"
         ));
         let visual = pub_viewer::open_mature_0x2c_geometry(
             &bytes,
