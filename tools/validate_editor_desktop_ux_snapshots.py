@@ -65,7 +65,8 @@ def main() -> int:
     receipt = {
         "receipt_version": "chaptera.editor-desktop-ux-snapshots.v1",
         "renderer": "chaptera-egui-kittest-wgpu-headless-windows",
-        "windows_scale_assumption": "100_percent",
+        "render_target": "headless",
+        "pixels_per_point": 1.0,
         "screenshots": {
             "default_1280x820": default,
             "minimum_900x600": minimum,
