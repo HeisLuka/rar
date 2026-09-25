@@ -2,6 +2,8 @@ use std::{error::Error, fmt};
 
 use uuid::Uuid;
 
+use crate::TableCellId;
+
 pub const SOURCE_DERIVED_NAMESPACE_V1: [u8; 16] = [
     0xc0, 0x2c, 0xe2, 0x1c, 0xd0, 0x44, 0x56, 0xb2, 0x95, 0xd9, 0x25, 0xa9, 0x28, 0x9c, 0x1d, 0x1f,
 ];
@@ -11,6 +13,7 @@ const SOURCE_DERIVED_FRAMING_VERSION_V1: u8 = 0x01;
 const ROLE_PAGE: &str = "cdm.page";
 const ROLE_NODE: &str = "cdm.node";
 const ROLE_STORY: &str = "cdm.story";
+const ROLE_TABLE_CELL: &str = "cdm.table_cell";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceIdentityError {
@@ -86,6 +89,12 @@ pub fn pub_quill_story_object_key_v1(qsid: u32) -> String {
     format!("quill/syid/{qsid}")
 }
 
+pub fn pub_table_cell_object_key_v1(table_seq_num: u32, stored_record_index: u32) -> String {
+    format!(
+        "contents/0x2c/seq/{table_seq_num}/cells/stored/{stored_record_index}"
+    )
+}
+
 pub fn derive_pub_page_id_v1(
     source_hash: &str,
     seq_num: u32,
@@ -117,6 +126,20 @@ pub fn derive_pub_story_id_v1(source_hash: &str, qsid: u32) -> Result<String, So
         &pub_quill_story_object_key_v1(qsid),
         ROLE_STORY,
     )
+}
+
+pub fn derive_pub_table_cell_id_v1(
+    source_hash: &str,
+    table_seq_num: u32,
+    stored_record_index: u32,
+) -> Result<TableCellId, SourceIdentityError> {
+    let value = derive_source_uuid_v5_v1(
+        source_hash,
+        PUB_SOURCE_ADAPTER_ID_V1,
+        &pub_table_cell_object_key_v1(table_seq_num, stored_record_index),
+        ROLE_TABLE_CELL,
+    )?;
+    Ok(TableCellId::from_canonical_uuid_string(value))
 }
 
 fn decode_lower_hex_sha256(value: &str) -> Result<[u8; 32], SourceIdentityError> {
@@ -218,11 +241,29 @@ mod tests {
         let node_again = derive_pub_node_id_v1(&source_hash, 437).expect("node");
         let page = derive_pub_page_id_v1(&source_hash, 437).expect("page");
         let story = derive_pub_story_id_v1(&source_hash, 218).expect("story");
+        let cell = derive_pub_table_cell_id_v1(&source_hash, 437, 3).expect("table cell");
+        let cell_again = derive_pub_table_cell_id_v1(&source_hash, 437, 3).expect("table cell");
 
         assert_eq!(node, node_again);
+        assert_eq!(cell, cell_again);
         assert_ne!(node, page);
         assert_ne!(node, story);
         assert_ne!(page, story);
+        assert_ne!(cell.as_str(), node);
+    }
+
+    #[test]
+    fn table_cell_helper_matches_historical_object_key_and_role_law() {
+        let source_hash = "22".repeat(32);
+        let expected = derive_source_uuid_v5_v1(
+            &source_hash,
+            PUB_SOURCE_ADAPTER_ID_V1,
+            "contents/0x2c/seq/900/cells/stored/4",
+            "cdm.table_cell",
+        )
+        .expect("historical law");
+        let cell = derive_pub_table_cell_id_v1(&source_hash, 900, 4).expect("cell");
+        assert_eq!(cell.as_str(), expected);
     }
 
     #[test]
