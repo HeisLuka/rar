@@ -1,0 +1,32 @@
+name: CLOUD-PROJECT-PERSISTENCE-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0013_project_persistence.sql"
+      - "apps/chaptera-server/src/project_persistence_sqlite.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - ".github/workflows/cloud-project-persistence-v1.yml"
+  push:
+    branches:
+      - cloud-project-persistence-01
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-project-genesis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: cargo fmt --manifest-path apps/chaptera-server/Cargo.toml --check
+      - name: Check server
+        run: cargo check --manifest-path apps/chaptera-server/Cargo.toml
+      - name: Test project persistence
+        run: cargo test --manifest-path apps/chaptera-server/Cargo.toml project_persistence_sqlite
+      - name: Test schema migration
+        run: cargo test --manifest-path apps/chaptera-server/Cargo.toml schema_migration
