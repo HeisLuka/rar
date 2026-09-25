@@ -43,11 +43,7 @@ impl TableCellBordersV1 {
         }
     }
 
-    pub(crate) fn set_side(
-        &mut self,
-        side: TableCellBorderSideV1,
-        value: Option<SolidStrokeV1>,
-    ) {
+    pub(crate) fn set_side(&mut self, side: TableCellBorderSideV1, value: Option<SolidStrokeV1>) {
         match side {
             TableCellBorderSideV1::Top => self.top = value,
             TableCellBorderSideV1::Right => self.right = value,
