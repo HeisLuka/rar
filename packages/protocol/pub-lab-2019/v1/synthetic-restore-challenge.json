@@ -6,7 +6,7 @@
   "restore_nonce": "0123456789abcdef0123456789abcdef",
   "restore_requested_at_utc": "2026-09-25T15:00:00Z",
   "cold_start_succeeded_at_utc": "2026-09-25T15:00:01Z",
-  "expected_environment_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "expected_environment_fingerprint": "ac470ff16c69eeec6607e7ef1d358502c3232456421a76be4b9103cb251d1c21",
   "pre_restore_state_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
   "vmware": {
     "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
