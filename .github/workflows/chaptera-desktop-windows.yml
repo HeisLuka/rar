@@ -13,6 +13,7 @@ on:
       - "tools/build_editor_live_trial_package_receipt.py"
       - "tools/validate_editor_live_trial_package_receipt.py"
       - "tools/run_editor_live_trial_package_smoke.py"
+      - "tools/validate_editor_desktop_ux_snapshots.py"
       - ".github/workflows/chaptera-desktop-windows.yml"
       - "packages/product/desktop-suite/**"
       - "tools/validate_chaptera_desktop_suite_manifest.py"
@@ -44,6 +45,25 @@ jobs:
 
       - name: Validate suite product identity
         run: python tools/validate_chaptera_desktop_suite_manifest.py packages/product/desktop-suite/v1/product-manifest.json --editor-cargo apps/chaptera-desktop/Cargo.toml
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
+          Invoke-WebRequest -Uri $url -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $fixture).Length
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          }
+          if ($bytes -ne 291840) {
+            throw "SampleNewsletter byte length mismatch: $bytes"
+          }
+          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Test GUI-only Desktop V0 walkthrough
+        run: cargo test -p chaptera-desktop gui_only_v0_walkthrough_uses_real_widgets -- --ignored --nocapture
 
       - name: Check desktop package
         run: cargo check -p chaptera-desktop --all-targets
@@ -79,21 +99,13 @@ jobs:
             source_commit = "${{ github.sha }}"
           } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-editor.desktop-build.json
 
-      - name: Acquire pinned Apache POI SampleNewsletter
+      - name: Capture headless Chaptera UX snapshots
         shell: pwsh
         run: |
-          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
-          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
-          Invoke-WebRequest -Uri $url -OutFile $fixture
-          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
-          $bytes = (Get-Item $fixture).Length
-          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
-            throw "SampleNewsletter SHA-256 mismatch: $hash"
-          }
-          if ($bytes -ne 291840) {
-            throw "SampleNewsletter byte length mismatch: $bytes"
-          }
-          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $snapshotDir = (Resolve-Path "target/release").Path
+          $env:CHAPTERA_UX_SNAPSHOT_DIR = $snapshotDir
+          cargo test -p chaptera-desktop headless_wgpu_ux_snapshots_render_current_viewer_app -- --ignored --nocapture
+          python tools/validate_editor_desktop_ux_snapshots.py --default target/release/chaptera-editor-ux-1280x820.png --minimum target/release/chaptera-editor-ux-900x600.png --output target/release/editor-desktop-ux-snapshots.real.json
 
       - name: Run real Desktop V0 continuity receipt
         shell: pwsh
@@ -136,6 +148,9 @@ jobs:
             target/release/Chaptera-Editor.package.json
             target/release/editor-live-trial-package.real.json
             target/release/editor-agent-control.real.json
+            target/release/chaptera-editor-ux-1280x820.png
+            target/release/chaptera-editor-ux-900x600.png
+            target/release/editor-desktop-ux-snapshots.real.json
           if-no-files-found: error
 
   validate-portable-editor:
