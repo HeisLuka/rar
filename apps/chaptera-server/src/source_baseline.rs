@@ -7,7 +7,8 @@ use std::{
 };
 
 use chaptera_cdm_model::{
-    AUTHORING_REVISION_SCHEMA_V1, canonical_revision_json_v1, derive_authoring_revision_id_v1,
+    AUTHORING_REVISION_SCHEMA_V1, AuthoringRevisionIdV1, canonical_revision_json_v1,
+    derive_authoring_revision_id_v1,
 };
 use chaptera_untrusted_pub_scan::install_post_read_filesystem_default_deny;
 use pub_editor::EditorProject;
@@ -120,6 +121,15 @@ pub struct BaselineIdentityDerivation {
     pub canonical_authoring_revision_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitIdentityDerivation {
+    pub project_hash: String,
+    pub state_id: String,
+    pub transition_hash: String,
+    pub service_revision_id: String,
+    pub canonical_authoring_revision_id: String,
+}
+
 #[derive(Serialize)]
 struct WebAuthoringStateV1<'a> {
     protocol_version: &'static str,
@@ -179,6 +189,67 @@ pub fn derive_import_baseline_identities<G: Serialize + ?Sized>(
     Ok(BaselineIdentityDerivation {
         project_hash,
         state_id,
+        service_revision_id,
+        canonical_authoring_revision_id,
+    })
+}
+
+
+pub fn derive_commit_identities<G: Serialize + ?Sized, O: Serialize + ?Sized>(
+    document_id: &str,
+    source_sha256: &str,
+    project_schema_version: &str,
+    project: &G,
+    canonical_operation: &O,
+    parent_service_revision_id: &str,
+    parent_authoring_revision_id: &str,
+) -> Result<CommitIdentityDerivation, SourceBaselineError> {
+    require_ident(document_id, "document_id")?;
+    require_sha256(source_sha256, "source_sha256")?;
+    require_ident(project_schema_version, "project_schema_version")?;
+    require_prefixed_sha256(parent_service_revision_id, "parent_service_revision_id")?;
+
+    let parent_authoring_revision_id = parent_authoring_revision_id
+        .parse::<AuthoringRevisionIdV1>()
+        .map_err(|_| {
+            SourceBaselineError::new(
+                "source_baseline_authoring_identity_failed",
+                "parent canonical AuthoringRevisionId is invalid",
+            )
+        })?;
+
+    let project_hash = web_hash_id(project)?;
+    let state_id = web_hash_id(&WebAuthoringStateV1 {
+        protocol_version: "chaptera.authoring-state.v1",
+        document_id,
+        source_hash: source_sha256,
+        project_schema_version,
+        project_hash: &project_hash,
+    })?;
+    let transition_hash = web_hash_id(canonical_operation)?;
+    let service_revision_id = web_hash_id(&WebRevisionNodeV1 {
+        protocol_version: "chaptera.revision-node.v1",
+        document_id,
+        source_hash: source_sha256,
+        parent_revision_id: Some(parent_service_revision_id),
+        state_id: &state_id,
+        transition_kind: "commit",
+        transition_hash: Some(&transition_hash),
+    })?;
+    let canonical_authoring_revision_id =
+        derive_authoring_revision_id_v1(project, Some(parent_authoring_revision_id))
+            .map_err(|_| {
+                SourceBaselineError::new(
+                    "source_baseline_authoring_identity_failed",
+                    "canonical child AuthoringRevisionId derivation failed",
+                )
+            })?
+            .to_string();
+
+    Ok(CommitIdentityDerivation {
+        project_hash,
+        state_id,
+        transition_hash,
         service_revision_id,
         canonical_authoring_revision_id,
     })
