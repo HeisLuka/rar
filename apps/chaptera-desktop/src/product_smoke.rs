@@ -19,7 +19,7 @@ pub fn run() -> Result<Value, String> {
         .map_err(|error| format!("resolve current executable: {error}"))?;
     let bytes = fs::read(&executable)
         .map_err(|error| format!("read current executable: {error}"))?;
-    if len(&bytes) < 2 || &bytes[..2] != b"MZ" {
+    if bytes.len() < 2 || &bytes[..2] != b"MZ" {
         return Err("current executable is not a Windows PE image".to_owned());
     }
 
