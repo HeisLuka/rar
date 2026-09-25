@@ -41,7 +41,6 @@ replacement_path = pathlib.Path(sys.argv[4])
 
 source_hash = os.environ["CHAPTERA_SOURCE_HASH"]
 rar_commit = os.environ["CHAPTERA_RAR_COMMIT"]
-binding = os.environ["CHAPTERA_REPLACEMENT_BINDING_ID"]
 auth_wrap_sha = os.environ["CHAPTERA_AUTH_WRAP_RECEIPT_SHA256"]
 story_witness = os.environ["CHAPTERA_TRIAL_STORY_WITNESS"]
 replacement = replacement_path.read_bytes()
@@ -116,7 +115,6 @@ observation = {
     "protocol_version": "chaptera.editor-fixed-page-trial-observation.v1",
     "source_hash": source_hash,
     "rar_commit": rar_commit,
-    "replacement_binding_id": binding,
     "auth_wrap_receipt_sha256": auth_wrap_sha,
     "saved_project_sha256": project_sha,
     "reopened_project_sha256": project_sha,
