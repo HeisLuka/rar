@@ -5,6 +5,12 @@ on:
     paths:
       - "apps/chaptera-server/src/job_queue.rs"
       - "apps/chaptera-server/src/job_worker.rs"
+      - "apps/chaptera-server/src/jobs.rs"
+      - "apps/chaptera-server/src/worker.rs"
+      - "apps/chaptera-server/src/worker_runtime.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/config.rs"
+      - "deploy/config/chaptera.prod.example.toml"
       - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/migrations/0003_jobs.sql"
       - ".github/workflows/cloud-async-runtime-v0.yml"
@@ -30,3 +36,5 @@ jobs:
         run: |
           cargo test -p chaptera-server job_queue::
           cargo test -p chaptera-server job_worker::
+          cargo test -p chaptera-server worker_runtime::
+          cargo test -p chaptera-server config::
