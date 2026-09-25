@@ -50,11 +50,12 @@ if (-not (Test-Path -LiteralPath $captureProvider -PathType Leaf)) {
 }
 
 $resetAdapter = Join-Path $PSScriptRoot "pub_lab_2019_vmware_reset.ps1"
+$pairValidator = Join-Path $PSScriptRoot "validate_pub_lab_2019_restore_pair.py"
 $evidenceValidator = Join-Path $PSScriptRoot "validate_pub_lab_2019_vmware_evidence.py"
 $receiptBuilder = Join-Path $PSScriptRoot "build_pub_research_reset_receipt.py"
 $receiptVerifier = Join-Path $PSScriptRoot "research-runner\verify_reset_receipt.py"
 
-foreach ($required in @($resetAdapter, $evidenceValidator, $receiptBuilder, $receiptVerifier)) {
+foreach ($required in @($resetAdapter, $pairValidator, $evidenceValidator, $receiptBuilder, $receiptVerifier)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required reset component missing: $required"
     }
@@ -86,6 +87,11 @@ try {
     }
     if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
         throw "Environment capture provider did not emit a manifest"
+    }
+
+    python $pairValidator $challenge $manifest
+    if ($LASTEXITCODE -ne 0) {
+        throw "restore challenge / measured EnvironmentManifest validation failed"
     }
 
     & pwsh -NoProfile -File $resetAdapter -Mode finalize-revert -VmxPath $vmxPath -SnapshotName $SnapshotId -ChallengeFile $challenge -EnvironmentManifest $manifest -EvidenceOutput $evidence
