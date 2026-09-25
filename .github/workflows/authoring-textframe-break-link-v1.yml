@@ -5,6 +5,7 @@ on:
     paths:
       - "vendor/producer-a/crates/pub-editor/src/lib.rs"
       - "vendor/producer-a/crates/pub-editor/tests/break_text_frame_forward_link_v1.rs"
+      - "vendor/producer-a/producer/tests/break_link_layout_v1.rs"
       - ".github/workflows/authoring-textframe-break-link-v1.yml"
   push:
     branches:
@@ -26,3 +27,8 @@ jobs:
       - name: Test existing pub-editor regressions
         run: |
           cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --lib
+      - name: Prove layout recomputes upstream overset after split
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml \
+            -p chaptera-producer-a \
+            --test break_link_layout_v1
