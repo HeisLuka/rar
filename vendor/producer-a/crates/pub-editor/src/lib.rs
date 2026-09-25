@@ -32,7 +32,8 @@ use pub_model::{
     ResourceId, SourceDerivedIdInput, StoryFrame, derive_source_canonical_id, validate_story_frames,
 };
 use pub_odg::{
-    ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, project_resolved_graph_to_odg, write_odg,
+    ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
+    add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
     PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
@@ -1078,11 +1079,19 @@ impl EditorSession {
                 })?
             }
             EditorEditableTarget::Odg => {
-                let package = project_resolved_graph_to_odg(&plan, &self.graph, frame_from_payload)
-                    .map_err(|error| EditorExportError::Projection {
+                let mut package =
+                    project_resolved_graph_to_odg(&plan, &self.graph, frame_from_payload)
+                        .map_err(|error| EditorExportError::Projection {
+                            target,
+                            message: error.to_string(),
+                        })?;
+                let placements = self.odg_replacement_placements()?;
+                add_embedded_images_to_odg(&plan, &mut package, &placements).map_err(|error| {
+                    EditorExportError::Projection {
                         target,
                         message: error.to_string(),
-                    })?;
+                    }
+                })?;
                 write_odg(&package).map_err(|error| EditorExportError::Write {
                     target,
                     message: error.to_string(),
@@ -1163,6 +1172,88 @@ impl EditorSession {
                 page_size: page.size,
                 resource_id: replacement_asset_resource_id(*asset_sha),
                 frame_bounds: node.header.bounds,
+                mime: asset.mime.clone(),
+                bytes: asset.bytes.clone(),
+            });
+        }
+
+        Ok(placements)
+    }
+
+    fn odg_replacement_placements(
+        &self,
+    ) -> Result<Vec<OdgEmbeddedImagePlacement>, EditorExportError> {
+        let target = EditorEditableTarget::Odg;
+        let mut placements = Vec::with_capacity(self.image_replacements.len());
+
+        for (node_id, asset_sha) in &self.image_replacements {
+            let node = self.graph.nodes.get(node_id).ok_or_else(|| {
+                EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "replacement image node {} is missing from the resolved graph",
+                        node_id.as_canonical()
+                    ),
+                }
+            })?;
+            let asset = self.replacement_assets.get(asset_sha).ok_or_else(|| {
+                EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "replacement image asset {asset_sha} is missing from the editor session"
+                    ),
+                }
+            })?;
+            let (page_id, page) = self
+                .graph
+                .pages
+                .iter()
+                .find(|(page_id, _)| page_id.into_canonical() == node.header.parent_id)
+                .ok_or_else(|| EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "replacement image node {} is not directly authored on a page",
+                        node_id.as_canonical()
+                    ),
+                })?;
+
+            let authored = self
+                .graph
+                .nodes
+                .iter()
+                .filter_map(|(candidate_id, candidate)| {
+                    (candidate.header.parent_id == page_id.into_canonical())
+                        .then_some(*candidate_id)
+                })
+                .collect::<Vec<_>>();
+            let ordered = if page.children.len() == authored.len()
+                && page
+                    .children
+                    .iter()
+                    .zip(authored.iter())
+                    .all(|(left, right)| left == right)
+            {
+                page.children.as_slice()
+            } else {
+                authored.as_slice()
+            };
+            let z_index = ordered
+                .iter()
+                .position(|candidate| candidate == node_id)
+                .ok_or_else(|| EditorExportError::Projection {
+                    target,
+                    message: format!(
+                        "replacement image node {} has no page-local object order",
+                        node_id.as_canonical()
+                    ),
+                })?;
+
+            placements.push(OdgEmbeddedImagePlacement {
+                node_id: *node_id,
+                page_id: *page_id,
+                resource_id: replacement_asset_resource_id(*asset_sha),
+                frame_bounds: node.header.bounds,
+                z_index,
                 mime: asset.mime.clone(),
                 bytes: asset.bytes.clone(),
             });
@@ -1796,7 +1887,10 @@ fn editable_export_plan(
     features.insert("page.geometry".into(), CapabilityLevel::Preserved);
     features.insert("story.text".into(), CapabilityLevel::Preserved);
     features.insert("story.linked_frames".into(), CapabilityLevel::Preserved);
-    if target == EditorEditableTarget::Idml {
+    if matches!(
+        target,
+        EditorEditableTarget::Idml | EditorEditableTarget::Odg
+    ) {
         features.insert(IMAGE_BYTES_FEATURE.into(), CapabilityLevel::Preserved);
         features.insert(
             IMAGE_FRAME_GEOMETRY_FEATURE.into(),
