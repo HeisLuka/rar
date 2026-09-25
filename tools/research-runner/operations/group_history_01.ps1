@@ -414,6 +414,7 @@ function Run-S2 {
         grouped = $null
         ungrouped = $null
         regroup = $null
+        regroup_identity_relation = "unavailable"
     }
     try {
         $pair = Open-ArmDocument -Path $ctx.input_path
@@ -423,9 +424,10 @@ function Run-S2 {
             group = Get-ShapeRecord -Shape $group
             snapshot = Get-DocumentSnapshot -Document $pair.document -Phase "S2-grouped"
         }
-        $ungroupedRange = $group.Ungroup()
+        [void]$group.Ungroup()
         $result.ungrouped = Get-DocumentSnapshot -Document $pair.document -Phase "S2-ungrouped"
         $result.regroup = Try-Regroup -Document $pair.document -Phase "S2-inmemory-regroup"
+        $result.regroup_identity_relation = Get-GroupIdentityRelation -OldGroup $result.grouped.group -RegroupResult $result.regroup
     }
     finally {
         Close-ArmPair $pair
