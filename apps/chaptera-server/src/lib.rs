@@ -13,6 +13,7 @@ pub mod jobs;
 pub mod migrate;
 pub mod oidc_authn;
 pub mod runtime_error;
+pub mod runtime_readiness;
 pub mod s3_blob_provider;
 pub mod schema_migration;
 pub mod serve;
