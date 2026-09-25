@@ -302,8 +302,13 @@ jobs:
                           dsi_state="absent"
                           piddsi_value=None
                           producer_major=None
-                          if ole.exists(["\\x05DocumentSummaryInformation"]):
-                              props=ole.getproperties(["\\x05DocumentSummaryInformation"],convert_time=False)
+                          dsi_path=next(
+                              (p for p in ole.listdir(streams=True,storages=False)
+                               if p and p[-1].startswith(chr(5)) and p[-1][1:]=="DocumentSummaryInformation"),
+                              None,
+                          )
+                          if dsi_path is not None:
+                              props=ole.getproperties(dsi_path,convert_time=False)
                               v=props.get(0x17)
                               if isinstance(v,bytes) and len(v)==4:
                                   v=int.from_bytes(v,"little")
@@ -388,6 +393,12 @@ jobs:
           assert s["source_safe"] is True
           assert s["raw_payload_retained"] is False
           assert s["office14_iso_sha256"]=="38457021494137d8115ae853bcdff78f830a339cfa8ee78b3fa92fc1cb69b03b"
+          assert s["classification"]=="exact_office2010_sp1_carries_office2007_shellnew_bytes"
+          assert s["exact_office2007_shellnew_hash_match_count"]==1
+          m=s["exact_matches"][0]
+          assert m["digest"]["sha256"]=="e050ea777d910137fff7c160992ec026ab4f76832b6c96701b114e379abf4ca3"
+          assert m["pub_metadata"]["contents_revision"]==20
+          assert m["pub_metadata"]["producer_major"]==12
           PY
           sha256sum out/*.json | sort > out/sha256sums.txt
       - uses: actions/upload-artifact@v4
