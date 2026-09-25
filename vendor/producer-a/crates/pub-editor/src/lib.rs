@@ -4263,3 +4263,203 @@ fn apply_table_cell_state(
     story.text.push_str(replacement_story);
     Ok(())
 }
+
+#[cfg(test)]
+mod image_crop_runtime_tests {
+    use super::*;
+    use pub_model::{
+        Affine2D, Document, DocumentId, Node, NodeHeader, NodeKind, Page, ResolvedGraph, Size2D,
+        SourceDescriptor,
+    };
+    use pub_reader::{PubExplicitImageCropSource, PubExplicitShapePaintSource};
+
+    fn id<T: serde::de::DeserializeOwned>(value: &str) -> T {
+        serde_json::from_str(&format!("\"{value}\"")).expect("canonical typed id")
+    }
+
+    fn source_hash() -> Sha256Digest {
+        "1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .expect("sha")
+    }
+
+    fn crop_graph() -> (PubResolvedGraph, NodeId) {
+        let page_id: PageId = id("10000000-0000-4000-8000-000000000001");
+        let node_id: NodeId = id("20000000-0000-4000-8000-000000000001");
+        let hash = source_hash();
+
+        let bounds = RectEmu::new(
+            LengthEmu::new(100_000),
+            LengthEmu::new(200_000),
+            LengthEmu::new(300_000),
+            LengthEmu::new(400_000),
+        );
+
+        let mut pages = BTreeMap::new();
+        pages.insert(
+            page_id,
+            Page {
+                id: page_id,
+                size: Size2D::new(LengthEmu::new(5_000_000), LengthEmu::new(5_000_000)),
+                bleed: None,
+                margins: None,
+                children: vec![node_id],
+                extensions: Vec::new(),
+            },
+        );
+
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            node_id,
+            Node {
+                kind: NodeKind::Shape,
+                header: NodeHeader {
+                    id: node_id,
+                    parent_id: page_id.into_canonical(),
+                    bounds,
+                    transform: Affine2D::identity(),
+                    source_refs: Vec::new(),
+                    extensions: Vec::new(),
+                },
+                payload: PubResolvedNodePayload {
+                    contents_seq_num: 1,
+                    officeart_shape_type: Some(75),
+                    officeart_spid: Some(1),
+                    image_slot: Some(1),
+                    explicit_image_crop: Some(PubExplicitImageCropSource {
+                        top_raw: Some(10),
+                        bottom_raw: Some(20),
+                        left_raw: Some(30),
+                        right_raw: Some(40),
+                        ambiguous: false,
+                    }),
+                    explicit_paint: PubExplicitShapePaintSource::default(),
+                    story_frame: None,
+                    table_story: None,
+                    table: None,
+                },
+            },
+        );
+
+        (
+            ResolvedGraph {
+                cdm_version: "0.1".into(),
+                resolver_version: "test".into(),
+                source: SourceDescriptor {
+                    format: "pub".into(),
+                    format_version: Some("0x2c".into()),
+                    adapter_version: "pub-rs/test".into(),
+                    source_hash: hash,
+                },
+                document: Document {
+                    id: id::<DocumentId>("30000000-0000-4000-8000-000000000001"),
+                    format_origin: "pub".into(),
+                    source_hash: hash,
+                    pages: vec![page_id],
+                    resources: Vec::new(),
+                    styles: Vec::new(),
+                },
+                pages,
+                nodes,
+                stories: BTreeMap::new(),
+                paragraphs: BTreeMap::new(),
+                text_runs: BTreeMap::new(),
+                resources: BTreeMap::new(),
+                styles: BTreeMap::new(),
+                extensions: BTreeMap::new(),
+            },
+            node_id,
+        )
+    }
+
+    fn install_png_authority(session: &mut EditorSession, node_id: NodeId) {
+        session.source_image_authority.insert(
+            node_id,
+            SourceImageAuthorityV1 {
+                resource_id: id("40000000-0000-4000-8000-000000000001"),
+                mime: "image/png".into(),
+                source_hash: "2222222222222222222222222222222222222222222222222222222222222222"
+                    .parse()
+                    .expect("sha"),
+            },
+        );
+    }
+
+    #[test]
+    fn crop_overlay_undo_redo_and_replace_preserve_independent_axes() {
+        let (graph, node_id) = crop_graph();
+        let source_bounds = graph.nodes[&node_id].header.bounds;
+        let mut session = EditorSession::new(graph).expect("session");
+        install_png_authority(&mut session, node_id);
+
+        let before = session.image_crop_for(node_id).expect("source crop");
+        let after = ImageCropStateV1 {
+            top_raw: Some(11),
+            bottom_raw: Some(22),
+            left_raw: Some(33),
+            right_raw: Some(44),
+        };
+
+        let op = session
+            .set_image_crop(node_id, before, after)
+            .expect("set crop");
+        assert!(matches!(op, EditOperation::SetImageCrop { .. }));
+        assert_eq!(session.image_crop_for(node_id), Some(after));
+        assert_eq!(session.graph.nodes[&node_id].header.bounds, source_bounds);
+        assert_eq!(session.project().schema_version, EDITOR_PROJECT_VERSION_V0_11);
+
+        assert!(matches!(
+            session.set_image_crop(node_id, before, after),
+            Err(EditorError::StaleImageCrop { .. })
+        ));
+        assert!(matches!(
+            session.set_image_crop(node_id, after, after),
+            Err(EditorError::ImageCropNoChange { .. })
+        ));
+
+        session.undo().expect("crop undo");
+        assert_eq!(session.image_crop_for(node_id), Some(before));
+        session.redo().expect("crop redo");
+        assert_eq!(session.image_crop_for(node_id), Some(after));
+
+        let replacement = session
+            .import_replacement_asset("image/png", b"\x89PNG\r\n\x1a\nfixture".to_vec())
+            .expect("replacement asset");
+        session
+            .replace_image(node_id, replacement)
+            .expect("safe cropped replacement");
+        assert_eq!(session.image_crop_for(node_id), Some(after));
+        assert_eq!(session.graph.nodes[&node_id].header.bounds, source_bounds);
+    }
+
+    #[test]
+    fn cropped_picture_requires_exact_safe_source_authority() {
+        let (graph, node_id) = crop_graph();
+        let mut session = EditorSession::new(graph).expect("session");
+        let before = session.image_crop_for(node_id).expect("source crop");
+        let after = ImageCropStateV1 {
+            top_raw: Some(1),
+            ..before
+        };
+
+        assert!(matches!(
+            session.set_image_crop(node_id, before, after),
+            Err(EditorError::ImageCropUnsupported { .. })
+        ));
+
+        session.source_image_authority.insert(
+            node_id,
+            SourceImageAuthorityV1 {
+                resource_id: id("40000000-0000-4000-8000-000000000001"),
+                mime: "image/x-ms-bmp-dib".into(),
+                source_hash: "3333333333333333333333333333333333333333333333333333333333333333"
+                    .parse()
+                    .expect("sha"),
+            },
+        );
+        assert!(matches!(
+            session.set_image_crop(node_id, before, after),
+            Err(EditorError::ImageCropUnsupported { .. })
+        ));
+    }
+}
