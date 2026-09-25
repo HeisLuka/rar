@@ -1,0 +1,32 @@
+name: Publisher MoveNode causal runner
+
+on:
+  pull_request:
+    paths:
+      - "tools/publisher_movenode_causal.ps1"
+      - ".github/workflows/publisher-movenode-causal-runner.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse and self-test PowerShell runner
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "tools/publisher_movenode_causal.ps1"),
+            [ref]$null,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+          pwsh -NoProfile -File tools/publisher_movenode_causal.ps1 -SelfTest | Out-Null
