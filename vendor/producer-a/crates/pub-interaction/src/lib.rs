@@ -981,4 +981,145 @@ mod tests {
             Some(valid)
         );
     }
+
+    #[test]
+    fn resize_handle_hit_test_precedes_move_body() {
+        let bounds = ScreenRect::new(10.0, 20.0, 100.0, 80.0).expect("screen bounds");
+        assert_eq!(
+            classify_resize_pointer_down(bounds, ScreenPoint::new(10.0, 20.0), 6.0)
+                .expect("hit test"),
+            ResizePointerDown::Handle(ResizeHandle::TopLeft)
+        );
+        assert_eq!(
+            classify_resize_pointer_down(bounds, ScreenPoint::new(60.0, 60.0), 6.0)
+                .expect("body hit test"),
+            ResizePointerDown::MoveBody
+        );
+        assert_eq!(
+            classify_resize_pointer_down(bounds, ScreenPoint::new(500.0, 500.0), 6.0)
+                .expect("outside hit test"),
+            ResizePointerDown::None
+        );
+    }
+
+    #[test]
+    fn bottom_right_resize_keeps_opposite_corner_fixed() {
+        let before = rect(100, 200, 300, 400);
+        let mut transaction = ResizeTransaction::begin(
+            node_id(20),
+            before,
+            ResizeHandle::BottomRight,
+            DocumentPoint::new(LengthEmu::new(400), LengthEmu::new(600)),
+        )
+        .expect("resize transaction");
+
+        let update = transaction
+            .update(DocumentPoint::new(LengthEmu::new(450), LengthEmu::new(675)))
+            .expect("resize update");
+        let ResizeUpdate::Preview(after) = update else {
+            panic!("expected valid resize preview");
+        };
+        assert_eq!(after, rect(100, 200, 350, 475));
+
+        let commit = transaction.commit().expect("resize commit");
+        assert_eq!(commit.before, before);
+        assert_eq!(commit.after, after);
+        assert_eq!(commit.handle, ResizeHandle::BottomRight);
+        assert_eq!(transaction.state(), ResizeTransactionState::Committed);
+        assert_eq!(
+            transaction.commit(),
+            Err(ResizeTransactionError::NotActive),
+            "commit is one-shot"
+        );
+    }
+
+    #[test]
+    fn top_left_resize_keeps_bottom_right_fixed() {
+        let before = rect(100, 200, 300, 400);
+        let mut transaction = ResizeTransaction::begin(
+            node_id(21),
+            before,
+            ResizeHandle::TopLeft,
+            DocumentPoint::new(LengthEmu::new(100), LengthEmu::new(200)),
+        )
+        .expect("resize transaction");
+
+        let update = transaction
+            .update(DocumentPoint::new(LengthEmu::new(50), LengthEmu::new(100)))
+            .expect("resize update");
+        let ResizeUpdate::Preview(after) = update else {
+            panic!("expected valid resize preview");
+        };
+        assert_eq!(after, rect(50, 100, 350, 500));
+        assert_eq!(after.right(), before.right());
+        assert_eq!(after.bottom(), before.bottom());
+    }
+
+    #[test]
+    fn invalid_terminal_resize_cannot_commit_stale_last_valid_preview() {
+        let before = rect(0, 0, 100, 100);
+        let mut transaction = ResizeTransaction::begin(
+            node_id(22),
+            before,
+            ResizeHandle::Right,
+            DocumentPoint::new(LengthEmu::new(100), LengthEmu::new(50)),
+        )
+        .expect("resize transaction");
+
+        assert_eq!(
+            transaction
+                .update(DocumentPoint::new(LengthEmu::new(125), LengthEmu::new(50)))
+                .expect("valid preview"),
+            ResizeUpdate::Preview(rect(0, 0, 125, 100))
+        );
+
+        let invalid = transaction
+            .update(DocumentPoint::new(LengthEmu::new(-1), LengthEmu::new(50)))
+            .expect("invalid geometry is represented fail-closed");
+        assert_eq!(
+            invalid,
+            ResizeUpdate::Invalid {
+                reason: ResizeInvalidReason::NonPositiveSize,
+                last_valid: rect(0, 0, 125, 100),
+            }
+        );
+        assert_eq!(
+            transaction.commit(),
+            Err(ResizeTransactionError::LatestCandidateInvalid)
+        );
+    }
+
+    #[test]
+    fn resize_requires_actual_size_change_and_cancel_emits_nothing() {
+        let before = rect(10, 20, 100, 200);
+        let mut no_change = ResizeTransaction::begin(
+            node_id(23),
+            before,
+            ResizeHandle::Right,
+            DocumentPoint::new(LengthEmu::new(110), LengthEmu::new(50)),
+        )
+        .expect("resize transaction");
+        assert_eq!(
+            no_change.commit(),
+            Err(ResizeTransactionError::NoSizeChange)
+        );
+
+        let mut cancelled = ResizeTransaction::begin(
+            node_id(24),
+            before,
+            ResizeHandle::Bottom,
+            DocumentPoint::new(LengthEmu::new(50), LengthEmu::new(220)),
+        )
+        .expect("resize transaction");
+        cancelled
+            .update(DocumentPoint::new(LengthEmu::new(50), LengthEmu::new(250)))
+            .expect("preview");
+        cancelled.cancel().expect("cancel");
+        assert_eq!(cancelled.preview_bounds(), None);
+        assert_eq!(
+            cancelled.commit(),
+            Err(ResizeTransactionError::NotActive)
+        );
+    }
 }
+
