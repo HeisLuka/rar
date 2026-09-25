@@ -150,14 +150,16 @@ pub fn add_authored_rectangles_to_odg(
     for placement in ordered {
         let page_name = crate::semantic::page_name(placement.page_id);
         let page_marker = format!("<draw:page draw:name=\"{page_name}\"");
-        let page_start = xml.find(&page_marker).ok_or(OdgAuthoredShapeError::MissingPage {
-            page_id: placement.page_id,
-        })?;
-        let relative_close = xml[page_start..]
-            .find("      </draw:page>")
+        let page_start = xml
+            .find(&page_marker)
             .ok_or(OdgAuthoredShapeError::MissingPage {
                 page_id: placement.page_id,
             })?;
+        let relative_close = xml[page_start..].find("      </draw:page>").ok_or(
+            OdgAuthoredShapeError::MissingPage {
+                page_id: placement.page_id,
+            },
+        )?;
         let insert_at = page_start + relative_close;
         xml.insert_str(insert_at, &rectangle_xml(placement)?);
     }
