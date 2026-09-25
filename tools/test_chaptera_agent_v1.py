@@ -8,6 +8,8 @@ import sys
 
 
 EXPECTED_SOURCE_SHA256 = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+AGENT_CATALOG = ROOT / "packages" / "protocol" / "editor-agent-control" / "v1.catalog.json"
 
 
 class AgentProtocolError(RuntimeError):
@@ -127,6 +129,25 @@ def run(exe: pathlib.Path, fixture: pathlib.Path, work_dir: pathlib.Path, receip
             raise AgentProtocolError("agent protocol_version mismatch")
         if protocol["result"]["native_pub_write"] is not False:
             raise AgentProtocolError("agent unexpectedly exposes native PUB write")
+        if protocol["result"].get("catalog_schema") != "chaptera.agent-control.catalog.v1":
+            raise AgentProtocolError("agent catalog schema mismatch")
+        if protocol["result"].get("executable") != "chaptera-editor.exe":
+            raise AgentProtocolError("agent executable identity mismatch")
+        expected_catalog_sha256 = sha256_file(AGENT_CATALOG)
+        if protocol["result"].get("catalog_sha256") != expected_catalog_sha256:
+            raise AgentProtocolError("embedded Agent catalog hash mismatch")
+        if protocol["result"]["global_laws"].get("source_pub_immutable") is not True:
+            raise AgentProtocolError("agent catalog lost immutable-source law")
+        if protocol["result"]["global_laws"].get("native_pub_write") is not False:
+            raise AgentProtocolError("agent catalog widened native PUB write")
+        commands = set(protocol["result"]["commands"])
+        contracts = set(protocol["result"]["command_contracts"])
+        if commands != contracts or len(commands) != 21:
+            raise AgentProtocolError("runtime command list differs from embedded catalog")
+        deep_contract = protocol["result"]["command_contracts"]["diagnostics.deep"]
+        optional = set(deep_contract["request"]["optional"])
+        if not {"receipt_path", "joined_receipt_path", "allow_local_file"}.issubset(optional):
+            raise AgentProtocolError("diagnostics.deep discovery contract is incomplete")
 
         client.call("trace.subscribe", enabled=True)
 
@@ -303,6 +324,8 @@ def run(exe: pathlib.Path, fixture: pathlib.Path, work_dir: pathlib.Path, receip
         "protocol_version": "chaptera.agent-control-real.v1",
         "source_hash": source_before,
         "agent_protocol_version": "chaptera.agent-control.v1",
+        "agent_catalog_sha256": expected_catalog_sha256,
+        "agent_command_count": len(commands),
         "story_id": story_id,
         "instance_id": instance_id,
         "post_story_state_id": story_state_id,
