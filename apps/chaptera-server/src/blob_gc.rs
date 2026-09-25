@@ -584,11 +584,12 @@ pub enum GcDeleteOutcome {
     UnknownOutcome,
 }
 
+#[async_trait::async_trait]
 pub trait BlobGcAuthority: Send + Sync {
     /// Must re-read current durable lifecycle/reachability and atomically install
     /// a fence preventing a new binding/reference from making this object live
     /// before commit_deleted clears durable metadata.
-    fn recheck_and_fence(
+    async fn recheck_and_fence(
         &self,
         candidate: &GcCandidate,
         now_ms: i64,
@@ -596,7 +597,7 @@ pub trait BlobGcAuthority: Send + Sync {
 
     /// Commits durable deletion under the exact fence returned above. Must be
     /// idempotent after provider success/NotFound and fail closed on fence drift.
-    fn commit_deleted(
+    async fn commit_deleted(
         &self,
         candidate: &GcCandidate,
         storage_generation: &str,
@@ -605,14 +606,15 @@ pub trait BlobGcAuthority: Send + Sync {
     ) -> Result<(), BlobGcError>;
 }
 
+#[async_trait::async_trait]
 pub trait BlobGcObjectStore: Send + Sync {
-    fn delete_exact(
+    async fn delete_exact(
         &self,
         object_locator: &str,
         storage_generation: &str,
     ) -> Result<GcDeleteOutcome, BlobGcError>;
 
-    fn exists_exact(
+    async fn exists_exact(
         &self,
         object_locator: &str,
         storage_generation: &str,
@@ -657,7 +659,11 @@ impl BlobGcProcessor {
             return Ok(None);
         };
 
-        match self.authority.recheck_and_fence(&lease.candidate, now_ms)? {
+        match self
+            .authority
+            .recheck_and_fence(&lease.candidate, now_ms)
+            .await?
+        {
             GcPreDelete::Cancel { code } => self
                 .ledger
                 .terminal(&lease, now_ms, GcCandidateState::Cancelled, Some(code))
@@ -693,12 +699,16 @@ impl BlobGcProcessor {
 
                 let deleted = match self
                     .objects
-                    .delete_exact(&object_locator, &storage_generation)?
+                    .delete_exact(&object_locator, &storage_generation)
+                    .await?
                 {
                     GcDeleteOutcome::Deleted | GcDeleteOutcome::NotFound => true,
-                    GcDeleteOutcome::UnknownOutcome => !self
-                        .objects
-                        .exists_exact(&object_locator, &storage_generation)?,
+                    GcDeleteOutcome::UnknownOutcome => {
+                        !self
+                            .objects
+                            .exists_exact(&object_locator, &storage_generation)
+                            .await?
+                    }
                 };
 
                 if !deleted {
@@ -710,12 +720,9 @@ impl BlobGcProcessor {
                         .map(Some);
                 }
 
-                self.authority.commit_deleted(
-                    &lease.candidate,
-                    &storage_generation,
-                    &delete_fence,
-                    now_ms,
-                )?;
+                self.authority
+                    .commit_deleted(&lease.candidate, &storage_generation, &delete_fence, now_ms)
+                    .await?;
                 self.ledger
                     .terminal(&lease, now_ms, GcCandidateState::Completed, None)
                     .await
@@ -897,8 +904,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl BlobGcAuthority for MemoryAuthority {
-        fn recheck_and_fence(
+        async fn recheck_and_fence(
             &self,
             candidate: &GcCandidate,
             _now_ms: i64,
@@ -928,7 +936,7 @@ mod tests {
             })
         }
 
-        fn commit_deleted(
+        async fn commit_deleted(
             &self,
             candidate: &GcCandidate,
             _storage_generation: &str,
@@ -964,8 +972,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl BlobGcObjectStore for MemoryObjects {
-        fn delete_exact(
+        async fn delete_exact(
             &self,
             object_locator: &str,
             storage_generation: &str,
@@ -985,7 +994,7 @@ mod tests {
             })
         }
 
-        fn exists_exact(
+        async fn exists_exact(
             &self,
             object_locator: &str,
             storage_generation: &str,
@@ -1022,6 +1031,7 @@ mod tests {
         assert!(
             objects
                 .exists_exact("canonical/tenant-a/blob-1", "g1")
+                .await
                 .unwrap()
         );
 
@@ -1055,6 +1065,7 @@ mod tests {
         assert!(
             objects
                 .exists_exact("canonical/tenant-a/blob-2", "g2")
+                .await
                 .unwrap()
         );
 
