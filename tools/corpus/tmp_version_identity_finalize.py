@@ -476,8 +476,44 @@ def build_final(args: argparse.Namespace) -> int:
     unknown = (summary.get("contents_family_logical_counts") or {}).get(
         "unknown_due_to_raw_unavailable", 0
     )
-    if unknown != 4:
-        raise ValueError(f"expected 4 raw-unavailable family gaps, got {unknown}")
+    if unknown != 3:
+        raise ValueError(f"expected 3 raw-unavailable family gaps, got {unknown}")
+
+    phase1_rows = load_fingerprint_rows(phase1_out)
+    repaired_cc = phase1_rows.get(
+        "ffe49f7b0a8ebced082bb30319ac6b12c154565727c17081ecc4c7ff830e1fdb"
+    )
+    if not repaired_cc:
+        raise ValueError("missing repaired Common Crawl phase1 row ffe49f7b...")
+    expected_cc = {
+        "status": "ok",
+        "contents_family": "0x2c",
+        "contents_serialization_revision": 26,
+        "rehydrated_from": "bounded_repair:common_crawl",
+        "family_projection_status": "current_raw_verified",
+    }
+    for key, value in expected_cc.items():
+        if repaired_cc.get(key) != value:
+            raise ValueError(
+                f"Common Crawl repair projection drift {key}: "
+                f"{repaired_cc.get(key)!r} != {value!r}"
+            )
+
+    raw_unavailable = {
+        sha
+        for sha, row in phase1_rows.items()
+        if row.get("contents_family") == "unknown_due_to_raw_unavailable"
+    }
+    expected_raw_unavailable = {
+        "7bbd0a50b896a55f8d1c58fb48cb72982cb898274f49c17fb45021bc0d2c20f0",
+        "eed047711b48e28ceebed1ecb5d4bbba55ab32ec8e753724f9dfca5ae825c22e",
+        "b497a8cc97cb7834f9cd4625492ddba0fa48dec9a86c09883ab0e3eecaf73a95",
+    }
+    if raw_unavailable != expected_raw_unavailable:
+        raise ValueError(
+            "raw-unavailable phase1 SHA set drift: "
+            f"{sorted(raw_unavailable)} != {sorted(expected_raw_unavailable)}"
+        )
 
     print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
     return 0
