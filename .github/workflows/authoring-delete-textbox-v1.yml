@@ -1,0 +1,32 @@
+name: Authoring Delete TextBox V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/delete_textbox_v1.py"
+      - "services/editor-api/test_delete_textbox_v1.py"
+      - "services/editor-api/create_textbox_v1.py"
+      - "services/editor-api/revision_store.py"
+      - ".github/workflows/authoring-delete-textbox-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test atomic author-created TextBox deletion
+        working-directory: services/editor-api
+        run: python -m unittest -v test_delete_textbox_v1
+      - name: Regression CreateTextBox
+        working-directory: services/editor-api
+        run: python -m unittest -v test_create_textbox_v1
+      - name: Regression StoryEditTransaction
+        working-directory: services/editor-api
+        run: python -m unittest -v test_story_edit_transaction_v1
