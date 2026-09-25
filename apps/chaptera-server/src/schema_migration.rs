@@ -27,6 +27,7 @@ const DERIVED_ARTIFACTS_SQL: &str = include_str!("../migrations/0007_derived_art
 const QUOTA_RESERVATIONS_SQL: &str = include_str!("../migrations/0008_quota_reservations.sql");
 const REVISION_IDENTITY_BINDINGS_SQL: &str =
     include_str!("../migrations/0009_revision_identity_bindings.sql");
+const EXPORT_PUBLICATIONS_SQL: &str = include_str!("../migrations/0010_export_publications.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -81,9 +82,14 @@ const MIGRATIONS: &[MigrationSpec] = &[
         name: "revision_identity_bindings",
         sql: REVISION_IDENTITY_BINDINGS_SQL,
     },
+    MigrationSpec {
+        version: 10,
+        name: "export_publications",
+        sql: EXPORT_PUBLICATIONS_SQL,
+    },
 ];
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 9;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -499,7 +505,8 @@ async fn known_schema_tables_present(
             'sessions',
             'derived_artifacts',
             'quota_reservations',
-            'revision_identity_bindings'
+            'revision_identity_bindings',
+            'export_publications'
           )
         "#,
     )
@@ -586,7 +593,7 @@ mod tests {
         assert_eq!(report.state, "pending");
         assert_eq!(report.current_version, 0);
         assert_eq!(report.target_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(report.pending_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         assert!(!path.exists());
     }
 
@@ -597,7 +604,7 @@ mod tests {
 
         let first = runtime.migrate_up().await.unwrap();
         assert_eq!(first.state, "current");
-        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(first.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
         let second = runtime.migrate_up().await.unwrap();
         assert_eq!(second, first);
@@ -692,7 +699,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 final_report.applied_versions,
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
             );
 
             cleanup(&path);
