@@ -161,6 +161,10 @@ def run_worker(
             raise RuntimeError("source identity changed while fenced worker tree was running")
 
         values, terminal = _parse_terminal(stdout)
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        if stderr_text:
+            print(stderr_text[-4096:], file=sys.stderr)
+
         if timed_out:
             return {
                 "schema_version": "chaptera.rescue-worker-launch.v1",
@@ -171,7 +175,6 @@ def run_worker(
                 "source_sha256": source_sha256,
                 "source_unchanged": True,
                 "producer_receipt": None,
-                "stderr_tail": stderr.decode("utf-8", errors="replace")[-2048:],
             }
 
         if terminal is None:
@@ -185,7 +188,6 @@ def run_worker(
                 "source_unchanged": True,
                 "producer_receipt": None,
                 "protocol_record_count": len(values),
-                "stderr_tail": stderr.decode("utf-8", errors="replace")[-2048:],
             }
 
         if terminal.get("source_sha256") != source_sha256:
@@ -212,7 +214,6 @@ def run_worker(
                 "process_memory_limit_bytes": memory_bytes,
                 "parent_wall_time_limit_ms": wall_time_ms,
             },
-            "stderr_tail": stderr.decode("utf-8", errors="replace")[-2048:],
         }
     finally:
         if process is not None and process.poll() is None:
