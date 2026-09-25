@@ -773,6 +773,66 @@ class RevisionKernel:
             pre_execute_validator=pre_execute_validator,
         )
 
+    def commit_table_cell_fill(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_table_cell_fill_request_shape,
+            canonical_validator=self._validate_canonical_table_cell_fill,
+            pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_clear_table_cell_fill(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_clear_table_cell_fill_request_shape,
+            canonical_validator=self._validate_canonical_clear_table_cell_fill,
+            pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_table_cell_border_side(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_table_cell_border_side_request_shape,
+            canonical_validator=self._validate_canonical_table_cell_border_side,
+            pre_execute_validator=pre_execute_validator,
+        )
+
+    def commit_clear_table_cell_border_side(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+        *,
+        pre_execute_validator: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
+        return self._commit_command(
+            request,
+            executor,
+            request_validator=self._validate_clear_table_cell_border_side_request_shape,
+            canonical_validator=self._validate_canonical_clear_table_cell_border_side,
+            pre_execute_validator=pre_execute_validator,
+        )
+
     def commit_delete_node(
         self,
         request: dict,
@@ -2131,6 +2191,216 @@ class RevisionKernel:
             raise ValueError("canonical SetStroke after-state differs from accepted intent")
         if operation["before"] == operation["after"]:
             raise ValueError("canonical SetStroke must change stroke state")
+
+    @staticmethod
+    def _validate_table_cell_id(value: object) -> None:
+        if not isinstance(value, str) or len(value) != 36:
+            raise ValueError("table_cell_id must be canonical lowercase UUID text")
+        for index, char in enumerate(value):
+            if index in (8, 13, 18, 23):
+                if char != "-":
+                    raise ValueError("table_cell_id must be canonical lowercase UUID text")
+            elif char not in "0123456789abcdef":
+                raise ValueError("table_cell_id must be canonical lowercase UUID text")
+
+    @staticmethod
+    def _validate_optional_table_cell_fill_state(fill: object, label: str) -> None:
+        if fill is not None:
+            RevisionKernel._validate_shape_fill_state(fill, label)
+
+    @staticmethod
+    def _validate_optional_table_cell_border_state(border: object, label: str) -> None:
+        if border is not None:
+            RevisionKernel._validate_shape_stroke_state(border, label)
+
+    @staticmethod
+    def _validate_table_cell_border_side(side: object) -> None:
+        if side not in {"top", "right", "bottom", "left"}:
+            raise ValueError("table cell border side must be top/right/bottom/left")
+
+    @staticmethod
+    def _validate_table_cell_fill_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.table-cell-fill-intent.v1":
+            raise ValueError("V1 table cell fill protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "table_cell_id", "expected_before", "after"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "set_table_cell_fill"
+            or set(command) != allowed
+        ):
+            raise ValueError("SetTableCellFill contains non-intent/authoritative fields")
+        RevisionKernel._validate_table_cell_id(command.get("table_cell_id"))
+        RevisionKernel._validate_optional_table_cell_fill_state(
+            command.get("expected_before"),
+            "expected_before table cell fill",
+        )
+        RevisionKernel._validate_shape_fill_state(
+            command.get("after"),
+            "after table cell fill",
+        )
+        if command["expected_before"] == command["after"]:
+            raise ValueError("SetTableCellFill no-op is not a durable edit")
+
+    @staticmethod
+    def _validate_clear_table_cell_fill_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.table-cell-fill-clear-intent.v1":
+            raise ValueError("V1 clear table cell fill protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "table_cell_id", "expected_before"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "clear_table_cell_fill"
+            or set(command) != allowed
+        ):
+            raise ValueError("ClearTableCellFill contains non-intent/authoritative fields")
+        RevisionKernel._validate_table_cell_id(command.get("table_cell_id"))
+        RevisionKernel._validate_shape_fill_state(
+            command.get("expected_before"),
+            "expected_before table cell fill",
+        )
+
+    @staticmethod
+    def _validate_table_cell_border_side_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.table-cell-border-side-intent.v1":
+            raise ValueError("V1 table cell border side protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "table_cell_id", "side", "expected_before", "after"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "set_table_cell_border_side"
+            or set(command) != allowed
+        ):
+            raise ValueError("SetTableCellBorderSide contains non-intent/authoritative fields")
+        RevisionKernel._validate_table_cell_id(command.get("table_cell_id"))
+        RevisionKernel._validate_table_cell_border_side(command.get("side"))
+        RevisionKernel._validate_optional_table_cell_border_state(
+            command.get("expected_before"),
+            "expected_before table cell border",
+        )
+        RevisionKernel._validate_shape_stroke_state(
+            command.get("after"),
+            "after table cell border",
+        )
+        if command["expected_before"] == command["after"]:
+            raise ValueError("SetTableCellBorderSide no-op is not a durable edit")
+
+    @staticmethod
+    def _validate_clear_table_cell_border_side_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.table-cell-border-side-clear-intent.v1":
+            raise ValueError("V1 clear table cell border side protocol_version is required")
+        command = request.get("command")
+        allowed = {"kind", "table_cell_id", "side", "expected_before"}
+        if (
+            not isinstance(command, dict)
+            or command.get("kind") != "clear_table_cell_border_side"
+            or set(command) != allowed
+        ):
+            raise ValueError("ClearTableCellBorderSide contains non-intent/authoritative fields")
+        RevisionKernel._validate_table_cell_id(command.get("table_cell_id"))
+        RevisionKernel._validate_table_cell_border_side(command.get("side"))
+        RevisionKernel._validate_shape_stroke_state(
+            command.get("expected_before"),
+            "expected_before table cell border",
+        )
+
+    @staticmethod
+    def _validate_canonical_table_cell_fill(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "table_cell_id", "before", "after"}
+            or operation.get("kind") != "set_table_cell_fill"
+        ):
+            raise ValueError("authoritative executor returned malformed SetTableCellFill operation")
+        if operation.get("table_cell_id") != command.get("table_cell_id"):
+            raise ValueError("canonical SetTableCellFill targets a different cell")
+        RevisionKernel._validate_optional_table_cell_fill_state(
+            operation.get("before"),
+            "canonical before table cell fill",
+        )
+        RevisionKernel._validate_shape_fill_state(
+            operation.get("after"),
+            "canonical after table cell fill",
+        )
+        if operation["before"] != command.get("expected_before"):
+            raise ValueError("canonical SetTableCellFill before differs from expected precondition")
+        if operation["after"] != command.get("after"):
+            raise ValueError("canonical SetTableCellFill after differs from accepted intent")
+        if operation["before"] == operation["after"]:
+            raise ValueError("canonical SetTableCellFill must change fill state")
+
+    @staticmethod
+    def _validate_canonical_clear_table_cell_fill(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "table_cell_id", "before"}
+            or operation.get("kind") != "clear_table_cell_fill"
+        ):
+            raise ValueError("authoritative executor returned malformed ClearTableCellFill operation")
+        if operation.get("table_cell_id") != command.get("table_cell_id"):
+            raise ValueError("canonical ClearTableCellFill targets a different cell")
+        RevisionKernel._validate_shape_fill_state(
+            operation.get("before"),
+            "canonical before table cell fill",
+        )
+        if operation["before"] != command.get("expected_before"):
+            raise ValueError("canonical ClearTableCellFill before differs from expected precondition")
+
+    @staticmethod
+    def _validate_canonical_table_cell_border_side(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "table_cell_id", "side", "before", "after"}
+            or operation.get("kind") != "set_table_cell_border_side"
+        ):
+            raise ValueError(
+                "authoritative executor returned malformed SetTableCellBorderSide operation"
+            )
+        if operation.get("table_cell_id") != command.get("table_cell_id"):
+            raise ValueError("canonical SetTableCellBorderSide targets a different cell")
+        if operation.get("side") != command.get("side"):
+            raise ValueError("canonical SetTableCellBorderSide targets a different side")
+        RevisionKernel._validate_optional_table_cell_border_state(
+            operation.get("before"),
+            "canonical before table cell border",
+        )
+        RevisionKernel._validate_shape_stroke_state(
+            operation.get("after"),
+            "canonical after table cell border",
+        )
+        if operation["before"] != command.get("expected_before"):
+            raise ValueError(
+                "canonical SetTableCellBorderSide before differs from expected precondition"
+            )
+        if operation["after"] != command.get("after"):
+            raise ValueError(
+                "canonical SetTableCellBorderSide after differs from accepted intent"
+            )
+        if operation["before"] == operation["after"]:
+            raise ValueError("canonical SetTableCellBorderSide must change border state")
+
+    @staticmethod
+    def _validate_canonical_clear_table_cell_border_side(command: dict, operation: dict) -> None:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {"kind", "table_cell_id", "side", "before"}
+            or operation.get("kind") != "clear_table_cell_border_side"
+        ):
+            raise ValueError(
+                "authoritative executor returned malformed ClearTableCellBorderSide operation"
+            )
+        if operation.get("table_cell_id") != command.get("table_cell_id"):
+            raise ValueError("canonical ClearTableCellBorderSide targets a different cell")
+        if operation.get("side") != command.get("side"):
+            raise ValueError("canonical ClearTableCellBorderSide targets a different side")
+        RevisionKernel._validate_shape_stroke_state(
+            operation.get("before"),
+            "canonical before table cell border",
+        )
+        if operation["before"] != command.get("expected_before"):
+            raise ValueError(
+                "canonical ClearTableCellBorderSide before differs from expected precondition"
+            )
 
     @staticmethod
     def _validate_crop_state(crop: dict, label: str) -> None:
