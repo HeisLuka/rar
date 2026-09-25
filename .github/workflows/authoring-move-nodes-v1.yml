@@ -3,7 +3,13 @@ name: Authoring MoveNodes V1
 on:
   pull_request:
     paths:
+      - "services/editor-api/revision_store.py"
       - "services/editor-api/test_move_nodes.py"
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/src/writer_assessment.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/move_nodes_v1.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/resize_node_v1.rs"
+      - "apps/chaptera-desktop/src/agent.rs"
       - ".github/workflows/authoring-move-nodes-v1.yml"
   workflow_dispatch:
 
@@ -18,9 +24,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
       - name: Run atomic MoveNodes revision tests
         working-directory: services/editor-api
         run: python -m unittest -v test_move_nodes
       - name: Run existing revision kernel regressions
         working-directory: services/editor-api
         run: python -m unittest -v test_revision_store
+      - name: Check pub-editor formatting
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -- --check
+      - name: Lint pub-editor batch runtime
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --all-targets -- -D warnings
+      - name: Run atomic MoveNodes Rust runtime tests
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test move_nodes_v1
+      - name: Run ResizeNode compatibility regression
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test resize_node_v1
