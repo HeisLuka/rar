@@ -1,0 +1,130 @@
+name: TEMP Office 2000 archived HTML href census
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/temp-office2000-href-census.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Extract outbound hrefs from exact archived Microsoft Press pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json, re, urllib.parse, urllib.request
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          UA="Mozilla/5.0 corpus-locator/1.0"
+          seeds=[
+            ("19991012021553","http://mspress.microsoft.com/office2000/books/learning.htm"),
+            ("19991128173516","http://mspress.microsoft.com/office2000/learning.htm"),
+            ("20000817084617","http://mspress.microsoft.com/office2000/products/publisher2000.htm"),
+            ("19990202150334","http://mspress.microsoft.com/office2000/books/default.htm"),
+            ("20030901110804","http://www.microsoft.com/mspress/office2000/books"),
+          ]
+
+          class P(HTMLParser):
+            def __init__(self):
+              super().__init__()
+              self.hrefs=[]
+            def handle_starttag(self, tag, attrs):
+              if tag.lower()!="a":
+                return
+              d=dict(attrs)
+              if d.get("href"):
+                self.hrefs.append(d["href"])
+
+          carrier=re.compile(r"\.(?:pub|zip|cab|exe|iso|img|bin|rar|7z|lzh|arj)(?:[?#].*)?$",re.I)
+          keyword=re.compile(r"(publisher|office.?2000|step.?by.?step|practice|companion|download|sample|lesson|exercise|training|files?)",re.I)
+
+          pages=[]
+          links=[]
+          for ts,orig in seeds:
+            replay=f"https://web.archive.org/web/{ts}id_/{orig}"
+            row={"timestamp":ts,"original":orig,"replay":replay}
+            try:
+              req=urllib.request.Request(replay,headers={"User-Agent":UA,"Accept":"text/html,*/*;q=0.1"})
+              with urllib.request.urlopen(req,timeout=45) as resp:
+                raw=resp.read(2*1024*1024+1)
+                row["status"]=getattr(resp,"status",None)
+                row["final_url"]=resp.geturl()
+                row["content_type"]=resp.headers.get("Content-Type")
+              if len(raw)>2*1024*1024:
+                raise ValueError("HTML replay exceeded 2 MiB")
+              text=raw.decode("utf-8","replace")
+              parser=P()
+              parser.feed(text)
+              row["href_count"]=len(parser.hrefs)
+              for h in parser.hrefs:
+                absu=urllib.parse.urljoin(orig,h)
+                links.append({
+                  "seed_timestamp":ts,
+                  "seed_original":orig,
+                  "href":h,
+                  "absolute_url":absu,
+                  "carrier_like":bool(carrier.search(absu)),
+                  "keyword_like":bool(keyword.search(absu)),
+                })
+            except Exception as exc:
+              row["error"]=f"{type(exc).__name__}: {exc}"
+            pages.append(row)
+
+          dedup={}
+          for x in links:
+            dedup.setdefault(x["absolute_url"].casefold(),x)
+          unique=sorted(dedup.values(),key=lambda x:x["absolute_url"].casefold())
+          candidates=[x for x in unique if x["carrier_like"] or x["keyword_like"]]
+
+          summary={
+            "schema":"chaptera.corpus-training-office2000-href-census.v1",
+            "source_safe":True,
+            "raw_payload_retained":False,
+            "seed_pages":len(seeds),
+            "successful_pages":sum(1 for x in pages if x.get("status")==200),
+            "unique_outbound_links":len(unique),
+            "candidate_links":len(candidates),
+            "carrier_like_links":sum(1 for x in candidates if x["carrier_like"]),
+            "pages":pages,
+            "guardrail":"Archived HTML only; no outbound carrier bytes fetched.",
+          }
+
+          Path("out/summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding="utf-8")
+          Path("out/candidates.json").write_text(json.dumps(candidates,indent=2,ensure_ascii=False),encoding="utf-8")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          print("--- candidate hrefs ---")
+          for x in candidates:
+            print(x["absolute_url"], "carrier="+str(x["carrier_like"]), "keyword="+str(x["keyword_like"]))
+          PY
+
+      - name: Guard artifact boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.pub' -o -iname '*.zip' -o -iname '*.cab' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.img' -o -iname '*.bin' \) | grep -q .; then
+            echo "unexpected byte-bearing carrier leaked into href artifact" >&2
+            exit 1
+          fi
+          sha256sum out/* | sort > out/sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-training-office2000-href-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
