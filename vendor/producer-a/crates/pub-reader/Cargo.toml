@@ -1,0 +1,21 @@
+[package]
+name="pub-reader"
+version.workspace=true
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
+
+[dependencies]
+anyhow.workspace=true
+pub-core={path="../pub-core"}
+pub-cfb={path="../pub-cfb"}
+pub-contents={path="../pub-contents"}
+pub-quill={path="../pub-quill"}
+pub-escher={path="../pub-escher"}
+pub-model={path="../pub-model"}
+pub-format-registry={path="../pub-format-registry"}
+serde.workspace=true
+serde_json.workspace=true
+sha2.workspace=true
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+zip = { workspace = true, features = ["flate2", "deflate-flate2"] }

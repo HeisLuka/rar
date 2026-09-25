@@ -1,0 +1,12 @@
+[package]
+name="pub-contents"
+version.workspace=true
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
+[dependencies]
+pub-core={path="../pub-core"}
+serde.workspace=true
+
+[dev-dependencies]
+pub-cfb={path="../pub-cfb"}

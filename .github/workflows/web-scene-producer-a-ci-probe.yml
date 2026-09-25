@@ -1,0 +1,107 @@
+name: WEB-SCENE-ADAPTER-01 Producer A CI probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/web-scene-producer-a-ci-probe.yml"
+      - "vendor/producer-a/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  producer-a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Rar
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install receipt validator
+        run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Materialize pinned SampleNewsletter.pub from Apache POI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .web-v0
+          curl -fL --retry 3 --retry-delay 2             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"             -o .web-v0/SampleNewsletter.pub
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          path = Path(".web-v0/SampleNewsletter.pub")
+          raw = path.read_bytes()
+          expected_len = 291840
+          expected_sha = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          actual_sha = hashlib.sha256(raw).hexdigest()
+          assert len(raw) == expected_len, (len(raw), expected_len)
+          assert actual_sha == expected_sha, (actual_sha, expected_sha)
+          print({"byte_len": len(raw), "sha256": actual_sha})
+          PY
+
+      - name: Build Rar-owned Producer A slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build             --manifest-path vendor/producer-a/Cargo.toml             -p chaptera-producer-a
+
+      - name: Generate real ViewerGeometryDocument receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/build_viewer_geometry_receipt.py             --source-hash 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf             --source-byte-len 291840             --output .web-v0/viewer-geometry.real.json             -- python tools/run_local_viewer_geometry_cli.py               --fixture .web-v0/SampleNewsletter.pub               -- vendor/producer-a/target/debug/chaptera-producer-a "{fixture}"
+
+      - name: Validate exact Viewer receipt
+        run: python tools/validate_viewer_geometry_receipt.py .web-v0/viewer-geometry.real.json
+
+      - name: Run Rar Web acceptance preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .web-v0/viewer-geometry.real.json apps/web/acceptance/receipts/viewer-geometry.real.json
+          python tools/validate_web_acceptance_preflight.py             --fixture .web-v0/SampleNewsletter.pub             --mode preflight             --output .web-v0/web-acceptance-preflight.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path(".web-v0/web-acceptance-preflight.json").read_text())
+          assert report["validated"]["fixture"] is True, report
+          assert report["validated"]["revision_producer"] is True, report
+          assert report["validated"]["viewer_geometry"] is True, report
+          print(json.dumps({
+              "validated": report["validated"],
+              "blockers": report["blockers"],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Pin validated real Viewer receipt on the PR branch
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/acceptance/receipts/viewer-geometry.real.json
+          if git diff --cached --quiet; then
+            echo "validated receipt already pinned"
+          else
+            git commit -m "test: pin real SampleNewsletter Viewer receipt"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+
+      - name: Upload Producer A evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-scene-producer-a-ci-probe
+          if-no-files-found: error
+          path: |
+            .web-v0/viewer-geometry.real.json
+            .web-v0/web-acceptance-preflight.json
+          retention-days: 14
