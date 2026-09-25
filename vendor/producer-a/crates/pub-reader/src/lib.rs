@@ -2742,6 +2742,26 @@ mod tests {
     }
 
     #[test]
+    fn copy_ledger_counters_stay_zero_for_identity_only_work() {
+        reset_pub_reader_copy_ledger_v1();
+        let hash = source_hash();
+        let _ = derive_pub_document_id(&hash, 1).expect("identity derivation");
+        assert_eq!(
+            pub_reader_copy_ledger_snapshot_v1(),
+            PubReaderCopyLedgerSnapshotV1 {
+                file_buffer_bytes: 0,
+                file_buffer_instances: 0,
+                contents_stream_bytes: 0,
+                contents_stream_instances: 0,
+                quill_stream_bytes: 0,
+                quill_stream_instances: 0,
+                escher_stream_bytes: 0,
+                escher_stream_instances: 0,
+            }
+        );
+    }
+
+    #[test]
     fn bounded_image_crop_preserves_unique_raw_scalars_and_marks_ambiguity() {
         let shape = crop_test_shape(vec![
             crop_test_property(OFFICE_ART_PROPERTY_CROP_FROM_TOP, 28_954),
