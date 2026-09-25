@@ -2,7 +2,7 @@
 import copy
 from render_scene_v1 import hash_id
 
-PRIMITIVE_KINDS = ("rects","images","glyph_runs")
+PRIMITIVE_KINDS = ("rects","images","paths","glyph_runs")
 
 class ScenePatchApplyPoisoned(AssertionError):
     """The renderer-owned compiled state must be discarded after this failure."""
@@ -95,6 +95,7 @@ def diff_render_scenes(base, target, metrics=None):
         "upsert_nodes":upserts,
         "page_deltas": [] if base["pages"]==target["pages"] else copy.deepcopy(target["pages"]),
         "resource_deltas": [] if base["tables"]["resources"]==target["tables"]["resources"] else copy.deepcopy(target["tables"]["resources"]),
+        "path_deltas": None if base["tables"].get("paths",[])==target["tables"].get("paths",[]) else copy.deepcopy(target["tables"].get("paths",[])),
         "effect_deltas": {
             "effects": _diff_table_by_id(
                 base["tables"].get("effects", []),
@@ -181,6 +182,8 @@ def _apply_patch_mutating(out, patch, metrics=None):
         out["pages"]=copy.deepcopy(patch["page_deltas"])
     if patch["resource_deltas"]:
         out["tables"]["resources"]=copy.deepcopy(patch["resource_deltas"])
+    if patch.get("path_deltas") is not None:
+        out["tables"]["paths"]=copy.deepcopy(patch["path_deltas"])
     effect_deltas = patch.get("effect_deltas")
     if effect_deltas:
         out["tables"]["effects"] = _apply_table_delta(
