@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chaptera.dev/schema/product/editor-desktop-vertical/v1/acceptance-receipt.json",
+  "title": "Chaptera Desktop Vertical acceptance receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "receipt_kind",
+    "producer",
+    "source",
+    "story_edit",
+    "object_move",
+    "history",
+    "project",
+    "capability_loss",
+    "export",
+    "environment",
+    "invariants"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": "chaptera.editor-desktop-vertical-acceptance.v1"
+    },
+    "receipt_kind": {
+      "const": "real_local"
+    },
+    "producer": {
+      "$ref": "#/$defs/producer"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "byte_len", "immutable"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "byte_len": {"type": "integer", "minimum": 1},
+        "immutable": {"const": true}
+      }
+    },
+    "story_edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "story_id",
+        "operation_kind",
+        "capability_admitted",
+        "before_state_id",
+        "after_state_id"
+      ],
+      "properties": {
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "operation_kind": {"const": "replace_story_range"},
+        "capability_admitted": {"const": true},
+        "before_state_id": {"$ref": "#/$defs/hashId"},
+        "after_state_id": {"$ref": "#/$defs/hashId"}
+      }
+    },
+    "object_move": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "projection_kind",
+        "origin_node_id",
+        "capability_admitted",
+        "geometry_sync_policy",
+        "before",
+        "after",
+        "durable_move_count",
+        "transient_geometry_operation_count"
+      ],
+      "properties": {
+        "instance_id": {"$ref": "#/$defs/hashId"},
+        "projection_kind": {"const": "direct_page_local"},
+        "origin_node_id": {"$ref": "#/$defs/uuid"},
+        "capability_admitted": {"const": true},
+        "geometry_sync_policy": {"const": "apply_authored_origin_geometry"},
+        "before": {"$ref": "#/$defs/rect"},
+        "after": {"$ref": "#/$defs/rect"},
+        "durable_move_count": {"const": 1},
+        "transient_geometry_operation_count": {"const": 0}
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "after_story_state_id",
+        "after_move_state_id",
+        "undo_state_id",
+        "redo_state_id",
+        "reopened_state_id",
+        "story_state_after_move",
+        "story_state_after_undo",
+        "story_state_after_redo",
+        "story_state_reopened"
+      ],
+      "properties": {
+        "after_story_state_id": {"$ref": "#/$defs/hashId"},
+        "after_move_state_id": {"$ref": "#/$defs/hashId"},
+        "undo_state_id": {"$ref": "#/$defs/hashId"},
+        "redo_state_id": {"$ref": "#/$defs/hashId"},
+        "reopened_state_id": {"$ref": "#/$defs/hashId"},
+        "story_state_after_move": {"$ref": "#/$defs/hashId"},
+        "story_state_after_undo": {"$ref": "#/$defs/hashId"},
+        "story_state_after_redo": {"$ref": "#/$defs/hashId"},
+        "story_state_reopened": {"$ref": "#/$defs/hashId"}
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "sha256",
+        "byte_len",
+        "operation_count",
+        "story_operation_count",
+        "move_operation_count"
+      ],
+      "properties": {
+        "schema_version": {
+          "enum": ["pub-editor-v0.2", "pub-editor-v0.3", "pub-editor-v0.4"]
+        },
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "byte_len": {"type": "integer", "minimum": 1},
+        "operation_count": {"type": "integer", "minimum": 2},
+        "story_operation_count": {"const": 1},
+        "move_operation_count": {"const": 1}
+      }
+    },
+    "capability_loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_before_export",
+        "blocking_loss_count",
+        "approximations_explicit",
+        "unsupported_partial_semantics_explicit"
+      ],
+      "properties": {
+        "observed_before_export": {"const": true},
+        "blocking_loss_count": {"type": "integer", "minimum": 0},
+        "approximations_explicit": {"const": true},
+        "unsupported_partial_semantics_explicit": {"const": true}
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "sha256",
+        "byte_len",
+        "package_valid",
+        "edited_story_present",
+        "moved_geometry_present"
+      ],
+      "properties": {
+        "format": {"enum": ["idml", "odg"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "byte_len": {"type": "integer", "minimum": 1},
+        "package_valid": {"const": true},
+        "edited_story_present": {"const": true},
+        "moved_geometry_present": {"const": true}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rar_commit", "os", "arch"],
+      "properties": {
+        "rar_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "os": {"type": "string", "minLength": 1, "maxLength": 128},
+        "arch": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "invariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_pub_immutable",
+        "native_pub_write_used",
+        "no_hidden_network_upload",
+        "raw_document_text_emitted",
+        "raw_source_bytes_emitted",
+        "direct_page_local_gate_used",
+        "projected_object_mutation_fails_closed",
+        "reopen_used_fresh_session"
+      ],
+      "properties": {
+        "source_pub_immutable": {"const": true},
+        "native_pub_write_used": {"const": false},
+        "no_hidden_network_upload": {"const": true},
+        "raw_document_text_emitted": {"const": false},
+        "raw_source_bytes_emitted": {"const": false},
+        "direct_page_local_gate_used": {"const": true},
+        "projected_object_mutation_fails_closed": {"const": true},
+        "reopen_used_fresh_session": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "commit_or_build", "core_integration"],
+      "properties": {
+        "implementation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit_or_build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "core_integration": {"const": true}
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+name: Editor desktop vertical acceptance V1
+
+on:
+  pull_request:
+    paths:
+      - "packages/product/editor-desktop-vertical/**"
+      - "tools/run_local_editor_desktop_vertical.py"
+      - "tools/validate_editor_desktop_vertical_receipt.py"
+      - "tools/test_run_local_editor_desktop_vertical.py"
+      - ".github/workflows/editor-desktop-vertical-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install validator dependency
+        run: python -m pip install "jsonschema==4.23.0"
+      - name: Run desktop vertical local-boundary tests
+        run: python tools/test_run_local_editor_desktop_vertical.py -v
