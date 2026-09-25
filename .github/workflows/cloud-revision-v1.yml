@@ -10,6 +10,10 @@ on:
       - "tools/run_cloud_revision_v1_contract.py"
       - "docs/cloud-revision-v1.md"
       - ".github/workflows/cloud-revision-v1.yml"
+      - "apps/chaptera-server/migrations/0007_derived_artifacts.sql"
+      - "apps/chaptera-server/src/derived_artifacts.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
   workflow_dispatch:
 
 permissions:
@@ -39,3 +43,20 @@ jobs:
           name: cloud-revision-v1-contract
           path: target/cloud-revision-v1/receipt.json
           if-no-files-found: error
+
+  durable-artifact-store:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Check chaptera-server formatting
+        run: cargo fmt -p chaptera-server -- --check
+      - name: Lint chaptera-server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Test durable exact-fence store
+        run: cargo test -p chaptera-server derived_artifacts::
+      - name: Test migration chain
+        run: cargo test -p chaptera-server schema_migration::
