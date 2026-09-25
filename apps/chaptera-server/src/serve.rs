@@ -4,19 +4,19 @@ use std::{
     io,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
     },
     time::Instant,
 };
 
 use axum::{
+    Json, Router,
     extract::{ConnectInfo, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use serde::Serialize;
 use serde_json::json;
