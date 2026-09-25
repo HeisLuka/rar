@@ -1,0 +1,190 @@
+name: TEMP PUBWIZ MORPH9 POCPB5 xref
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-morph9-pocpb5-xref-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inert static tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full iat python3-pip
+          python3 -m pip install --disable-pip-version-check pefile==2024.8.26 capstone==5.0.6
+      - name: Rehydrate exact MORPH9 and localize POCPB5 xrefs
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/xref/{src,disc,module} out
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors --max-time 1800 \
+            'https://archive.org/download/X05-44678/2000-01_X05-44678_X05-44675_O9PRMCD02.7z' \
+            -o /tmp/xref/source.7z
+          test "$(sha1sum /tmp/xref/source.7z | awk '{print $1}')" = '56ca51186a7fe2139b3b5ab27c7d05749ba75b46'
+          7z x -y /tmp/xref/source.7z -o/tmp/xref/src >/tmp/xref/unpack.log
+          MDF="$(find /tmp/xref/src -type f -iname '*.mdf' | head -n1)"
+          test -n "$MDF"
+          iat "$MDF" /tmp/xref/disc.iso >/tmp/xref/iat.log
+          test "$(sha256sum /tmp/xref/disc.iso | awk '{print $1}')" = 'f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0'
+          7z e -y -o/tmp/xref/module /tmp/xref/disc.iso 'PFILES/MSOFFICE/OFFICE/MORPH9.DLL' >/tmp/xref/module.log
+          test -f /tmp/xref/module/MORPH9.DLL
+          test "$(sha256sum /tmp/xref/module/MORPH9.DLL | awk '{print $1}')" = 'd154b4de63ee03c1c8a735f45bd12ca6029ad5a3fab319e7161367454fa91ac7'
+          python3 - <<'PY'
+          import hashlib, json, pathlib, re, struct
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_32
+          from capstone.x86 import X86_OP_IMM, X86_OP_MEM
+
+          path=pathlib.Path('/tmp/xref/module/MORPH9.DLL')
+          data=path.read_bytes()
+          pe=pefile.PE(data=data,fast_load=False)
+          image_base=pe.OPTIONAL_HEADER.ImageBase
+          literal=b'POCPB5'
+          hits=[]
+          start=0
+          while True:
+              off=data.find(literal,start)
+              if off<0: break
+              hits.append(off); start=off+1
+          if 324980 not in hits:
+              raise SystemExit(f'pinned POCPB5 offset missing; hits={hits}')
+          target_off=324980
+          target_rva=pe.get_rva_from_offset(target_off)
+          target_va=image_base+target_rva
+
+          def sec_for_rva(rva):
+              for s in pe.sections:
+                  lo=s.VirtualAddress
+                  hi=lo+max(s.Misc_VirtualSize,s.SizeOfRawData)
+                  if lo<=rva<hi:
+                      return s.Name.rstrip(b'\0').decode('ascii','replace')
+              return None
+          def off_to_rva(off):
+              try:return pe.get_rva_from_offset(off)
+              except:return None
+          def find_u32(value):
+              pat=struct.pack('<I',value & 0xffffffff)
+              out=[]; pos=0
+              while True:
+                  pos=data.find(pat,pos)
+                  if pos<0: break
+                  rva=off_to_rva(pos)
+                  out.append({'file_offset':pos,'rva':rva,'va':image_base+rva if rva is not None else None,'section':sec_for_rva(rva) if rva is not None else None})
+                  pos+=1
+              return out
+
+          # Direct raw pointers to the literal VA/RVA.
+          level1=[]
+          for kind,val in [('va',target_va),('rva',target_rva)]:
+              for x in find_u32(val):
+                  x['encoding']=kind
+                  level1.append(x)
+
+          # One additional pointer-indirection layer: references to VA of level1 pointer slots.
+          level2=[]
+          seen=set()
+          for node in level1:
+              if node.get('va') is None: continue
+              for x in find_u32(node['va']):
+                  key=(x['file_offset'],node['va'])
+                  if key in seen: continue
+                  seen.add(key)
+                  x['points_to_pointer_va']=node['va']
+                  level2.append(x)
+
+          target_vas={target_va}
+          for x in level1+level2:
+              if x.get('va') is not None:
+                  target_vas.add(x['va'])
+
+          md=Cs(CS_ARCH_X86,CS_MODE_32)
+          md.detail=True
+          code_xrefs=[]
+          windows=[]
+          grammar_signals=[]
+          for sec in pe.sections:
+              if not (sec.Characteristics & 0x20000000):
+                  continue
+              sec_data=sec.get_data()
+              base=image_base+sec.VirtualAddress
+              ins=list(md.disasm(sec_data,base))
+              addr_index={x.address:i for i,x in enumerate(ins)}
+              for idx,inst in enumerate(ins):
+                  refs=[]
+                  for op in inst.operands:
+                      if op.type==X86_OP_IMM and (op.imm & 0xffffffff) in target_vas:
+                          refs.append({'kind':'imm','target_va':op.imm & 0xffffffff})
+                      elif op.type==X86_OP_MEM and (op.mem.disp & 0xffffffff) in target_vas:
+                          refs.append({'kind':'mem-disp','target_va':op.mem.disp & 0xffffffff})
+                  if not refs:
+                      continue
+                  rva=inst.address-image_base
+                  rec={'instruction_va':inst.address,'instruction_rva':rva,'section':sec.Name.rstrip(b'\0').decode('ascii','replace'),'mnemonic':inst.mnemonic,'op_str':inst.op_str,'refs':refs}
+                  code_xrefs.append(rec)
+                  lo=max(0,idx-8); hi=min(len(ins),idx+9)
+                  win=[]
+                  sig=[]
+                  for z in ins[lo:hi]:
+                      zrva=z.address-image_base
+                      item={'rva':zrva,'mnemonic':z.mnemonic,'op_str':z.op_str}
+                      win.append(item)
+                      op=z.op_str.lower()
+                      if '0x7ff' in op or '0x07ff' in op:
+                          sig.append({'rva':zrva,'signal':'mask-0x07ff','mnemonic':z.mnemonic,'op_str':z.op_str})
+                      if '0xf800' in op:
+                          sig.append({'rva':zrva,'signal':'mask-0xf800','mnemonic':z.mnemonic,'op_str':z.op_str})
+                      if z.mnemonic.lower() in ('shr','shl','sar') and re.search(r'(?:,\s*)(?:0xb|11)\b',op):
+                          sig.append({'rva':zrva,'signal':'shift-11','mnemonic':z.mnemonic,'op_str':z.op_str})
+                  windows.append({'xref_rva':rva,'instructions':win,'grammar_signals':sig})
+                  grammar_signals.extend(sig)
+
+          # Source-free summaries for pointer slots: do not retain arbitrary neighboring bytes.
+          result={
+              'schema':'chaptera.pubwiz-morph9-pocpb5-xref.v1',
+              'module':{
+                  'path':'PFILES/MSOFFICE/OFFICE/MORPH9.DLL',
+                  'size':len(data),
+                  'sha256':hashlib.sha256(data).hexdigest(),
+                  'image_base':image_base,
+                  'machine':pe.FILE_HEADER.Machine
+              },
+              'literal':{
+                  'text':'POCPB5',
+                  'file_offset':target_off,
+                  'rva':target_rva,
+                  'va':target_va,
+                  'section':sec_for_rva(target_rva),
+                  'all_file_offsets':hits
+              },
+              'direct_pointer_slots':level1,
+              'second_level_pointer_slots':level2,
+              'code_xrefs':code_xrefs,
+              'xref_windows':windows,
+              'grammar_signal_count':len(grammar_signals),
+              'grammar_signals':grammar_signals,
+              'classification':'code-referenced-poc-consumer-foothold' if code_xrefs else ('data-only-reference' if level1 or level2 else 'unreferenced-literal'),
+              'source_safe':True,
+              'raw_module_retained':False
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print(json.dumps(result,indent=2))
+          PY
+      - name: Enforce source-safe closure
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.dll' -o -iname '*.exe' -o -iname '*.iso' -o -iname '*.7z' \) | grep -q .; then
+            echo "raw binary leaked into retained output" >&2
+            exit 1
+          fi
+          sha256sum out/summary.json > out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-morph9-pocpb5-xref-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
