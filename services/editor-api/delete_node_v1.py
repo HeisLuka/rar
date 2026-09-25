@@ -75,6 +75,10 @@ def _validate_command(command: object) -> dict:
     return command
 
 
+def validate_delete_node_intent_v1(command: object) -> None:
+    _validate_command(command)
+
+
 def _require_current_page_owned_shape(
     base_project: dict,
     command: dict,
