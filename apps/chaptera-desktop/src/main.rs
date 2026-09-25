@@ -15,7 +15,10 @@ use chaptera_scene_instance::{
     direct_page_local_instance_v1, geometry_sync_policy_v1,
 };
 use eframe::egui;
-use pub_interaction::{MoveTransaction, ScreenPoint, ViewTransform};
+use pub_interaction::{
+    MoveTransaction, ResizeCommit, ResizeHandle, ResizePointerDown, ResizeTransaction, ResizeUpdate,
+    ScreenPoint, ScreenRect, ViewTransform, classify_resize_pointer_down, resize_handle_center,
+};
 use pub_viewer::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, ViewerDiagnosticSeverity, ViewerFidelityStatus,
@@ -427,6 +430,7 @@ struct ViewerApp {
     selected_page: usize,
     canvas_selection: SceneSelectionState,
     canvas_drag: Option<MoveTransaction>,
+    canvas_resize: Option<ResizeTransaction>,
     zoom: f32,
     load_error: Option<ViewerLoadFailure>,
     search_query: String,
@@ -467,6 +471,7 @@ impl ViewerApp {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: None,
             search_query: String::new(),
@@ -530,6 +535,7 @@ impl ViewerApp {
         self.selected_page = 0;
         self.canvas_selection.clear();
         self.canvas_drag = None;
+        self.canvas_resize = None;
         self.zoom = 1.0;
         self.load_error = None;
         self.search_query.clear();
@@ -983,6 +989,7 @@ impl ViewerApp {
             if self.selected_page != index {
                 self.canvas_selection.clear();
                 self.canvas_drag = None;
+        self.canvas_resize = None;
                 self.supporter_value
                     .observe(supporter::ValueEvent::PageNavigated { page_index: index });
             }
@@ -1616,6 +1623,7 @@ impl ViewerApp {
 
     fn finish_authoring_change(&mut self, status: &str) {
         self.canvas_drag = None;
+        self.canvas_resize = None;
         self.sync_visual_stories_from_editor();
         self.sync_visual_geometry_from_editor();
         self.refresh_search();
@@ -2016,6 +2024,7 @@ impl ViewerApp {
 
     fn commit_canvas_drag(&mut self, drag: MoveTransaction) {
         self.canvas_drag = None;
+        self.canvas_resize = None;
         if !drag.has_moved() {
             return;
         }
@@ -2033,6 +2042,29 @@ impl ViewerApp {
         match outcome {
             Ok(_) => self.finish_authoring_change(
                 "Moved canvas object in the authoring session. One MoveNode operation was committed.",
+            ),
+            Err(error) => {
+                self.edit_status = Some(error);
+                self.sync_visual_geometry_from_editor();
+            }
+        }
+    }
+
+    fn commit_canvas_resize(&mut self, resize: ResizeCommit) {
+        self.canvas_resize = None;
+        self.canvas_drag = None;
+        let outcome = self
+            .editor
+            .as_mut()
+            .ok_or_else(|| "Editor session is unavailable.".to_owned())
+            .and_then(|editor| {
+                editor
+                    .resize_node_to(resize.node_id, resize.after)
+                    .map_err(|error| format!("Resize rejected: {} ({})", error, error.code()))
+            });
+        match outcome {
+            Ok(_) => self.finish_authoring_change(
+                "Resized canvas object in the authoring session. One ResizeNode operation was committed.",
             ),
             Err(error) => {
                 self.edit_status = Some(error);
@@ -2539,6 +2571,7 @@ impl ViewerApp {
 
         if let Some(error) = drag_error {
             self.canvas_drag = None;
+        self.canvas_resize = None;
             self.edit_status = Some(error);
         } else if let Some(drag) = drag_commit {
             self.commit_canvas_drag(drag);
@@ -3023,6 +3056,7 @@ mod tests {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::Unsupported,
@@ -3066,6 +3100,7 @@ mod tests {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::FileAccess,
@@ -3311,6 +3346,7 @@ mod tests {
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
+            canvas_resize: None,
             zoom: 1.0,
             load_error: None,
             search_query: String::new(),
