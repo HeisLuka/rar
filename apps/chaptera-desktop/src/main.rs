@@ -745,12 +745,11 @@ impl ViewerApp {
                         .stories
                         .iter()
                         .find(|story| story.id == result.story_id)
+                        && ui.button("Copy full story").clicked()
                     {
-                        if ui.button("Copy full story").clicked() {
-                            ui.ctx().copy_text(story.text.clone());
-                            self.supporter_value
-                                .observe(supporter::ValueEvent::FullStoryCopied);
-                        }
+                        ui.ctx().copy_text(story.text.clone());
+                        self.supporter_value
+                            .observe(supporter::ValueEvent::FullStoryCopied);
                     }
                 });
 
@@ -1756,14 +1755,14 @@ impl ViewerApp {
                             .filter(|candidate| candidate.story_id == frame.story_id)
                             .count();
 
-                        if frame_count == 1 {
-                            if let Some(story) = visual
+                        if frame_count == 1
+                            && let Some(story) = visual
                                 .document
                                 .stories
                                 .iter()
                                 .find(|story| story.id == frame.story_id)
-                            {
-                                if !story.text.is_empty() {
+                            && !story.text.is_empty()
+                        {
                                     let text_clip_rect = node_rect.shrink(2.0);
                                     let text_painter = painter.with_clip_rect(text_clip_rect);
                                     let font_size = (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
@@ -1794,13 +1793,11 @@ impl ViewerApp {
                                             egui::Color32::RED,
                                         );
                                     }
-                                    text_painter.galley(
-                                        text_clip_rect.min,
-                                        galley,
-                                        egui::Color32::BLACK,
-                                    );
-                                }
-                            }
+                            text_painter.galley(
+                                text_clip_rect.min,
+                                galley,
+                                egui::Color32::BLACK,
+                            );
                         }
                     }
                 }
@@ -1976,7 +1973,7 @@ fn editable_export_report_path(output_path: &Path) -> PathBuf {
     output_path.with_file_name(name)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "embedded-fixture-tests"))]
 fn apply_editor_project_json(
     editor: &mut pub_editor::EditorSession,
     bytes: &[u8],
@@ -2480,6 +2477,7 @@ mod tests {
         assert!(preview.chars().count() <= 49);
     }
 
+    #[cfg(feature = "embedded-fixture-tests")]
     fn decode_base64_fixture(input: &str) -> Vec<u8> {
         let mut output = Vec::with_capacity(input.len() * 3 / 4);
         let mut buffer = 0_u32;
