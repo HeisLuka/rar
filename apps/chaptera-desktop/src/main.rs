@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod product_smoke;
+mod open_phase;
 #[allow(dead_code)]
 mod supporter;
 
@@ -195,6 +196,90 @@ fn main() -> eframe::Result<()> {
             std::process::exit(2);
         }
         return Ok(());
+    }
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--open-phase-run-v1")) {
+        if !reader_only_mode() {
+            eprintln!("open phase harness is admitted only in the Reader build");
+            std::process::exit(2);
+        }
+        let Some(fixture) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-run-v1 FIXTURE CACHE_STATE OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(cache_state) = args.next().and_then(|value| value.into_string().ok()) else {
+            eprintln!("usage: chaptera-reader --open-phase-run-v1 FIXTURE CACHE_STATE OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(output) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-run-v1 FIXTURE CACHE_STATE OUTPUT.json");
+            std::process::exit(2);
+        };
+        if args.next().is_some() || !matches!(cache_state.as_str(), "cold" | "warm" | "unknown") {
+            eprintln!("open phase run requires one valid cache_state and one output path");
+            std::process::exit(2);
+        }
+        match open_phase::run_one(&fixture, &cache_state) {
+            Ok(run) => {
+                let encoded = serde_json::to_vec_pretty(&run)
+                    .expect("open phase observation is JSON-serializable");
+                if let Err(error) = fs::write(&output, encoded) {
+                    eprintln!("write open phase observation {}: {error}", output.display());
+                    std::process::exit(2);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--open-phase-series-v1")) {
+        if !reader_only_mode() {
+            eprintln!("open phase harness is admitted only in the Reader build");
+            std::process::exit(2);
+        }
+        let Some(fixture) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(cache_state) = args.next().and_then(|value| value.into_string().ok()) else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(count) = args
+            .next()
+            .and_then(|value| value.into_string().ok())
+            .and_then(|value| value.parse::<usize>().ok())
+        else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        let Some(output) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --open-phase-series-v1 FIXTURE CACHE_STATE COUNT OUTPUT.json");
+            std::process::exit(2);
+        };
+        if args.next().is_some() || !matches!(cache_state.as_str(), "cold" | "warm" | "unknown") {
+            eprintln!("open phase series requires valid cache_state/count/output");
+            std::process::exit(2);
+        }
+        match open_phase::run_series(&fixture, &cache_state, count) {
+            Ok(runs) => {
+                let encoded = serde_json::to_vec_pretty(&runs)
+                    .expect("open phase observations are JSON-serializable");
+                if let Err(error) = fs::write(&output, encoded) {
+                    eprintln!("write open phase series {}: {error}", output.display());
+                    std::process::exit(2);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
     }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--product-smoke-v1")) {
