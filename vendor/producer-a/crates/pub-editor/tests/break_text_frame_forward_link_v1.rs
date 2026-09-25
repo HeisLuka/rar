@@ -31,12 +31,12 @@ fn source_story_id() -> StoryId {
 }
 
 fn new_story_id() -> StoryId {
-    serde_json::from_str(""01890f47-0c00-7abc-8def-0123456789ab"")
+    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ab\"")
         .expect("valid UUIDv7 StoryId")
 }
 
 fn other_new_story_id() -> StoryId {
-    serde_json::from_str(""01890f47-0c00-7abc-8def-0123456789ac"")
+    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ac\"")
         .expect("valid UUIDv7 StoryId")
 }
 
