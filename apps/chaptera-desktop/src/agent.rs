@@ -2011,6 +2011,12 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "before":rect_json(*before),
             "after":rect_json(*after)
         }),
+        EditOperation::ResizeNode { node_id, before, after } => json!({
+            "kind":"resize_node",
+            "node_id":node_id.as_canonical().to_string(),
+            "before":rect_json(*before),
+            "after":rect_json(*after)
+        }),
     }
 }
 
