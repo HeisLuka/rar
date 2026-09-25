@@ -1,0 +1,101 @@
+name: WEB-RENDER-01 real Scene benchmark
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/render-benchmark.html"
+      - "tools/run_web_renderer_benchmark.mjs"
+      - ".github/workflows/web-render-real-scene.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-real-scene:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Scene validator
+        run: python -m pip install "jsonschema==4.23.0"
+
+      - name: Materialize pinned real SampleNewsletter Scene V1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/web-render-real
+          python tools/validate_viewer_geometry_receipt.py             apps/web/acceptance/receipts/viewer-geometry.real.json
+          python tools/adapt_viewer_scene_v1.py             apps/web/acceptance/receipts/viewer-geometry.real.json             target/web-render-real/SampleNewsletter.scene.json             --document-id 9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b001             --revision-id sha256:853fa2471bbf5ce479340e391550c5ee7b972f208a36d81c26808ab52c672d6c
+          python tools/validate_scene_protocol.py             target/web-render-real/SampleNewsletter.scene.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Unit-test pure render contract
+        run: node --test apps/web/render-v1.test.mjs
+
+      - name: Install Playwright browser
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Benchmark real canonical Scene
+        run: |
+          node tools/run_web_renderer_benchmark.mjs             ${{ matrix.browser }}             target/web-render-real/SampleNewsletter.scene.json
+
+      - name: Validate real receipt classification
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          browser = "${{ matrix.browser }}"
+          path = Path("target/web-render") / f"{browser}-receipt.json"
+          receipt = json.loads(path.read_text())
+          assert receipt["receipt_kind"] == "chaptera.real-pub-renderer-benchmark.v1"
+          assert receipt["real_pub"] is True
+          assert receipt["representative_corpus"] is True
+          assert receipt["technology_decision_allowed"] is False
+          assert len(receipt["cases"]) == 1
+          case = receipt["cases"][0]
+          assert case["fixture"] == "SampleNewsletter.scene.json"
+          assert case["input_class"] == "real_pub_scene"
+          assert case["real_pub"] is True
+          assert case["representative_corpus"] is True
+          assert case["technology_decision_allowed"] is False
+          assert case["payload_bytes"] > 0
+          assert case["pages"] > 0
+          assert case["nodes"] > 0
+          renderers = {row["renderer"]: row for row in case["renderers"]}
+          assert set(renderers) == {"svg", "canvas2d", "webgl2-hybrid"}
+          assert renderers["svg"]["available"] is True
+          assert renderers["canvas2d"]["available"] is True
+          print(json.dumps({
+              "browser": browser,
+              "payload_bytes": case["payload_bytes"],
+              "pages": case["pages"],
+              "nodes": case["nodes"],
+              "renderers": renderers,
+          }, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-render-real-scene-${{ matrix.browser }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            target/web-render/${{ matrix.browser }}-*
+            target/web-render-real/SampleNewsletter.scene.json
