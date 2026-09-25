@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header::CONTENT_LENGTH},
+    http::{HeaderMap, HeaderValue, StatusCode, header::{CONTENT_LENGTH, RETRY_AFTER}},
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -597,12 +597,25 @@ pub enum SourceIngressHttpError {
     Api {
         status: StatusCode,
         code: &'static str,
+        retry_after_seconds: Option<u64>,
     },
 }
 
 impl SourceIngressHttpError {
     fn api(status: StatusCode, code: &'static str) -> Self {
-        Self::Api { status, code }
+        Self::Api {
+            status,
+            code,
+            retry_after_seconds: None,
+        }
+    }
+
+    fn rate_limited(code: &'static str, retry_at_ms: Option<i64>) -> Self {
+        Self::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code,
+            retry_after_seconds: retry_after_seconds(retry_at_ms),
+        }
     }
 
     fn bad_request(code: &'static str) -> Self {
@@ -647,9 +660,43 @@ impl IntoResponse for SourceIngressHttpError {
     fn into_response(self) -> Response {
         match self {
             Self::Auth(error) => error.into_response(),
-            Self::Api { status, code } => (status, Json(serde_json::json!({ "error": code }))).into_response(),
+            Self::Api {
+                status,
+                code,
+                retry_after_seconds,
+            } => {
+                let mut response =
+                    (status, Json(serde_json::json!({ "error": code }))).into_response();
+                if let Some(seconds) = retry_after_seconds
+                    && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
+                {
+                    response.headers_mut().insert(RETRY_AFTER, value);
+                }
+                response
+            },
         }
     }
+}
+
+fn retry_after_seconds(retry_at_ms: Option<i64>) -> Option<u64> {
+    let retry_at_ms = retry_at_ms?;
+    if retry_at_ms < 0 {
+        return None;
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())?;
+    let remaining_ms = retry_at_ms.saturating_sub(now_ms);
+    let seconds = if remaining_ms <= 0 {
+        1
+    } else {
+        u64::try_from(remaining_ms)
+            .ok()?
+            .saturating_add(999)
+            / 1000
+    };
+    Some(seconds.max(1))
 }
 
 fn map_workspace_error(error: WorkspaceContextError) -> SourceIngressHttpError {
@@ -672,7 +719,7 @@ fn map_admission_error(error: UploadAdmissionError) -> SourceIngressHttpError {
         | "upload_admission_tenant_concurrency"
         | "upload_admission_principal_bytes"
         | "upload_admission_tenant_bytes" => {
-            SourceIngressHttpError::api(StatusCode::TOO_MANY_REQUESTS, error.code)
+            SourceIngressHttpError::rate_limited(error.code, error.retry_at_ms)
         }
         "upload_admission_idempotency_conflict"
         | "upload_admission_already_released"
