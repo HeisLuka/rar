@@ -100,11 +100,7 @@ impl AuthHttpState {
             .map_err(map_authn_error)?;
         let record = self
             .store
-            .authenticate_session(
-                session_token.as_bytes(),
-                now,
-                refresh_idle_expires_at_ms,
-            )
+            .authenticate_session(session_token.as_bytes(), now, refresh_idle_expires_at_ms)
             .await
             .map_err(map_authn_error)?;
 
