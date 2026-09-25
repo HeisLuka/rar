@@ -1030,35 +1030,34 @@ impl EditorSession {
 
     pub fn project(&self) -> EditorProject {
         let table_grids = effective_table_grids(&self.graph);
-        let schema_version = if self
-            .undo
-            .iter()
-            .any(|operation| matches!(operation, EditOperation::BreakTextFrameForwardLink { .. }))
-        {
-            EDITOR_PROJECT_VERSION_V0_7
-        } else if !table_grids.is_empty() {
-            EDITOR_PROJECT_VERSION_V0_6
-        } else if self
-            .undo
-            .iter()
-            .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
-        {
-            EDITOR_PROJECT_VERSION_V0_5
-        } else if self
-            .undo
-            .iter()
-            .any(|operation| matches!(operation, EditOperation::MoveNode { .. }))
-        {
-            EDITOR_PROJECT_VERSION_V0_4
-        } else if self
-            .undo
-            .iter()
-            .any(|operation| matches!(operation, EditOperation::ReplaceImage { .. }))
-        {
-            EDITOR_PROJECT_VERSION_V0_3
-        } else {
-            EDITOR_PROJECT_VERSION_V0_2
-        };
+        let schema_version =
+            if self.undo.iter().any(|operation| {
+                matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
+            }) {
+                EDITOR_PROJECT_VERSION_V0_7
+            } else if !table_grids.is_empty() {
+                EDITOR_PROJECT_VERSION_V0_6
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_5
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::MoveNode { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_4
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::ReplaceImage { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_3
+            } else {
+                EDITOR_PROJECT_VERSION_V0_2
+            };
 
         EditorProject {
             schema_version: schema_version.into(),
@@ -1168,11 +1167,9 @@ impl EditorSession {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_7 {
-            if let Some(index) = project
-                .operations
-                .iter()
-                .position(|operation| matches!(operation, EditOperation::BreakTextFrameForwardLink { .. }))
-            {
+            if let Some(index) = project.operations.iter().position(|operation| {
+                matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
+            }) {
                 return Err(EditorProjectError::LegacyProjectCarriesBreakLinkOperation { index });
             }
         }
@@ -1957,11 +1954,8 @@ impl EditorSession {
             });
         }
 
-        let chain = explicit_story_chain_for_break(
-            &self.graph,
-            upstream_frame_id,
-            downstream_frame_id,
-        )?;
+        let chain =
+            explicit_story_chain_for_break(&self.graph, upstream_frame_id, downstream_frame_id)?;
         let source_story_id = chain
             .first()
             .expect("explicit chain must be non-empty")
@@ -1986,11 +1980,8 @@ impl EditorSession {
             new_story_id,
         )?;
 
-        let before_frames = explicit_story_chain_for_break(
-            &self.graph,
-            upstream_frame_id,
-            downstream_frame_id,
-        )?;
+        let before_frames =
+            explicit_story_chain_for_break(&self.graph, upstream_frame_id, downstream_frame_id)?;
         let story_id = before_frames
             .first()
             .expect("capability check verified non-empty chain")
@@ -1998,8 +1989,7 @@ impl EditorSession {
         let break_index = before_frames
             .iter()
             .position(|frame| {
-                frame.frame_id == upstream_frame_id
-                    && frame.next == Some(downstream_frame_id)
+                frame.frame_id == upstream_frame_id && frame.next == Some(downstream_frame_id)
             })
             .expect("capability check verified explicit break edge");
 
@@ -2230,11 +2220,7 @@ fn replay_canonical_operation(
             new_story_id,
             ..
         } => session
-            .break_text_frame_forward_link(
-                *upstream_frame_id,
-                *downstream_frame_id,
-                *new_story_id,
-            )
+            .break_text_frame_forward_link(*upstream_frame_id, *downstream_frame_id, *new_story_id)
             .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::ReplaceTableCellText {
             node_id,
@@ -2307,18 +2293,16 @@ fn explicit_story_chain_for_break(
     upstream_frame_id: NodeId,
     downstream_frame_id: NodeId,
 ) -> Result<Vec<StoryFrame<StoryId, NodeId>>, EditorError> {
-    let upstream = frame_snapshot(graph, upstream_frame_id).ok_or(
-        EditorError::BreakLinkUnsupported {
+    let upstream =
+        frame_snapshot(graph, upstream_frame_id).ok_or(EditorError::BreakLinkUnsupported {
             upstream_frame_id,
             downstream_frame_id,
-        },
-    )?;
-    let downstream = frame_snapshot(graph, downstream_frame_id).ok_or(
-        EditorError::BreakLinkUnsupported {
+        })?;
+    let downstream =
+        frame_snapshot(graph, downstream_frame_id).ok_or(EditorError::BreakLinkUnsupported {
             upstream_frame_id,
             downstream_frame_id,
-        },
-    )?;
+        })?;
 
     if upstream.story_id != downstream.story_id
         || upstream.next != Some(downstream_frame_id)
@@ -2384,20 +2368,19 @@ fn explicit_story_chain_for_break(
                 downstream_frame_id,
             });
         }
-        let frame = by_id.get(&frame_id).ok_or(
-            EditorError::BreakLinkUnsupported {
+        let frame = by_id
+            .get(&frame_id)
+            .ok_or(EditorError::BreakLinkUnsupported {
                 upstream_frame_id,
                 downstream_frame_id,
-            },
-        )?;
+            })?;
         ordered.push(frame.clone());
         cursor = frame.next;
     }
 
     if ordered.len() != frames.len()
         || !ordered.iter().any(|frame| {
-            frame.frame_id == upstream_frame_id
-                && frame.next == Some(downstream_frame_id)
+            frame.frame_id == upstream_frame_id && frame.next == Some(downstream_frame_id)
         })
     {
         return Err(EditorError::BreakLinkUnsupported {
@@ -2437,9 +2420,9 @@ fn frames_match_snapshots(
     graph: &PubResolvedGraph,
     snapshots: &[StoryFrame<StoryId, NodeId>],
 ) -> bool {
-    snapshots.iter().all(|expected| {
-        frame_snapshot(graph, expected.frame_id).as_ref() == Some(expected)
-    })
+    snapshots
+        .iter()
+        .all(|expected| frame_snapshot(graph, expected.frame_id).as_ref() == Some(expected))
 }
 
 fn empty_editor_story(story_id: StoryId) -> Story {
@@ -2453,7 +2436,6 @@ fn empty_editor_story(story_id: StoryId) -> Story {
         source_refs: Vec::new(),
     }
 }
-
 
 fn effective_table_grids(graph: &PubResolvedGraph) -> Vec<EffectiveTableGridV1> {
     let mut grids = Vec::new();
