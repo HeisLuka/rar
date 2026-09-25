@@ -897,6 +897,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_reserve_serializes_capacity_check_and_insert() {
+        let (path, authority) = setup("concurrent").await;
+        authority.close().await;
+
+        let strict = UploadAdmissionConfig {
+            principal_concurrent_cap: 1,
+            tenant_concurrent_cap: 1,
+            principal_bytes_cap: 900,
+            tenant_bytes_cap: 900,
+            max_single_upload_bytes: 900,
+            lease_duration: Duration::from_millis(100),
+            retention: Duration::from_millis(200),
+        };
+        let left =
+            SqliteUploadAdmissionAuthority::open(&path, 4, Duration::from_secs(2), strict.clone())
+                .await
+                .unwrap();
+        let right =
+            SqliteUploadAdmissionAuthority::open(&path, 4, Duration::from_secs(2), strict)
+                .await
+                .unwrap();
+
+        let (left_result, right_result) = tokio::join!(
+            left.reserve(request("race-left", "principal-a", 800), 10),
+            right.reserve(request("race-right", "principal-a", 800), 10)
+        );
+
+        let accepted = usize::from(left_result.is_ok()) + usize::from(right_result.is_ok());
+        assert_eq!(accepted, 1, "exactly one concurrent reservation may fit");
+
+        let rejected = if let Err(error) = left_result {
+            error
+        } else {
+            right_result.unwrap_err()
+        };
+        assert!(
+            matches!(
+                rejected.code,
+                "upload_principal_capacity" | "upload_tenant_capacity"
+            ),
+            "unexpected rejection: {rejected:?}"
+        );
+
+        left.close().await;
+        right.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
     async fn single_upload_cap_and_disabled_principal_reject_before_capacity() {
         let (path, authority) = setup("early-reject").await;
         assert_eq!(
