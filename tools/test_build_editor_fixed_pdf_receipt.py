@@ -209,6 +209,12 @@ class EditorFixedPdfReceiptTests(unittest.TestCase):
         self.assertTrue(receipt["artifact"]["header"].startswith("%PDF-"))
         self.assertGreater(receipt["artifact"]["byte_len"], 8)
         self.assertEqual(1, receipt["fixed_run_count"])
+        self.assertEqual(0, receipt["cmo_target_count"])
+        self.assertEqual(0, receipt["cmo_visible_slot_count"])
+        self.assertEqual(0, receipt["cmo_overset_story_count"])
+        self.assertTrue(
+            receipt["invariants"]["canonical_cmo_slot_flow_authoritative"]
+        )
         self.assertEqual(0, receipt["invariants"]["source_reparse_after_edit_count"])
         self.assertFalse(receipt["invariants"]["renderer_received_source_bytes"])
 
