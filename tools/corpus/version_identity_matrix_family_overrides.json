@@ -1,0 +1,11 @@
+{
+  "schema": "chaptera.corpus-version-family-overrides.v1",
+  "rows": [
+    {
+      "sha256": "6cb88d4e02f823876a23d7f7414c7d370ca30996c30f145ec92b62f519b22170",
+      "contents_family": "malformed_or_invalid_family",
+      "classification_note": "OPCLS.PUB /Contents sector duplicates the CFB directory sector; not old-0x22, not mature-0x2C, not a third Contents family.",
+      "evidence": "PUB-T-674 / rar#458 / run 36111863961 / artifact 10852724833"
+    }
+  ]
+}

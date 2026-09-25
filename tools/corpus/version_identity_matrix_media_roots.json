@@ -1,0 +1,45 @@
+{
+  "schema": "chaptera.corpus-version-media-roots.v1",
+  "rows": [
+    {
+      "root_sha256": "8f1e46dd43be728d7b39f53cf4f642149b19eebe0c74103270fc14ecae1291c4",
+      "distribution_media_version": "Publisher 2.0",
+      "source_media_provenance": "Microsoft Publisher 2.0 distribution media / microsoft-publisher-2.0"
+    },
+    {
+      "root_sha256": "36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a",
+      "distribution_media_version": "Publisher 3.0 / Windows 95",
+      "source_media_provenance": "Microsoft Publisher 3.0 for Windows 95 distribution media / microsoft-home-collection-1993-1995"
+    },
+    {
+      "root_sha256": "41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab",
+      "distribution_media_version": "Publisher 97",
+      "source_media_provenance": "Publisher 97 EN distribution media / MSPublisher97-EN"
+    },
+    {
+      "root_sha256": "0e30e5f0817cb94ff78780ac34b386c4c87c475ead40227758c387e985560e4c",
+      "distribution_media_version": "Publisher 97",
+      "source_media_provenance": "Publisher 97 Thai distribution media / MSPublisher97ThaiEdition"
+    },
+    {
+      "root_sha256": "cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59",
+      "distribution_media_version": "Publisher 97",
+      "source_media_provenance": "Publisher 97 PUB40CD distribution media / PUB40CD"
+    },
+    {
+      "root_sha256": "c44fc471b42e3381efeec1d069161c05331d1ebd883d764e9c04a5c6392177c7",
+      "distribution_media_version": "Publisher 97",
+      "source_media_provenance": "Publisher 97 Norwegian distribution media / pub97no"
+    },
+    {
+      "root_sha256": "3abd372fd3a1def03cf17ca6277533a8a1bcfbe88b56a213f9c389035020a78b",
+      "distribution_media_version": "Publisher 97",
+      "source_media_provenance": "Publisher 97 pub-40-cd distribution media"
+    },
+    {
+      "root_sha256": "69043e0d2d23345163a27806914c99382490a27e5710fdb6af82ee7df33b4ce8",
+      "distribution_media_version": "Publisher 97",
+      "source_media_provenance": "Publisher 97 Deluxe distribution media / microsoft-publisher-97-cd-deluxe"
+    }
+  ]
+}

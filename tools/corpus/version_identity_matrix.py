@@ -14,7 +14,7 @@ from pathlib import Path
 
 import structural_novelty as novelty
 
-SCHEMA = "chaptera.corpus-version-identity-matrix.v1"
+SCHEMA = "chaptera.corpus-version-identity-matrix.v2"
 
 
 def load_rows(root: Path) -> list[dict]:
@@ -59,6 +59,58 @@ def load_provenance(path: Path | None) -> dict[str, dict]:
     return out
 
 
+def load_media_roots(path: Path | None) -> dict[str, dict]:
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
+        payload = payload["rows"]
+    if not isinstance(payload, list):
+        raise ValueError("media-roots input must be a JSON list or {rows:[...]}")
+    out: dict[str, dict] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        root = str(row.get("root_sha256") or "").lower()
+        if not root:
+            continue
+        current = {
+            "distribution_media_version": str(row.get("distribution_media_version") or "").strip(),
+            "source_media_provenance": str(row.get("source_media_provenance") or "").strip(),
+        }
+        if root in out and out[root] != current:
+            raise ValueError(f"conflicting media-root classification for {root}")
+        out[root] = current
+    return out
+
+
+def load_family_overrides(path: Path | None) -> dict[str, dict]:
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
+        payload = payload["rows"]
+    if not isinstance(payload, list):
+        raise ValueError("family-overrides input must be a JSON list or {rows:[...]}")
+    out: dict[str, dict] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        sha = str(row.get("sha256") or "").lower()
+        family = str(row.get("contents_family") or "").strip()
+        if not sha or not family:
+            continue
+        current = {
+            "contents_family": family,
+            "classification_note": str(row.get("classification_note") or "").strip(),
+            "evidence": str(row.get("evidence") or "").strip(),
+        }
+        if sha in out and out[sha] != current:
+            raise ValueError(f"conflicting family override for physical SHA {sha}")
+        out[sha] = current
+    return out
+
+
 def one_value(values: set, *, field: str, logical_identity: str):
     clean = {v for v in values if v not in {"", None}}
     if len(clean) > 1:
@@ -68,8 +120,15 @@ def one_value(values: set, *, field: str, logical_identity: str):
     return next(iter(clean)) if clean else None
 
 
-def build(rows: list[dict], provenance: dict[str, dict] | None = None) -> dict:
+def build(
+    rows: list[dict],
+    provenance: dict[str, dict] | None = None,
+    media_roots: dict[str, dict] | None = None,
+    family_overrides: dict[str, dict] | None = None,
+) -> dict:
     provenance = provenance or {}
+    media_roots = media_roots or {}
+    family_overrides = family_overrides or {}
     status = Counter(str(row.get("status") or "") for row in rows)
     ok = [row for row in rows if row.get("status") == "ok"]
 
@@ -81,16 +140,41 @@ def build(rows: list[dict], provenance: dict[str, dict] | None = None) -> dict:
         groups[logical].append(row)
 
     logical_rows = []
-    cells: dict[tuple[str, str, str], dict] = {}
+    cells: dict[tuple[str, str, str, str], dict] = {}
     source_logical_counts = Counter()
     version_label_counts = Counter()
+    distribution_media_version_counts = Counter()
     family_counts = Counter()
     revision_counts = Counter()
 
     for logical, members in sorted(groups.items()):
-        families = {row.get("contents_family") for row in members}
+        families = set()
+        classification_notes = set()
+        distribution_media_versions = set()
+        source_media_provenance = set()
+        for row in members:
+            sha = str(row.get("sha256") or row.get("source_sha256") or "").lower()
+            override = family_overrides.get(sha, {})
+            families.add(override.get("contents_family") or row.get("contents_family"))
+            note = override.get("classification_note")
+            if note:
+                classification_notes.add(note)
+            root = str(row.get("root_sha256") or "").lower()
+            media = media_roots.get(root, {})
+            media_version = media.get("distribution_media_version")
+            media_source = media.get("source_media_provenance")
+            if media_version:
+                distribution_media_versions.add(media_version)
+            if media_source:
+                source_media_provenance.add(media_source)
+
         revisions = {row.get("contents_serialization_revision") for row in members}
         family = one_value(families, field="contents_family", logical_identity=logical) or "unknown"
+        distribution_media_version = one_value(
+            distribution_media_versions,
+            field="distribution_media_version",
+            logical_identity=logical,
+        ) or "unknown"
         revision_value = one_value(
             revisions, field="contents_serialization_revision", logical_identity=logical
         )
@@ -127,22 +211,29 @@ def build(rows: list[dict], provenance: dict[str, dict] | None = None) -> dict:
             "contents_serialization_revision": revision_value,
             "version_label": version_label,
             "provenance_class": provenance_class,
+            "distribution_media_version": distribution_media_version,
+            "source_media_provenance": sorted(source_media_provenance),
+            "creator_version": "unknown",
+            "writer_version": "unknown",
+            "family_classification_notes": sorted(classification_notes),
         }
         logical_rows.append(logical_row)
 
         family_counts[family] += 1
         revision_counts[f"{family}:{revision}"] += 1
         version_label_counts[version_label] += 1
+        distribution_media_version_counts[distribution_media_version] += 1
         for source in sources:
             source_logical_counts[source] += 1
 
-        key = (family, revision, version_label)
+        key = (family, revision, version_label, distribution_media_version)
         cell = cells.setdefault(
             key,
             {
                 "contents_family": family,
                 "contents_serialization_revision": revision_value,
                 "version_label": version_label,
+                "distribution_media_version": distribution_media_version,
                 "logical_identity_count": 0,
                 "physical_sha_count": 0,
                 "sources": set(),
@@ -211,6 +302,12 @@ def build(rows: list[dict], provenance: dict[str, dict] | None = None) -> dict:
         "contents_family_logical_counts": dict(sorted(family_counts.items())),
         "contents_family_revision_logical_counts": dict(sorted(revision_counts.items())),
         "version_label_logical_counts": dict(sorted(version_label_counts.items())),
+        "distribution_media_version_logical_counts": dict(
+            sorted(distribution_media_version_counts.items())
+        ),
+        "distribution_media_provenance_covered_logical_count": (
+            logical_count - distribution_media_version_counts.get("unknown", 0)
+        ),
         "source_logical_membership_counts_nonexclusive": dict(sorted(source_logical_counts.items())),
         "matrix_cell_count": len(matrix),
         "weighting_law": "one evidence vote per exact logical stream-set identity; physical SHA remains provenance authority",
@@ -289,6 +386,45 @@ def self_test() -> int:
     assert s["contents_family_logical_counts"] == {"0x22": 1, "0x2c": 1}
     assert sum(row["logical_identity_count"] for row in result["matrix"]) == 2
 
+    rows[0]["root_sha256"] = "a" * 64
+    rows[1]["root_sha256"] = "a" * 64
+    rows[2]["root_sha256"] = "b" * 64
+    media_roots = {
+        "a" * 64: {
+            "distribution_media_version": "Publisher 97",
+            "source_media_provenance": "fixture-media-a",
+        },
+        "b" * 64: {
+            "distribution_media_version": "Publisher 3.0 / Windows 95",
+            "source_media_provenance": "fixture-media-b",
+        },
+    }
+    overrides = {
+        "3" * 64: {
+            "contents_family": "malformed_or_invalid_family",
+            "classification_note": "bounded malformed control",
+            "evidence": "self-test",
+        }
+    }
+    enriched = build(rows, media_roots=media_roots, family_overrides=overrides)
+    es = enriched["summary"]
+    assert es["contents_family_logical_counts"] == {
+        "0x2c": 1,
+        "malformed_or_invalid_family": 1,
+    }
+    assert es["distribution_media_version_logical_counts"] == {
+        "Publisher 3.0 / Windows 95": 1,
+        "Publisher 97": 1,
+    }
+    assert es["distribution_media_provenance_covered_logical_count"] == 2
+    malformed = [
+        row for row in enriched["logical_identities"]
+        if row["contents_family"] == "malformed_or_invalid_family"
+    ]
+    assert len(malformed) == 1
+    assert malformed[0]["creator_version"] == "unknown"
+    assert malformed[0]["writer_version"] == "unknown"
+
     conflicting = [dict(rows[0]), dict(rows[1])]
     conflicting[1]["contents_family"] = "0x22"
     try:
@@ -310,6 +446,8 @@ def main() -> int:
     build_cmd.add_argument("--input", type=Path, required=True)
     build_cmd.add_argument("--out", type=Path, required=True)
     build_cmd.add_argument("--provenance", type=Path)
+    build_cmd.add_argument("--media-roots", type=Path)
+    build_cmd.add_argument("--family-overrides", type=Path)
 
     sub.add_parser("self-test")
     args = ap.parse_args()
@@ -318,7 +456,12 @@ def main() -> int:
         return self_test()
 
     rows = load_rows(args.input)
-    result = build(rows, load_provenance(args.provenance))
+    result = build(
+        rows,
+        load_provenance(args.provenance),
+        load_media_roots(args.media_roots),
+        load_family_overrides(args.family_overrides),
+    )
     write_outputs(result, args.out)
     print(json.dumps(result["summary"], indent=2, ensure_ascii=False, sort_keys=True))
     return 0
