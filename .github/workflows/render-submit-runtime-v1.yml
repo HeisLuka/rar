@@ -1,0 +1,39 @@
+name: Render Submit Runtime V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/render_submit_runtime_v1.py"
+      - "tools/test_render_submit_runtime_v1.py"
+      - "tools/run_render_submit_runtime_receipt.py"
+      - "tools/render_segment_plan_v1.py"
+      - "tools/buffer_residency_v1.py"
+      - "tools/texture_residency_v1.py"
+      - ".github/workflows/render-submit-runtime-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test submit runtime cache/generation contract
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_submit_runtime_v1.py
+      - name: Re-run segment planner regressions
+        run: PYTHONPATH=tools python -m unittest -v tools/test_render_segment_plan_v1.py
+      - name: Re-run buffer/texture residency regressions
+        run: PYTHONPATH=tools python -m unittest -v tools/test_buffer_residency_v1.py tools/test_texture_residency_v1.py
+      - name: Emit normalized submit receipt
+        run: mkdir -p target/render-submit-runtime && PYTHONPATH=tools python tools/run_render_submit_runtime_receipt.py | tee target/render-submit-runtime/receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-submit-runtime-${{ github.run_id }}
+          path: target/render-submit-runtime/receipt.json
+          if-no-files-found: error
