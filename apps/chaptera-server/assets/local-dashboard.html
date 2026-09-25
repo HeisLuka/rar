@@ -27,7 +27,12 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#c7d2fe}
     <div class="card"><div class="label">Process</div><div id="live" class="value">…</div></div>
     <div class="card"><div class="label">Runtime</div><div id="ready" class="value">…</div></div>
     <div class="card"><div class="label">Build</div><div id="build" class="value" style="font-size:14px">…</div></div>
-    <div class="card"><div class="label">Editor</div><div class="value warn" style="font-size:14px">API wiring next</div><div class="muted" style="margin-top:6px;font-size:12px">Не synthetic harness: сюда подключим реальный browser→server editor flow.</div></div>
+    <div class="card">
+      <div class="label">Editor</div>
+      <div id="editor" class="value warn" style="font-size:14px">BOOTING</div>
+      <div id="editor-note" class="muted" style="margin-top:6px;font-size:12px">Preparing real SampleNewsletter + canonical EditorSession.</div>
+      <button id="open-editor" style="margin-top:10px" disabled>Open real editor</button>
+    </div>
   </div>
 
   <section>
@@ -43,6 +48,7 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#c7d2fe}
       <label><input id="errorsOnly" type="checkbox"> errors/warnings only</label>
       <span class="muted">server: <code>.chaptera-local/logs/server.log</code></span>
       <span class="muted">worker: <code>.chaptera-local/logs/worker.log</code></span>
+      <span class="muted">editor: <code>.chaptera-local/logs/editor-service.log</code></span>
     </div>
     <div id="fatal"></div>
     <table><thead><tr><th>#</th><th>Level</th><th>Request</th><th>Status</th><th>ms</th><th>Trace</th></tr></thead><tbody id="events"></tbody></table>
@@ -52,6 +58,28 @@ code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#c7d2fe}
 let lastStatus=null,lastEvents=[];
 const esc=(v)=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function setClass(el,ok){el.className="value "+(ok?"ok":"bad")}
+const EDITOR_API="http://127.0.0.1:18765";
+const EDITOR_URL="http://127.0.0.1:18083/apps/web/local-editor.html?api="+encodeURIComponent(EDITOR_API)+"&emu_per_css_px=12700&pan_y_css_px=-2600";
+async function loadEditor(){
+  const editor=document.querySelector("#editor");
+  const note=document.querySelector("#editor-note");
+  const open=document.querySelector("#open-editor");
+  try{
+    const response=await fetch(EDITOR_API+"/health",{cache:"no-store"});
+    if(!response.ok) throw new Error("HTTP "+response.status);
+    const status=await response.json();
+    editor.textContent="READY"; setClass(editor,true);
+    note.textContent=status.interactive===true
+      ?"Real PUB + canonical EditorSession interactive mode."
+      :"Editor service ready.";
+    open.disabled=false;
+  }catch(error){
+    editor.textContent="BOOTING / ERROR";
+    editor.className="value warn";
+    note.textContent="See .chaptera-local/logs/editor-service.log";
+    open.disabled=true;
+  }
+}
 async function load(){
   const fatal=document.querySelector("#fatal");
   try{
@@ -67,6 +95,7 @@ async function load(){
       "<tr><td><code>"+esc(name)+"</code></td><td>"+(c.required?"yes":"no")+"</td><td class='"+(c.ready?"ok":"bad")+"'>"+(c.ready?"ready":"not ready")+"</td><td>"+esc(c.code??"")+(c.message?" — "+esc(c.message):"")+"</td></tr>"
     ).join("");
     renderEvents();
+    await loadEditor();
     fatal.style.display="none";
   }catch(err){
     document.querySelector("#live").textContent="OFFLINE"; setClass(document.querySelector("#live"),false);
@@ -80,6 +109,7 @@ function renderEvents(){
     "<tr><td>"+e.seq+"</td><td class='"+(e.level==="error"?"bad":e.level==="warn"?"warn":"")+"'>"+esc(e.level)+"</td><td><code>"+esc(e.method)+" "+esc(e.path)+"</code><br><span class='muted'>"+esc(e.request_id)+"</span></td><td>"+e.status+"</td><td>"+e.duration_ms+"</td><td><code>"+esc(e.trace_id??"")+"</code></td></tr>"
   ).join("");
 }
+document.querySelector("#open-editor").onclick=()=>window.open(EDITOR_URL,"_blank","noopener");
 document.querySelector("#refresh").onclick=load;
 document.querySelector("#errorsOnly").onchange=renderEvents;
 document.querySelector("#copy").onclick=async()=>{
