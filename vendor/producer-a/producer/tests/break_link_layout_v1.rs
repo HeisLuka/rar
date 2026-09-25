@@ -30,7 +30,7 @@ fn story_id() -> StoryId {
     StoryId::from_canonical(canonical(0x40))
 }
 fn new_story_id() -> StoryId {
-    serde_json::from_str("\\\"01890f47-0c00-7abc-8def-0123456789ab\\\"").unwrap()
+    serde_json::from_str("\"01890f47-0c00-7abc-8def-0123456789ab\"").unwrap()
 }
 fn source_hash() -> Sha256Digest {
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
