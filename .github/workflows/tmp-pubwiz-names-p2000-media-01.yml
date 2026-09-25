@@ -1,0 +1,317 @@
+name: TEMP PUBWIZ P2000 master-set media census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-names-p2000-media-01.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends p7zip-full msitools iat
+
+      - name: Recover exact Publisher 2000 media
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/p2k/src /tmp/p2k/img /tmp/p2k/disc /tmp/p2k/install
+          python - <<'PY'
+          import json, urllib.request, urllib.parse, pathlib
+          ident="X05-44678"
+          req=urllib.request.Request(
+              f"https://archive.org/metadata/{ident}",
+              headers={"User-Agent":"rar-pubwiz-names-p2000/1.0"},
+          )
+          with urllib.request.urlopen(req, timeout=60) as r:
+              meta=json.load(r)
+          files=[]
+          for f in meta.get("files",[]):
+              n=str(f.get("name") or "")
+              if str(f.get("source") or "")=="original" and n.lower().endswith(".7z"):
+                  files.append(f)
+          if not files:
+              raise SystemExit("no original 7z")
+          files.sort(key=lambda f:int(f.get("size") or 0), reverse=True)
+          f=files[0]
+          name=f["name"]
+          url=f"https://archive.org/download/{ident}/"+urllib.parse.quote(name,safe="/")
+          pathlib.Path("/tmp/p2k/url").write_text(url)
+          pathlib.Path("out/source.json").write_text(json.dumps({
+              "identifier":ident,
+              "name":name,
+              "reported_size":int(f.get("size") or 0),
+              "reported_md5":f.get("md5"),
+              "reported_sha1":f.get("sha1"),
+          },indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 \
+            -o /tmp/p2k/src/source.7z "$(cat /tmp/p2k/url)"
+          ACTUAL="$(sha256sum /tmp/p2k/src/source.7z | awk '{print $1}')"
+          echo "transport_sha256=$ACTUAL"
+          test "$ACTUAL" = "5c9b052976fc261d4a1f04d41277871395699bb98b4078b6f9bf832b932ac1ba"
+
+          7z l -slt /tmp/p2k/src/source.7z > /tmp/p2k/archive.slt
+          python - <<'PY'
+          import pathlib
+          rows=[]; cur={}
+          for line in pathlib.Path("/tmp/p2k/archive.slt").read_text(errors="replace").splitlines():
+              if " = " not in line:
+                  continue
+              k,v=line.split(" = ",1)
+              if k=="Path" and cur:
+                  rows.append(cur); cur={}
+              cur[k]=v
+          if cur: rows.append(cur)
+          cand=[]
+          for r in rows:
+              p=r.get("Path","")
+              if p.lower().endswith((".mdf",".iso",".img",".bin")):
+                  try:s=int(r.get("Size","0"))
+                  except:s=0
+                  cand.append((s,p))
+          if not cand: raise SystemExit("no image member")
+          cand.sort(reverse=True)
+          pathlib.Path("/tmp/p2k/image_member").write_text(cand[0][1])
+          print(cand[0])
+          PY
+          7z x -y /tmp/p2k/src/source.7z -o/tmp/p2k/img "$(cat /tmp/p2k/image_member)" >/dev/null
+          IMAGE="$(find /tmp/p2k/img -type f | head -n1)"
+          test -n "$IMAGE"
+          case "$IMAGE" in
+            *.mdf|*.MDF) iat "$IMAGE" /tmp/p2k/p2000.iso >/dev/null; IMAGE=/tmp/p2k/p2000.iso ;;
+          esac
+          IMG_SHA="$(sha256sum "$IMAGE" | awk '{print $1}')"
+          echo "image_sha256=$IMG_SHA"
+          test "$IMG_SHA" = "f5317c26742be05c6e015a5b4391fbf62e840680a9d682c159dfb46e6ad777e0"
+          printf '%s' "$IMAGE" > /tmp/p2k/image_path
+
+      - name: Extract Publisher-bearing install payloads
+        run: |
+          set -euo pipefail
+          IMAGE="$(cat /tmp/p2k/image_path)"
+          7z x -y "$IMAGE" -o/tmp/p2k/disc >/dev/null
+
+          python - <<'PY'
+          import pathlib, subprocess, json, re
+          disc=pathlib.Path("/tmp/p2k/disc")
+          selected=[]
+          all_msi=[]
+          for msi in disc.rglob("*"):
+              if not msi.is_file() or msi.suffix.lower()!=".msi":
+                  continue
+              row={"path":str(msi.relative_to(disc))}
+              p=subprocess.run(["msiinfo","export",str(msi),"File"],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+              txt=p.stdout.decode("utf-8","replace") if p.returncode==0 else ""
+              row["file_rows"]=max(0,len(txt.splitlines())-3)
+              pub_hits=sum(1 for line in txt.splitlines() if re.search(r"MSPUB|PUBWIZ|BIZCARD|PUB6\.CHM|MORPH9|PTXT9",line,re.I))
+              row["publisher_file_hits"]=pub_hits
+              all_msi.append(row)
+              if pub_hits:
+                  selected.append(msi)
+          pathlib.Path("out/msi-selection.json").write_text(json.dumps({
+              "all_msi":all_msi,
+              "selected":[str(x.relative_to(disc)) for x in selected],
+          },indent=2))
+          if not selected:
+              raise SystemExit("no Publisher-bearing MSI")
+          for i,msi in enumerate(selected):
+              dest=pathlib.Path("/tmp/p2k/install")/f"msi-{i:02d}"
+              dest.mkdir(parents=True,exist_ok=True)
+              q=subprocess.run(["msiextract","-C",str(dest),str(msi)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+              pathlib.Path(str(dest)+".status").write_text(str(q.returncode))
+          PY
+
+          # Also unpack CABs directly; some old setup payloads are easier to inspect this way.
+          python - <<'PY'
+          import pathlib, subprocess, json
+          disc=pathlib.Path("/tmp/p2k/disc")
+          rows=[]
+          for i,cab in enumerate(p for p in disc.rglob("*") if p.is_file() and p.suffix.lower()==".cab"):
+              dest=pathlib.Path("/tmp/p2k/install")/f"cab-{i:03d}"
+              dest.mkdir(parents=True,exist_ok=True)
+              q=subprocess.run(["7z","x","-y",f"-o{dest}",str(cab)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=120)
+              rows.append({"cab":str(cab.relative_to(disc)),"returncode":q.returncode})
+          pathlib.Path("out/cab-extraction.json").write_text(json.dumps(rows,indent=2))
+          PY
+
+      - name: Scan exact media payload for Master Set names and clusters
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, re, json, hashlib, collections
+
+          root=pathlib.Path("/tmp/p2k/install")
+          # Broad late vocabulary is used only as a search lexicon, never as historical identity proof.
+          vocabulary=[
+            "Accent Box","Accessory Bar","Arcs","Argyle","Arrows","Astro","Axis","Bars",
+            "Birthday","Blank","Blends","Blocks","Border Flowers","Borders","Bouquet","Bounce",
+            "Brocade","Bubbles","Butterfly","Capsules","Cascade","Checkers","Circles","Color Band",
+            "Confetti","Corner Art","Crossed Lines","Diamonds","Echo","Eclipse","Edge","Floating Oval",
+            "Handprint","Hearts and Circles","Jumbled Boxes","Jungle","Layers","Leaves","Level",
+            "Linear Accent","Marker","Marquee","Maze","Mobile","Modular","Network","Pansies",
+            "Party Time","Perforation","Photoscope","Pinwheel","Pixel","Profile","Punctuation",
+            "Quadrant","Radial","Refined","Retro","Ribbons","Romance","Scallops","Signpost",
+            "Simple Divider","Soap Bubbles","Starfish","Steps","Straight Edge","Stripes","Studio",
+            "Tabs","Tilt","Triangles","Wallpaper","Watermark","Waves","Wavy Frame"
+          ]
+          anchors={"Accent Box","Accessory Bar","Arcs","Argyle","Astro","Axis","Bars","Blends","Blocks",
+                   "Floating Oval","Marquee","Mobile","Tilt"}
+
+          def h256(p):
+              h=hashlib.sha256()
+              with p.open("rb") as f:
+                  while True:
+                      b=f.read(1024*1024)
+                      if not b: break
+                      h.update(b)
+              return h.hexdigest()
+
+          def find_all(data,needle):
+              out=[]; start=0
+              while True:
+                  i=data.find(needle,start)
+                  if i<0: return out
+                  out.append(i); start=i+1
+
+          file_hits=[]
+          anchor_files=set()
+          scanned=0
+          for p in root.rglob("*"):
+              if not p.is_file():
+                  continue
+              try:
+                  size=p.stat().st_size
+              except OSError:
+                  continue
+              if size==0 or size>80*1024*1024:
+                  continue
+              scanned+=1
+              try:data=p.read_bytes()
+              except OSError: continue
+              hits=[]
+              for name in vocabulary:
+                  forms=[
+                    ("ascii",name.encode("ascii")),
+                    ("ascii_upper",name.upper().encode("ascii")),
+                    ("utf16le",name.encode("utf-16le")),
+                    ("utf16le_upper",name.upper().encode("utf-16le")),
+                  ]
+                  found=set()
+                  for enc,needle in forms:
+                      for off in find_all(data,needle):
+                          key=(off,enc)
+                          if key in found: continue
+                          found.add(key)
+                          hits.append({"name":name,"encoding":enc,"offset":off})
+              if hits:
+                  hits.sort(key=lambda x:(x["offset"],x["name"],x["encoding"]))
+                  names=[]
+                  seen=set()
+                  for x in hits:
+                      if x["name"] not in seen:
+                          names.append(x["name"]); seen.add(x["name"])
+                  rel=str(p.relative_to(root))
+                  file_hits.append({
+                      "file":rel,
+                      "size":size,
+                      "sha256":h256(p),
+                      "distinct_names":names,
+                      "distinct_name_count":len(names),
+                      "hits":hits[:500],
+                  })
+                  if anchors.intersection(names):
+                      anchor_files.add(rel)
+
+          # Extract only short, alphabetic-ish neighboring strings around known anchor hits.
+          # This is a source-safe locator, not a dump of proprietary resources.
+          neigh=[]
+          ascii_re=re.compile(rb"[A-Za-z][A-Za-z &'()/-]{2,47}")
+          utf_re=re.compile(rb"(?:[A-Za-z &'()/-]\x00){3,48}")
+          for row in file_hits:
+              if row["file"] not in anchor_files:
+                  continue
+              p=root/row["file"]
+              data=p.read_bytes()
+              short=[]
+              for m in ascii_re.finditer(data):
+                  s=m.group(0).decode("ascii","replace").strip()
+                  if 3<=len(s)<=48:
+                      short.append((m.start(),"ascii",s))
+              for m in utf_re.finditer(data):
+                  try:s=m.group(0).decode("utf-16le").strip()
+                  except UnicodeDecodeError: continue
+                  if 3<=len(s)<=48:
+                      short.append((m.start(),"utf16le",s))
+              short.sort()
+              anchor_offsets=[x["offset"] for x in row["hits"] if x["name"] in anchors]
+              picked=[]
+              for ao in anchor_offsets:
+                  nearby=[x for x in short if abs(x[0]-ao)<=8192]
+                  # retain only a compact local window around each anchor
+                  nearby=sorted(nearby,key=lambda x:(abs(x[0]-ao),x[0]))[:40]
+                  for x in nearby:
+                      if x not in picked: picked.append(x)
+              picked.sort()
+              neigh.append({
+                  "file":row["file"],
+                  "anchor_names":[n for n in row["distinct_names"] if n in anchors],
+                  "nearby_short_strings":[{"offset":o,"encoding":e,"text":s} for o,e,s in picked[:250]],
+              })
+
+          ranked=sorted(file_hits,key=lambda r:(-r["distinct_name_count"],r["file"]))
+          summary={
+              "schema":"chaptera.pubwiz-p2000-masterset-media-census.v1",
+              "source_safe":True,
+              "raw_payload_retained":False,
+              "scanned_file_count":scanned,
+              "files_with_vocab_hits":len(file_hits),
+              "files_with_anchor_hits":len(anchor_files),
+              "top_files":[{
+                  "file":r["file"],
+                  "size":r["size"],
+                  "sha256":r["sha256"],
+                  "distinct_name_count":r["distinct_name_count"],
+                  "distinct_names":r["distinct_names"],
+              } for r in ranked[:30]],
+              "anchor_neighborhoods":neigh,
+              "guardrail":"Vocabulary membership is only a locator. Historical Master Set identity/order requires a version-specific clustered/resource context, not name presence alone."
+          }
+          pathlib.Path("out/census.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps({
+              "scanned_file_count":scanned,
+              "files_with_vocab_hits":len(file_hits),
+              "files_with_anchor_hits":len(anchor_files),
+              "top":[(r["file"],r["distinct_name_count"],r["distinct_names"]) for r in ranked[:10]],
+          },indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          r=json.load(open("out/census.json"))
+          assert r["source_safe"] is True
+          assert r["raw_payload_retained"] is False
+          for p in pathlib.Path("out").rglob("*"):
+              if p.suffix.lower() in {".exe",".dll",".msi",".cab",".poc",".des",".chm",".iso",".mdf",".7z"}:
+                  raise SystemExit(f"raw payload leaked: {p}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-p2000-masterset-media-census
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
