@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use serde::Serialize;
 
+use crate::sqlite_store::SqliteRevisionStore;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyFailure {
     pub code: &'static str,
@@ -91,6 +93,27 @@ impl RuntimePorts {
 
 fn unconfigured(gate: &'static str) -> Arc<dyn RuntimeDependency> {
     Arc::new(UnconfiguredDependency { gate })
+}
+
+pub fn revision_stream_dependency(store: SqliteRevisionStore) -> Arc<dyn RuntimeDependency> {
+    Arc::new(SqliteRevisionStreamDependency { store })
+}
+
+struct SqliteRevisionStreamDependency {
+    store: SqliteRevisionStore,
+}
+
+impl RuntimeDependency for SqliteRevisionStreamDependency {
+    fn check(&self) -> Result<(), DependencyFailure> {
+        if self.store.is_open() {
+            Ok(())
+        } else {
+            Err(DependencyFailure::new(
+                "revision_stream_closed",
+                "SQLite RevisionStream pool is closed",
+            ))
+        }
+    }
 }
 
 fn snapshot(port: &Arc<dyn RuntimeDependency>, required: bool) -> ComponentStatus {
