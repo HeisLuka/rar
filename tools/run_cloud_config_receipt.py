@@ -196,6 +196,14 @@ def main() -> int:
 
             server_env = os.environ.copy()
             server_env.update(role_env)
+            server_env.update(
+                {
+                    "AWS_REGION": "us-east-1",
+                    "AWS_ACCESS_KEY_ID": "receipt-only-access-key",
+                    "AWS_SECRET_ACCESS_KEY": "receipt-only-secret-key",
+                    "AWS_EC2_METADATA_DISABLED": "true",
+                }
+            )
             server = subprocess.Popen(
                 [str(binary), "--config", str(runtime_config), "serve"],
                 stdout=subprocess.PIPE,
