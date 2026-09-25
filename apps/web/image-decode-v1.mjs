@@ -63,7 +63,7 @@ function asBlob(bytes, mimeType) {
 }
 
 export class BrowserImageDecodeAdapterV1 {
-  constructor({ createImageBitmapImpl = globalThis.createImageBitmap, runtime_generation = "browser-runtime-v1" } = {}) {
+  constructor({ createImageBitmapImpl = globalThis.createImageBitmap?.bind(globalThis), runtime_generation = "browser-runtime-v1" } = {}) {
     this.createImageBitmapImpl = createImageBitmapImpl;
     this.runtimeGeneration = runtime_generation;
     this.generations = new Map();
