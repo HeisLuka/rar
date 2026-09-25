@@ -1,0 +1,508 @@
+name: TEMP CORPUS PIDDSI producer-major census
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-corpus-producer-major-piddsi-01.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CFB parser
+        run: python -m pip install --disable-pip-version-check olefile==0.47
+      - name: Restore accepted T645 source-free corpus receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/t645
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/10853776519/zip" > /tmp/t645.zip
+          unzip -q /tmp/t645.zip -d /tmp/t645
+          test -f /tmp/t645/cohorts/phase1/fingerprints.json
+      - name: Census PIDDSI_VERSION on all media-pinned physical members
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import concurrent.futures
+          import hashlib
+          import io
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          import olefile
+
+          UA = "rar-piddsi-census/1.0"
+          SECTOR = 2048
+
+          MEDIA = {
+              "8f1e46dd43be728d7b39f53cf4f642149b19eebe0c74103270fc14ecae1291c4": "Publisher 2.0",
+              "36abfed421c586737cf852f4c3179210cd8f93e7d2d8c56e07e2ef825b5d7a7a": "Publisher 3.0 / Windows 95",
+              "41d4180a7cc8b04db10d5cfc510207f7a9f705915d0090be655a4c27c2cb15ab": "Publisher 97",
+              "0e30e5f0817cb94ff78780ac34b386c4c87c475ead40227758c387e985560e4c": "Publisher 97",
+              "cb9ced4d7f0606a81638855a1d77430a5d37352ec6993a95668295b854a69d59": "Publisher 97",
+              "c44fc471b42e3381efeec1d069161c05331d1ebd883d764e9c04a5c6392177c7": "Publisher 97",
+              "3abd372fd3a1def03cf17ca6277533a8a1bcfbe88b56a213f9c389035020a78b": "Publisher 97",
+              "69043e0d2d23345163a27806914c99382490a27e5710fdb6af82ee7df33b4ce8": "Publisher 97",
+          }
+
+          def sha256(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def u16(data: bytes, off: int) -> int:
+              if off < 0 or off + 2 > len(data):
+                  raise ValueError("u16 out of bounds")
+              return int.from_bytes(data[off:off+2], "little")
+
+          def u32(data: bytes, off: int) -> int:
+              if off < 0 or off + 4 > len(data):
+                  raise ValueError("u32 out of bounds")
+              return int.from_bytes(data[off:off+4], "little")
+
+          class RangeISO:
+              def __init__(self, archive_url: str):
+                  self.archive_url = archive_url
+                  self.delivery_urls = self._delivery_urls(archive_url)
+                  self.delivery_url = self._select_delivery()
+                  self.dir_cache = {}
+
+              def _delivery_urls(self, url: str) -> list[str]:
+                  p = urllib.parse.urlparse(url)
+                  parts = p.path.split("/")
+                  if p.netloc != "archive.org" or len(parts) < 4 or parts[1] != "download":
+                      raise ValueError(f"unsupported archive URL: {url}")
+                  identifier = parts[2]
+                  filename = "/".join(parts[3:])
+                  req = urllib.request.Request(
+                      f"https://archive.org/metadata/{identifier}",
+                      headers={"User-Agent": UA},
+                  )
+                  last = None
+                  for attempt in range(4):
+                      try:
+                          with urllib.request.urlopen(req, timeout=45) as response:
+                              meta = json.load(response)
+                          break
+                      except Exception as exc:
+                          last = exc
+                          if attempt == 3:
+                              raise
+                          time.sleep(2 ** attempt)
+                  directory = str(meta.get("dir") or "")
+                  urls = []
+                  for key in ("d1", "d2"):
+                      host = str(meta.get(key) or "")
+                      if host and directory:
+                          urls.append(
+                              "https://" + host + directory.rstrip("/") + "/" +
+                              urllib.parse.quote(filename, safe="/")
+                          )
+                  urls.extend([url, url + "?download=1"])
+                  return list(dict.fromkeys(urls))
+
+              def _read_from(self, url: str, start: int, length: int) -> bytes:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": UA,
+                          "Range": f"bytes={start}-{start + length - 1}",
+                          "Accept-Encoding": "identity",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=60) as response:
+                      status = getattr(response, "status", None)
+                      if status != 206 and not response.headers.get("Content-Range"):
+                          raise ValueError(f"range unsupported status={status}")
+                      data = response.read(length + 1)
+                  if len(data) != length:
+                      raise ValueError(f"range length drift {len(data)} != {length}")
+                  return data
+
+              def _select_delivery(self) -> str:
+                  last = None
+                  for url in self.delivery_urls:
+                      for attempt in range(4):
+                          try:
+                              pvd = self._read_from(url, 16 * SECTOR, SECTOR)
+                              if pvd[:6] != b"\x01CD001":
+                                  raise ValueError("not ISO9660 PVD")
+                              return url
+                          except Exception as exc:
+                              last = exc
+                              if attempt < 3:
+                                  time.sleep(2 ** attempt)
+                  assert last is not None
+                  raise last
+
+              def read(self, start: int, length: int) -> bytes:
+                  last = None
+                  for attempt in range(5):
+                      try:
+                          return self._read_from(self.delivery_url, start, length)
+                      except Exception as exc:
+                          last = exc
+                          if attempt < 4:
+                              time.sleep(2 ** attempt)
+                  assert last is not None
+                  raise last
+
+              @staticmethod
+              def _record(rec: bytes):
+                  extent = int.from_bytes(rec[2:6], "little")
+                  size = int.from_bytes(rec[10:14], "little")
+                  flags = rec[25]
+                  n = rec[32]
+                  raw = rec[33:33+n]
+                  name = raw.decode("ascii", errors="strict")
+                  return name, extent, size, flags
+
+              def _read_dir(self, extent: int, size: int):
+                  key = (extent, size)
+                  if key in self.dir_cache:
+                      return self.dir_cache[key]
+                  data = self.read(extent * SECTOR, size)
+                  out = {}
+                  pos = 0
+                  while pos < len(data):
+                      n = data[pos]
+                      if n == 0:
+                          pos = ((pos // SECTOR) + 1) * SECTOR
+                          continue
+                      rec = data[pos:pos+n]
+                      name, ex, sz, flags = self._record(rec)
+                      if name not in ("\x00", "\x01"):
+                          out[name.split(";")[0].upper()] = (ex, sz, flags)
+                      pos += n
+                  self.dir_cache[key] = out
+                  return out
+
+              def member_bytes(self, path: str) -> bytes:
+                  pvd = self.read(16 * SECTOR, SECTOR)
+                  root_len = pvd[156]
+                  _, extent, size, flags = self._record(pvd[156:156+root_len])
+                  parts = [x.upper() for x in path.strip("/").split("/") if x]
+                  for i, part in enumerate(parts):
+                      listing = self._read_dir(extent, size)
+                      key = part.split(";")[0]
+                      if key not in listing:
+                          raise KeyError(f"ISO member missing: {path} at {part}")
+                      extent, size, flags = listing[key]
+                      if i + 1 < len(parts) and not (flags & 0x02):
+                          raise ValueError(f"expected directory at {part}")
+                  if flags & 0x02:
+                      raise ValueError(f"target is directory: {path}")
+                  return self.read(extent * SECTOR, size)
+
+          def parse_piddsi(pub: bytes) -> dict:
+              try:
+                  with olefile.OleFileIO(io.BytesIO(pub)) as ole:
+                      target = None
+                      for path in ole.listdir(streams=True, storages=False):
+                          if path and path[-1] == "\x05DocumentSummaryInformation":
+                              target = path
+                              break
+                      if target is None:
+                          return {"state": "property_absent", "dsi_stream_present": False}
+                      raw = ole.openstream(target).read()
+              except Exception as exc:
+                  return {
+                      "state": "malformed_value",
+                      "dsi_stream_present": None,
+                      "error": f"ole:{type(exc).__name__}:{exc}",
+                  }
+
+              base = {"dsi_stream_present": True, "dsi_stream_len": len(raw)}
+              try:
+                  if len(raw) < 28:
+                      raise ValueError("property stream shorter than header")
+                  if raw[0:2] != b"\xfe\xff":
+                      raise ValueError(f"unexpected byte order {raw[0:2].hex()}")
+                  section_count = u32(raw, 24)
+                  if section_count < 1 or section_count > 8:
+                      raise ValueError(f"invalid section count {section_count}")
+                  if 28 + section_count * 20 > len(raw):
+                      raise ValueError("section descriptor table truncated")
+
+                  hits = []
+                  for si in range(section_count):
+                      desc = 28 + si * 20
+                      sec_off = u32(raw, desc + 16)
+                      if sec_off + 8 > len(raw):
+                          raise ValueError(f"section {si} header out of bounds")
+                      sec_size = u32(raw, sec_off)
+                      prop_count = u32(raw, sec_off + 4)
+                      if sec_size < 8 or sec_off + sec_size > len(raw):
+                          raise ValueError(f"section {si} size invalid")
+                      if prop_count > 4096 or sec_off + 8 + prop_count * 8 > sec_off + sec_size:
+                          raise ValueError(f"section {si} property table invalid")
+                      for pi in range(prop_count):
+                          ent = sec_off + 8 + pi * 8
+                          pid = u32(raw, ent)
+                          rel = u32(raw, ent + 4)
+                          if pid != 0x17:
+                              continue
+                          val_off = sec_off + rel
+                          if val_off + 4 > sec_off + sec_size:
+                              hits.append({"state": "malformed_value", "section": si, "reason": "typed value header out of bounds"})
+                              continue
+                          vt = u16(raw, val_off)
+                          if vt != 3:
+                              hits.append({"state": "malformed_type", "section": si, "vt": vt})
+                              continue
+                          if val_off + 8 > sec_off + sec_size:
+                              hits.append({"state": "malformed_value", "section": si, "vt": vt, "reason": "VT_I4 value out of bounds"})
+                              continue
+                          value = u32(raw, val_off + 4)
+                          hits.append({
+                              "state": "valid_vt_i4",
+                              "section": si,
+                              "vt": vt,
+                              "value_u32": value,
+                              "value_hex": f"0x{value:08X}",
+                              "producer_major": (value >> 16) & 0xFFFF,
+                              "producer_build_or_minor": value & 0xFFFF,
+                          })
+
+                  if not hits:
+                      return {**base, "state": "property_absent"}
+                  valid = [h for h in hits if h["state"] == "valid_vt_i4"]
+                  if valid:
+                      vals = {h["value_u32"] for h in valid}
+                      if len(vals) != 1 or len(valid) != len(hits):
+                          return {
+                              **base,
+                              "state": "malformed_value",
+                              "error": "multiple/conflicting PIDDSI_VERSION observations",
+                              "observations": hits,
+                          }
+                      return {**base, **valid[0], "observation_count": len(valid)}
+                  # No valid hit; preserve first bounded malformed classification.
+                  return {**base, **hits[0], "observations": hits}
+              except Exception as exc:
+                  return {
+                      **base,
+                      "state": "malformed_value",
+                      "error": f"property_set:{type(exc).__name__}:{exc}",
+                  }
+
+          cohort_root = Path("/tmp/t645/cohorts")
+          rows = []
+          for path in sorted(cohort_root.glob("*/fingerprints.json")):
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              if not isinstance(payload, list):
+                  raise ValueError(f"not a row list: {path}")
+              rows.extend(payload)
+
+          selected = [
+              row for row in rows
+              if row.get("status") == "ok"
+              and str(row.get("root_sha256") or "").lower() in MEDIA
+          ]
+          assert len(selected) == 828, len(selected)
+          logical_ids = {row["content_topology_fingerprint_sha256"] for row in selected}
+          assert len(logical_ids) == 668, len(logical_ids)
+          assert all(row.get("archive_member") for row in selected)
+          assert all(row.get("container_url") for row in selected)
+          assert all(int(row.get("byte_len") or 0) > 0 for row in selected)
+
+          by_root = defaultdict(list)
+          for row in selected:
+              by_root[str(row["root_sha256"]).lower()].append(row)
+
+          def scan_root(item):
+              root_sha, root_rows = item
+              urls = {str(row["container_url"]) for row in root_rows}
+              if len(urls) != 1:
+                  raise ValueError(f"root {root_sha} has URL ambiguity: {sorted(urls)}")
+              reader = RangeISO(next(iter(urls)))
+              out = []
+              for idx, row in enumerate(sorted(root_rows, key=lambda r: (r["archive_member"], r["sha256"]))):
+                  try:
+                      data = reader.member_bytes(str(row["archive_member"]))
+                      expected_len = int(row["byte_len"])
+                      if len(data) != expected_len:
+                          raise ValueError(f"size mismatch {len(data)} != {expected_len}")
+                      actual = sha256(data)
+                      expected_sha = str(row["sha256"]).lower()
+                      if actual != expected_sha:
+                          raise ValueError(f"sha mismatch {actual} != {expected_sha}")
+                      probe = parse_piddsi(data)
+                      status = "ok"
+                      error = None
+                  except Exception as exc:
+                      probe = {"state": "rehydrate_failure"}
+                      status = "rehydrate_failure"
+                      error = f"{type(exc).__name__}:{exc}"
+                  result = {
+                      "logical_identity": row["content_topology_fingerprint_sha256"],
+                      "physical_sha256": row["sha256"],
+                      "byte_len": row["byte_len"],
+                      "root_sha256": root_sha,
+                      "distribution_media_version": MEDIA[root_sha],
+                      "container_url": row["container_url"],
+                      "archive_member": row["archive_member"],
+                      "contents_family": row.get("contents_family"),
+                      "contents_serialization_revision": row.get("contents_serialization_revision"),
+                      "member_verification": status,
+                      "piddsi": probe,
+                  }
+                  if error:
+                      result["error"] = error
+                  out.append(result)
+                  if (idx + 1) % 50 == 0:
+                      print(root_sha[:12], idx + 1, "/", len(root_rows), flush=True)
+              return out
+
+          physical_rows = []
+          with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(by_root))) as pool:
+              futures = [pool.submit(scan_root, item) for item in sorted(by_root.items())]
+              for future in concurrent.futures.as_completed(futures):
+                  physical_rows.extend(future.result())
+
+          physical_rows.sort(key=lambda r: (r["logical_identity"], r["physical_sha256"]))
+          assert len(physical_rows) == 828
+
+          grouped = defaultdict(list)
+          for row in physical_rows:
+              grouped[row["logical_identity"]].append(row)
+          assert len(grouped) == 668
+
+          logical_rows = []
+          conflict_rows = []
+          for logical, members in sorted(grouped.items()):
+              states = Counter(m["piddsi"]["state"] for m in members)
+              valid_values = {
+                  m["piddsi"].get("value_u32")
+                  for m in members
+                  if m["piddsi"]["state"] == "valid_vt_i4"
+              }
+              valid_values.discard(None)
+              state = "consistent"
+              if len(valid_values) > 1:
+                  state = "value_conflict"
+              # Exact logical stream identity should make PIDDSI bytes identical;
+              # mixed presence/state is therefore also an explicit inconsistency.
+              member_states = {m["piddsi"]["state"] for m in members}
+              if len(member_states) > 1 and not member_states <= {"property_absent"}:
+                  state = "state_conflict"
+              representative = members[0]
+              row = {
+                  "logical_identity": logical,
+                  "physical_member_count": len(members),
+                  "distribution_media_versions": sorted({m["distribution_media_version"] for m in members}),
+                  "contents_families": sorted({str(m.get("contents_family")) for m in members}),
+                  "contents_serialization_revisions": sorted({
+                      str(m.get("contents_serialization_revision")) for m in members
+                  }),
+                  "piddsi_state_counts": dict(sorted(states.items())),
+                  "consistency": state,
+              }
+              if len(valid_values) == 1:
+                  value = next(iter(valid_values))
+                  row.update({
+                      "piddsi_value_u32": value,
+                      "piddsi_value_hex": f"0x{value:08X}",
+                      "producer_major": (value >> 16) & 0xFFFF,
+                      "producer_build_or_minor": value & 0xFFFF,
+                  })
+              logical_rows.append(row)
+              if state != "consistent":
+                  conflict_rows.append(row)
+
+          physical_state_counts = Counter(r["piddsi"]["state"] for r in physical_rows)
+          logical_presence_counts = Counter()
+          producer_major_counts = Counter()
+          by_media = defaultdict(Counter)
+          for row in logical_rows:
+              counts = row["piddsi_state_counts"]
+              if counts.get("valid_vt_i4"):
+                  bucket = "valid_vt_i4"
+                  producer_major_counts[str(row["producer_major"])] += 1
+              elif counts.get("rehydrate_failure"):
+                  bucket = "rehydrate_failure"
+              elif counts.get("malformed_type"):
+                  bucket = "malformed_type"
+              elif counts.get("malformed_value"):
+                  bucket = "malformed_value"
+              else:
+                  bucket = "property_absent"
+              logical_presence_counts[bucket] += 1
+              for media in row["distribution_media_versions"]:
+                  by_media[media][bucket] += 1
+
+          summary = {
+              "schema": "chaptera.corpus-producer-major-piddsi-census.v1",
+              "source_safe": True,
+              "raw_pub_retained": False,
+              "physical_member_count": len(physical_rows),
+              "logical_identity_count": len(logical_rows),
+              "expected_media_pinned_logical_identity_count": 668,
+              "physical_state_counts": dict(sorted(physical_state_counts.items())),
+              "logical_state_counts": dict(sorted(logical_presence_counts.items())),
+              "producer_major_logical_counts": dict(sorted(producer_major_counts.items(), key=lambda kv: int(kv[0]))),
+              "logical_state_counts_by_distribution_media": {
+                  media: dict(sorted(counts.items())) for media, counts in sorted(by_media.items())
+              },
+              "logical_conflict_count": len(conflict_rows),
+              "rehydrate_failure_count": physical_state_counts.get("rehydrate_failure", 0),
+              "interpretation_boundary": "PIDDSI_VERSION high word is retained as numeric producer_major only; no marketing-version label is inferred by this receipt.",
+          }
+
+          out = Path("out")
+          out.mkdir(exist_ok=True)
+          (out / "physical_rows.json").write_text(
+              json.dumps(physical_rows, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "logical_rows.json").write_text(
+              json.dumps(logical_rows, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
+
+          assert summary["physical_member_count"] == 828
+          assert summary["logical_identity_count"] == 668
+          assert summary["logical_conflict_count"] == 0, conflict_rows[:5]
+          assert summary["rehydrate_failure_count"] == 0
+          PY
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          if find out -type f -iname '*.pub' | grep -q .; then
+            echo "raw PUB leaked into retained output" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("out/summary.json").read_text())
+          assert s["source_safe"] is True
+          assert s["raw_pub_retained"] is False
+          assert s["physical_member_count"] == 828
+          assert s["logical_identity_count"] == 668
+          assert s["logical_conflict_count"] == 0
+          assert s["rehydrate_failure_count"] == 0
+          PY
+          sha256sum out/*.json | tee out/sha256sums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-producer-major-piddsi-01-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
