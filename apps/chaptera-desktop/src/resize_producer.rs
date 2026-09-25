@@ -126,7 +126,7 @@ fn select_candidate(editor: &EditorSession) -> Result<CandidateContext, String> 
             .graph()
             .pages
             .keys()
-            .find(|page_id| page_id.into_canonical() == node.header.parent_id)
+            .find(|page_id| (**page_id).into_canonical() == node.header.parent_id)
         else {
             continue;
         };
@@ -201,9 +201,9 @@ fn commit_response(fixture: &Fixture, request: &Value) -> Result<Value, String> 
         .get("command")
         .and_then(Value::as_object)
         .ok_or_else(|| "ResizeNode commit request is missing command".to_owned())?;
+    let candidate_node_id = context.candidate.node_id.as_canonical().to_string();
     if command.get("kind").and_then(Value::as_str) != Some("resize_node_to")
-        || command.get("node_id").and_then(Value::as_str)
-            != Some(context.candidate.node_id.as_canonical().to_string().as_str())
+        || command.get("node_id").and_then(Value::as_str) != Some(candidate_node_id.as_str())
     {
         return Err("ResizeNode commit request targets a different canonical object".to_owned());
     }
