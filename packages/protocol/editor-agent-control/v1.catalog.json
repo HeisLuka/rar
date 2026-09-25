@@ -1,0 +1,657 @@
+{
+  "schema": "chaptera.agent-control.catalog.v1",
+  "protocol_version": "chaptera.agent-control.v1",
+  "executable": "chaptera-editor.exe",
+  "mode": "--agent-v1",
+  "transport": "ndjson_stdio",
+  "envelope": {
+    "required": [
+      "request_id",
+      "command"
+    ],
+    "request_id": "non_empty_string",
+    "command": "catalog_key",
+    "result_message_type": "result",
+    "trace_message_type": "trace"
+  },
+  "global_laws": {
+    "source_pub_immutable": true,
+    "native_pub_write": false,
+    "default_output": "source_free",
+    "projected_object_mutation": "fail_closed",
+    "local_content_requires_explicit_consent": true,
+    "local_diagnostic_file_reads_require_explicit_consent": true
+  },
+  "commands": {
+    "protocol.describe": {
+      "requires_open_document": false,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "protocol_version",
+        "transport",
+        "commands",
+        "command_contracts",
+        "privacy_default",
+        "native_pub_write",
+        "deep_diagnostics_provider"
+      ]
+    },
+    "open": {
+      "requires_open_document": false,
+      "mutates_session": true,
+      "mutates_editor_state": false,
+      "reads_local_file": true,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "path"
+        ],
+        "optional": [],
+        "fields": {
+          "path": "local PUB path"
+        }
+      },
+      "trace_event_kinds": [
+        "opened"
+      ],
+      "result_principal_fields": [
+        "session_id",
+        "source_hash",
+        "state",
+        "fidelity",
+        "diagnostic_codes",
+        "counts",
+        "invariants"
+      ]
+    },
+    "document.describe": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "format",
+        "format_version",
+        "source_hash",
+        "byte_len",
+        "page_count",
+        "story_count",
+        "scene_node_count",
+        "direct_scene_instance_count",
+        "fidelity",
+        "diagnostic_codes",
+        "engine_revision",
+        "native_pub_write"
+      ]
+    },
+    "pages.list": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "pages"
+      ]
+    },
+    "stories.list": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "stories"
+      ]
+    },
+    "story.inspect": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "story_id"
+        ],
+        "optional": [],
+        "fields": {
+          "story_id": "canonical StoryId string"
+        }
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "story_id",
+        "scalar_len",
+        "byte_len",
+        "text_sha256",
+        "paragraph_count",
+        "run_count",
+        "field_count",
+        "hyperlink_count",
+        "frame_count",
+        "editable",
+        "capability_reason",
+        "content"
+      ]
+    },
+    "story.read_local": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "consent": {
+        "field": "allow_content",
+        "required_value": true,
+        "scope": "exact local Story content"
+      },
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "story_id",
+          "allow_content"
+        ],
+        "optional": [],
+        "fields": {
+          "story_id": "canonical StoryId string",
+          "allow_content": "boolean true"
+        }
+      },
+      "trace_event_kinds": [
+        "content_read_local"
+      ],
+      "result_principal_fields": [
+        "story_id",
+        "text",
+        "text_sha256",
+        "local_only"
+      ]
+    },
+    "scene.instances.list": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [
+          "page_id"
+        ],
+        "fields": {
+          "page_id": "canonical page id filter"
+        }
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "instances",
+        "unclassified_or_projected_visual_node_count",
+        "mutation_policy"
+      ]
+    },
+    "instance.inspect": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "instance_id"
+        ],
+        "optional": [],
+        "fields": {
+          "instance_id": "SceneInstanceId returned by scene.instances.list"
+        }
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "instance",
+        "effective_bounds",
+        "origin_node_id",
+        "move_node_admission",
+        "geometry_sync_policy"
+      ]
+    },
+    "capabilities.get": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "target_kind",
+          "target_id"
+        ],
+        "optional": [],
+        "fields": {
+          "target_kind": {
+            "enum": [
+              "story",
+              "instance"
+            ]
+          },
+          "target_id": "StoryId or SceneInstanceId"
+        }
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "target_kind",
+        "target_id",
+        "replace_story_range",
+        "move_node",
+        "replace_image",
+        "projection_kind"
+      ]
+    },
+    "edit.apply": {
+      "requires_open_document": true,
+      "mutates_session": true,
+      "mutates_editor_state": true,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "operation"
+        ],
+        "optional": [],
+        "fields": {
+          "operation": {
+            "one_of": {
+              "replace_story_range": {
+                "required": [
+                  "kind",
+                  "story_id",
+                  "start_scalar",
+                  "end_scalar",
+                  "expected_before",
+                  "replacement_text"
+                ],
+                "kind": "replace_story_range",
+                "story_id": "canonical StoryId string",
+                "start_scalar": "u32 scalar offset",
+                "end_scalar": "u32 scalar offset",
+                "expected_before": "exact expected replaced text",
+                "replacement_text": "replacement text"
+              },
+              "move_node": {
+                "required": [
+                  "kind",
+                  "instance_id",
+                  "x",
+                  "y"
+                ],
+                "kind": "move_node",
+                "instance_id": "admitted direct_page_local SceneInstanceId",
+                "x": "i64 EMU target x",
+                "y": "i64 EMU target y"
+              }
+            }
+          }
+        }
+      },
+      "trace_event_kinds": [
+        "intent",
+        "durable_commit",
+        "projection_updated"
+      ],
+      "result_principal_fields": [
+        "accepted",
+        "operation_id",
+        "operation",
+        "before_state_id",
+        "after_state_id",
+        "scene_delta",
+        "diagnostics_delta"
+      ]
+    },
+    "undo": {
+      "requires_open_document": true,
+      "mutates_session": true,
+      "mutates_editor_state": true,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "undo"
+      ],
+      "result_principal_fields": [
+        "operation",
+        "state"
+      ]
+    },
+    "redo": {
+      "requires_open_document": true,
+      "mutates_session": true,
+      "mutates_editor_state": true,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "redo"
+      ],
+      "result_principal_fields": [
+        "operation",
+        "state"
+      ]
+    },
+    "project.save": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": true,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "path"
+        ],
+        "optional": [],
+        "fields": {
+          "path": "local EditorProject output path"
+        }
+      },
+      "trace_event_kinds": [
+        "project_persisted"
+      ],
+      "result_principal_fields": [
+        "artifact",
+        "operation_count"
+      ]
+    },
+    "project.reopen": {
+      "requires_open_document": true,
+      "mutates_session": true,
+      "mutates_editor_state": true,
+      "reads_local_file": true,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "path"
+        ],
+        "optional": [],
+        "fields": {
+          "path": "local EditorProject path"
+        }
+      },
+      "trace_event_kinds": [
+        "fresh_reopen"
+      ],
+      "result_principal_fields": [
+        "artifact",
+        "state",
+        "fresh_session"
+      ]
+    },
+    "loss.preview": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "target"
+        ],
+        "optional": [],
+        "fields": {
+          "target": {
+            "enum": [
+              "idml",
+              "odg"
+            ]
+          }
+        }
+      },
+      "trace_event_kinds": [
+        "loss_previewed"
+      ],
+      "result_principal_fields": [
+        "target",
+        "report"
+      ]
+    },
+    "export": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": true,
+      "request": {
+        "required": [
+          "request_id",
+          "command",
+          "target",
+          "path"
+        ],
+        "optional": [],
+        "fields": {
+          "target": {
+            "enum": [
+              "idml",
+              "odg"
+            ]
+          },
+          "path": "local output path"
+        }
+      },
+      "trace_event_kinds": [
+        "exported"
+      ],
+      "result_principal_fields": [
+        "artifact",
+        "loss_report"
+      ]
+    },
+    "snapshot.get": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "session_id",
+        "source_hash",
+        "state",
+        "fidelity",
+        "diagnostic_codes",
+        "counts",
+        "invariants"
+      ]
+    },
+    "trace.subscribe": {
+      "requires_open_document": false,
+      "mutates_session": true,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [
+          "enabled"
+        ],
+        "fields": {
+          "enabled": "boolean; default true"
+        }
+      },
+      "trace_event_kinds": [],
+      "result_principal_fields": [
+        "subscribed"
+      ]
+    },
+    "diagnostics.deep": {
+      "requires_open_document": true,
+      "mutates_session": false,
+      "mutates_editor_state": false,
+      "reads_local_file": true,
+      "writes_local_file": false,
+      "consent": {
+        "field": "allow_local_file",
+        "required_value": true,
+        "scope": "explicit local diagnostic receipt files when receipt_path is supplied"
+      },
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [
+          "receipt_path",
+          "joined_receipt_path",
+          "allow_local_file"
+        ],
+        "fields": {
+          "receipt_path": "local OperationBlastRadiusV1 JSON path; omitted returns provider not loaded",
+          "joined_receipt_path": "optional local MoveNodeDiagnosticReceiptV1 JSON path bound to receipt_path",
+          "allow_local_file": "boolean true required when reading receipt_path"
+        }
+      },
+      "trace_event_kinds": [
+        "observed"
+      ],
+      "result_principal_fields": [
+        "available",
+        "provider",
+        "receipt_sha256",
+        "schema_version",
+        "source_hash",
+        "operation",
+        "artifacts",
+        "classification_counts",
+        "cfb",
+        "parsed_record_family_delta",
+        "semantic_graph_delta",
+        "parser_outcomes",
+        "second_save_convergence",
+        "native_join",
+        "invariants"
+      ]
+    },
+    "shutdown": {
+      "requires_open_document": false,
+      "mutates_session": true,
+      "mutates_editor_state": false,
+      "reads_local_file": false,
+      "writes_local_file": false,
+      "request": {
+        "required": [
+          "request_id",
+          "command"
+        ],
+        "optional": [],
+        "fields": {}
+      },
+      "trace_event_kinds": [
+        "shutdown"
+      ],
+      "result_principal_fields": [
+        "shutdown"
+      ]
+    }
+  }
+}
