@@ -16,6 +16,7 @@ except ImportError as error:
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "packages" / "protocol" / "movenode-diagnostic" / "v1.schema.json"
+BLAST_SCHEMA_PATH = ROOT / "packages" / "protocol" / "operation-blast-radius" / "v1.schema.json"
 RECEIPT_VERSION = "chaptera.movenode-diagnostic-receipt.v1"
 BLAST_VERSION = "chaptera.operation-blast-radius.v1"
 EMU_PER_POINT = Decimal(12700)
@@ -83,7 +84,9 @@ def within_tolerance(actual: int, native_points: Decimal, tolerance_emu: int, ax
 
 def validate(receipt: dict[str, Any], blast: dict[str, Any], blast_raw: bytes) -> dict[str, Any]:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    blast_schema = json.loads(BLAST_SCHEMA_PATH.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(receipt)
+    jsonschema.Draft202012Validator(blast_schema).validate(blast)
 
     if receipt["receipt_version"] != RECEIPT_VERSION:
         raise ValidationError("wrong receipt_version")
