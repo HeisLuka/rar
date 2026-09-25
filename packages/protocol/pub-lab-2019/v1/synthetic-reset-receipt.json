@@ -10,20 +10,24 @@
   },
   "vmx_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "environment_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "environment_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
   "vmware": {
     "vmrun_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "vmware_vmx_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "vdiskmanager_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   },
   "restore": {
+    "challenge_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
     "revert_succeeded": true,
     "cold_start_succeeded": true,
+    "post_boot_capture_bound": true,
     "environment_match": true,
     "restore_verified": true
   },
   "privacy": {
     "local_paths_serialized": false,
     "credentials_serialized": false,
-    "licensed_media_serialized": false
+    "licensed_media_serialized": false,
+    "restore_nonce_serialized": false
   }
 }
