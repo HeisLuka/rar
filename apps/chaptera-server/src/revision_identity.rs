@@ -342,7 +342,7 @@ impl SqliteRevisionIdentityStore {
                     .resolve(&binding.document_id, &binding.service_revision_id)
                     .await?
                 {
-                    if existing == binding {
+                    if same_binding_identity(&existing, &binding) {
                         return Ok(BindRevisionIdentityOutcome::AlreadyBound(existing));
                     }
                     return Err(RevisionIdentityError::new(
@@ -453,6 +453,17 @@ impl SqliteRevisionIdentityStore {
 
         Ok(())
     }
+}
+
+fn same_binding_identity(
+    existing: &RevisionIdentityBinding,
+    requested: &RevisionIdentityBinding,
+) -> bool {
+    existing.document_id == requested.document_id
+        && existing.service_revision_id == requested.service_revision_id
+        && existing.canonical_revision_id == requested.canonical_revision_id
+        && existing.service_parent_revision_id == requested.service_parent_revision_id
+        && existing.canonical_parent_revision_id == requested.canonical_parent_revision_id
 }
 
 fn validate_binding(binding: &RevisionIdentityBinding) -> Result<(), RevisionIdentityError> {
@@ -809,7 +820,7 @@ mod tests {
                     "service-r1",
                     &canonical_r0,
                     &canonical_r1,
-                    2,
+                    99,
                 )
                 .await
                 .unwrap(),
