@@ -1,0 +1,95 @@
+name: OPEN-FIRST-USEFUL-PAGE-HARNESS-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/src/main.rs"
+      - "apps/chaptera-desktop/src/open_phase.rs"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "tools/open_first_useful_page_v1.py"
+      - "tools/test_open_first_useful_page_v1.py"
+      - "tools/run_open_first_useful_page_harness.py"
+      - "docs/open-first-useful-page-v1.md"
+      - ".github/workflows/open-first-useful-page-harness-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reader-open-phase-harness:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test receipt evidence classes
+        run: python tools/test_open_first_useful_page_v1.py
+
+      - name: Check Reader timing crates
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer -- --check
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer --all-targets
+          cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-viewer --all-targets -- -D warnings
+
+      - name: Check Reader-only desktop timing surface
+        run: cargo check -p chaptera-desktop --features reader-only --all-targets
+
+      - name: Build Reader-only timing binary
+        run: cargo build -p chaptera-desktop --release --features reader-only
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
+          Invoke-WebRequest -Uri $url -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $fixture).Length
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          }
+          if ($bytes -ne 291840) {
+            throw "SampleNewsletter byte length mismatch: $bytes"
+          }
+          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run cold and warm real Reader phase receipt
+        shell: pwsh
+        run: python tools/run_open_first_useful_page_harness.py --binary target/release/chaptera-editor.exe --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --out target/open-first-useful-page-harness/receipt.json --build-sha "${{ github.sha }}" --expected-sha256 "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf" --expected-byte-len 291840 --cold-runs 3 --warm-runs 3
+
+      - name: Render actual Reader first WGPU frame
+        shell: pwsh
+        run: |
+          $env:CHAPTERA_OPEN_FIRST_PAINT_RECEIPT = "target/open-first-useful-page-harness/first-paint-wgpu.json"
+          cargo test -p chaptera-desktop --features reader-only reader_open_phase_wgpu_first_paint_uses_current_viewer_app -- --ignored --nocapture
+
+      - name: Verify source-free authority fences
+        shell: pwsh
+        run: |
+          $receipt = Get-Content -Raw "target/open-first-useful-page-harness/receipt.json" | ConvertFrom-Json
+          if ($receipt.measurement_class -ne "hosted_public_fixture") { throw "wrong measurement class" }
+          if ($receipt.evidence_authority.real_pub_runtime -ne $true) { throw "real Reader runtime not recorded" }
+          if ($receipt.evidence_authority.architecture_decision_allowed -ne $false) { throw "hosted timing gained architecture authority" }
+          if ($receipt.corpus_identity.raw_path -ne $null) { throw "raw path leaked into public receipt" }
+          $paint = Get-Content -Raw "target/open-first-useful-page-harness/first-paint-wgpu.json" | ConvertFrom-Json
+          if ($paint.frame_rendered -ne $true -or $paint.source_unchanged -ne $true) { throw "Reader first-paint WGPU proof failed" }
+          if ($paint.architecture_decision_allowed -ne $false) { throw "WGPU hosted timing gained architecture authority" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-first-useful-page-harness-v1
+          path: |
+            target/open-first-useful-page-harness/receipt.json
+            target/open-first-useful-page-harness/first-paint-wgpu.json
+          if-no-files-found: error
