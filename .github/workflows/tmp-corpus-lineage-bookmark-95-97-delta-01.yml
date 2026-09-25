@@ -1,4 +1,4 @@
-name: TEMP CORPUS BOOKMARK printer29 nested record widening
+name: TEMP CORPUS BOOKMARK printer29 record0 zone decomposition
 
 on:
   pull_request:
@@ -448,7 +448,66 @@ jobs:
               "pure_offset_widening":bool(k>=0 and shift_ok and tail_equal)
             })
           printer29_record_widening={"id":284,"records":record_widen,"all_records_pure_offset_widening":all(x["pure_offset_widening"] for x in record_widen)}
-          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts,"ext10_analysis":ext10_analysis,"opaque3_analysis":opaque3_analysis,"printer29_record_widening":printer29_record_widening}
+          def zone_delta(a,b):
+            sm=difflib.SequenceMatcher(None,a,b,autojunk=False)
+            cp=0
+            while cp<min(len(a),len(b)) and a[cp]==b[cp]:cp+=1
+            cs=0
+            while cs<min(len(a),len(b))-cp and a[-1-cs]==b[-1-cs]:cs+=1
+            candidates=[]
+            for start in range(0,min(len(a),len(b))+1):
+              if a[:start]!=b[:start]:continue
+              for k in range(1,9):
+                if start+2*k>len(a) or start+4*k>len(b):break
+                av=[u16(a,start+2*i) for i in range(k)]
+                bv=[u32(b,start+4*i) for i in range(k)]
+                at=a[start+2*k:]; bt=b[start+4*k:]
+                if at==bt:
+                  growth=len(b)-len(a)
+                  candidates.append({
+                    "start":start,"count":k,"left_u16":av,"right_u32":bv,
+                    "right_minus_left":[y-x for x,y in zip(av,bv)],
+                    "tail_len":len(at),"tail_sha256":sha(at),
+                    "all_shift_by_zone_growth":all(y==x+growth for x,y in zip(av,bv))
+                  })
+            toks=lambda x:{sha(m.group(0)) for m in re.finditer(rb"[\x20-\x7e]{4,}",x)}
+            ta,tb=toks(a),toks(b);u=ta|tb
+            return {
+              "left_len":len(a),"right_len":len(b),"growth":len(b)-len(a),
+              "left_sha256":sha(a),"right_sha256":sha(b),
+              "common_prefix":cp,"common_suffix":cs,
+              "sequence_match_ratio":round(sm.ratio(),6),
+              "printable_token_count_left":len(ta),"printable_token_count_right":len(tb),
+              "printable_token_overlap":len(ta&tb),
+              "printable_token_jaccard":round(len(ta&tb)/len(u),6) if u else 1.0,
+              "contains_msprint1_privb_left":b"msprint1\\privb" in a,
+              "contains_msprint1_privb_right":b"msprint1\\privb" in b,
+              "embedded_widening_candidates":candidates[:20]
+            }
+          lr0,rr0=lrecs[0],rrecs[0]
+          left_bounds=[u16(lr0,2*i) for i in range(5)]
+          right_bounds=[u32(rr0,4*i) for i in range(5)]
+          left_valid=all(left_bounds[i]<=left_bounds[i+1] for i in range(4)) and left_bounds[-1]<=len(lr0)
+          right_valid=all(right_bounds[i]<=right_bounds[i+1] for i in range(4)) and right_bounds[-1]<=len(rr0)
+          rec0_zones=[]
+          if left_valid and right_valid:
+            lcuts=left_bounds+[len(lr0)]; rcuts=right_bounds+[len(rr0)]
+            fixed_left=lr0[10:left_bounds[0]]
+            fixed_right=rr0[20:right_bounds[0]]
+            for zi in range(5):
+              rec0_zones.append({"zone_index":zi,"left_start":lcuts[zi],"left_end":lcuts[zi+1],"right_start":rcuts[zi],"right_end":rcuts[zi+1],"delta":zone_delta(lr0[lcuts[zi]:lcuts[zi+1]],rr0[rcuts[zi]:rcuts[zi+1]])})
+            fixed_summary={"left_len":len(fixed_left),"right_len":len(fixed_right),"left_sha256":sha(fixed_left),"right_sha256":sha(fixed_right),"byte_identical":fixed_left==fixed_right}
+          else:
+            fixed_summary={"byte_identical":False}
+          printer29_record0_zones={
+            "left_bounds_u16":left_bounds,"right_bounds_u32":right_bounds,
+            "left_bounds_valid":left_valid,"right_bounds_valid":right_valid,
+            "vector_growth_bytes":10,
+            "boundary_deltas":[b-a for a,b in zip(left_bounds,right_bounds)],
+            "fixed_between_vector_and_first_boundary":fixed_summary,
+            "zones":rec0_zones
+          }
+          residual_analysis={"ids":residual_ids,"rows":residual,"cluster_counts":cluster_counts,"ext10_analysis":ext10_analysis,"opaque3_analysis":opaque3_analysis,"printer29_record_widening":printer29_record_widening,"printer29_record0_zones":printer29_record0_zones}
 
           # strip raw before retention
           for side in parsed.values():
@@ -480,7 +539,7 @@ jobs:
           sha256sum out/*.json | tee out/sha256sums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: corpus-lineage-bookmark-printer29-record-widen-receipt
+          name: corpus-lineage-bookmark-printer29-rec0-receipt
           path: out/**
           if-no-files-found: error
           retention-days: 90
