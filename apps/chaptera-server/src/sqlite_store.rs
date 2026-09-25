@@ -561,10 +561,6 @@ fn sqlite_read_error(error: sqlx::Error) -> SqliteStoreError {
     SqliteStoreError::new("sqlite_read_failed", bounded_sqlx_message(&error))
 }
 
-fn sqlite_write_error(error: sqlx::Error) -> SqliteStoreError {
-    SqliteStoreError::new("sqlite_write_failed", bounded_sqlx_message(&error))
-}
-
 fn sqlite_decode_error(error: sqlx::Error) -> SqliteStoreError {
     SqliteStoreError::new("sqlite_row_corrupt", bounded_sqlx_message(&error))
 }
