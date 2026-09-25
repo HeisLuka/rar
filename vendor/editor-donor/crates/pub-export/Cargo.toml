@@ -1,0 +1,13 @@
+[package]
+name = "pub-export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-model = { path = "../../../producer-a/crates/pub-model" }
+pub-format-registry = { path = "../../../producer-a/crates/pub-format-registry" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
