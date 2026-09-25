@@ -150,6 +150,40 @@ except ModuleNotFoundError:
     validate_uuid7_node_id_v1 = _create_shape_module.validate_uuid7_node_id_v1
 
 try:
+    from delete_textbox_v1 import (
+        validate_delete_textbox_intent_v1,
+        validate_delete_textbox_operation_v1,
+    )
+except ModuleNotFoundError:
+    import importlib.util
+    import pathlib
+
+    _delete_textbox_path = pathlib.Path(__file__).with_name("delete_textbox_v1.py")
+    _delete_textbox_spec = importlib.util.spec_from_file_location(
+        "chaptera_delete_textbox_v1",
+        _delete_textbox_path,
+    )
+    if _delete_textbox_spec is None or _delete_textbox_spec.loader is None:
+        raise ImportError("cannot load delete_textbox_v1 sibling module")
+    _delete_textbox_module = importlib.util.module_from_spec(_delete_textbox_spec)
+    sys.modules[_delete_textbox_spec.name] = _delete_textbox_module
+    _delete_textbox_sibling_dir = str(_delete_textbox_path.parent)
+    _delete_textbox_added_path = _delete_textbox_sibling_dir not in sys.path
+    if _delete_textbox_added_path:
+        sys.path.insert(0, _delete_textbox_sibling_dir)
+    try:
+        _delete_textbox_spec.loader.exec_module(_delete_textbox_module)
+    finally:
+        if _delete_textbox_added_path:
+            sys.path.remove(_delete_textbox_sibling_dir)
+    validate_delete_textbox_intent_v1 = (
+        _delete_textbox_module.validate_delete_textbox_intent_v1
+    )
+    validate_delete_textbox_operation_v1 = (
+        _delete_textbox_module.validate_delete_textbox_operation_v1
+    )
+
+try:
     from create_textbox_v1 import (
         validate_create_textbox_intent_v1,
         validate_create_textbox_operation_v1,
@@ -714,6 +748,54 @@ class RevisionKernel:
             executor,
             request_validator=self._validate_create_picture_frame_request_shape,
             canonical_validator=self._validate_canonical_create_picture_frame,
+        )
+
+    def commit_delete_textbox(
+        self,
+        request: dict,
+        executor: AuthoritativeExecutor,
+    ) -> dict:
+        def bound_executor(base_project: dict, command: dict):
+            operation, resulting_project, consequences = executor(
+                base_project,
+                command,
+            )
+            node_id = command["node_id"]
+            story_id = command["story_id"]
+            page_id = operation.get("page_id")
+
+            frames = resulting_project.get("text_frames")
+            stories = resulting_project.get("stories")
+            story_models = resulting_project.get("story_models")
+            if isinstance(frames, dict) and node_id in frames:
+                raise ValueError("DeleteTextBox resulting project retained target TextFrame")
+            if isinstance(stories, dict) and story_id in stories:
+                raise ValueError("DeleteTextBox resulting project retained owned Story")
+            if isinstance(story_models, dict) and story_id in story_models:
+                raise ValueError("DeleteTextBox resulting project retained owned Story model")
+
+            presets = resulting_project.get("text_presets")
+            expected_preset = command["expected_text_preset_record"]
+            preset_id = expected_preset.get("preset_id")
+            if not isinstance(presets, dict) or presets.get(preset_id) != expected_preset:
+                raise ValueError("DeleteTextBox must retain the referenced text preset")
+
+            pages = resulting_project.get("pages")
+            page = pages.get(page_id) if isinstance(pages, dict) else None
+            if (
+                not isinstance(page, dict)
+                or page.get("children") != operation.get("page_children_after")
+            ):
+                raise ValueError(
+                    "DeleteTextBox resulting project is not bound to canonical page-child removal"
+                )
+            return operation, resulting_project, consequences
+
+        return self._commit_command(
+            request,
+            bound_executor,
+            request_validator=self._validate_delete_textbox_request_shape,
+            canonical_validator=self._validate_canonical_delete_textbox,
         )
 
     def commit_create_textbox(
@@ -2074,6 +2156,16 @@ class RevisionKernel:
             raise ValueError(
                 "authoritative executor returned non-canonical CreatePictureFrame operation"
             )
+
+    @staticmethod
+    def _validate_delete_textbox_request_shape(request: dict) -> None:
+        if request.get("protocol_version") != "chaptera.delete-textbox-intent.v1":
+            raise ValueError("V1 DeleteTextBox protocol_version is required")
+        validate_delete_textbox_intent_v1(request.get("command"))
+
+    @staticmethod
+    def _validate_canonical_delete_textbox(command: dict, operation: dict) -> None:
+        validate_delete_textbox_operation_v1(command, operation)
 
     @staticmethod
     def _validate_create_textbox_request_shape(request: dict) -> None:
