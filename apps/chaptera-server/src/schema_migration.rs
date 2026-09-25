@@ -25,7 +25,8 @@ const REVISION_STREAM_SQL: &str = include_str!("../migrations/0005_revision_stre
 const AUTHN_SQL: &str = include_str!("../migrations/0006_authn.sql");
 const DERIVED_ARTIFACTS_SQL: &str = include_str!("../migrations/0007_derived_artifacts.sql");
 const QUOTA_RESERVATIONS_SQL: &str = include_str!("../migrations/0008_quota_reservations.sql");
-const REVISION_IDENTITY_BINDINGS_SQL: &str = include_str!("../migrations/0009_revision_identity_bindings.sql");
+const REVISION_IDENTITY_BINDINGS_SQL: &str =
+    include_str!("../migrations/0009_revision_identity_bindings.sql");
 
 #[derive(Clone, Copy)]
 struct MigrationSpec {
@@ -689,7 +690,10 @@ mod tests {
                 .status_report()
                 .await
                 .unwrap();
-            assert_eq!(final_report.applied_versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+            assert_eq!(
+                final_report.applied_versions,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+            );
 
             cleanup(&path);
         }
