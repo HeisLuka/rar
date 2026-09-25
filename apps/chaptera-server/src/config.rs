@@ -952,6 +952,11 @@ mod tests {
     }
 
     fn prod_toml(secret_source: &str) -> String {
+        let sqlite_path = if cfg!(windows) {
+            "C:/chaptera/chaptera.sqlite"
+        } else {
+            "/var/lib/chaptera/chaptera.sqlite"
+        };
         format!(
             r#"
 environment = "prod"
@@ -959,7 +964,7 @@ listen = "127.0.0.1:8080"
 public_origin = "https://cloud.example.invalid"
 
 [sqlite]
-path = "/var/lib/chaptera/chaptera.sqlite"
+path = "{sqlite_path}"
 journal_mode = "wal"
 synchronous = "full"
 busy_timeout_ms = 5000
