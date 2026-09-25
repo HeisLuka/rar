@@ -256,6 +256,28 @@ pub trait ProjectCreationPort: Send + Sync {
     ) -> Result<ProjectCreateResult, IngressError>;
 }
 
+/// Derive the restart-stable opaque UploadId for one logical issue request.
+///
+/// The durable uploads table already defines issue idempotency as
+/// (tenant_id, idempotency_key). Admission must use the same logical identity:
+/// if the process dies after reserving upload capacity but before inserting the
+/// UploadRecord, a retry must reconstruct the exact same reservation_id rather
+/// than leaking a second lease until the first one expires.
+pub fn derive_upload_id_v1(
+    tenant_id: &str,
+    idempotency_key: &str,
+) -> Result<String, IngressError> {
+    require_ident(tenant_id, "tenant_id")?;
+    require_ident(idempotency_key, "idempotency_key")?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"chaptera-source-upload-id-v1\0");
+    hasher.update(tenant_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(idempotency_key.as_bytes());
+    Ok(format!("upload:{}", hex_digest(hasher.finalize())))
+}
+
 /// Build the canonical durable ISSUED row from a preallocated opaque UploadId.
 ///
 /// Production Cloud composition must allocate this identity before upload
@@ -1338,6 +1360,24 @@ mod tests {
             .complete_upload("tenant-a", "principal-a", &issued.upload.upload_id, 200)
             .unwrap()
             .upload
+    }
+
+    #[test]
+    fn upload_id_derivation_survives_crash_before_upload_row_insert() {
+        let first = derive_upload_id_v1("tenant-a", "client-request-42").unwrap();
+        let retry = derive_upload_id_v1("tenant-a", "client-request-42").unwrap();
+        assert_eq!(first, retry);
+        assert!(first.starts_with("upload:"));
+        assert_eq!(first.len(), "upload:".len() + 64);
+
+        assert_ne!(
+            first,
+            derive_upload_id_v1("tenant-a", "client-request-43").unwrap()
+        );
+        assert_ne!(
+            first,
+            derive_upload_id_v1("tenant-b", "client-request-42").unwrap()
+        );
     }
 
     #[test]
