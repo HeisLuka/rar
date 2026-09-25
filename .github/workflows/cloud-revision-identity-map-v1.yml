@@ -1,0 +1,33 @@
+name: CLOUD-REVISION-IDENTITY-MAP-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/migrations/0009_revision_identity_bindings.sql"
+      - "apps/chaptera-server/src/revision_identity.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/src/lib.rs"
+      - "tools/run_cloud_migration_receipt.py"
+      - ".github/workflows/cloud-revision-identity-map-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revision-identity-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Format chaptera-server
+        run: cargo fmt --package chaptera-server -- --check
+      - name: Clippy chaptera-server
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+      - name: Test revision identity bindings
+        run: cargo test -p chaptera-server revision_identity::
+      - name: Test migration chain
+        run: cargo test -p chaptera-server schema_migration::
