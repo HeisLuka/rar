@@ -1,0 +1,154 @@
+name: TEMP PUBWIZ Office12 DG XML media proof
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-pubwiz-dgxml-office12-01.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y p7zip-full msitools
+      - name: Recover exact Office 2007 media and inspect MSI tables
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/o12/media /tmp/o12/msi
+          python - <<'PY'
+          import json,urllib.request,urllib.parse,pathlib
+          ident="microsoft-office-professional-plus-2007"
+          req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":"rar-pubwiz-office12/1.0"})
+          with urllib.request.urlopen(req,timeout=60) as r:m=json.load(r)
+          cand=[]
+          for f in m.get("files",[]):
+              if str(f.get("source") or "")!="original": continue
+              n=str(f.get("name") or "")
+              if n.lower().endswith((".iso",".img")):
+                  cand.append((int(f.get("size") or 0),n,f.get("md5"),f.get("sha1")))
+          if not cand: raise SystemExit("no original ISO/IMG candidates")
+          cand.sort(reverse=True)
+          size,name,md5,sha1=cand[0]
+          url=f"https://archive.org/download/{ident}/"+urllib.parse.quote(name,safe="/")
+          pathlib.Path("/tmp/o12/url").write_text(url)
+          pathlib.Path("/tmp/o12/name").write_text(name)
+          pathlib.Path("out/source-metadata.json").write_text(json.dumps({
+            "item":ident,"selected_name":name,"reported_size":size,"reported_md5":md5,"reported_sha1":sha1,
+            "candidate_count":len(cand),"source_page":f"https://archive.org/details/{ident}"
+          },indent=2))
+          PY
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -o /tmp/o12/media/office12.img "$(cat /tmp/o12/url)"
+          python - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path("/tmp/o12/media/office12.img")
+          h256=hashlib.sha256(); h1=hashlib.sha1(); md5=hashlib.md5()
+          with p.open("rb") as f:
+              while True:
+                  b=f.read(1024*1024)
+                  if not b:break
+                  h256.update(b);h1.update(b);md5.update(b)
+          meta=json.loads(pathlib.Path("out/source-metadata.json").read_text())
+          meta.update({"actual_size":p.stat().st_size,"sha256":h256.hexdigest(),"sha1":h1.hexdigest(),"md5":md5.hexdigest()})
+          if meta["reported_size"] and meta["actual_size"]!=meta["reported_size"]: raise SystemExit("size mismatch")
+          if meta.get("reported_sha1") and meta["sha1"].lower()!=str(meta["reported_sha1"]).lower(): raise SystemExit("sha1 mismatch")
+          if meta.get("reported_md5") and meta["md5"].lower()!=str(meta["reported_md5"]).lower(): raise SystemExit("md5 mismatch")
+          pathlib.Path("out/source-metadata.json").write_text(json.dumps(meta,indent=2))
+          PY
+          7z l -slt /tmp/o12/media/office12.img > /tmp/o12/iso.slt
+          7z x -y -o/tmp/o12/msi /tmp/o12/media/office12.img -r '*.msi' '*.MSI' >/dev/null || true
+          python - <<'PY'
+          import csv,json,pathlib,subprocess,re
+          roots=list(pathlib.Path("/tmp/o12/msi").rglob("*"))
+          msis=[p for p in roots if p.is_file() and p.suffix.lower()==".msi"]
+          targets={"DGACCBAR.XML","DGACCBOX.XML","DGACCBAR.DPV","DGACCBOX.DPV"}
+          matches=[]
+          scanned=[]
+          def export(msi,table):
+              r=subprocess.run(["msiinfo","export",str(msi),table],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+              return r.stdout if r.returncode==0 else ""
+          def parse_idt(txt):
+              rows=[]
+              lines=txt.splitlines()
+              if len(lines)<3:return rows
+              cols=lines[0].split("\t")
+              for line in lines[3:]:
+                  vals=line.split("\t")
+                  vals += [""]*(len(cols)-len(vals))
+                  rows.append(dict(zip(cols,vals)))
+              return rows
+          for msi in msis:
+              frows=parse_idt(export(msi,"File"))
+              mrows=parse_idt(export(msi,"Media"))
+              scanned.append({"msi":str(msi.relative_to("/tmp/o12/msi")),"file_rows":len(frows),"media_rows":len(mrows)})
+              media=[]
+              for r in mrows:
+                  try:last=int(r.get("LastSequence") or 0)
+                  except:last=0
+                  media.append((last,r))
+              media.sort()
+              for r in frows:
+                  fn=(r.get("FileName") or "")
+                  longname=fn.split("|")[-1].upper()
+                  if longname not in targets:continue
+                  try:seq=int(r.get("Sequence") or 0)
+                  except:seq=0
+                  owner=None
+                  prev=0
+                  for last,mr in media:
+                      if prev < seq <= last:
+                          owner=mr;break
+                      prev=last
+                  matches.append({
+                    "target":longname,
+                    "msi":str(msi.relative_to("/tmp/o12/msi")),
+                    "file_key":r.get("File"),
+                    "component":r.get("Component_"),
+                    "file_name":fn,
+                    "file_size":r.get("FileSize"),
+                    "version":r.get("Version"),
+                    "language":r.get("Language"),
+                    "attributes":r.get("Attributes"),
+                    "sequence":seq,
+                    "media":owner
+                  })
+          iso_txt=pathlib.Path("/tmp/o12/iso.slt").read_text(errors="replace")
+          direct_hits=[]
+          for line in iso_txt.splitlines():
+              if line.startswith("Path = "):
+                  path=line.split(" = ",1)[1]
+                  u=path.upper()
+                  if any(t in u for t in targets): direct_hits.append(path)
+          summary={
+            "schema":"chaptera.pubwiz-office12-dgxml.v1",
+            "source_safe":True,
+            "msi_count":len(msis),
+            "scanned_msi":scanned,
+            "matches":matches,
+            "direct_iso_hits":direct_hits,
+            "target_presence":{t:any(m["target"]==t for m in matches) or any(t in x.upper() for x in direct_hits) for t in sorted(targets)}
+          }
+          pathlib.Path("out/summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps({"msi_count":len(msis),"target_presence":summary["target_presence"],"match_count":len(matches)},indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe output
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.msi' -o -iname '*.cab' -o -iname '*.xml' -o -iname '*.dpv' \) | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          s=json.load(open("out/summary.json"))
+          assert s["source_safe"] is True
+          assert s["msi_count"]>0
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubwiz-dgxml-office12-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
