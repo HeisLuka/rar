@@ -3195,7 +3195,6 @@ mod tests {
     #[derive(Default)]
     struct SupporterTestStorage {
         values: std::collections::BTreeMap<String, String>,
-        flush_count: usize,
     }
 
     impl eframe::Storage for SupporterTestStorage {
@@ -3207,13 +3206,7 @@ mod tests {
             self.values.insert(key.to_owned(), value);
         }
 
-        fn remove_string(&mut self, key: &str) {
-            self.values.remove(key);
-        }
-
-        fn flush(&mut self) {
-            self.flush_count += 1;
-        }
+        fn flush(&mut self) {}
     }
 
     #[test]
