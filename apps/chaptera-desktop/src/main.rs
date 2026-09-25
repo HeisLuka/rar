@@ -3216,7 +3216,7 @@ mod tests {
         assert!(source.contains("Match details"));
     }
 
-    #[cfg(all(feature = "embedded-fixture-tests", not(feature = "reader-only")))]
+    #[cfg(not(feature = "reader-only"))]
     #[test]
     fn headless_wgpu_ux_snapshots_render_current_viewer_app() {
         use egui_kittest::Harness;
@@ -3259,12 +3259,17 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "embedded-fixture-tests", not(feature = "reader-only")))]
+    #[cfg(not(feature = "reader-only"))]
     #[test]
     fn gui_only_v0_walkthrough_uses_real_widgets() {
         use egui_kittest::{Harness, kittest::Queryable};
 
-        let original = sample_newsletter_fixture();
+        let fixture_source = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let original = fs::read(&fixture_source).unwrap_or_else(|error| {
+            panic!("read pinned SampleNewsletter fixture {}: {error}", fixture_source.display())
+        });
         let root = std::env::temp_dir().join(format!(
             "chaptera-gui-v0-walkthrough-{}",
             std::process::id()
