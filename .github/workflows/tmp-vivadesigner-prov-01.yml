@@ -1,0 +1,202 @@
+name: TEMP VivaDesigner PUB importer provenance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-vivadesigner-prov-01.yml'
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install inspection tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends squashfs-tools binutils file
+      - name: Download exact official Linux package
+        run: |
+          set -euo pipefail
+          mkdir -p out /tmp/viva/root
+          URL='https://viva.systems/download/?wpdmdl=8074'
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1200 \
+            -D /tmp/viva/headers.txt -w '%{url_effective}\n' "$URL" \
+            -o /tmp/viva/VivaDesigner.AppImage > /tmp/viva/effective-url.txt
+          test -s /tmp/viva/VivaDesigner.AppImage
+          sha256sum /tmp/viva/VivaDesigner.AppImage > /tmp/viva/package.sha256
+          stat -c '%s' /tmp/viva/VivaDesigner.AppImage > /tmp/viva/package.size
+          file /tmp/viva/VivaDesigner.AppImage > /tmp/viva/package.file
+          python - <<'PY'
+          import pathlib,re,json
+          h=pathlib.Path('/tmp/viva/headers.txt').read_text(errors='replace')
+          cd=[x.strip() for x in h.splitlines() if x.lower().startswith('content-disposition:')]
+          ct=[x.strip() for x in h.splitlines() if x.lower().startswith('content-type:')]
+          out={
+            'source_url':'https://viva.systems/download/?wpdmdl=8074',
+            'effective_url':pathlib.Path('/tmp/viva/effective-url.txt').read_text().strip(),
+            'content_disposition':cd[-1] if cd else None,
+            'content_type':ct[-1] if ct else None,
+            'sha256':pathlib.Path('/tmp/viva/package.sha256').read_text().split()[0],
+            'size':int(pathlib.Path('/tmp/viva/package.size').read_text()),
+            'file':pathlib.Path('/tmp/viva/package.file').read_text().strip(),
+          }
+          pathlib.Path('out/package_identity.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+      - name: Extract AppImage without executing it
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          p=pathlib.Path('/tmp/viva/VivaDesigner.AppImage')
+          b=p.read_bytes()
+          hits=[]
+          pos=0
+          while True:
+            i=b.find(b'hsqs',pos)
+            if i<0: break
+            hits.append(i); pos=i+1
+          print('squashfs_magic_offsets',hits[:20])
+          if not hits:
+            raise SystemExit('no squashfs magic found')
+          pathlib.Path('/tmp/viva/squash.offset').write_text(str(hits[-1]))
+          PY
+          OFF="$(cat /tmp/viva/squash.offset)"
+          unsquashfs -o "$OFF" -d /tmp/viva/root /tmp/viva/VivaDesigner.AppImage >/tmp/viva/unsquash.log
+          test -d /tmp/viva/root
+      - name: Inspect dependencies, notices and parser markers
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib,subprocess,json,re,hashlib,os
+          root=pathlib.Path('/tmp/viva/root')
+          marker_re=re.compile(r'(?i)(libmspub|librevenge|writerperfect|libwpd|libwpg|libodfgen|libstaroffice|libcdr|libvisio|libetonyek|libfreehand|libpagemaker|libabw|libe-book|libmwaw|libwps|liblangtag|LibreOffice|OpenOffice)')
+          pub_re=re.compile(r'(?i)(microsoft publisher|ms publisher|publisher document|\.pub\b|pub import|import.*publisher|publisher.*import)')
+          version_re=re.compile(r'(?i)(VivaDesigner[^\n\r]{0,80}|11\.5(?:\.\d+)?(?:[^\n\r]{0,40})?|build[^\n\r]{0,30}9241|9241)')
+          files=[p for p in root.rglob('*') if p.is_file()]
+          names=[str(p.relative_to(root)) for p in files]
+          license_files=[n for n in names if re.search(r'(?i)(^|/)(license|licence|copying|notice|third.?party|authors?|credits?)(\.|$|/)',n)]
+          framework_names=[n for n in names if re.search(r'(?i)(\.so(?:\.|$)|/lib[^/]*\.so|framework)',n)]
+          elf=[]
+          for p in files:
+            try:
+              o=subprocess.run(['file','-b',str(p)],capture_output=True,text=True,timeout=5).stdout.strip()
+            except Exception:
+              continue
+            if 'ELF ' in o:
+              rel=str(p.relative_to(root))
+              dyn=subprocess.run(['readelf','-d',str(p)],capture_output=True,text=True,timeout=15).stdout
+              needed=re.findall(r'Shared library: \[([^\]]+)\]',dyn)
+              rpaths=re.findall(r'(?:RPATH|RUNPATH).*?\[([^\]]+)\]',dyn)
+              elf.append({'path':rel,'file':o,'needed':needed,'rpath':rpaths})
+          all_needed=sorted(set(x for e in elf for x in e['needed']))
+          linked_marker_hits=[x for x in all_needed if marker_re.search(x)]
+          name_marker_hits=[n for n in names if marker_re.search(n)]
+          text_marker_hits=[]
+          pub_marker_hits=[]
+          version_hits=[]
+          for p in files:
+            try:
+              if p.stat().st_size>350_000_000: continue
+              s=subprocess.run(['strings','-a','-n','6',str(p)],capture_output=True,text=True,errors='replace',timeout=45).stdout
+            except Exception:
+              continue
+            rel=str(p.relative_to(root))
+            m=sorted(set(x.group(0) for x in marker_re.finditer(s)))
+            if m:
+              text_marker_hits.append({'path':rel,'markers':m[:50]})
+            pubs=[]
+            for line in s.splitlines():
+              if pub_re.search(line):
+                pubs.append(line[:240])
+                if len(pubs)>=40: break
+            if pubs:
+              pub_marker_hits.append({'path':rel,'samples':pubs})
+            vv=[]
+            for line in s.splitlines():
+              if version_re.search(line):
+                vv.append(line[:240])
+                if len(vv)>=40: break
+            if vv:
+              version_hits.append({'path':rel,'samples':vv})
+          desktop=[]
+          for p in files:
+            if p.suffix.lower() in {'.desktop','.appdata','.metainfo','.xml'} and p.stat().st_size<2_000_000:
+              try:
+                txt=p.read_text(errors='replace')
+              except Exception:
+                continue
+              if re.search(r'(?i)VivaDesigner|Version=',txt):
+                desktop.append({'path':str(p.relative_to(root)),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'text':txt[:12000]})
+          # bounded symbol evidence for ELF files with PUB-related strings
+          pub_elf_paths={x['path'] for x in pub_marker_hits}
+          dyn_symbols=[]
+          for e in elf:
+            if e['path'] not in pub_elf_paths: continue
+            p=root/e['path']
+            sym=subprocess.run(['nm','-D','--defined-only',str(p)],capture_output=True,text=True,errors='replace',timeout=30).stdout
+            hits=[line[:300] for line in sym.splitlines() if re.search(r'(?i)(pub|publisher|import)',line)]
+            if hits:
+              dyn_symbols.append({'path':e['path'],'hits':hits[:200]})
+          report={
+            'schema':'chaptera.vivadesigner-pub-importer-provenance.v1',
+            'source_safe':True,
+            'raw_package_retained':False,
+            'package':json.loads(pathlib.Path('out/package_identity.json').read_text()),
+            'squashfs_offset':int(pathlib.Path('/tmp/viva/squash.offset').read_text()),
+            'file_count':len(files),
+            'elf_count':len(elf),
+            'elf':elf,
+            'all_needed':all_needed,
+            'linked_known_engine_markers':linked_marker_hits,
+            'path_known_engine_markers':name_marker_hits[:500],
+            'string_known_engine_markers':text_marker_hits[:200],
+            'license_notice_files':license_files[:1000],
+            'library_like_paths':framework_names[:2000],
+            'pub_import_string_hits':pub_marker_hits[:200],
+            'version_build_string_hits':version_hits[:200],
+            'desktop_metadata':desktop[:50],
+            'pub_related_dynamic_symbols':dyn_symbols[:100],
+            'known_engine_marker_absence_is_not_independence_proof':True
+          }
+          pathlib.Path('out/report.json').write_text(json.dumps(report,indent=2))
+          summary={
+            'schema':report['schema'],
+            'package':report['package'],
+            'squashfs_offset':report['squashfs_offset'],
+            'file_count':report['file_count'],
+            'elf_count':report['elf_count'],
+            'all_needed':report['all_needed'],
+            'linked_known_engine_markers':report['linked_known_engine_markers'],
+            'path_known_engine_markers':report['path_known_engine_markers'],
+            'string_known_engine_markers':report['string_known_engine_markers'],
+            'license_notice_files':report['license_notice_files'],
+            'pub_import_string_hit_files':[{'path':x['path'],'samples':x['samples'][:8]} for x in report['pub_import_string_hits']],
+            'version_build_string_hit_files':[{'path':x['path'],'samples':x['samples'][:8]} for x in report['version_build_string_hits']],
+            'pub_related_dynamic_symbols':report['pub_related_dynamic_symbols'],
+            'guardrail':'No known-engine marker is not proof of independent parser authorship.'
+          }
+          pathlib.Path('out/summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          sha256sum out/*.json | sort > out/sha256sums.txt
+      - name: Enforce source-safe receipt
+        run: |
+          set -euo pipefail
+          if find out -type f \( -iname '*.appimage' -o -iname '*.so' -o -perm -111 \) | grep -q .; then exit 1; fi
+          python - <<'PY'
+          import json
+          r=json.load(open('out/report.json'))
+          assert r['source_safe'] is True
+          assert r['raw_package_retained'] is False
+          assert r['package']['size'] > 10_000_000
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vivadesigner-pub-importer-provenance-receipt
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
