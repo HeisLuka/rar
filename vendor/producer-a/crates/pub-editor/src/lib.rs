@@ -1303,7 +1303,7 @@ impl std::error::Error for EditorExportError {}
 pub struct EditorSession {
     source_hash: Sha256Digest,
     graph: PubResolvedGraph,
-    project_identity: EditorProjectIdentity,
+    project_identity: Option<EditorProjectIdentity>,
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
     authored_shapes: BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
@@ -1321,7 +1321,7 @@ impl EditorSession {
         Ok(Self {
             source_hash,
             graph,
-            project_identity: new_project_identity(),
+            project_identity: Some(new_project_identity()),
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
             authored_shapes: BTreeMap::new(),
@@ -1387,20 +1387,70 @@ impl EditorSession {
     }
 
     pub fn project(&self) -> EditorProject {
+        let table_grids = effective_table_grids(&self.graph);
+        let (schema_version, identity) = if let Some(identity) = &self.project_identity {
+            (EDITOR_PROJECT_VERSION_V0_11, Some(identity.clone()))
+        } else {
+            let legacy_schema = if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::CreateShape { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_10
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::ResizeNodes { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_9
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::MoveNodes { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_8
+            } else if self.undo.iter().any(|operation| {
+                matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
+            }) {
+                EDITOR_PROJECT_VERSION_V0_7
+            } else if !table_grids.is_empty() {
+                EDITOR_PROJECT_VERSION_V0_6
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::ResizeNode { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_5
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::MoveNode { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_4
+            } else if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::ReplaceImage { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_3
+            } else {
+                EDITOR_PROJECT_VERSION_V0_2
+            };
+            (legacy_schema, None)
+        };
+
         EditorProject {
-            schema_version: EDITOR_PROJECT_VERSION_V0_11.into(),
+            schema_version: schema_version.into(),
             source_hash: self.source_hash,
-            identity: Some(self.project_identity.clone()),
+            identity,
             assets: self.project_asset_metadata(),
-            table_grids: effective_table_grids(&self.graph),
+            table_grids,
             operations: self.undo.clone(),
         }
     }
 
-    pub fn fork_project_next_issue(&self) -> EditorProject {
-        self.project()
-            .fork_next_issue()
-            .expect("current EditorSession always carries durable project identity")
+    pub fn fork_project_next_issue(&self) -> Result<EditorProject, EditorProjectForkError> {
+        self.project().fork_next_issue()
     }
 
     pub fn persistence_requirements(&self) -> Vec<PersistenceRequirement> {
@@ -1584,9 +1634,7 @@ impl EditorSession {
         }
 
         let mut candidate = self.clone();
-        if let Some(identity) = &project.identity {
-            candidate.project_identity = identity.clone();
-        }
+        candidate.project_identity = project.identity.clone();
         for (index, metadata) in project.assets.iter().enumerate() {
             let bytes = asset_bytes
                 .get(&metadata.sha256)
