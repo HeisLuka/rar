@@ -37,6 +37,8 @@ jobs:
         run: cargo test --manifest-path apps/chaptera-recovery-worker/Cargo.toml
       - name: Build worker
         run: cargo build --manifest-path apps/chaptera-recovery-worker/Cargo.toml --release
+      - name: Run fail-closed worker protocol probe
+        run: python tools/probe_rescue_worker_v1.py --exe apps/chaptera-recovery-worker/target/release/chaptera-recovery-worker.exe
       - name: Verify fail-closed executable identity
         shell: pwsh
         run: |
