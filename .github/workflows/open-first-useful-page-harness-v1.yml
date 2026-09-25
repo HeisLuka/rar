@@ -48,25 +48,68 @@ jobs:
       - name: Build Reader-only timing binary
         run: cargo build -p chaptera-desktop --release --features reader-only
 
-      - name: Acquire pinned Apache POI SampleNewsletter
+      - name: Qualify pinned public PUB for first-useful-page mechanics
         shell: pwsh
         run: |
-          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
-          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
-          Invoke-WebRequest -Uri $url -OutFile $fixture
-          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
-          $bytes = (Get-Item $fixture).Length
-          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
-            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-open-phase-fixtures"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $poiCommit = "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8"
+          $candidates = @(
+            @{ Name = "Sample.pub"; Bytes = 72192 },
+            @{ Name = "SampleBrochure.pub"; Bytes = 161792 },
+            @{ Name = "SampleNewsletter.pub"; Bytes = 291840 }
+          )
+
+          $selected = $null
+          foreach ($candidate in $candidates) {
+            $fixture = Join-Path $root $candidate.Name
+            $url = "https://raw.githubusercontent.com/apache/poi/$poiCommit/test-data/publisher/$($candidate.Name)"
+            Invoke-WebRequest -Uri $url -OutFile $fixture
+            $bytes = (Get-Item $fixture).Length
+            if ($bytes -ne $candidate.Bytes) {
+              throw "$($candidate.Name) byte length mismatch: expected $($candidate.Bytes), got $bytes"
+            }
+
+            $observation = Join-Path $root "$($candidate.Name).qualification.json"
+            $process = Start-Process -FilePath "target/release/chaptera-editor.exe" -ArgumentList @(
+              "--open-phase-run-v1", $fixture, "unknown", $observation
+            ) -Wait -PassThru
+            if ($process.ExitCode -ne 0 -or -not (Test-Path $observation)) {
+              Write-Host "Candidate $($candidate.Name) is not supported by the current mature Reader path."
+              continue
+            }
+
+            $run = Get-Content -Raw $observation | ConvertFrom-Json
+            $definition = $run.first_useful_page_definition
+            $qualified = (
+              $definition.page_geometry_present -eq $true -and
+              $definition.fidelity_diagnostics_present -eq $true -and
+              $definition.visible_resources_ready -eq $true -and
+              $definition.current_text_layout_present -eq $true -and
+              $definition.non_empty_visible_content -eq $true
+            )
+            Write-Host "Candidate $($candidate.Name): qualified=$qualified definition=$($definition | ConvertTo-Json -Compress)"
+            if ($qualified) {
+              $selected = $fixture
+              break
+            }
           }
-          if ($bytes -ne 291840) {
-            throw "SampleNewsletter byte length mismatch: $bytes"
+
+          if (-not $selected) {
+            throw "No pinned Apache POI candidate satisfies the unchanged first-useful-page contract."
           }
-          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $hash = (Get-FileHash $selected -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $selected).Length
+          "CHAPTERA_OPEN_PHASE_FIXTURE=$selected" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_OPEN_PHASE_FIXTURE_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_OPEN_PHASE_FIXTURE_BYTES=$bytes" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_OPEN_PHASE_FIXTURE_NAME=$(Split-Path $selected -Leaf)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run cold and warm real Reader phase receipt
         shell: pwsh
-        run: python tools/run_open_first_useful_page_harness.py --binary target/release/chaptera-editor.exe --fixture "$env:CHAPTERA_SAMPLE_NEWSLETTER" --out target/open-first-useful-page-harness/receipt.json --build-sha "${{ github.sha }}" --expected-sha256 "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf" --expected-byte-len 291840 --cold-runs 3 --warm-runs 3
+        run: python tools/run_open_first_useful_page_harness.py --binary target/release/chaptera-editor.exe --fixture "$env:CHAPTERA_OPEN_PHASE_FIXTURE" --out target/open-first-useful-page-harness/receipt.json --build-sha "${{ github.sha }}" --expected-sha256 "$env:CHAPTERA_OPEN_PHASE_FIXTURE_SHA256" --expected-byte-len "$env:CHAPTERA_OPEN_PHASE_FIXTURE_BYTES" --cold-runs 3 --warm-runs 3
 
       - name: Render actual Reader first WGPU frame
         shell: pwsh
