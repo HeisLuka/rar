@@ -323,13 +323,7 @@ mod tests {
 
     #[test]
     fn configured_required_ports_are_ready_and_each_lifecycle_fails_closed() {
-        let assembled = assemble_configured_serve(
-            bind(()),
-            bind(()),
-            bind(()),
-            bind(()),
-            bind(()),
-        );
+        let assembled = assemble_configured_serve(bind(()), bind(()), bind(()), bind(()), bind(()));
 
         let report = assembled.ports.readiness_report();
         assert!(report.ready);
