@@ -264,7 +264,7 @@
         ],
         "optional": [],
         "fields": {
-          "instance_id": "SceneInstanceId returned by scene.instances.list"
+          "instance_id": "direct_page_local SceneInstanceId returned by scene.instances.list; projected/inherited instances are not mutation-addressable"
         }
       },
       "trace_event_kinds": [
