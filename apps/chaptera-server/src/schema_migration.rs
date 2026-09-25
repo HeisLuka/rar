@@ -333,9 +333,7 @@ async fn load_and_validate_applied(
 }
 
 fn validate_applied(applied: &[AppliedMigration]) -> Result<(), MigrationError> {
-    let mut expected_next = 1_i64;
-
-    for row in applied {
+    for (expected_next, row) in (1_i64..).zip(applied.iter()) {
         if row.version > CURRENT_SCHEMA_VERSION {
             return Err(MigrationError::new(
                 "schema_version_too_new",
@@ -390,7 +388,6 @@ fn validate_applied(applied: &[AppliedMigration]) -> Result<(), MigrationError> 
             ));
         }
 
-        expected_next += 1;
     }
 
     Ok(())
