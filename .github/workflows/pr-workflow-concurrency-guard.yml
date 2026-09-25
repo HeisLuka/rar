@@ -1,0 +1,65 @@
+name: PR workflow concurrency guard
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "AGENTS.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce latest-head cancellation on changed PR workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "Manual run: nothing to enforce."
+            exit 0
+          fi
+
+          base="origin/${{ github.base_ref }}"
+          mapfile -t changed < <(
+            git diff --name-only "$base"...HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml'
+          )
+
+          failed=0
+          for path in "${changed[@]}"; do
+            [[ -f "$path" ]] || continue
+
+            if ! grep -Eq '^[[:space:]]*pull_request:' "$path"; then
+              continue
+            fi
+
+            if ! grep -Eq '^concurrency:' "$path"; then
+              echo "::error file=$path::PR workflow must define top-level concurrency."
+              failed=1
+              continue
+            fi
+
+            if ! grep -Eq '^[[:space:]]*cancel-in-progress:[[:space:]]*' "$path"; then
+              echo "::error file=$path::PR workflow concurrency must define cancel-in-progress."
+              failed=1
+            fi
+          done
+
+          if (( failed != 0 )); then
+            echo "See AGENTS.md section 'Mandatory latest-head concurrency for PR validation'."
+            exit 1
+          fi
+
+          echo "Changed PR workflows satisfy the latest-head concurrency contract."
