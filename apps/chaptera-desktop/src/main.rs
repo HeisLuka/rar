@@ -2949,8 +2949,6 @@ mod tests {
     #[ignore = "requires CHAPTERA_SAMPLE_NEWSLETTER and a WGPU-capable hosted runner"]
     fn reader_open_phase_wgpu_first_paint_uses_current_viewer_app() {
         use egui_kittest::Harness;
-        use sha2::{Digest, Sha256};
-
         let fixture = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
             .map(PathBuf::from)
             .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned public PUB fixture");
@@ -2986,7 +2984,7 @@ mod tests {
         if let Some(path) = std::env::var_os("CHAPTERA_OPEN_FIRST_PAINT_RECEIPT") {
             let receipt = serde_json::json!({
                 "schema_version": "chaptera.reader-first-paint-wgpu.v1",
-                "fixture_sha256": format!("{:x}", Sha256::digest(&original)),
+                "fixture_sha256": open_phase::sha256_hex(&original),
                 "source_unchanged": true,
                 "viewer_opened": true,
                 "frame_rendered": true,
