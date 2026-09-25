@@ -3388,7 +3388,10 @@ mod tests {
         };
 
         {
-            let search = harness.get_by_value("");
+            let search = harness
+                .get_all_by_role(egui::accesskit::Role::TextInput)
+                .find(|node| node.value().as_deref() == Some(""))
+                .expect("Search TextInput is present and initially empty");
             search.type_text(search_term.clone());
         }
         harness.run();
@@ -3409,7 +3412,10 @@ mod tests {
 
         let replacement = "Chaptera GUI-only V0 acceptance text".to_owned();
         {
-            let editor = harness.get_by_value(&original_story);
+            let editor = harness
+                .get_all_by_role(egui::accesskit::Role::TextInput)
+                .find(|node| node.value().as_deref() == Some(original_story.as_str()))
+                .expect("Story editor TextInput exposes the selected Story text");
             editor.key_combination(&[
                 egui_kittest::kittest::Key::Control,
                 egui_kittest::kittest::Key::A,
