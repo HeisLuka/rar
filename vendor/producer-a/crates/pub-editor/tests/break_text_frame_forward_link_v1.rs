@@ -158,7 +158,9 @@ fn frame(graph: &PubResolvedGraph, id: NodeId) -> &PubResolvedStoryFrame {
 fn break_link_splits_topology_without_moving_or_copying_story_text() {
     let baseline = graph();
     let baseline_nodes = baseline.nodes.clone();
-    let source_text = baseline.stories[&source_story_id()].text.clone();
+    let source_story = baseline.stories[&source_story_id()].clone();
+    let source_hash_before = baseline.source.source_hash;
+    let document_source_hash_before = baseline.document.source_hash;
     let mut session = EditorSession::new(baseline.clone()).expect("open editor");
     let a = frame_id(0x31);
     let b = frame_id(0x32);
@@ -187,7 +189,9 @@ fn break_link_splits_topology_without_moving_or_copying_story_text() {
     assert_eq!(after_frames.len(), 3);
 
     let current = session.graph();
-    assert_eq!(current.stories[&source_story_id()].text, source_text);
+    assert_eq!(current.stories[&source_story_id()], source_story);
+    assert_eq!(current.source.source_hash, source_hash_before);
+    assert_eq!(current.document.source_hash, document_source_hash_before);
     assert_eq!(current.stories[&new_story_id()].text, "");
     assert!(current.stories[&new_story_id()].paragraphs.is_empty());
     assert!(current.stories[&new_story_id()].runs.is_empty());
