@@ -3,6 +3,7 @@ import copy
 import json
 import unittest
 
+from author_created_story_test_fixture import bind_author_created_story_graph_v1
 from paragraph_lifecycle_v1 import (
     ParagraphPropertiesV1,
     ParagraphV1,
@@ -36,8 +37,10 @@ from text_range_fragment_v1 import (
 
 DOC = "doc:fragment"
 SOURCE_HASH = "b" * 64
-SOURCE_STORY = "story:source"
-DEST_STORY = "story:dest"
+SOURCE_STORY = "01900000-0000-7000-8000-000000000401"
+DEST_STORY = "01900000-0000-7000-8000-000000000402"
+DEST_FRAME_ID = "01900000-0000-7000-8000-000000000403"
+DEST_PAGE_ID = "page:fragment-destination"
 NEW1 = "01900000-0000-7000-8000-000000000011"
 
 
@@ -93,6 +96,28 @@ def core(
         generic_anchors=tuple(generic),
         unsupported_anchored_semantics=tuple(unsupported),
         active_paragraph_features=tuple(active_features),
+    )
+
+
+def project_for_destination(state, *, story_model=None):
+    project = {
+        "schema_version": "pub-editor-v0.6",
+        "source_hash": SOURCE_HASH,
+        "operations": [],
+        "stories": {DEST_STORY: state.paragraph_state.story_text},
+        "story_models": {
+            DEST_STORY: (
+                story_edit_core_state_to_dict(state)
+                if story_model is None
+                else story_model
+            )
+        },
+    }
+    return bind_author_created_story_graph_v1(
+        project,
+        story_id=DEST_STORY,
+        frame_id=DEST_FRAME_ID,
+        page_id=DEST_PAGE_ID,
     )
 
 
@@ -339,13 +364,7 @@ class TextRangeFragmentV1Tests(unittest.TestCase):
             basefmt=fmt(size=9000, bold=False, color="#000000", font="font:dest"),
         )
         kernel = RevisionKernel()
-        project = {
-            "schema_version": "pub-editor-v0.6",
-            "source_hash": SOURCE_HASH,
-            "operations": [],
-            "stories": {DEST_STORY: "abcd"},
-            "story_models": {DEST_STORY: story_edit_core_state_to_dict(dest)},
-        }
+        project = project_for_destination(dest)
         baseline = kernel.register_baseline(
             document_id=DOC,
             source_hash=SOURCE_HASH,
@@ -386,13 +405,7 @@ class TextRangeFragmentV1Tests(unittest.TestCase):
         for start, expected in ((0, "XAB"), (2, "ABX")):
             dest = core(DEST_STORY, "AB")
             kernel = RevisionKernel()
-            project = {
-                "schema_version": "pub-editor-v0.6",
-                "source_hash": SOURCE_HASH,
-                "operations": [],
-                "stories": {DEST_STORY: "AB"},
-                "story_models": {DEST_STORY: story_edit_core_state_to_dict(dest)},
-            }
+            project = project_for_destination(dest)
             baseline = kernel.register_baseline(
                 document_id=DOC,
                 source_hash=SOURCE_HASH,
@@ -422,13 +435,7 @@ class TextRangeFragmentV1Tests(unittest.TestCase):
         ).fragment
         dest = core(DEST_STORY, "Z")
         kernel = RevisionKernel()
-        project = {
-            "schema_version": "pub-editor-v0.6",
-            "source_hash": SOURCE_HASH,
-            "operations": [],
-            "stories": {DEST_STORY: "Z"},
-            "story_models": {DEST_STORY: story_edit_core_state_to_dict(dest)},
-        }
+        project = project_for_destination(dest)
         baseline = kernel.register_baseline(
             document_id=DOC, source_hash=SOURCE_HASH, project=project
         )
@@ -466,13 +473,7 @@ class TextRangeFragmentV1Tests(unittest.TestCase):
         dest = core(DEST_STORY, "AB")
         before_dict = story_edit_core_state_to_dict(dest)
         kernel = RevisionKernel()
-        project = {
-            "schema_version": "pub-editor-v0.6",
-            "source_hash": SOURCE_HASH,
-            "operations": [],
-            "stories": {DEST_STORY: "AB"},
-            "story_models": {DEST_STORY: before_dict},
-        }
+        project = project_for_destination(dest, story_model=before_dict)
         baseline = kernel.register_baseline(
             document_id=DOC, source_hash=SOURCE_HASH, project=project
         )

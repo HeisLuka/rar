@@ -136,6 +136,11 @@ def _preset_id(value: dict) -> str:
     return f"sha256:{digest}"
 
 
+def authoring_text_preset_id_v1(value: dict) -> str:
+    """Return the canonical identity of one validated AuthoringTextPresetV1."""
+    return _preset_id(value)
+
+
 def _base_format(value: dict) -> BaseCharacterFormatV1:
     character = value["character_defaults"] or {"bold": False, "italic": False}
     return BaseCharacterFormatV1(
