@@ -453,6 +453,16 @@ mod effective_grid_tests {
     }
 
     #[test]
+    fn content_range_requires_story_identity() {
+        let mut grid = grid(None, None);
+        grid.cells[0].story_id = None;
+        assert!(matches!(
+            grid.validate(),
+            Err(EffectiveTableGridError::StoryRangeWithoutStory { id }) if id == cell_id(10)
+        ));
+    }
+
+    #[test]
     fn v1_rejects_merged_cells() {
         let mut grid = grid(None, None);
         grid.cells[0].column_span = 2;
