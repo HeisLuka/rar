@@ -19,6 +19,7 @@ pub mod job_executor_registry;
 pub mod job_queue;
 pub mod job_worker;
 pub mod jobs;
+pub mod jobs_runtime;
 pub mod migrate;
 pub mod oidc_authn;
 pub mod quota_admission;
