@@ -593,10 +593,10 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
             if field.id != FIELD_STORY_ID {
                 continue;
             }
-            if let RawContentsBlockBody::U32 { value, .. } = &field.body
-                && syids.contains(value)
-            {
-                result.decoded_field_27_syid_matches += 1;
+            if let RawContentsBlockBody::U32 { value, .. } = &field.body {
+                if syids.contains(value) {
+                    result.decoded_field_27_syid_matches += 1;
+                }
             }
         }
 
