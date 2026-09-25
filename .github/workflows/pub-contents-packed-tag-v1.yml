@@ -5,6 +5,8 @@ on:
     paths:
       - "tools/pub_contents_packed_tag_v1.py"
       - "tools/test_pub_contents_packed_tag_v1.py"
+      - "vendor/producer-a/crates/pub-contents/**"
+      - "vendor/producer-a/crates/pub-reader/**"
       - ".github/workflows/pub-contents-packed-tag-v1.yml"
   workflow_dispatch:
 
@@ -19,5 +21,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
       - name: Run packed-tag codec regressions
         run: python tools/test_pub_contents_packed_tag_v1.py -v
+      - name: Run production Rust Contents regressions
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents
+      - name: Check bounded Reader consumers
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader
