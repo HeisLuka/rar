@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/source_ingress.rs"
+      - "apps/chaptera-server/src/source_ingress_async.rs"
       - "apps/chaptera-server/src/source_ingress_sqlite.rs"
       - "apps/chaptera-server/src/source_authority.rs"
       - "apps/chaptera-server/src/blob_store.rs"
