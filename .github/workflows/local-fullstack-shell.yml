@@ -1,0 +1,73 @@
+name: LOCAL-FULLSTACK-SHELL-01
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/local-fullstack-shell.yml"
+      - "apps/chaptera-server/**"
+      - "tools/local/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-local-console:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Test Chaptera server local console contracts
+        run: cargo test -p chaptera-server
+
+      - name: Build Chaptera local runtime
+        run: cargo build -p chaptera-server --bin chaptera
+
+      - name: Launch through the user-facing local helper
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/local/start_chaptera_local.ps1 -SkipBuild -NoBrowser
+          $console = Invoke-WebRequest -Uri "http://127.0.0.1:8080/__chaptera" -UseBasicParsing -TimeoutSec 5
+          if ($console.StatusCode -ne 200 -or $console.Content -notmatch "Chaptera Local") {
+            throw "local console did not render"
+          }
+
+          try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:8080/not-a-route" -UseBasicParsing -TimeoutSec 5 | Out-Null
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) {
+              throw
+            }
+          }
+
+          Start-Sleep -Milliseconds 500
+          $logRoot = Join-Path $env:LOCALAPPDATA "Chaptera\local\logs"
+          $latest = Get-ChildItem -LiteralPath $logRoot -Filter "*.jsonl" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($null -eq $latest) {
+            throw "local JSONL log was not created"
+          }
+          $log = Get-Content -LiteralPath $latest.FullName -Raw
+          if ($log -notmatch '"event":"request_complete"' -or $log -notmatch '"status":404') {
+            throw "local JSONL log does not contain the expected bounded 404 event"
+          }
+
+          $ready = $null
+          try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:8080/ready" -UseBasicParsing -TimeoutSec 5 | Out-Null
+          } catch {
+            $ready = $_.Exception.Response.StatusCode.value__
+          }
+          if ($ready -ne 503) {
+            throw "unconfigured local shell must remain honestly not-ready"
+          }
+
+      - name: Stop local runtime
+        if: always()
+        shell: pwsh
+        run: pwsh -NoProfile -File tools/local/stop_chaptera_local.ps1
