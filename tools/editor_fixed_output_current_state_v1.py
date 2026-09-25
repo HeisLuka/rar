@@ -457,10 +457,11 @@ def build_current_fixed_output(
             projection_context=context,
             shaped_flow=shaped_flow,
         )
-        current_scene = merge_cmo_runtime_into_scene_v1(
-            current_scene,
-            cmo_runtime,
-        )
+        if cmo_runtime["native_outputs"] or cmo_runtime["scene_instances"]:
+            current_scene = merge_cmo_runtime_into_scene_v1(
+                current_scene,
+                cmo_runtime,
+            )
     except CmoSlotRuntimeError as error:
         raise EditorFixedOutputError(
             f"Cmo slot runtime failed: {error}"
