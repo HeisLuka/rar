@@ -39,3 +39,25 @@ jobs:
 
       - name: Prove exact edited real-PUB producer
         run: cargo test -p chaptera-server --test export_executor_producer -- --ignored --nocapture
+
+      - name: Prove durable export publication authority
+        run: cargo test -p chaptera-server export_publication::
+
+      - name: Prove published export JobExecutor
+        run: cargo test -p chaptera-server export_executor::
+
+      - name: Build chaptera server for migration receipt
+        run: cargo build -p chaptera-server
+
+      - name: Verify schema migration v10
+        run: |
+          python tools/run_cloud_migration_receipt.py \
+            --binary target/debug/chaptera \
+            --out target/cloud-export-publication/migration
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-export-publication-v1
+          if-no-files-found: error
+          retention-days: 90
+          path: target/cloud-export-publication/
