@@ -26,10 +26,10 @@ pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+zip = "=2.4.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
 
 [dev-dependencies]
 egui_kittest = { version = "=0.31.1", features = ["eframe", "wgpu"] }
-zip = "=2.4.2"
