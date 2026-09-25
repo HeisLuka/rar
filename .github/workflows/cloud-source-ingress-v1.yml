@@ -4,7 +4,10 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/source_ingress.rs"
+      - "apps/chaptera-server/src/source_ingress_sqlite.rs"
       - "apps/chaptera-server/src/source_authority.rs"
+      - "apps/chaptera-server/src/blob_store.rs"
+      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/Cargo.toml"
       - "apps/chaptera-server/migrations/0001_source_ingress.sql"
       - ".github/workflows/cloud-source-ingress-v1.yml"
@@ -24,5 +27,7 @@ jobs:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --package chaptera-server -- --check
+      - name: Run Chaptera server clippy
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run Chaptera server tests
         run: cargo test -p chaptera-server
