@@ -1,0 +1,33 @@
+name: LOCAL-WEB-EDITOR-01
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/local-editor.html"
+      - "services/editor-api/web_real_acceptance_service.py"
+      - "tools/run_local_real_editor.py"
+      - "tools/run_local_full_stack.py"
+      - "apps/chaptera-server/assets/local-dashboard.html"
+      - ".github/workflows/local-web-editor-v0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-local-editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - name: Check Python syntax
+        run: |
+          python -m py_compile tools/run_local_real_editor.py
+          python -m py_compile tools/run_local_full_stack.py
+          python -m py_compile services/editor-api/web_real_acceptance_service.py
+      - name: Prove arbitrary interactive MoveNode + Scene + Undo
+        run: python tools/run_local_real_editor.py --smoke
