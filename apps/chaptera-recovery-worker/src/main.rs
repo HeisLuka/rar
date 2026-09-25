@@ -157,7 +157,7 @@ fn validate_job(job: &Job) -> Result<(), String> {
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let count = file
             .read(&mut buffer)
