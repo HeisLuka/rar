@@ -382,7 +382,10 @@ async fn exact_prefix_materializes_r0_r1_r2_and_ignores_corrupt_future_tail_for_
     let r0 = m.materialize("tenant-a", "doc-a", "r0").await.unwrap();
     assert_eq!(r0.replayed_edges, 0);
     assert_eq!(r0.project, baseline);
-    assert_eq!(r0.canonical_revision_schema_version, AUTHORING_REVISION_SCHEMA_V1);
+    assert_eq!(
+        r0.canonical_revision_schema_version,
+        AUTHORING_REVISION_SCHEMA_V1
+    );
     assert_eq!(r0.canonical_authoring_revision_id, hash_char('1'));
 
     let r1 = m.materialize("tenant-a", "doc-a", "r1").await.unwrap();
