@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(first.state, "current");
         assert_eq!(
             first.applied_versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         );
 
         let second = runtime.migrate_up().await.unwrap();
@@ -729,7 +729,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 final_report.applied_versions,
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
             );
 
             cleanup(&path);
