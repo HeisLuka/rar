@@ -1,22 +1,31 @@
-use std::{future::Future, io};
+use std::{future::Future, io, net::SocketAddr};
 
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Json, Router, extract::State, http::StatusCode, middleware, response::IntoResponse,
+    routing::get,
+};
 use serde_json::json;
 use tokio::net::TcpListener;
 
 use crate::{
     build_info::{BUILD_GIT_SHA, BUILD_IDENTITY},
     config::RuntimeConfig,
+    edge::{self, EdgePolicy},
     shutdown,
     state::AppState,
 };
 
 pub fn router(state: AppState) -> Router {
+    router_with_edge(state, EdgePolicy::development())
+}
+
+pub fn router_with_edge(state: AppState, edge_policy: EdgePolicy) -> Router {
     Router::new()
         .route("/live", get(live))
         .route("/ready", get(ready))
         .route("/version", get(version))
         .with_state(state)
+        .layer(middleware::from_fn_with_state(edge_policy, edge::enforce))
 }
 
 async fn live() -> impl IntoResponse {
@@ -30,7 +39,6 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-
     (status, Json(report))
 }
 
@@ -44,15 +52,18 @@ async fn version() -> impl IntoResponse {
     )
 }
 
-pub async fn run(config: RuntimeConfig, state: AppState) -> io::Result<()> {
+pub async fn run(
+    config: RuntimeConfig,
+    edge_policy: EdgePolicy,
+    state: AppState,
+) -> io::Result<()> {
     config
         .validate()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
     let listener = TcpListener::bind(config.listen).await?;
     eprintln!("chaptera serve listening on {}", listener.local_addr()?);
-
-    run_with_listener(listener, state, shutdown::signal()).await
+    run_with_listener_policy(listener, state, edge_policy, shutdown::signal()).await
 }
 
 pub async fn run_with_listener<F>(
@@ -63,7 +74,22 @@ pub async fn run_with_listener<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown)
-        .await
+    run_with_listener_policy(listener, state, EdgePolicy::development(), shutdown).await
+}
+
+async fn run_with_listener_policy<F>(
+    listener: TcpListener,
+    state: AppState,
+    edge_policy: EdgePolicy,
+    shutdown: F,
+) -> io::Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    axum::serve(
+        listener,
+        router_with_edge(state, edge_policy).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
 }

@@ -1,0 +1,58 @@
+name: CLOUD-EDGE-01 HTTPS ingress integration
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-server/src/config.rs"
+      - "apps/chaptera-server/src/edge.rs"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/serve.rs"
+      - "deploy/caddy/Caddyfile.example"
+      - "deploy/config/chaptera.prod.example.toml"
+      - "docs/cloud-single-host-v0.md"
+      - "tools/run_cloud_edge_integration.py"
+      - "tools/validate_cloud_deploy_v0.py"
+      - ".github/workflows/cloud-edge-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  edge-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check edge Rust formatting
+        run: cargo fmt --package chaptera-server -- --check
+
+      - name: Run edge Rust tests
+        run: cargo test -p chaptera-server edge::tests
+
+      - name: Verify Docker runtime
+        run: docker version
+
+      - name: Run HTTPS reverse-proxy and WebSocket receipt
+        run: python tools/run_cloud_edge_integration.py --caddy-image caddy:2.10.2-alpine
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloud-edge-01-receipt
+          path: |
+            target/cloud-edge-01/receipt.json
+            target/cloud-edge-01/Caddyfile
+            target/cloud-edge-01/caddy.log
+            target/cloud-edge-01/https-headers.txt
+            target/cloud-edge-01/inspect.json
+            target/cloud-edge-01/upload-response.json
+          if-no-files-found: warn

@@ -92,16 +92,30 @@ spill in `/run` tmpfs on a 2 GiB VM.
 
 ## Caddy
 
+The example Caddyfile requires **Caddy 2.10.0 or newer** because its
+`request_body max_size` guard is a v2.10+ directive. The task-owned edge
+acceptance pins `caddy:2.10.2-alpine` so this deployment dependency is tested,
+not implicit.
+
 The example Caddyfile:
 
 - terminates HTTPS outside Chaptera;
 - proxies only to `127.0.0.1:8080`;
 - uses a finite 8 MiB ordinary API body bound;
 - uses a separate finite 256 MiB streamed-upload fallback bound;
-- relies on Caddy's native WebSocket proxy support.
+- relies on Caddy's native WebSocket proxy support;
+- rewrites the three X-Forwarded authority headers at the trusted ingress,
+  rather than preserving client-supplied proxy chains.
 
-Final Host/Origin/CORS/CSRF/CSP/HSTS policy remains owned by
-`CLOUD-EDGE-01`.
+`CLOUD-EDGE-01` adds a second, independent Rust boundary behind Caddy:
+only configured immediate proxy peers may assert X-Forwarded metadata;
+production non-health requests must arrive through that HTTPS edge; canonical
+Host and Origin are exact-match; browser mutations require same-origin plus a
+bounded CSRF token precondition; transfer-encoded bodies are rejected and
+declared body/header/time limits are bounded; responses carry CSP/HSTS,
+nosniff, referrer and permissions headers. Route-owned authentication remains
+responsible for verifying the supplied CSRF token against the authenticated
+session rather than treating header presence as authorization.
 
 ## Raw PUB
 
