@@ -375,7 +375,7 @@ jobs:
               right = sides["pub97"]
               lh = left["ptr"]
               rh = right["ptr"]
-              metadata_equal = all(lh[k] == rh[k] for k in ("n", "maxn", "data_size", "f0", "f1"))
+              metadata_equal = all(lh[k] == rh[k] for k in ("n", "maxn", "f0", "f1"))
               n = lh["n"]
               header_growth = 8
               vector_growth = 2 * (n + 1)
@@ -383,6 +383,13 @@ jobs:
               vector_widening = (
                   len(lh["vector"]) == len(rh["vector"])
                   and all(r == l + vector_growth for l, r in zip(lh["vector"], rh["vector"]))
+              )
+              last_ptr_widening = (
+                  rh["data_size"] == lh["data_size"] + vector_growth
+                  and bool(lh["vector"])
+                  and bool(rh["vector"])
+                  and lh["data_size"] == lh["vector"][-1]
+                  and rh["data_size"] == rh["vector"][-1]
               )
               prefix_equal = (
                   left["_raw"][:lh["data_offset"]]
@@ -402,6 +409,7 @@ jobs:
                   rh["pointer_size"] == 4,
                   metadata_equal,
                   vector_widening,
+                  last_ptr_widening,
                   prefix_equal,
                   bridge_equal,
                   zones_equal,
@@ -424,6 +432,7 @@ jobs:
                   "control": spec["control"],
                   "sides": sides,
                   "metadata_equal": metadata_equal,
+                  "last_ptr_widening_exact": last_ptr_widening,
                   "n": n,
                   "header_growth": header_growth,
                   "vector_growth": vector_growth,
