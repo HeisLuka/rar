@@ -5,7 +5,6 @@ on:
     paths:
       - "services/editor-api/create_picture_frame_v1.py"
       - "services/editor-api/test_create_picture_frame_v1.py"
-      - "services/editor-api/revision_store.py"
       - "services/editor-api/editor_project_asset_registry_v1.py"
       - "services/editor-api/image_asset_intrinsic_v1.py"
       - "services/editor-api/picture_resize_plan_v1.py"
