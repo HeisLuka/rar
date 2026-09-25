@@ -3256,7 +3256,7 @@ mod tests {
             path: Some(fixture.clone()),
             ..Default::default()
         });
-        harness.run();
+        harness.step();
         assert!(harness.state().visual.is_some(), "GUI file drop must open the PUB");
         assert!(harness.state().editor.is_some(), "GUI open must create the EditorSession");
 
@@ -3299,7 +3299,7 @@ mod tests {
             let search = harness.get_by_role(egui::accesskit::Role::TextInput);
             search.type_text(search_term.clone());
         }
-        harness.run();
+        harness.step();
         let result_label = {
             let result = harness
                 .state()
@@ -3310,7 +3310,7 @@ mod tests {
             format!("1. {}", search_result_preview(&result.text))
         };
         harness.get_by_label(&result_label).click();
-        harness.run();
+        harness.step();
         assert_eq!(harness.state().edit_buffer, original_story);
 
         let replacement = "Chaptera GUI-only V0 acceptance text".to_owned();
@@ -3322,9 +3322,9 @@ mod tests {
             ]);
             editor.type_text(replacement.clone());
         }
-        harness.run();
+        harness.step();
         harness.get_by_label("Apply Story edit").click();
-        harness.run();
+        harness.step();
         assert_eq!(
             harness
                 .state()
@@ -3396,7 +3396,7 @@ mod tests {
             .next()
             .expect("Undo command")
             .click();
-        harness.run();
+        harness.step();
         assert_eq!(
             harness.state().editor.as_ref().expect("editor").graph().nodes[&moved_node_id]
                 .header
@@ -3410,7 +3410,7 @@ mod tests {
             .next()
             .expect("Redo command")
             .click();
-        harness.run();
+        harness.step();
         assert_eq!(
             harness.state().editor.as_ref().expect("editor").graph().nodes[&moved_node_id]
                 .header
@@ -3420,7 +3420,7 @@ mod tests {
         );
 
         harness.get_by_label("Save Project").click();
-        harness.run();
+        harness.step();
         let sidecar = editor_project_sidecar_path(&fixture).expect("sidecar path");
         assert!(sidecar.is_file(), "GUI Save Project must write the sidecar");
 
@@ -3429,7 +3429,7 @@ mod tests {
             assert!(!reopen.is_disabled(), "saved clean state enables Reopen Project");
             reopen.click();
         }
-        harness.run();
+        harness.step();
         {
             let editor = harness.state().editor.as_ref().expect("fresh reopened editor");
             assert_eq!(editor.operations().len(), 2);
@@ -3438,9 +3438,9 @@ mod tests {
         }
 
         harness.get_by_label("Export").click();
-        harness.run();
+        harness.step();
         harness.get_by_label("Preview IDML").click();
-        harness.run();
+        harness.step();
         assert!(
             harness
                 .state()
@@ -3454,9 +3454,9 @@ mod tests {
             "GUI IDML preview must admit the current edited state"
         );
         harness.get_by_label("Export").click();
-        harness.run();
+        harness.step();
         harness.get_by_label("Export edited IDML copy").click();
-        harness.run();
+        harness.step();
 
         let exported =
             editable_export_path(&fixture, pub_editor::EditorEditableTarget::Idml).expect("IDML path");
