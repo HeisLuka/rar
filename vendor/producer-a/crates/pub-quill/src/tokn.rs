@@ -894,6 +894,50 @@ mod tests {
         ));
     }
 
+
+    #[test]
+    fn malformed_target_section_is_preserved_as_exact_opaque_tail() {
+        let mut bytes = type12_prefix(1, 0, &[0, 1]);
+        bytes.extend(property_block(&[
+            (TOKN_PROPERTY_TEXT_LENGTH, 1),
+            (TOKN_PROPERTY_KIND, 1),
+        ]));
+        bytes.extend(property_block(&[(TOKN_PROPERTY_STATE, 0)]));
+
+        let tail_start = bytes.len();
+        // Deliberately false size equation. The reader must not guess a target
+        // section from these bytes.
+        w32(&mut bytes, 999);
+        w32(&mut bytes, 1);
+        w32(&mut bytes, 0xdead_beef);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 0);
+        w32(&mut bytes, 4);
+        w16(&mut bytes, 1);
+        w16(&mut bytes, b'X' as u16);
+
+        let parsed = parse_tokn_chunks(
+            StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &bytes,
+            &[&descriptor(bytes.len(), 0)],
+            &[syid(55)],
+        )
+        .unwrap();
+
+        let tokn = &parsed[0];
+        assert!(tokn.target_section.is_none());
+        assert_eq!(
+            tokn.opaque_tail_source,
+            Some(RawSpan {
+                stream: StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                offset: tail_start as u64,
+                len: (bytes.len() - tail_start) as u64,
+            })
+        );
+        assert_eq!(tokn.opaque_tail, bytes[tail_start..].to_vec());
+    }
+
+
     #[test]
     fn descriptor_ordinal_joins_exact_parallel_syid() {
         let mut bytes = type12_prefix(1, 0, &[0, 1]);
