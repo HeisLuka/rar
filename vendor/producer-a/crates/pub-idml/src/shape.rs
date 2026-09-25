@@ -276,9 +276,8 @@ fn ensure_graphic_resource(
     writeln!(xml, "<?xml version=\"1.0\" encoding=\"utf-8\"?>").unwrap();
     writeln!(
         xml,
-        "<idPkg:Graphic xmlns:idPkg=\"{}\" DOMVersion=\"{}\">",
-        crate::IDML_PACKAGING_NAMESPACE,
-        "7.0"
+        "<idPkg:Graphic xmlns:idPkg=\"{}\" DOMVersion=\"7.0\">",
+        crate::IDML_PACKAGING_NAMESPACE
     )
     .unwrap();
     for color in colors {
