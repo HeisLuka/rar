@@ -2204,6 +2204,17 @@ fn explicit_story_chain_for_break(
         || upstream.next != Some(downstream_frame_id)
         || downstream.previous != Some(upstream_frame_id)
         || !graph.stories.contains_key(&upstream.story_id)
+        || graph.nodes.values().any(|node| {
+            node.payload
+                .table_story
+                .as_ref()
+                .is_some_and(|owner| owner.story_id == Some(upstream.story_id))
+                || node
+                    .payload
+                    .table
+                    .as_ref()
+                    .is_some_and(|table| table.story_id == Some(upstream.story_id))
+        })
     {
         return Err(EditorError::BreakLinkUnsupported {
             upstream_frame_id,
@@ -2764,7 +2775,22 @@ fn apply_inverse(
                 .filter(|frame| frame.story_id == *new_story_id)
                 .map(|frame| frame.frame_id)
                 .collect::<BTreeSet<_>>();
-            if current_new_story_frames != expected_new_story_frames {
+            let current_source_story_frames = graph
+                .nodes
+                .iter()
+                .filter_map(|(node_id, node)| {
+                    let frame = frame_from_payload(*node_id, &node.payload)?;
+                    (frame.story_id == *story_id).then_some(frame.frame_id)
+                })
+                .collect::<BTreeSet<_>>();
+            let expected_source_story_frames = after_frames
+                .iter()
+                .filter(|frame| frame.story_id == *story_id)
+                .map(|frame| frame.frame_id)
+                .collect::<BTreeSet<_>>();
+            if current_new_story_frames != expected_new_story_frames
+                || current_source_story_frames != expected_source_story_frames
+            {
                 return Err(EditorError::StaleFrameTopology {
                     story_id: *story_id,
                 });
