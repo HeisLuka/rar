@@ -1,4 +1,4 @@
-use std::{error::Error, process::ExitCode, time::Duration};
+use std::{error::Error, process::ExitCode, sync::Arc, time::Duration};
 
 use chaptera_server::{
     auth_runtime::AuthRuntime,
@@ -11,10 +11,16 @@ use chaptera_server::{
     jobs::UnconfiguredWorkerRuntime,
     jobs_runtime::JobsRuntime,
     migrate,
+    project_persistence_sqlite::SqliteProjectPersistence,
     runtime_readiness::{ports_with_configured_serve, ports_with_revision_stream},
     schema_migration::SqliteMigrationRuntime,
     serve, source_baseline,
+    source_baseline::IsolatedSourceBaselineProducer,
+    source_ingress_http::{self, SourceIngressHttpState},
+    source_ingress_sqlite::SqliteSourceIngressRepository,
     sqlite_store::SqliteRevisionStore,
+    upload_admission::SqliteUploadAdmissionAuthority,
+    workspace_context::SqliteWorkspaceContextResolver,
     state::{AppState, RuntimePorts},
     worker,
     worker_runtime::ConfiguredWorkerRuntime,
@@ -105,6 +111,55 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     )
                     .await?;
                     let blob_store = BlobStoreRuntime::open(&config).await?;
+                    let product_router = if let Some(source_config) = &config.source_ingress {
+                        let workspace = SqliteWorkspaceContextResolver::open(
+                            &config.sqlite.path,
+                            config.sqlite.pool_max,
+                            busy_timeout,
+                        )
+                        .await?;
+                        let admission = SqliteUploadAdmissionAuthority::open(
+                            &config.sqlite.path,
+                            config.sqlite.pool_max,
+                            busy_timeout,
+                            source_ingress_http::upload_admission_config(source_config),
+                        )
+                        .await?;
+                        let source_repo = SqliteSourceIngressRepository::open(
+                            &config.sqlite.path,
+                            config.sqlite.pool_max,
+                            busy_timeout,
+                        )
+                        .await?;
+                        let scanner = Arc::new(source_ingress_http::production_scanner(
+                            source_config,
+                        )?);
+                        let baseline = IsolatedSourceBaselineProducer::new(
+                            source_ingress_http::baseline_config(source_config),
+                            blob_store.service().clone(),
+                        )?;
+                        let projects = SqliteProjectPersistence::open(
+                            &config.sqlite.path,
+                            config.sqlite.pool_max,
+                            busy_timeout,
+                        )
+                        .await?;
+                        let source_state = SourceIngressHttpState::new(
+                            auth_http.clone(),
+                            workspace,
+                            admission,
+                            source_repo,
+                            blob_store.service().clone(),
+                            scanner,
+                            baseline,
+                            projects,
+                            source_ingress_http::http_config(source_config),
+                        )?;
+                        Some(source_ingress_http::router(source_state))
+                    } else {
+                        None
+                    };
+
                     let assembled = ports_with_configured_serve(
                         revision_stream,
                         auth_runtime,
@@ -113,12 +168,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                         blob_store,
                     );
                     let state = AppState::new(assembled.ports);
-                    serve::run_with_auth_local(
+                    serve::run_with_auth_local_product(
                         config.runtime_config(),
                         edge_policy,
                         state,
                         Some(auth_http),
                         !matches!(config.environment, EnvironmentMode::Prod),
+                        product_router,
                     )
                     .await?;
                 } else {
