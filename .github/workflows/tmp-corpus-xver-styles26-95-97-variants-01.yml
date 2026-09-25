@@ -571,13 +571,27 @@ jobs:
                               }
                           )
 
+          invalid_style_files = [
+              row["name"]
+              for row in results
+              if any(style["classification"] == "invalid-position-list-header" for style in row["styles"])
+          ]
+          pure_style_files = [
+              row["name"]
+              for row in results
+              if row["styles"] and all(
+                  style["classification"] == "pure-list-and-record-offset-widening"
+                  for style in row["styles"]
+              )
+          ]
+
           summary = {
               "schema": "chaptera.styles26-95-97-variants-summary.v1",
               "source_safe": True,
               "raw_pub_retained": False,
               "target_count": len(TARGETS),
               "long_form_count": len(LONG_FORMS),
-              "classification_counts": class_counts,
+              "classification_counts": class_counts,\n              "pure_style_files": pure_style_files,\n              "invalid_style_files": invalid_style_files,
               "all_long_forms_outer_pointer_widen_2_to_4": all(
                   style.get("pointer_widen_2_to_4") is True for style in long_style_pairs
               ),
