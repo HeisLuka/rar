@@ -1,0 +1,31 @@
+name: Authoring TextFrame Break Link V1
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/break_text_frame_forward_link_v1.rs"
+      - "vendor/producer-a/producer/tests/break_link_layout_v1.rs"
+      - ".github/workflows/authoring-textframe-break-link-v1.yml"
+concurrency:
+  group: authoring-textframe-break-link-v1-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  break-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test full pub-editor suite including BreakTextFrameForwardLink
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
+      - name: Prove layout recomputes upstream overset after split
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml \
+            -p chaptera-producer-a \
+            --test break_link_layout_v1
