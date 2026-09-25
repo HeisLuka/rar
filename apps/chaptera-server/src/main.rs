@@ -5,7 +5,7 @@ use chaptera_server::{
     authz_runtime::SqliteAuthzAuthority,
     blob_runtime::BlobStoreRuntime,
     cli::{Cli, Command},
-    config::{ChapteraConfig, SecretResolver},
+    config::{ChapteraConfig, EnvironmentMode, SecretResolver},
     doctor,
     edge::EdgePolicy,
     jobs::UnconfiguredWorkerRuntime,
@@ -82,23 +82,38 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                         blob_store,
                     );
                     let state = AppState::new(assembled.ports);
-                    serve::run_with_auth(
+                    serve::run_with_auth_local(
                         config.runtime_config(),
                         edge_policy,
                         state,
                         Some(auth_http),
+                        !matches!(config.environment, EnvironmentMode::Prod),
                     )
                     .await?;
                 } else {
                     drop(secrets);
                     let assembled = ports_with_revision_stream(revision_stream);
                     let state = AppState::new(assembled.ports);
-                    serve::run(config.runtime_config(), edge_policy, state).await?;
+                    serve::run_with_auth_local(
+                        config.runtime_config(),
+                        edge_policy,
+                        state,
+                        None,
+                        !matches!(config.environment, EnvironmentMode::Prod),
+                    )
+                    .await?;
                 }
             } else {
                 drop(secrets);
                 let state = AppState::new(RuntimePorts::unconfigured());
-                serve::run(config.runtime_config(), edge_policy, state).await?;
+                serve::run_with_auth_local(
+                    config.runtime_config(),
+                    edge_policy,
+                    state,
+                    None,
+                    true,
+                )
+                .await?;
             }
         }
         Command::Worker => {
