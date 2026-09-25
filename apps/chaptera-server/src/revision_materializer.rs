@@ -226,6 +226,12 @@ pub struct ExactRevisionMaterializationReceipt {
     pub project: EditorProject,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactRevisionMaterializedState {
+    pub receipt: ExactRevisionMaterializationReceipt,
+    pub source_bytes: Vec<u8>,
+}
+
 pub struct ExactRevisionMaterializer {
     source_authority: Arc<dyn DocumentSourceAuthority>,
     source_loader: Arc<dyn ExactSourceLoader>,
@@ -254,6 +260,18 @@ impl ExactRevisionMaterializer {
         document_id: &str,
         requested_revision_id: &str,
     ) -> Result<ExactRevisionMaterializationReceipt, RevisionMaterializerError> {
+        Ok(self
+            .materialize_state(tenant_id, document_id, requested_revision_id)
+            .await?
+            .receipt)
+    }
+
+    pub async fn materialize_state(
+        &self,
+        tenant_id: &str,
+        document_id: &str,
+        requested_revision_id: &str,
+    ) -> Result<ExactRevisionMaterializedState, RevisionMaterializerError> {
         require_identifier(tenant_id, "tenant_id")?;
         require_identifier(document_id, "document_id")?;
         require_identifier(requested_revision_id, "requested_revision_id")?;
@@ -322,7 +340,10 @@ impl ExactRevisionMaterializer {
             authoring_root_hash,
             project: current_project,
         };
-        Ok(receipt)
+        Ok(ExactRevisionMaterializedState {
+            receipt,
+            source_bytes,
+        })
     }
 
     fn replay_edge(
