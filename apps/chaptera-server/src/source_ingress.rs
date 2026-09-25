@@ -1358,12 +1358,9 @@ mod tests {
             "upload-reservation-42".into(),
         )
         .unwrap();
-        let replay = build_issue_upload_candidate(
-            1024 * 1024,
-            request,
-            "upload-reservation-42".into(),
-        )
-        .unwrap();
+        let replay =
+            build_issue_upload_candidate(1024 * 1024, request, "upload-reservation-42".into())
+                .unwrap();
 
         assert_eq!(first.upload_id, "upload-reservation-42");
         assert_eq!(
