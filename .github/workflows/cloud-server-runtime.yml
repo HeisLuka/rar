@@ -37,6 +37,21 @@ jobs:
       - name: Rust tests
         run: cargo test -p chaptera-server
 
+      - name: Fetch pinned real Publisher export fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$fixture"
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          test "$actual" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          echo "CHAPTERA_EXPORT_FIXTURE=$fixture" >> "$GITHUB_ENV"
+
+      - name: Prove registered exact-revision export worker vertical
+        run: cargo test -p chaptera-server --test export_executor_producer -- --ignored --nocapture
+
       - name: Build runtime shell
         env:
           CHAPTERA_BUILD_GIT_SHA: ${{ github.sha }}
