@@ -85,10 +85,8 @@ impl AsyncSourceValidationRuntime {
             UploadState::StoredUnverified => {
                 let mut next = upload.clone();
                 next.state = UploadState::Validating;
-                next.upload_generation = next
-                    .upload_generation
-                    .checked_add(1)
-                    .ok_or_else(|| {
+                next.upload_generation =
+                    next.upload_generation.checked_add(1).ok_or_else(|| {
                         IngressError::new(
                             "upload_generation_overflow",
                             "upload generation cannot advance",
@@ -191,15 +189,12 @@ impl AsyncSourceValidationRuntime {
 
         let mut next = upload.clone();
         next.state = UploadState::ValidatedDurable;
-        next.upload_generation = next
-            .upload_generation
-            .checked_add(1)
-            .ok_or_else(|| {
-                IngressError::new(
-                    "upload_generation_overflow",
-                    "upload generation cannot advance",
-                )
-            })?;
+        next.upload_generation = next.upload_generation.checked_add(1).ok_or_else(|| {
+            IngressError::new(
+                "upload_generation_overflow",
+                "upload generation cannot advance",
+            )
+        })?;
         next.canonical_sha256 = Some(canonical_sha256);
         next.durable_binding_id = Some(binding.binding_id);
         next.completed_at_ms = Some(now_ms);
@@ -397,12 +392,15 @@ mod tests {
             ) -> Result<SourceSecurityScanOutcome, IngressError> {
                 let mut byte = [0_u8; 1];
                 use tokio::io::AsyncReadExt;
-                input.read_exact(&mut byte).await.map_err(|error| {
-                    IngressError::new("scanner_read_failed", error.to_string())
-                })?;
-                Ok(SourceSecurityScanOutcome::Accepted(SourceSecurityScanReceipt {
-                    validation_profile: "chaptera-untrusted-pub-v1".to_owned(),
-                }))
+                input
+                    .read_exact(&mut byte)
+                    .await
+                    .map_err(|error| IngressError::new("scanner_read_failed", error.to_string()))?;
+                Ok(SourceSecurityScanOutcome::Accepted(
+                    SourceSecurityScanReceipt {
+                        validation_profile: "chaptera-untrusted-pub-v1".to_owned(),
+                    },
+                ))
             }
         }
 
