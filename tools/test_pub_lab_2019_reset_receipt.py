@@ -55,6 +55,14 @@ class PubLab2019ResetReceiptTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             validate_receipt(value)
 
+    def test_reset_adapter_pins_expected_environment_before_cold_start(self):
+        script = (ROOT / "tools" / "pub_lab_2019_vmware_reset.ps1").read_text(encoding="utf-8")
+        self.assertIn('begin-revert requires -ExpectedEnvironmentFingerprint', script)
+        self.assertIn('expected_environment_fingerprint = $expectedFingerprint', script)
+        self.assertIn('$expectedFingerprint = [string]$challenge.expected_environment_fingerprint', script)
+        self.assertNotIn('finalize-revert requires -ExpectedEnvironmentFingerprint', script)
+        self.assertIn('restore challenge VMware tool identity mismatch', script)
+
 
 if __name__ == "__main__":
     unittest.main()
