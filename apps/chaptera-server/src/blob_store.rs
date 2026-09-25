@@ -592,6 +592,81 @@ impl BlobStoreService {
         })
     }
 
+    pub async fn create_quarantine_streamed(
+        &self,
+        tenant_id: &str,
+        upload_id: &str,
+        expected_byte_len: u64,
+        input: &mut (dyn AsyncRead + Unpin + Send),
+    ) -> Result<QuarantineObjectMetadata, BlobStoreError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(upload_id, "upload_id")?;
+        if expected_byte_len == 0 {
+            return Err(BlobStoreError::new(
+                "invalid_upload_size",
+                "streamed quarantine upload byte length must be positive",
+            ));
+        }
+
+        let object_locator = object_locator(BlobNamespace::Quarantine, tenant_id, upload_id);
+        let mut bounded = HashingBoundedReader::new(input, expected_byte_len);
+        let (mut upload_writer, upload_reader) = tokio::io::duplex(COPY_BUFFER_BYTES);
+        let create = self
+            .provider
+            .create_immutable(&object_locator, expected_byte_len, Box::new(upload_reader));
+        let pump = async {
+            tokio::io::copy(&mut bounded, &mut upload_writer)
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))?;
+            upload_writer
+                .shutdown()
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))
+        };
+        let (create_result, pump_result) = tokio::join!(create, pump);
+
+        let metadata = match create_result {
+            Ok(metadata) => {
+                pump_result?;
+                metadata
+            }
+            Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => {
+                pump_result?;
+                self.provider
+                    .head_exact(&object_locator)
+                    .await
+                    .map_err(provider_error)?
+                    .ok_or_else(|| {
+                        BlobStoreError::new(
+                            "provider_unknown_unreconciled",
+                            "quarantine create outcome is unknown and exact object is absent",
+                        )
+                    })?
+            }
+            Err(error) if error.kind == ProviderErrorKind::AlreadyExists => {
+                return Err(BlobStoreError::new(
+                    "quarantine_object_exists",
+                    "create-only quarantine object already exists",
+                ));
+            }
+            Err(error) => return Err(provider_error(error)),
+        };
+
+        bounded.require_exact_eof(expected_byte_len)?;
+        validate_provider_metadata(&metadata, expected_byte_len)?;
+        require_ident(&metadata.generation, "storage_generation")?;
+        require_ident(&metadata.etag, "object_etag")?;
+
+        Ok(QuarantineObjectMetadata {
+            tenant_id: tenant_id.to_owned(),
+            upload_id: upload_id.to_owned(),
+            object_locator,
+            storage_generation: metadata.generation,
+            etag: metadata.etag,
+            byte_len: metadata.byte_len,
+        })
+    }
+
     pub async fn inspect_quarantine_upload(
         &self,
         tenant_id: &str,
