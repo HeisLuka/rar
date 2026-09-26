@@ -23,6 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.1
+          components: clippy
       - name: Test chaptera-entitlement
         run: cargo test -p chaptera-entitlement --all-targets
       - name: Clippy chaptera-entitlement
