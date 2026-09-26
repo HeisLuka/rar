@@ -6231,10 +6231,8 @@ mod tests {
             .map(PathBuf::from)
             .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
         let original = fs::read(&fixture_source).expect("read pinned SampleNewsletter fixture");
-        let root = std::env::temp_dir().join(format!(
-            "chaptera-gui-direct-text-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("chaptera-gui-direct-text-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create direct-text GUI temp directory");
         let fixture = root.join("SampleNewsletter.pub");
@@ -6271,9 +6269,11 @@ mod tests {
                         .nodes
                         .iter()
                         .find(|node| node.origin == fragment.frame_id)?;
-                    let page = visual.document.pages.iter().find(|page| {
-                        node.parent_origin == page.id.into_canonical()
-                    })?;
+                    let page = visual
+                        .document
+                        .pages
+                        .iter()
+                        .find(|page| node.parent_origin == page.id.into_canonical())?;
                     let page_id_text = page.id.as_canonical().to_string();
                     let page_nodes = visual
                         .scene
@@ -6286,11 +6286,8 @@ mod tests {
                             .iter()
                             .enumerate()
                             .filter_map(|(paint_order, candidate)| {
-                                let instance = direct_scene_instance(
-                                    editor,
-                                    &page_id_text,
-                                    candidate.origin,
-                                )?;
+                                let instance =
+                                    direct_scene_instance(editor, &page_id_text, candidate.origin)?;
                                 Some(SceneHitEntry {
                                     instance_id: instance.instance_id,
                                     node_id: candidate.origin,
