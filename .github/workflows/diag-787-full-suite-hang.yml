@@ -1,4 +1,4 @@
-name: DIAG 787 full-suite hang
+name: DIAG 787 blob-store tests
 
 on:
   pull_request:
@@ -17,33 +17,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: blob-store
-            args: "blob_store::tests::"
-          - label: project-persistence
-            args: "project_persistence_sqlite::tests::"
-          - label: source-http
-            args: "source_ingress_http::tests::"
-          - label: source-domain
-            args: "source_ingress::tests::"
-          - label: source-sqlite
-            args: "source_ingress_sqlite::tests::"
-          - label: upload-admission
-            args: "upload_admission::tests::"
-          - label: auth-http
-            args: "auth_http::tests::"
-          - label: config
-            args: "config::tests::"
-          - label: sqlite-control
-            args: "sqlite_store::tests::"
-          - label: runtime-shell
-            args: "--test runtime_shell"
+          - test: create_and_verified_read_start_from_tenant_binding_not_hash
+          - test: tenant_local_dedupe_reuses_physical_blob_but_not_binding_identity
+          - test: cross_tenant_content_does_not_reuse_physical_blob
+          - test: unknown_create_outcome_reconciles_by_exact_head_and_read
+          - test: streamed_quarantine_fallback_is_exact_create_once_and_reopenable
+          - test: streamed_quarantine_fallback_rejects_length_mismatch
+          - test: quarantine_inspect_and_exact_read_preserve_object_identity
+          - test: quarantine_exact_read_fails_closed_on_identity_drift
+          - test: direct_upload_requires_provider_hard_size_and_create_only_capabilities
+          - test: signed_grant_is_exactly_scoped_and_expires
+          - test: async_hashing_bounded_reader_rejects_one_byte_over_and_under
+          - test: async_hashing_owned_reader_rejects_one_byte_over_and_under
+          - test: provider_create_only_rejects_same_key_overwrite
 
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.1
-      - name: Run isolated test slice
+      - name: Run isolated BlobStore test
         shell: bash
         run: |
           set -euo pipefail
-          echo "slice=${{ matrix.label }}"
-          timeout 180 cargo test -p chaptera-server ${{ matrix.args }} -- --nocapture --test-threads=1
+          echo "test=${{ matrix.test }}"
+          timeout 180 cargo test -p chaptera-server "blob_store::tests::${{ matrix.test }}" -- --exact --nocapture --test-threads=1
