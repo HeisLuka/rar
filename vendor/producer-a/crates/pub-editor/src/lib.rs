@@ -44,7 +44,8 @@ use pub_odg::{
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
-    PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
+    PubImageResourceCatalog, PubResolvedGraph, PubResolvedNodePayload,
+    build_mature_0x2c_image_resource_catalog, build_mature_0x2c_source_graph,
     materialize_bounded_simple_table_cells, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -137,6 +138,14 @@ pub struct ResizeNodeBatchEntry {
     pub after: RectEmu,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageCropStateV1 {
+    pub top_raw: Option<u32>,
+    pub bottom_raw: Option<u32>,
+    pub left_raw: Option<u32>,
+    pub right_raw: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
@@ -176,6 +185,11 @@ pub enum EditOperation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before_asset: Option<Sha256Digest>,
         after_asset: Sha256Digest,
+    },
+    SetImageCrop {
+        node_id: NodeId,
+        before: ImageCropStateV1,
+        after: ImageCropStateV1,
     },
     MoveNode {
         node_id: NodeId,
@@ -251,6 +265,11 @@ impl PersistenceRequirements for EditOperation {
                 feature: "image.replacement".into(),
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("node.image.resource".into()),
+            }],
+            Self::SetImageCrop { node_id, .. } => vec![PersistenceRequirement {
+                feature: "image.crop".into(),
+                origin: Some(node_id.into_canonical()),
+                property_path: Some("node.image.crop".into()),
             }],
             Self::MoveNode { node_id, .. } => vec![PersistenceRequirement {
                 feature: "node.geometry.position".into(),
@@ -594,6 +613,15 @@ pub enum EditorError {
     StaleImageOperation {
         node_id: NodeId,
     },
+    ImageCropUnsupported {
+        node_id: NodeId,
+    },
+    ImageCropNoChange {
+        node_id: NodeId,
+    },
+    StaleImageCrop {
+        node_id: NodeId,
+    },
     CreateShapeInvalidNodeId {
         node_id: NodeId,
     },
@@ -774,6 +802,21 @@ impl fmt::Display for EditorError {
                 "image node {} no longer matches the replacement operation precondition",
                 node_id.as_canonical()
             ),
+            Self::ImageCropUnsupported { node_id } => write!(
+                formatter,
+                "image node {} is outside the bounded source-backed crop slice",
+                node_id.as_canonical()
+            ),
+            Self::ImageCropNoChange { node_id } => write!(
+                formatter,
+                "image node {} already has the requested crop state",
+                node_id.as_canonical()
+            ),
+            Self::StaleImageCrop { node_id } => write!(
+                formatter,
+                "image node {} no longer matches the expected crop state",
+                node_id.as_canonical()
+            ),
             Self::CreateShapeInvalidNodeId { node_id } => write!(
                 formatter,
                 "CreateShape node {} is not an editor-created UUIDv7",
@@ -938,6 +981,9 @@ impl EditorError {
             Self::MissingReplacementAsset { .. } => "missing_replacement_asset",
             Self::ImageReplacementNoChange { .. } => "image_replacement_no_change",
             Self::StaleImageOperation { .. } => "stale_image_operation",
+            Self::ImageCropUnsupported { .. } => "image_crop_unsupported",
+            Self::ImageCropNoChange { .. } => "image_crop_no_change",
+            Self::StaleImageCrop { .. } => "stale_image_crop",
             Self::CreateShapeInvalidNodeId { .. } => "create_shape_invalid_node_id",
             Self::CreateShapePageMissing { .. } => "create_shape_page_missing",
             Self::CreateShapeIdCollision { .. } => "create_shape_id_collision",
@@ -1113,6 +1159,10 @@ impl fmt::Display for EditorProjectError {
                 formatter,
                 "editor project operation {index} uses CreateShape but the project schema predates pub-editor-v0.10"
             ),
+            Self::LegacyProjectCarriesImageCropOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses SetImageCrop but the project schema predates pub-editor-v0.11"
+            ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
             ),
@@ -1179,15 +1229,29 @@ impl fmt::Display for EditorProjectError {
 
 impl std::error::Error for EditorProjectError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceImageAuthorityV1 {
+    pub resource_id: ResourceId,
+    pub mime: String,
+    pub source_hash: Sha256Digest,
+}
+
 pub fn open_mature_0x2c_editor(
     bytes: &[u8],
     source_hash: Sha256Digest,
 ) -> Result<EditorSession, EditorOpenError> {
     let source = build_mature_0x2c_source_graph(Cursor::new(bytes), source_hash)
         .map_err(|error| EditorOpenError::SourceGraph(error.to_string()))?;
+    let image_catalog = build_mature_0x2c_image_resource_catalog(Cursor::new(bytes), &source.graph)
+        .ok()
+        .flatten();
     let resolved = resolve_pub_source_graph(&source.graph)
         .map_err(|error| EditorOpenError::Resolve(error.to_string()))?;
-    EditorSession::new(resolved.graph).map_err(EditorOpenError::Session)
+    let mut session = EditorSession::new(resolved.graph).map_err(EditorOpenError::Session)?;
+    if let Some(catalog) = image_catalog {
+        session.install_source_image_authority(catalog);
+    }
+    Ok(session)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1364,6 +1428,40 @@ impl EditorSession {
 
     pub fn image_replacement_for(&self, node_id: NodeId) -> Option<Sha256Digest> {
         self.image_replacements.get(&node_id).copied()
+    }
+
+    pub fn source_image_authority_for(&self, node_id: NodeId) -> Option<&SourceImageAuthorityV1> {
+        self.source_image_authority.get(&node_id)
+    }
+
+    pub fn image_crop_for(&self, node_id: NodeId) -> Option<ImageCropStateV1> {
+        self.image_crop_overrides
+            .get(&node_id)
+            .copied()
+            .or_else(|| source_image_crop_state(&self.graph, node_id))
+    }
+
+    fn install_source_image_authority(&mut self, catalog: PubImageResourceCatalog) {
+        let PubImageResourceCatalog {
+            resources,
+            node_resources,
+            ..
+        } = catalog;
+
+        self.source_image_authority = node_resources
+            .into_iter()
+            .filter_map(|(node_id, resource_id)| {
+                let resource = resources.get(&resource_id)?;
+                Some((
+                    node_id,
+                    SourceImageAuthorityV1 {
+                        resource_id,
+                        mime: resource.mime.clone(),
+                        source_hash: resource.source_hash,
+                    },
+                ))
+            })
+            .collect();
     }
 
     pub fn import_replacement_asset(
@@ -1635,6 +1733,7 @@ impl EditorSession {
             || !self.redo.is_empty()
             || !self.replacement_assets.is_empty()
             || !self.image_replacements.is_empty()
+            || !self.image_crop_overrides.is_empty()
             || !self.authored_shapes.is_empty()
         {
             return Err(EditorProjectError::SessionNotEmpty);
@@ -1791,7 +1890,12 @@ impl EditorSession {
     ) -> Result<(ExportReport, String, ExportPlan), EditorExportError> {
         self.validate_source_identity()
             .map_err(EditorExportError::Session)?;
-        let plan = editable_export_plan(target, &self.graph, &self.image_replacements);
+        let plan = editable_export_plan(
+            target,
+            &self.graph,
+            &self.image_replacements,
+            &self.image_crop_overrides,
+        );
         let report = build_export_report(
             &plan,
             ExportReportSource {
@@ -2195,13 +2299,22 @@ impl EditorSession {
             .nodes
             .get(&node_id)
             .ok_or(EditorError::ImageReplaceUnsupported { node_id })?;
-        if node.payload.image_slot.is_none() || node.payload.explicit_image_crop.is_some() {
+        if node.payload.image_slot.is_none() {
             return Err(EditorError::ImageReplaceUnsupported { node_id });
+        }
+        if let Some(crop) = node.payload.explicit_image_crop.as_ref() {
+            let authority = self
+                .source_image_authority_for(node_id)
+                .ok_or(EditorError::ImageReplaceUnsupported { node_id })?;
+            if crop.ambiguous || !matches!(authority.mime.as_str(), "image/png" | "image/jpeg") {
+                return Err(EditorError::ImageReplaceUnsupported { node_id });
+            }
         }
         if node.header.bounds.width.get() <= 0
             || node.header.bounds.height.get() <= 0
             || node.header.bounds.right().is_none()
             || node.header.bounds.bottom().is_none()
+            || node.header.transform != pub_model::Affine2D::identity()
         {
             return Err(EditorError::ImageReplaceUnsupported { node_id });
         }
@@ -2215,6 +2328,72 @@ impl EditorSession {
         }
 
         Ok(())
+    }
+
+    pub fn can_set_image_crop(&self, node_id: NodeId) -> Result<(), EditorError> {
+        self.validate_source_identity()?;
+
+        let node = self
+            .graph
+            .nodes
+            .get(&node_id)
+            .ok_or(EditorError::ImageCropUnsupported { node_id })?;
+        let crop = node
+            .payload
+            .explicit_image_crop
+            .as_ref()
+            .ok_or(EditorError::ImageCropUnsupported { node_id })?;
+        let authority = self
+            .source_image_authority_for(node_id)
+            .ok_or(EditorError::ImageCropUnsupported { node_id })?;
+
+        if node.payload.image_slot.is_none()
+            || crop.ambiguous
+            || !matches!(authority.mime.as_str(), "image/png" | "image/jpeg")
+            || node.header.transform != pub_model::Affine2D::identity()
+            || node.header.bounds.width.get() <= 0
+            || node.header.bounds.height.get() <= 0
+            || node.header.bounds.right().is_none()
+            || node.header.bounds.bottom().is_none()
+            || !self
+                .graph
+                .pages
+                .keys()
+                .any(|page_id| page_id.into_canonical() == node.header.parent_id)
+        {
+            return Err(EditorError::ImageCropUnsupported { node_id });
+        }
+
+        Ok(())
+    }
+
+    pub fn set_image_crop(
+        &mut self,
+        node_id: NodeId,
+        expected_before: ImageCropStateV1,
+        after: ImageCropStateV1,
+    ) -> Result<EditOperation, EditorError> {
+        self.can_set_image_crop(node_id)?;
+        let before = self
+            .image_crop_for(node_id)
+            .ok_or(EditorError::ImageCropUnsupported { node_id })?;
+        if before != expected_before {
+            return Err(EditorError::StaleImageCrop { node_id });
+        }
+        if before == after {
+            return Err(EditorError::ImageCropNoChange { node_id });
+        }
+
+        let operation = EditOperation::SetImageCrop {
+            node_id,
+            before,
+            after,
+        };
+        apply_crop_forward(&self.graph, &mut self.image_crop_overrides, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
     }
 
     pub fn replace_image(
@@ -2750,6 +2929,8 @@ impl EditorSession {
         let operation = self.undo.pop().ok_or(EditorError::NothingToUndo)?;
         if matches!(operation, EditOperation::ReplaceImage { .. }) {
             apply_image_inverse(&mut self.image_replacements, &operation)?;
+        } else if matches!(operation, EditOperation::SetImageCrop { .. }) {
+            apply_crop_inverse(&self.graph, &mut self.image_crop_overrides, &operation)?;
         } else if matches!(operation, EditOperation::CreateShape { .. }) {
             apply_authored_shape_inverse(&mut self.authored_shapes, &operation)?;
         } else {
@@ -2764,6 +2945,8 @@ impl EditorSession {
         let operation = self.redo.pop().ok_or(EditorError::NothingToRedo)?;
         if matches!(operation, EditOperation::ReplaceImage { .. }) {
             apply_image_forward(&mut self.image_replacements, &operation)?;
+        } else if matches!(operation, EditOperation::SetImageCrop { .. }) {
+            apply_crop_forward(&self.graph, &mut self.image_crop_overrides, &operation)?;
         } else if matches!(operation, EditOperation::CreateShape { .. }) {
             let shape = authored_shape_from_operation(&operation)
                 .expect("CreateShape operation reconstructs authored shape");
@@ -2913,6 +3096,13 @@ fn replay_canonical_operation(
             ..
         } => session
             .replace_image(*node_id, *after_asset)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::SetImageCrop {
+            node_id,
+            before,
+            after,
+        } => session
+            .set_image_crop(*node_id, *before, *after)
             .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::MoveNode { node_id, after, .. } => session
             .move_node_to(*node_id, after.x, after.y)
@@ -3213,6 +3403,7 @@ fn editable_export_plan(
     target: EditorEditableTarget,
     graph: &PubResolvedGraph,
     image_replacements: &BTreeMap<NodeId, Sha256Digest>,
+    image_crop_overrides: &BTreeMap<NodeId, ImageCropStateV1>,
 ) -> ExportPlan {
     let mut features = BTreeMap::new();
     features.insert("page.geometry".into(), CapabilityLevel::Preserved);
@@ -3323,7 +3514,14 @@ fn editable_export_plan(
                 feature: IMAGE_CONTENT_TRANSFORM_FEATURE.into(),
                 origin: Some(node_id.into_canonical()),
                 property_path: Some("image.content_transform".into()),
-                require_preserved: false,
+                require_preserved: image_crop_overrides.contains_key(node_id),
+            });
+        } else if image_crop_overrides.contains_key(node_id) {
+            requests.push(SemanticFeatureRequest {
+                feature: IMAGE_CONTENT_TRANSFORM_FEATURE.into(),
+                origin: Some(node_id.into_canonical()),
+                property_path: Some("image.content_transform".into()),
+                require_preserved: true,
             });
         } else {
             requests.push(SemanticFeatureRequest {
@@ -3704,6 +3902,9 @@ fn apply_forward(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::SetImageCrop { .. } => {
+            unreachable!("image crop mutations are applied to editor overlay state")
+        }
         EditOperation::CreateShape { .. } => {
             unreachable!("CreateShape is applied to the authored overlay state")
         }
@@ -3910,6 +4111,9 @@ fn apply_inverse(
         EditOperation::ReplaceImage { .. } => {
             unreachable!("image replacements are applied to editor overlay state")
         }
+        EditOperation::SetImageCrop { .. } => {
+            unreachable!("image crop mutations are applied to editor overlay state")
+        }
         EditOperation::CreateShape { .. } => {
             unreachable!("CreateShape is reverted in the authored overlay state")
         }
@@ -3997,6 +4201,81 @@ fn apply_image_inverse(
         replacements.insert(*node_id, *before_asset);
     } else {
         replacements.remove(node_id);
+    }
+    Ok(())
+}
+
+fn source_image_crop_state(graph: &PubResolvedGraph, node_id: NodeId) -> Option<ImageCropStateV1> {
+    let crop = graph
+        .nodes
+        .get(&node_id)?
+        .payload
+        .explicit_image_crop
+        .as_ref()?;
+    if crop.ambiguous {
+        return None;
+    }
+    Some(ImageCropStateV1 {
+        top_raw: crop.top_raw,
+        bottom_raw: crop.bottom_raw,
+        left_raw: crop.left_raw,
+        right_raw: crop.right_raw,
+    })
+}
+
+fn effective_image_crop_state(
+    graph: &PubResolvedGraph,
+    overrides: &BTreeMap<NodeId, ImageCropStateV1>,
+    node_id: NodeId,
+) -> Option<ImageCropStateV1> {
+    overrides
+        .get(&node_id)
+        .copied()
+        .or_else(|| source_image_crop_state(graph, node_id))
+}
+
+fn apply_crop_forward(
+    graph: &PubResolvedGraph,
+    overrides: &mut BTreeMap<NodeId, ImageCropStateV1>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    let EditOperation::SetImageCrop {
+        node_id,
+        before,
+        after,
+    } = operation
+    else {
+        unreachable!("only SetImageCrop reaches crop overlay apply")
+    };
+
+    if effective_image_crop_state(graph, overrides, *node_id) != Some(*before) {
+        return Err(EditorError::StaleImageCrop { node_id: *node_id });
+    }
+    overrides.insert(*node_id, *after);
+    Ok(())
+}
+
+fn apply_crop_inverse(
+    graph: &PubResolvedGraph,
+    overrides: &mut BTreeMap<NodeId, ImageCropStateV1>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    let EditOperation::SetImageCrop {
+        node_id,
+        before,
+        after,
+    } = operation
+    else {
+        unreachable!("only SetImageCrop reaches crop overlay inverse")
+    };
+
+    if effective_image_crop_state(graph, overrides, *node_id) != Some(*after) {
+        return Err(EditorError::StaleImageCrop { node_id: *node_id });
+    }
+    if source_image_crop_state(graph, *node_id) == Some(*before) {
+        overrides.remove(node_id);
+    } else {
+        overrides.insert(*node_id, *before);
     }
     Ok(())
 }
@@ -4092,4 +4371,226 @@ fn apply_table_cell_state(
     story.text.clear();
     story.text.push_str(replacement_story);
     Ok(())
+}
+
+#[cfg(test)]
+mod image_crop_runtime_tests {
+    use super::*;
+    use pub_model::{
+        Affine2D, Document, DocumentId, Node, NodeHeader, NodeKind, Page, ResolvedGraph, Size2D,
+        SourceDescriptor,
+    };
+    use pub_reader::{PubExplicitImageCropSource, PubExplicitShapePaintSource};
+
+    fn id<T: serde::de::DeserializeOwned>(value: &str) -> T {
+        serde_json::from_str(&format!("\"{value}\"")).expect("canonical typed id")
+    }
+
+    fn source_hash() -> Sha256Digest {
+        "1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .expect("sha")
+    }
+
+    fn crop_graph() -> (PubResolvedGraph, NodeId) {
+        let page_id: PageId = id("10000000-0000-4000-8000-000000000001");
+        let node_id: NodeId = id("20000000-0000-4000-8000-000000000001");
+        let hash = source_hash();
+
+        let bounds = RectEmu::new(
+            LengthEmu::new(100_000),
+            LengthEmu::new(200_000),
+            LengthEmu::new(300_000),
+            LengthEmu::new(400_000),
+        );
+
+        let mut pages = BTreeMap::new();
+        pages.insert(
+            page_id,
+            Page {
+                id: page_id,
+                size: Size2D::new(LengthEmu::new(5_000_000), LengthEmu::new(5_000_000)),
+                bleed: None,
+                margins: None,
+                children: vec![node_id],
+                extensions: Vec::new(),
+            },
+        );
+
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            node_id,
+            Node {
+                kind: NodeKind::Shape,
+                header: NodeHeader {
+                    id: node_id,
+                    parent_id: page_id.into_canonical(),
+                    bounds,
+                    transform: Affine2D::identity(),
+                    source_refs: Vec::new(),
+                    extensions: Vec::new(),
+                },
+                payload: PubResolvedNodePayload {
+                    contents_seq_num: 1,
+                    officeart_shape_type: Some(75),
+                    officeart_spid: Some(1),
+                    image_slot: Some(1),
+                    explicit_image_crop: Some(PubExplicitImageCropSource {
+                        top_raw: Some(10),
+                        bottom_raw: Some(20),
+                        left_raw: Some(30),
+                        right_raw: Some(40),
+                        ambiguous: false,
+                    }),
+                    explicit_paint: PubExplicitShapePaintSource::default(),
+                    story_frame: None,
+                    table_story: None,
+                    table: None,
+                },
+            },
+        );
+
+        (
+            ResolvedGraph {
+                cdm_version: "0.1".into(),
+                resolver_version: "test".into(),
+                source: SourceDescriptor {
+                    format: "pub".into(),
+                    format_version: Some("0x2c".into()),
+                    adapter_version: "pub-rs/test".into(),
+                    source_hash: hash,
+                },
+                document: Document {
+                    id: id::<DocumentId>("30000000-0000-4000-8000-000000000001"),
+                    format_origin: "pub".into(),
+                    source_hash: hash,
+                    pages: vec![page_id],
+                    resources: Vec::new(),
+                    styles: Vec::new(),
+                },
+                pages,
+                nodes,
+                stories: BTreeMap::new(),
+                paragraphs: BTreeMap::new(),
+                text_runs: BTreeMap::new(),
+                resources: BTreeMap::new(),
+                styles: BTreeMap::new(),
+                extensions: BTreeMap::new(),
+            },
+            node_id,
+        )
+    }
+
+    fn install_png_authority(session: &mut EditorSession, node_id: NodeId) {
+        session.source_image_authority.insert(
+            node_id,
+            SourceImageAuthorityV1 {
+                resource_id: id("40000000-0000-4000-8000-000000000001"),
+                mime: "image/png".into(),
+                source_hash: "2222222222222222222222222222222222222222222222222222222222222222"
+                    .parse()
+                    .expect("sha"),
+            },
+        );
+    }
+
+    #[test]
+    fn crop_overlay_undo_redo_and_replace_preserve_independent_axes() {
+        let (graph, node_id) = crop_graph();
+        let source_bounds = graph.nodes[&node_id].header.bounds;
+        let mut session = EditorSession::new(graph).expect("session");
+        install_png_authority(&mut session, node_id);
+
+        let before = session.image_crop_for(node_id).expect("source crop");
+        let after = ImageCropStateV1 {
+            top_raw: Some(11),
+            bottom_raw: Some(22),
+            left_raw: Some(33),
+            right_raw: Some(44),
+        };
+
+        let op = session
+            .set_image_crop(node_id, before, after)
+            .expect("set crop");
+        assert!(matches!(op, EditOperation::SetImageCrop { .. }));
+        assert_eq!(session.image_crop_for(node_id), Some(after));
+        assert_eq!(session.graph.nodes[&node_id].header.bounds, source_bounds);
+        assert_eq!(
+            session.project().schema_version,
+            EDITOR_PROJECT_VERSION_V0_11
+        );
+
+        assert!(matches!(
+            session.set_image_crop(node_id, before, after),
+            Err(EditorError::StaleImageCrop { .. })
+        ));
+        assert!(matches!(
+            session.set_image_crop(node_id, after, after),
+            Err(EditorError::ImageCropNoChange { .. })
+        ));
+
+        session.undo().expect("crop undo");
+        assert_eq!(session.image_crop_for(node_id), Some(before));
+        session.redo().expect("crop redo");
+        assert_eq!(session.image_crop_for(node_id), Some(after));
+
+        let project = session.project();
+        let (replay_graph, replay_node_id) = crop_graph();
+        assert_eq!(replay_node_id, node_id);
+        let mut replay = EditorSession::new(replay_graph).expect("replay session");
+        install_png_authority(&mut replay, node_id);
+        replay.apply_project(&project).expect("v0.11 crop replay");
+        assert_eq!(replay.image_crop_for(node_id), Some(after));
+        assert_eq!(replay.project(), project);
+
+        for target in [EditorEditableTarget::Idml, EditorEditableTarget::Odg] {
+            let preview = session
+                .preview_editable_export(target, "crop-test")
+                .expect("crop export preview");
+            assert!(
+                !preview.report.can_serialize,
+                "crop override must fail closed until {target} preserves content transform"
+            );
+        }
+
+        let replacement = session
+            .import_replacement_asset("image/png", b"\x89PNG\r\n\x1a\nfixture".to_vec())
+            .expect("replacement asset");
+        session
+            .replace_image(node_id, replacement)
+            .expect("safe cropped replacement");
+        assert_eq!(session.image_crop_for(node_id), Some(after));
+        assert_eq!(session.graph.nodes[&node_id].header.bounds, source_bounds);
+    }
+
+    #[test]
+    fn cropped_picture_requires_exact_safe_source_authority() {
+        let (graph, node_id) = crop_graph();
+        let mut session = EditorSession::new(graph).expect("session");
+        let before = session.image_crop_for(node_id).expect("source crop");
+        let after = ImageCropStateV1 {
+            top_raw: Some(1),
+            ..before
+        };
+
+        assert!(matches!(
+            session.set_image_crop(node_id, before, after),
+            Err(EditorError::ImageCropUnsupported { .. })
+        ));
+
+        session.source_image_authority.insert(
+            node_id,
+            SourceImageAuthorityV1 {
+                resource_id: id("40000000-0000-4000-8000-000000000001"),
+                mime: "image/x-ms-bmp-dib".into(),
+                source_hash: "3333333333333333333333333333333333333333333333333333333333333333"
+                    .parse()
+                    .expect("sha"),
+            },
+        );
+        assert!(matches!(
+            session.set_image_crop(node_id, before, after),
+            Err(EditorError::ImageCropUnsupported { .. })
+        ));
+    }
 }
