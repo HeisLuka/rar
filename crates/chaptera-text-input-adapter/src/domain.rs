@@ -80,8 +80,9 @@ impl fmt::Display for StoryEditDomainError {
 impl std::error::Error for StoryEditDomainError {}
 
 fn scalar_len(text: &str) -> Result<u32, StoryEditDomainError> {
-    u32::try_from(text.chars().count())
-        .map_err(|_| StoryEditDomainError::new("invalid_story", "Story scalar length overflows u32"))
+    u32::try_from(text.chars().count()).map_err(|_| {
+        StoryEditDomainError::new("invalid_story", "Story scalar length overflows u32")
+    })
 }
 
 pub fn derive_story_edit_domain_v1(
@@ -249,7 +250,9 @@ fn is_exact_primary_story_ref(
     role: SourceRole,
     path: &str,
 ) -> bool {
-    reference.validate_primary_source(&session.graph().source).is_ok()
+    reference
+        .validate_primary_source(&session.graph().source)
+        .is_ok()
         && reference.carrier == pub_reader::QUILL_STREAM_PATH
         && reference.path.as_deref() == Some(path)
         && reference.role == role
@@ -267,14 +270,18 @@ pub fn derive_editor_story_provenance_v1(
     hint: StoryProvenanceHintV1,
 ) -> Result<StoryProvenanceV1, StoryEditDomainError> {
     let story = session.graph().stories.get(&story_id).ok_or_else(|| {
-        StoryEditDomainError::new("missing_story", "Story is absent from current EditorSession")
+        StoryEditDomainError::new(
+            "missing_story",
+            "Story is absent from current EditorSession",
+        )
     })?;
 
     if hint == StoryProvenanceHintV1::ChapteraCreated {
-        let carries_primary_source = story
-            .source_refs
-            .iter()
-            .any(|reference| reference.validate_primary_source(&session.graph().source).is_ok());
+        let carries_primary_source = story.source_refs.iter().any(|reference| {
+            reference
+                .validate_primary_source(&session.graph().source)
+                .is_ok()
+        });
         if carries_primary_source {
             return Err(StoryEditDomainError::new(
                 "provenance_conflict",
@@ -309,10 +316,7 @@ pub fn derive_editor_story_provenance_v1(
         .iter()
         .any(|key| exact_text_keys.contains(key));
 
-    if profile_is_mature_0x2c
-        && confirmed_persisted_quill_story
-        && story.text.ends_with('\r')
-    {
+    if profile_is_mature_0x2c && confirmed_persisted_quill_story && story.text.ends_with('\r') {
         Ok(StoryProvenanceV1::ImportedMatureQuillTerminalCr)
     } else {
         Ok(StoryProvenanceV1::ImportedUnknown)
@@ -325,14 +329,13 @@ pub fn derive_editor_story_edit_domain_v1(
     hint: StoryProvenanceHintV1,
 ) -> Result<StoryEditDomainV1, StoryEditDomainError> {
     let story = session.graph().stories.get(&story_id).ok_or_else(|| {
-        StoryEditDomainError::new("missing_story", "Story is absent from current EditorSession")
+        StoryEditDomainError::new(
+            "missing_story",
+            "Story is absent from current EditorSession",
+        )
     })?;
     let provenance = derive_editor_story_provenance_v1(session, story_id, hint)?;
-    derive_story_edit_domain_v1(
-        story_id.as_canonical().to_string(),
-        &story.text,
-        provenance,
-    )
+    derive_story_edit_domain_v1(story_id.as_canonical().to_string(), &story.text, provenance)
 }
 
 #[cfg(test)]
@@ -341,12 +344,9 @@ mod tests {
 
     #[test]
     fn chaptera_final_cr_is_not_auto_protected() {
-        let domain = derive_story_edit_domain_v1(
-            "story:a",
-            "A\r",
-            StoryProvenanceV1::ChapteraCreated,
-        )
-        .unwrap();
+        let domain =
+            derive_story_edit_domain_v1("story:a", "A\r", StoryProvenanceV1::ChapteraCreated)
+                .unwrap();
         assert_eq!(domain.editable_end_scalar, Some(2));
         assert!(domain.protected_ranges.is_empty());
     }
@@ -372,12 +372,9 @@ mod tests {
 
     #[test]
     fn unknown_import_fails_closed_even_with_trailing_cr() {
-        let domain = derive_story_edit_domain_v1(
-            "story:u",
-            "ABC\r",
-            StoryProvenanceV1::ImportedUnknown,
-        )
-        .unwrap();
+        let domain =
+            derive_story_edit_domain_v1("story:u", "ABC\r", StoryProvenanceV1::ImportedUnknown)
+                .unwrap();
         assert_eq!(domain.status, "edit_domain_unknown");
         assert_eq!(
             validate_ordinary_story_range_v1(&domain, 0, 3)
