@@ -245,39 +245,46 @@ pub fn parse_bounded_typography(
     }
 
     let mut explicit_runs = Vec::new();
-    for range in &ranges {
-        let mut font_pairs = range
-            .font_indices
-            .iter()
-            .copied()
-            .zip(range.font_names.iter().cloned())
-            .collect::<Vec<_>>();
-        font_pairs.sort();
-        font_pairs.dedup();
+    // Unknown fixed block types are preserved as a diagnostic observation, but
+    // their physical width is not proven. A zero-length assumption can keep the
+    // bounded scanner moving for archaeology; it is not sufficient authority to
+    // promote Story/run typography into product semantics. Fail closed for the
+    // whole explicit-run projection whenever such a block was encountered.
+    if unknown_block_types.is_empty() {
+        for range in &ranges {
+            let mut font_pairs = range
+                .font_indices
+                .iter()
+                .copied()
+                .zip(range.font_names.iter().cloned())
+                .collect::<Vec<_>>();
+            font_pairs.sort();
+            font_pairs.dedup();
 
-        let mut text_sizes = range.text_sizes_emu.clone();
-        text_sizes.sort_unstable();
-        text_sizes.dedup();
+            let mut text_sizes = range.text_sizes_emu.clone();
+            text_sizes.sort_unstable();
+            text_sizes.dedup();
 
-        let ([(font_index, font_name)], [text_size_emu]) =
-            (font_pairs.as_slice(), text_sizes.as_slice())
-        else {
-            continue;
-        };
+            let ([(font_index, font_name)], [text_size_emu]) =
+                (font_pairs.as_slice(), text_sizes.as_slice())
+            else {
+                continue;
+            };
 
-        for intersection in &range.story_intersections {
-            explicit_runs.push(QuillExplicitTypographyRun {
-                story_index: intersection.story_index,
-                story_syid: intersection.story_syid,
-                story_start_utf16: intersection.story_start_utf16,
-                story_end_utf16: intersection.story_end_utf16,
-                font_index: *font_index,
-                font_name: font_name.clone(),
-                text_size_emu: *text_size_emu,
-                fdpc_descriptor_ordinal: range.fdpc_descriptor_ordinal,
-                fdpc_style_ordinal: range.fdpc_style_ordinal,
-                fdpc_style_source: range.fdpc_style_source.clone(),
-            });
+            for intersection in &range.story_intersections {
+                explicit_runs.push(QuillExplicitTypographyRun {
+                    story_index: intersection.story_index,
+                    story_syid: intersection.story_syid,
+                    story_start_utf16: intersection.story_start_utf16,
+                    story_end_utf16: intersection.story_end_utf16,
+                    font_index: *font_index,
+                    font_name: font_name.clone(),
+                    text_size_emu: *text_size_emu,
+                    fdpc_descriptor_ordinal: range.fdpc_descriptor_ordinal,
+                    fdpc_style_ordinal: range.fdpc_style_ordinal,
+                    fdpc_style_source: range.fdpc_style_source.clone(),
+                });
+            }
         }
     }
 
