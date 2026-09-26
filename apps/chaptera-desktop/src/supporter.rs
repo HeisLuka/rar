@@ -37,6 +37,42 @@ pub(crate) struct ValueReceipt {
     pub(crate) kind: ValueReceiptKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarketProfile {
+    Us,
+    Uk,
+    Ru,
+    NeutralEnglish,
+}
+
+impl MarketProfile {
+    pub(crate) fn from_locale(locale: Option<&str>) -> Self {
+        let raw = locale
+            .unwrap_or_default()
+            .trim()
+            .replace('_', "-")
+            .to_ascii_lowercase();
+        let normalized = raw.split(&['.', '@'][..]).next().unwrap_or_default();
+
+        match normalized {
+            "en-us" => Self::Us,
+            "en-gb" => Self::Uk,
+            "ru-ru" => Self::Ru,
+            _ => Self::NeutralEnglish,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SupporterAction {
+    Support,
+    Later,
+    AlreadySupported,
+    Share,
+    Report,
+    ArchiveHelp,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DocumentSession {
     page_count: usize,
