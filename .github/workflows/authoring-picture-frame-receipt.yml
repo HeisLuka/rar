@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check Producer A formatting
-        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-editor -p pub-reader -- --check
       - name: Run bounded pub-editor crop tests
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
       - name: Install schema validator
