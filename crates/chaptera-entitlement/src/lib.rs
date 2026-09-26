@@ -1,6 +1,11 @@
 mod build_identity;
+mod trusted_time;
 pub use build_identity::{
     BUILD_IDENTITY_CONTENT_TYPE, BuildIdentityPayloadV1, TrustedBuildIdentity,
+};
+pub use trusted_time::{
+    LEASE_COMMITMENT_LEN, LeaseTimeInputV1, TimeAcceptance, TimePolicy, TrustedTimeError,
+    TrustedTimeStateV1, evaluate_time_bound_right,
 };
 
 use coset::{
