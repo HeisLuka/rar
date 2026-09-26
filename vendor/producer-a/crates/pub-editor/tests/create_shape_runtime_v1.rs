@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use pub_editor::{
     AuthoredEntityProvenanceV1, AuthoredShapeKindV1, AuthoredShapePaintV1,
     AuthoredShapeTransformV1, AuthoredSolidFillV1, AuthoredSolidStrokeV1,
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_11,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_11, EDITOR_PROJECT_VERSION_V0_12,
     EditOperation, EditorError, EditorProject, EditorProjectError, EditorSession, LengthEmu,
     RectEmu, Srgb8V1, mature_0x2c_pub_persistence_target,
 };
@@ -151,7 +151,7 @@ fn paint() -> AuthoredShapePaintV1 {
 
 #[test]
 fn create_shape_is_one_v0_10_history_unit_and_source_graph_stays_immutable() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_11);
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_12);
     let base = graph();
     let mut session = EditorSession::new(base.clone()).expect("session");
     let node_id = authored_node_id();
