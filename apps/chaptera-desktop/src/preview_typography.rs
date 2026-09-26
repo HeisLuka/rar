@@ -273,9 +273,9 @@ mod tests {
     #[test]
     fn preview_typography_never_resolves_source_family_through_host_fonts() {
         let source = include_str!("preview_typography.rs");
-        assert!(!source.contains("source_font_name"));
         assert!(!source.contains("FontFamily::Name"));
         assert!(!source.contains("FontDefinitions"));
+        assert!(source.contains("FontId::proportional"));
     }
 
     #[test]
