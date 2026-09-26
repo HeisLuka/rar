@@ -1,0 +1,12 @@
+[package]
+name = "chaptera-update-orchestrator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chaptera-update-engine = { path = "../chaptera-update-engine" }
+
+[dev-dependencies]
+tempfile = "3"
