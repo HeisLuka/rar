@@ -201,14 +201,7 @@ mod tests {
         let query = attribution.query_string();
         assert_eq!(query, "m=ru&v=control-v1&ve=search&i=2");
         for forbidden in [
-            "123456",
-            "654321",
-            "path",
-            "hash",
-            "text",
-            "account",
-            "machine",
-            "install",
+            "123456", "654321", "path", "hash", "text", "account", "machine", "install",
         ] {
             assert!(!query.contains(forbidden), "query leaked {forbidden}");
         }
