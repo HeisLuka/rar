@@ -8,6 +8,13 @@ use thiserror::Error;
 
 pub const ENTITLEMENT_CONTENT_TYPE: &str = "application/vnd.chaptera.entitlement+cbor";
 pub const MAX_ARTIFACT_SIZE: usize = 16 * 1024;
+pub const MAX_KID_LEN: usize = 64;
+pub const DEVICE_KEY_ID_LEN: usize = 32;
+pub const MAX_ID_LEN: usize = 128;
+pub const MAX_PRODUCT_ID_LEN: usize = 64;
+pub const MAX_EDITION_LEN: usize = 64;
+pub const MAX_GRANTS: usize = 64;
+pub const MAX_GRANT_LEN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,6 +120,10 @@ pub enum EntitlementError {
     AmbiguousSigner,
     #[error("signature invalid")]
     SignatureInvalid,
+    #[error("invalid local trust bundle")]
+    InvalidTrustBundle,
+    #[error("signed payload violates Chaptera V1 policy")]
+    PayloadPolicyViolation,
     #[error("product mismatch")]
     ProductMismatch,
     #[error("subject mismatch")]
@@ -127,6 +138,46 @@ pub enum EntitlementError {
 
 pub struct EntitlementVerifier {
     trust: TrustBundle,
+}
+
+fn bounded_nonempty(value: &str, max_len: usize) -> bool {
+    !value.is_empty() && value.len() <= max_len
+}
+
+fn validate_payload_shape(payload: &ActivationPayloadV1) -> Result<(), EntitlementError> {
+    if !bounded_nonempty(&payload.activation_id, MAX_ID_LEN)
+        || !bounded_nonempty(&payload.entitlement_id, MAX_ID_LEN)
+        || !bounded_nonempty(&payload.subject_id, MAX_ID_LEN)
+        || !bounded_nonempty(&payload.product_id, MAX_PRODUCT_ID_LEN)
+        || !bounded_nonempty(&payload.edition, MAX_EDITION_LEN)
+        || payload.device_key_id.len() != DEVICE_KEY_ID_LEN
+        || payload.grants.is_empty()
+        || payload.grants.len() > MAX_GRANTS
+        || payload
+            .grants
+            .iter()
+            .any(|grant| !bounded_nonempty(grant, MAX_GRANT_LEN))
+    {
+        return Err(EntitlementError::PayloadPolicyViolation);
+    }
+
+    for (index, grant) in payload.grants.iter().enumerate() {
+        if payload.grants[..index].iter().any(|seen| seen == grant) {
+            return Err(EntitlementError::PayloadPolicyViolation);
+        }
+    }
+
+    if let RightV1::Perpetual {
+        min_major,
+        max_major,
+        ..
+    } = &payload.right
+        && min_major > max_major
+    {
+        return Err(EntitlementError::PayloadPolicyViolation);
+    }
+
+    Ok(())
 }
 
 impl EntitlementVerifier {
@@ -172,11 +223,17 @@ impl EntitlementVerifier {
         if protected.key_id.is_empty() {
             return Err(EntitlementError::UnknownSigner);
         }
+        if protected.key_id.len() > MAX_KID_LEN {
+            return Err(EntitlementError::MalformedArtifact);
+        }
 
         let signer = self.trust.resolve(&protected.key_id)?;
+        if signer.public_key_sec1.len() != 65 || signer.public_key_sec1.first() != Some(&0x04) {
+            return Err(EntitlementError::InvalidTrustBundle);
+        }
 
         let verifying_key = VerifyingKey::from_sec1_bytes(&signer.public_key_sec1)
-            .map_err(|_| EntitlementError::UnknownSigner)?;
+            .map_err(|_| EntitlementError::InvalidTrustBundle)?;
 
         if sign1.signature.len() != 64 {
             return Err(EntitlementError::SignatureInvalid);
@@ -200,6 +257,11 @@ impl EntitlementVerifier {
 
         if payload.schema_version != 1 {
             return Err(EntitlementError::UnsupportedSchema);
+        }
+        validate_payload_shape(&payload)?;
+
+        if ctx.expected_device_key_id.len() != DEVICE_KEY_ID_LEN {
+            return Err(EntitlementError::PayloadPolicyViolation);
         }
 
         if payload.product_id != ctx.build.product_id {
@@ -253,7 +315,7 @@ mod tests {
     use p256::ecdsa::{SigningKey, signature::Signer};
 
     const TEST_KID: &[u8] = b"test-k1";
-    const DEVICE_ID: &[u8] = b"device-a";
+    static DEVICE_ID: [u8; DEVICE_KEY_ID_LEN] = [0xA5; DEVICE_KEY_ID_LEN];
 
     fn signing_key() -> SigningKey {
         SigningKey::from_slice(&[7u8; 32]).expect("fixed test key")
@@ -323,7 +385,7 @@ mod tests {
                 released_at: 1_850_000_000,
             },
             expected_subject: Some("user-1"),
-            expected_device_key_id: DEVICE_ID,
+            expected_device_key_id: &DEVICE_ID,
         }
     }
 
@@ -412,7 +474,7 @@ mod tests {
     fn wrong_device_is_rejected() {
         let verifier = EntitlementVerifier::new(trust_bundle());
         let c = VerifyContext {
-            expected_device_key_id: b"device-b",
+            expected_device_key_id: &[0x5A; DEVICE_KEY_ID_LEN],
             ..ctx()
         };
         let err = verifier
@@ -470,6 +532,141 @@ mod tests {
             .verify(&sign_artifact(&p, TEST_KID), &ctx())
             .unwrap_err();
         assert_eq!(err, EntitlementError::TimeBoundRightUnsupported);
+    }
+
+    #[test]
+    fn wrong_algorithm_is_rejected_before_signature_verification() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+        let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
+        sign1.protected.header.alg =
+            Some(RegisteredLabelWithPrivate::Assigned(iana::Algorithm::EdDSA));
+        let changed = sign1.to_tagged_vec().unwrap();
+
+        let err = verifier.verify(&changed, &ctx()).unwrap_err();
+        assert_eq!(err, EntitlementError::UnsupportedAlgorithm);
+    }
+
+    #[test]
+    fn wrong_content_type_is_rejected_before_signature_verification() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+        let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
+        sign1.protected.header.content_type =
+            Some(ContentType::Text("application/octet-stream".to_owned()));
+        let changed = sign1.to_tagged_vec().unwrap();
+
+        let err = verifier.verify(&changed, &ctx()).unwrap_err();
+        assert_eq!(err, EntitlementError::UnexpectedContentType);
+    }
+
+    #[test]
+    fn overlong_kid_is_rejected_before_trust_lookup() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+        let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
+        sign1.protected.header.key_id = vec![b'k'; MAX_KID_LEN + 1];
+        let changed = sign1.to_tagged_vec().unwrap();
+
+        let err = verifier.verify(&changed, &ctx()).unwrap_err();
+        assert_eq!(err, EntitlementError::MalformedArtifact);
+    }
+
+    #[test]
+    fn wrong_device_key_id_width_is_rejected_as_payload_policy() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut p = payload();
+        p.device_key_id = vec![0xA5; DEVICE_KEY_ID_LEN - 1];
+
+        let err = verifier
+            .verify(&sign_artifact(&p, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::PayloadPolicyViolation);
+    }
+
+    #[test]
+    fn duplicate_grants_are_rejected() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut p = payload();
+        p.grants = vec!["edit".into(), "edit".into()];
+
+        let err = verifier
+            .verify(&sign_artifact(&p, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::PayloadPolicyViolation);
+    }
+
+    #[test]
+    fn excessive_grant_count_is_rejected() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut p = payload();
+        p.grants = (0..=MAX_GRANTS).map(|i| format!("g{i}")).collect();
+
+        let err = verifier
+            .verify(&sign_artifact(&p, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::PayloadPolicyViolation);
+    }
+
+    #[test]
+    fn inverted_perpetual_major_range_is_rejected() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut p = payload();
+        p.right = RightV1::Perpetual {
+            min_major: 3,
+            max_major: 2,
+            updates_until: None,
+        };
+
+        let err = verifier
+            .verify(&sign_artifact(&p, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::PayloadPolicyViolation);
+    }
+
+    #[test]
+    fn all_single_byte_mutations_of_valid_artifact_fail_closed_without_panicking() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+
+        for index in 0..artifact.len() {
+            let mut mutated = artifact.clone();
+            mutated[index] ^= 0x01;
+            assert!(
+                verifier.verify(&mutated, &ctx()).is_err(),
+                "single-byte mutation at index {index} unexpectedly verified"
+            );
+        }
+    }
+
+    #[test]
+    fn every_truncation_of_valid_artifact_fails_closed() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+
+        for len in 0..artifact.len() {
+            assert!(
+                verifier.verify(&artifact[..len], &ctx()).is_err(),
+                "truncation at length {len} unexpectedly verified"
+            );
+        }
+    }
+
+    #[test]
+    fn deterministic_garbage_corpus_never_panics_or_verifies() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut state = 0xD1CE_BA5E_F00D_CAFEu64;
+
+        for len in 0..=1024usize {
+            let mut bytes = vec![0u8; len];
+            for byte in &mut bytes {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                *byte = state as u8;
+            }
+            assert!(verifier.verify(&bytes, &ctx()).is_err());
+        }
     }
 
     #[test]
