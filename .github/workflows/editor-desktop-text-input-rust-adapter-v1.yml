@@ -1,0 +1,47 @@
+name: Editor Desktop Text Input Rust Adapter V1
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-text-input-adapter/**"
+      - "crates/chaptera-text-interaction-adapter/**"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "services/editor-api/story_edit_domain_v1.py"
+      - "services/editor-api/text_ingress_v1.py"
+      - "services/editor-api/text_keyboard_policy_v1.py"
+      - ".github/workflows/editor-desktop-text-input-rust-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Verify pinned Unicode 15 grapheme implementation
+        shell: bash
+        run: |
+          grep -F 'unicode-segmentation = "=1.10.1"' crates/chaptera-text-input-adapter/Cargo.toml
+      - name: Format
+        run: cargo fmt --manifest-path crates/chaptera-text-input-adapter/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets -- -D warnings
+      - name: Rust contract tests
+        run: cargo test --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
+      - name: Canonical Python Story edit-domain tests
+        run: python services/editor-api/test_story_edit_domain_v1.py
+      - name: Canonical Python text-ingress tests
+        run: python services/editor-api/test_text_ingress_v1.py
+      - name: Canonical Python keyboard-policy tests
+        run: python services/editor-api/test_text_keyboard_policy_v1.py
