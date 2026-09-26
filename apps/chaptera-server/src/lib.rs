@@ -1,3 +1,4 @@
+// CI routing probe: shared server facade edits must pay package integrity exactly once.
 pub mod auth_http;
 pub mod auth_runtime;
 pub mod authn;
