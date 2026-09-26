@@ -1,13 +1,9 @@
 name: chaptera-entitlement-fuzz
 
 on:
-  push:
-    branches:
-      - "chaptera-entitlement-fuzz"
   pull_request:
     paths:
-      - "crates/chaptera-entitlement/**"
-      - ".github/workflows/chaptera-entitlement-fuzz.yml"
+      - "crates/chaptera-entitlement/fuzz/**"
 
 permissions:
   contents: read
