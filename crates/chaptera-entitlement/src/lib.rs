@@ -10,6 +10,7 @@ pub const ENTITLEMENT_CONTENT_TYPE: &str = "application/vnd.chaptera.entitlement
 pub const MAX_ARTIFACT_SIZE: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActivationPayloadV1 {
     pub schema_version: u16,
     pub activation_id: String,
@@ -24,7 +25,7 @@ pub struct ActivationPayloadV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RightV1 {
     Perpetual {
         min_major: u32,
@@ -73,8 +74,13 @@ pub struct TrustBundle {
 }
 
 impl TrustBundle {
-    fn resolve(&self, kid: &[u8]) -> Option<&TrustedSigner> {
-        self.keys.iter().find(|k| k.kid.as_slice() == kid)
+    fn resolve(&self, kid: &[u8]) -> Result<&TrustedSigner, EntitlementError> {
+        let mut matches = self.keys.iter().filter(|k| k.kid.as_slice() == kid);
+        let first = matches.next().ok_or(EntitlementError::UnknownSigner)?;
+        if matches.next().is_some() {
+            return Err(EntitlementError::AmbiguousSigner);
+        }
+        Ok(first)
     }
 }
 
@@ -103,6 +109,8 @@ pub enum EntitlementError {
     UnexpectedContentType,
     #[error("unknown signer")]
     UnknownSigner,
+    #[error("ambiguous signer key id")]
+    AmbiguousSigner,
     #[error("signature invalid")]
     SignatureInvalid,
     #[error("product mismatch")]
@@ -143,6 +151,14 @@ impl EntitlementVerifier {
         }
 
         let protected = &sign1.protected.header;
+        if !protected.crit.is_empty()
+            || !protected.iv.is_empty()
+            || !protected.partial_iv.is_empty()
+            || !protected.counter_signatures.is_empty()
+            || !protected.rest.is_empty()
+        {
+            return Err(EntitlementError::MalformedArtifact);
+        }
         match protected.alg {
             Some(RegisteredLabelWithPrivate::Assigned(iana::Algorithm::ESP256)) => {}
             _ => return Err(EntitlementError::UnsupportedAlgorithm),
@@ -157,13 +173,14 @@ impl EntitlementVerifier {
             return Err(EntitlementError::UnknownSigner);
         }
 
-        let signer = self
-            .trust
-            .resolve(&protected.key_id)
-            .ok_or(EntitlementError::UnknownSigner)?;
+        let signer = self.trust.resolve(&protected.key_id)?;
 
         let verifying_key = VerifyingKey::from_sec1_bytes(&signer.public_key_sec1)
             .map_err(|_| EntitlementError::UnknownSigner)?;
+
+        if sign1.signature.len() != 64 {
+            return Err(EntitlementError::SignatureInvalid);
+        }
 
         sign1
             .verify_signature(&[], |sig_bytes, tbs| {
