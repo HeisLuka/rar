@@ -36,9 +36,12 @@ use pub_idml::{
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
     ResourceId, SourceDerivedIdInput, Story, StoryFrame, TableColumnId, TableRowId,
-    derive_source_canonical_id, validate_story_frames,
+    derive_source_canonical_id, new_editor_canonical_id, validate_story_frames,
 };
-pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
+pub use pub_model::{
+    CanonicalId, LengthEmu, NodeId, PageId, RectEmu, RulerGuideAxis, Sha256Digest, StoryId,
+    TableCellId,
+};
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
@@ -65,7 +68,8 @@ pub const EDITOR_PROJECT_VERSION_V0_8: &str = "pub-editor-v0.8";
 pub const EDITOR_PROJECT_VERSION_V0_9: &str = "pub-editor-v0.9";
 pub const EDITOR_PROJECT_VERSION_V0_10: &str = "pub-editor-v0.10";
 pub const EDITOR_PROJECT_VERSION_V0_11: &str = "pub-editor-v0.11";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_11;
+pub const EDITOR_PROJECT_VERSION_V0_12: &str = "pub-editor-v0.12";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_12;
 pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
@@ -137,6 +141,14 @@ pub struct ResizeNodeBatchEntry {
     pub after: RectEmu,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EditorRulerGuide {
+    pub guide_id: CanonicalId,
+    pub page_id: PageId,
+    pub axis: RulerGuideAxis,
+    pub position: LengthEmu,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
@@ -204,6 +216,19 @@ pub enum EditOperation {
         transform: AuthoredShapeTransformV1,
         paint: AuthoredShapePaintV1,
         provenance: AuthoredEntityProvenanceV1,
+    },
+    AddRulerGuide {
+        guide: EditorRulerGuide,
+    },
+    MoveRulerGuide {
+        guide_id: CanonicalId,
+        page_id: PageId,
+        axis: RulerGuideAxis,
+        before_position: LengthEmu,
+        after_position: LengthEmu,
+    },
+    DeleteRulerGuide {
+        guide: EditorRulerGuide,
     },
 }
 
@@ -278,6 +303,18 @@ impl PersistenceRequirements for EditOperation {
                     property_path: Some("node.bounds".into()),
                 })
                 .collect(),
+            Self::AddRulerGuide { guide } | Self::DeleteRulerGuide { guide } => {
+                vec![PersistenceRequirement {
+                    feature: "guide.page_ruler".into(),
+                    origin: Some(guide.guide_id),
+                    property_path: Some("page.ruler_guide".into()),
+                }]
+            }
+            Self::MoveRulerGuide { guide_id, .. } => vec![PersistenceRequirement {
+                feature: "guide.page_ruler".into(),
+                origin: Some(*guide_id),
+                property_path: Some("page.ruler_guide.position".into()),
+            }],
             Self::CreateShape { node_id, .. } => vec![
                 PersistenceRequirement {
                     feature: "node.created_identity".into(),
@@ -403,7 +440,7 @@ impl EditorProject {
         });
 
         Ok(Self {
-            schema_version: EDITOR_PROJECT_VERSION_V0_11.into(),
+            schema_version: EDITOR_PROJECT_VERSION_V0_12.into(),
             source_hash: self.source_hash,
             identity: Some(identity),
             assets: self.assets.clone(),
@@ -1311,6 +1348,7 @@ pub struct EditorSession {
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
     authored_shapes: BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
+    authored_ruler_guides: BTreeMap<CanonicalId, EditorRulerGuide>,
     undo: Vec<EditOperation>,
     redo: Vec<EditOperation>,
 }
@@ -1329,6 +1367,7 @@ impl EditorSession {
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
             authored_shapes: BTreeMap::new(),
+            authored_ruler_guides: BTreeMap::new(),
             undo: Vec::new(),
             redo: Vec::new(),
         })
@@ -1354,6 +1393,16 @@ impl EditorSession {
 
     pub fn authored_shape(&self, node_id: NodeId) -> Option<&AuthoredShapeRuntimeV1> {
         self.authored_shapes.get(&node_id)
+    }
+
+    pub fn authored_ruler_guides(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &EditorRulerGuide> + DoubleEndedIterator {
+        self.authored_ruler_guides.values()
+    }
+
+    pub fn authored_ruler_guide(&self, guide_id: CanonicalId) -> Option<&EditorRulerGuide> {
+        self.authored_ruler_guides.get(&guide_id)
     }
 
     pub fn replacement_assets(
@@ -1393,7 +1442,7 @@ impl EditorSession {
     pub fn project(&self) -> EditorProject {
         let table_grids = effective_table_grids(&self.graph);
         let (schema_version, identity) = if let Some(identity) = &self.project_identity {
-            (EDITOR_PROJECT_VERSION_V0_11, Some(identity.clone()))
+            (EDITOR_PROJECT_VERSION_V0_12, Some(identity.clone()))
         } else {
             let legacy_schema = if self
                 .undo
