@@ -4122,6 +4122,11 @@ fn apply_forward(
         EditOperation::CreateShape { .. } => {
             unreachable!("CreateShape is applied to the authored overlay state")
         }
+        EditOperation::AddRulerGuide { .. }
+        | EditOperation::MoveRulerGuide { .. }
+        | EditOperation::DeleteRulerGuide { .. } => {
+            return Err(EditorError::RulerGuideOverlayRoutingRequired);
+        }
     }
     Ok(())
 }
@@ -4327,6 +4332,11 @@ fn apply_inverse(
         }
         EditOperation::CreateShape { .. } => {
             unreachable!("CreateShape is reverted in the authored overlay state")
+        }
+        EditOperation::AddRulerGuide { .. }
+        | EditOperation::MoveRulerGuide { .. }
+        | EditOperation::DeleteRulerGuide { .. } => {
+            return Err(EditorError::RulerGuideOverlayRoutingRequired);
         }
     }
     Ok(())
