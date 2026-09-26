@@ -6,6 +6,7 @@
 // The cadence API is intentionally staged one PR before its UI consumer (#227).
 mod acceptance;
 mod agent;
+mod diagnostic_sweep;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
@@ -413,11 +414,8 @@ fn main() -> eframe::Result<()> {
 
 fn smoke_check(path: &Path) -> Result<(), String> {
     let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    let visual = pub_viewer::open_mature_0x2c_geometry(
-        &bytes,
-        pub_viewer::viewer_geometry_environment_v0_1(),
-    )
-    .map_err(|error| format!("open {}: {error:#}", path.display()))?;
+    let visual = diagnostic_sweep::open_for_product(&bytes)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
 
     if visual.document.pages.is_empty() {
         return Err("document has no Viewer pages".to_owned());
@@ -454,6 +452,11 @@ struct ViewerApp {
     preview_clipped_story_keys: BTreeSet<String>,
     diagnostic_save_path: String,
     diagnostic_status: Option<String>,
+    diagnostic_sweep: Option<diagnostic_sweep::FolderSweepHandle>,
+    diagnostic_sweep_progress: diagnostic_sweep::FolderSweepProgress,
+    diagnostic_sweep_report: Option<diagnostic_sweep::FolderSweepReport>,
+    diagnostic_sweep_open: bool,
+    diagnostic_sweep_status: Option<String>,
     supporter_value: supporter::ValueTracker,
     supporter_state: supporter::SupporterState,
     exact_file_consent_open: bool,
@@ -496,6 +499,11 @@ impl ViewerApp {
             preview_clipped_story_keys: BTreeSet::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
+            diagnostic_sweep: None,
+            diagnostic_sweep_progress: diagnostic_sweep::FolderSweepProgress::default(),
+            diagnostic_sweep_report: None,
+            diagnostic_sweep_open: false,
+            diagnostic_sweep_status: None,
             supporter_value: supporter::ValueTracker::default(),
             supporter_state: restore_supporter_state(storage),
             exact_file_consent_open: false,
@@ -508,6 +516,231 @@ impl ViewerApp {
         }
 
         app
+    }
+
+    fn open_pub_folder_diagnostics(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(root) = rfd::FileDialog::new().pick_folder() {
+                self.diagnostic_sweep_progress =
+                    diagnostic_sweep::FolderSweepProgress::default();
+                self.diagnostic_sweep_report = None;
+                self.diagnostic_sweep_status =
+                    Some(format!("Scanning {}…", root.display()));
+                self.diagnostic_sweep = Some(diagnostic_sweep::start_folder_sweep(root));
+                self.diagnostic_sweep_open = true;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.diagnostic_sweep_status =
+                Some("Folder diagnostics picker is currently available in the Windows build.".to_owned());
+            self.diagnostic_sweep_open = true;
+        }
+    }
+
+    fn poll_diagnostic_sweep(&mut self) {
+        let mut events = Vec::new();
+        if let Some(handle) = &self.diagnostic_sweep {
+            while let Ok(event) = handle.try_recv() {
+                events.push(event);
+            }
+        }
+
+        for event in events {
+            match event {
+                diagnostic_sweep::FolderSweepEvent::Started { discovered } => {
+                    self.diagnostic_sweep_progress.discovered = discovered;
+                    self.diagnostic_sweep_status =
+                        Some(format!("Discovered {discovered} PUB file(s)."));
+                }
+                diagnostic_sweep::FolderSweepEvent::Progress(progress) => {
+                    self.diagnostic_sweep_progress = progress;
+                }
+                diagnostic_sweep::FolderSweepEvent::Finished(report) => {
+                    self.diagnostic_sweep_progress.discovered = report.totals.discovered;
+                    self.diagnostic_sweep_progress.scanned = report.totals.scanned;
+                    self.diagnostic_sweep_progress.opened = report.totals.opened;
+                    self.diagnostic_sweep_progress.failed = report.totals.failed;
+                    self.diagnostic_sweep_progress.failure_groups = report.totals.failure_groups;
+                    self.diagnostic_sweep_progress.current_path = None;
+                    self.diagnostic_sweep_status = Some(if report.cancelled {
+                        format!(
+                            "Scan cancelled: {} scanned, {} opened, {} failed, {} failure group(s).",
+                            report.totals.scanned,
+                            report.totals.opened,
+                            report.totals.failed,
+                            report.totals.failure_groups
+                        )
+                    } else {
+                        format!(
+                            "Scan complete: {} scanned, {} opened, {} failed, {} failure group(s).",
+                            report.totals.scanned,
+                            report.totals.opened,
+                            report.totals.failed,
+                            report.totals.failure_groups
+                        )
+                    });
+                    self.diagnostic_sweep_report = Some(report);
+                    self.diagnostic_sweep = None;
+                }
+                diagnostic_sweep::FolderSweepEvent::Fatal(error) => {
+                    self.diagnostic_sweep_status =
+                        Some(format!("Folder diagnostics failed: {error}"));
+                    self.diagnostic_sweep = None;
+                }
+            }
+        }
+    }
+
+    fn save_diagnostic_sweep_report(&mut self) {
+        let Some(report) = self.diagnostic_sweep_report.as_ref() else {
+            return;
+        };
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("chaptera-pub-folder-diagnostics.json")
+                .save_file()
+            {
+                self.diagnostic_sweep_status = Some(match diagnostic_sweep::write_report(report, &path) {
+                    Ok(()) => format!("Saved diagnostic report to {}.", path.display()),
+                    Err(error) => format!("Could not save diagnostic report: {error}"),
+                });
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.diagnostic_sweep_status =
+                Some("Report picker is currently available in the Windows build.".to_owned());
+        }
+    }
+
+    fn show_diagnostic_sweep_window(&mut self, ctx: &egui::Context) {
+        if !self.diagnostic_sweep_open {
+            return;
+        }
+
+        let mut open = self.diagnostic_sweep_open;
+        egui::Window::new("PUB Folder Diagnostics")
+            .open(&mut open)
+            .default_width(760.0)
+            .default_height(560.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(format!(
+                        "Discovered {} · Scanned {} · Opened {} · Failed {} · Groups {}",
+                        self.diagnostic_sweep_progress.discovered,
+                        self.diagnostic_sweep_progress.scanned,
+                        self.diagnostic_sweep_progress.opened,
+                        self.diagnostic_sweep_progress.failed,
+                        self.diagnostic_sweep_progress.failure_groups
+                    ));
+                });
+
+                if let Some(path) = &self.diagnostic_sweep_progress.current_path {
+                    ui.small(format!("Current: {path}"));
+                }
+
+                if self.diagnostic_sweep.is_some() {
+                    if ui.button("Cancel scan").clicked()
+                        && let Some(handle) = &self.diagnostic_sweep
+                    {
+                        handle.cancel();
+                        self.diagnostic_sweep_status =
+                            Some("Cancellation requested; finishing the current file.".to_owned());
+                    }
+                }
+
+                if let Some(status) = &self.diagnostic_sweep_status {
+                    ui.label(status);
+                }
+
+                if self.diagnostic_sweep_report.is_some()
+                    && ui.button("Save report…").clicked()
+                {
+                    self.save_diagnostic_sweep_report();
+                }
+
+                ui.separator();
+
+                let Some(report) = &self.diagnostic_sweep_report else {
+                    ui.weak(
+                        "Failures are grouped by stable diagnostic signature. Full diagnostics remain available in the completed report.",
+                    );
+                    return;
+                };
+
+                if report.failure_groups.is_empty() {
+                    ui.strong("No grouped failures.");
+                } else {
+                    ui.heading("Failure groups");
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for group in &report.failure_groups {
+                                egui::CollapsingHeader::new(format!(
+                                    "{} × {} — {}",
+                                    group.count, group.stage, group.normalized_message
+                                ))
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    if let Some(class) = &group.intake_class {
+                                        ui.label(format!("Classification: {class}"));
+                                    }
+                                    ui.label(format!("Signature: {}", group.id));
+                                    ui.label("Representative files:");
+                                    for path in &group.representative_paths {
+                                        ui.monospace(path);
+                                    }
+                                    ui.collapsing(
+                                        format!("All affected files ({})", group.affected_paths.len()),
+                                        |ui| {
+                                            for path in &group.affected_paths {
+                                                ui.monospace(path);
+                                            }
+                                        },
+                                    );
+                                    ui.collapsing("Full diagnostic", |ui| {
+                                        ui.monospace(&group.sample_full_diagnostic);
+                                    });
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                }
+
+                ui.separator();
+                ui.collapsing(format!("Per-file results ({})", report.files.len()), |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            for file in &report.files {
+                                let verdict = if file.opened { "OPEN" } else { "FAIL" };
+                                let detail = file
+                                    .failure_group_id
+                                    .as_deref()
+                                    .or(file.format_version.as_deref())
+                                    .or(file.format.as_deref())
+                                    .unwrap_or("");
+                                ui.monospace(format!(
+                                    "{verdict:4}  d={}  {:>10}  {}  {}",
+                                    file.depth,
+                                    file.byte_len
+                                        .map(|value| value.to_string())
+                                        .unwrap_or_else(|| "-".to_owned()),
+                                    file.relative_path,
+                                    detail
+                                ));
+                            }
+                        });
+                });
+            });
+        self.diagnostic_sweep_open = open;
     }
 
     fn open_pub_picker(&mut self) {
@@ -578,10 +811,7 @@ impl ViewerApp {
             }
         };
 
-        match pub_viewer::open_mature_0x2c_geometry(
-            &bytes,
-            pub_viewer::viewer_geometry_environment_v0_1(),
-        ) {
+        match diagnostic_sweep::open_for_product(&bytes) {
             Ok(visual) => {
                 let supporter_status = match visual.document.fidelity_status() {
                     ViewerFidelityStatus::Supported => supporter::OpenStatus::Supported,
@@ -667,6 +897,9 @@ impl ViewerApp {
 
             if ui.button("Open PUB…").clicked() {
                 self.open_pub_picker();
+            }
+            if ui.button("Scan PUB folder…").clicked() {
+                self.open_pub_folder_diagnostics();
             }
 
             if let Some(label) = document_label {
@@ -2847,6 +3080,7 @@ impl eframe::App for ViewerApp {
             self.open_pub_picker();
         }
         self.accept_dropped_file(ctx);
+        self.poll_diagnostic_sweep();
 
         debug_assert_eq!(
             self.supporter_value.is_eligible(),
@@ -2884,6 +3118,7 @@ impl eframe::App for ViewerApp {
         egui::CentralPanel::default().show(ctx, |ui| self.show_canvas(ui));
         self.show_diagnostics_window(ctx);
         self.show_exact_file_consent_dialog(ctx);
+        self.show_diagnostic_sweep_window(ctx);
     }
 }
 
@@ -3299,10 +3534,12 @@ mod tests {
     }
 
     #[test]
-    fn path_loading_calls_geometry_boundary() {
+    fn path_loading_uses_shared_product_open_boundary() {
         let source = include_str!("main.rs");
-        assert!(source.contains("open_mature_0x2c_geometry"));
-        assert!(source.contains("viewer_geometry_environment_v0_1"));
+        assert!(source.contains("diagnostic_sweep::open_for_product(&bytes)"));
+        let sweep = include_str!("diagnostic_sweep.rs");
+        assert!(sweep.contains("open_mature_0x2c_geometry"));
+        assert!(sweep.contains("viewer_geometry_environment_v0_1"));
     }
 
     #[test]
@@ -3344,6 +3581,11 @@ mod tests {
             preview_clipped_story_keys: BTreeSet::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
+            diagnostic_sweep: None,
+            diagnostic_sweep_progress: diagnostic_sweep::FolderSweepProgress::default(),
+            diagnostic_sweep_report: None,
+            diagnostic_sweep_open: false,
+            diagnostic_sweep_status: None,
             supporter_value: supporter::ValueTracker::default(),
             supporter_state: supporter::SupporterState::default(),
             exact_file_consent_open: false,
@@ -3389,6 +3631,11 @@ mod tests {
             preview_clipped_story_keys: BTreeSet::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
+            diagnostic_sweep: None,
+            diagnostic_sweep_progress: diagnostic_sweep::FolderSweepProgress::default(),
+            diagnostic_sweep_report: None,
+            diagnostic_sweep_open: false,
+            diagnostic_sweep_status: None,
             supporter_value: supporter::ValueTracker::default(),
             supporter_state: supporter::SupporterState::default(),
             exact_file_consent_open: false,
@@ -3643,6 +3890,11 @@ mod tests {
             preview_clipped_story_keys: BTreeSet::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
+            diagnostic_sweep: None,
+            diagnostic_sweep_progress: diagnostic_sweep::FolderSweepProgress::default(),
+            diagnostic_sweep_report: None,
+            diagnostic_sweep_open: false,
+            diagnostic_sweep_status: None,
             supporter_value: supporter::ValueTracker::default(),
             supporter_state: supporter::SupporterState::default(),
             exact_file_consent_open: false,
