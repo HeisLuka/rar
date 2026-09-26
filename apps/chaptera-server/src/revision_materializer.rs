@@ -1,9 +1,9 @@
 use std::{fmt, str::FromStr, sync::Arc};
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_3,
-    EDITOR_PROJECT_VERSION_V0_4, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
-    EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
+    EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_3, EDITOR_PROJECT_VERSION_V0_4,
+    EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6, EDITOR_PROJECT_VERSION_V0_7,
+    EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_10,
     EditOperation, EditorProject, Sha256Digest, open_mature_0x2c_editor,
 };
 use serde::{Deserialize, Serialize};
@@ -475,7 +475,11 @@ pub fn cloud_revision_project(project: &EditorProject) -> EditorProject {
 }
 
 fn cloud_revision_project_schema(project: &EditorProject) -> &'static str {
-    let mut rank = if project.table_grids.is_empty() { 2_u8 } else { 6_u8 };
+    let mut rank = if project.table_grids.is_empty() {
+        2_u8
+    } else {
+        6_u8
+    };
 
     for operation in &project.operations {
         let operation_rank = match operation {
