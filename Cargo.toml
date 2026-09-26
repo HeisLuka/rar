@@ -9,6 +9,7 @@ members = [
   "crates/chaptera-image-decode-contract",
   "crates/chaptera-glyph-runtime",
   "crates/chaptera-untrusted-pub-scan",
+  "crates/chaptera-update-core",
   "crates/pub-master-projection",
   "crates/pub-fixed-flow-adapter",
   "crates/pub-line-placement",

@@ -1,0 +1,29 @@
+name: Chaptera updater core prep
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-update-core/**"
+      - ".github/workflows/chaptera-updater-core-prep.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaptera-updater-core-prep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  updater-core:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+      - name: Test crash-recoverable updater core
+        shell: pwsh
+        run: cargo test -p chaptera-update-core
