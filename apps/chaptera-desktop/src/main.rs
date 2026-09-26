@@ -66,13 +66,21 @@ const MIN_NUMERIC_ZOOM: f32 = 0.10;
 const MAX_NUMERIC_ZOOM: f32 = 4.00;
 const PAGE_THUMBNAIL_MAX_WIDTH: f32 = 116.0;
 const PAGE_THUMBNAIL_MAX_HEIGHT: f32 = 148.0;
+const SPREAD_GUTTER_PX: f32 = 18.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
     Percent,
     FitPage,
+    FitSpread,
     PageWidth,
     FitSelection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanvasArrangement {
+    SinglePage,
+    TwoPageSpread,
 }
 
 const GEOMETRY_WARNING: &str = "Partial preview: bounded single-frame text, exact embedded PNG/JPEG images, and complete explicit shape-local solid fill/line state may be painted; inherited/default paint, linked text flow, typography, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
@@ -453,6 +461,7 @@ struct ViewerApp {
     canvas_resize: Option<ResizeTransaction>,
     zoom: f32,
     zoom_mode: CanvasZoomMode,
+    canvas_arrangement: CanvasArrangement,
     load_error: Option<ViewerLoadFailure>,
     search_query: String,
     search_results: Vec<ViewerTextMatch>,
@@ -496,6 +505,7 @@ impl ViewerApp {
             canvas_resize: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
+            canvas_arrangement: CanvasArrangement::SinglePage,
             load_error: None,
             search_query: String::new(),
             search_results: Vec::new(),
@@ -562,6 +572,7 @@ impl ViewerApp {
         self.canvas_resize = None;
         self.zoom = 1.0;
         self.zoom_mode = CanvasZoomMode::FitPage;
+        self.canvas_arrangement = CanvasArrangement::SinglePage;
         self.load_error = None;
         self.search_query.clear();
         self.search_results.clear();
@@ -2296,6 +2307,24 @@ impl ViewerApp {
             {
                 self.zoom_mode = CanvasZoomMode::FitPage;
             }
+            let spread_visible = self.canvas_arrangement == CanvasArrangement::TwoPageSpread
+                && self
+                    .visual
+                    .as_ref()
+                    .is_some_and(|visual| {
+                        spread_partner_index(visual.document.pages.len(), self.selected_page)
+                            .is_some()
+                    });
+            let fit_spread = ui.add_enabled(
+                spread_visible,
+                egui::SelectableLabel::new(
+                    self.zoom_mode == CanvasZoomMode::FitSpread,
+                    "Fit Spread",
+                ),
+            );
+            if fit_spread.clicked() {
+                self.zoom_mode = CanvasZoomMode::FitSpread;
+            }
             if ui
                 .selectable_label(self.zoom_mode == CanvasZoomMode::PageWidth, "Page Width")
                 .clicked()
@@ -2311,6 +2340,30 @@ impl ViewerApp {
             );
             if fit_selection.clicked() {
                 self.zoom_mode = CanvasZoomMode::FitSelection;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("View");
+            if ui
+                .selectable_label(
+                    self.canvas_arrangement == CanvasArrangement::SinglePage,
+                    "Single Page",
+                )
+                .clicked()
+            {
+                self.canvas_arrangement = CanvasArrangement::SinglePage;
+                if self.zoom_mode == CanvasZoomMode::FitSpread {
+                    self.zoom_mode = CanvasZoomMode::FitPage;
+                }
+            }
+            if ui
+                .selectable_label(
+                    self.canvas_arrangement == CanvasArrangement::TwoPageSpread,
+                    "Two-Page Spread",
+                )
+                .clicked()
+            {
+                self.canvas_arrangement = CanvasArrangement::TwoPageSpread;
             }
         });
         ui.separator();
@@ -2363,6 +2416,21 @@ impl ViewerApp {
             return;
         };
 
+        let partner_index = if self.canvas_arrangement == CanvasArrangement::TwoPageSpread {
+            spread_partner_index(visual.document.pages.len(), self.selected_page)
+        } else {
+            None
+        };
+        let partner_surface = partner_index.and_then(|index| {
+            visual.document.pages.get(index).and_then(|partner_page| {
+                visual
+                    .scene
+                    .surfaces
+                    .iter()
+                    .find(|candidate| candidate.origin == partner_page.id)
+            })
+        });
+
         let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
         let page_nodes = visual
@@ -2388,6 +2456,23 @@ impl ViewerApp {
                 surface.size.height.get(),
                 viewport,
             ),
+            CanvasZoomMode::FitSpread => partner_surface
+                .and_then(|partner| {
+                    fitted_spread_scale(
+                        surface.size.width.get(),
+                        surface.size.height.get(),
+                        partner.size.width.get(),
+                        partner.size.height.get(),
+                        viewport,
+                    )
+                })
+                .or_else(|| {
+                    fitted_scale(
+                        surface.size.width.get(),
+                        surface.size.height.get(),
+                        viewport,
+                    )
+                }),
             CanvasZoomMode::PageWidth => {
                 page_width_scale(surface.size.width.get(), viewport)
             }
@@ -2413,8 +2498,20 @@ impl ViewerApp {
 
         let page_width = surface.size.width.get() as f32 * scene_scale;
         let page_height = surface.size.height.get() as f32 * scene_scale;
-        let content_width = (page_width + PAGE_MARGIN * 2.0).max(viewport.x);
-        let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
+        let partner_size = partner_surface.map(|partner| {
+            egui::vec2(
+                partner.size.width.get() as f32 * scene_scale,
+                partner.size.height.get() as f32 * scene_scale,
+            )
+        });
+        let spread_width = partner_size
+            .map(|size| page_width + SPREAD_GUTTER_PX + size.x)
+            .unwrap_or(page_width);
+        let spread_height = partner_size
+            .map(|size| page_height.max(size.y))
+            .unwrap_or(page_height);
+        let content_width = (spread_width + PAGE_MARGIN * 2.0).max(viewport.x);
+        let content_height = (spread_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
         let mut preview_clipped_story_keys = BTreeSet::new();
         let selected_canvas_instance = self.canvas_selection.primary().map(str::to_owned);
@@ -2426,6 +2523,7 @@ impl ViewerApp {
         let mut drag_error = None;
         let mut resize_commit = None;
         let mut resize_error = None;
+        let mut spread_page_clicked = None;
         let hit_index = SceneHitTestIndex::new(
             self.editor
                 .as_ref()
@@ -2523,33 +2621,84 @@ impl ViewerApp {
                     )
                 });
                 let canvas = response.rect;
-                let page_rect = if self.zoom_mode == CanvasZoomMode::FitSelection {
-                    selected_bounds
-                        .map(|bounds| {
-                            let selection_center_x =
-                                (bounds.x.get() as f32 + bounds.width.get() as f32 / 2.0)
-                                    * scene_scale;
-                            let selection_center_y =
-                                (bounds.y.get() as f32 + bounds.height.get() as f32 / 2.0)
-                                    * scene_scale;
-                            egui::Rect::from_min_size(
-                                canvas.center()
-                                    - egui::vec2(selection_center_x, selection_center_y),
-                                egui::vec2(page_width, page_height),
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            egui::Rect::from_center_size(
-                                canvas.center(),
-                                egui::vec2(page_width, page_height),
-                            )
-                        })
+                let spread_center = canvas.center();
+                let (page_rect, partner_rect) = if let (Some(partner_index), Some(partner_size)) =
+                    (partner_index, partner_size)
+                {
+                    let active_is_left = self.selected_page < partner_index;
+                    let left_width = if active_is_left { page_width } else { partner_size.x };
+                    let spread_left = spread_center.x - spread_width / 2.0;
+                    let active_x = if active_is_left {
+                        spread_left
+                    } else {
+                        spread_left + left_width + SPREAD_GUTTER_PX
+                    };
+                    let partner_x = if active_is_left {
+                        spread_left + page_width + SPREAD_GUTTER_PX
+                    } else {
+                        spread_left
+                    };
+                    (
+                        egui::Rect::from_min_size(
+                            egui::pos2(active_x, spread_center.y - page_height / 2.0),
+                            egui::vec2(page_width, page_height),
+                        ),
+                        Some(egui::Rect::from_min_size(
+                            egui::pos2(partner_x, spread_center.y - partner_size.y / 2.0),
+                            partner_size,
+                        )),
+                    )
+                } else if self.zoom_mode == CanvasZoomMode::FitSelection {
+                    (
+                        selected_bounds
+                            .map(|bounds| {
+                                let selection_center_x =
+                                    (bounds.x.get() as f32 + bounds.width.get() as f32 / 2.0)
+                                        * scene_scale;
+                                let selection_center_y =
+                                    (bounds.y.get() as f32 + bounds.height.get() as f32 / 2.0)
+                                        * scene_scale;
+                                egui::Rect::from_min_size(
+                                    canvas.center()
+                                        - egui::vec2(selection_center_x, selection_center_y),
+                                    egui::vec2(page_width, page_height),
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                egui::Rect::from_center_size(
+                                    canvas.center(),
+                                    egui::vec2(page_width, page_height),
+                                )
+                            }),
+                        None,
+                    )
                 } else {
-                    egui::Rect::from_center_size(
-                        canvas.center(),
-                        egui::vec2(page_width, page_height),
+                    (
+                        egui::Rect::from_center_size(
+                            canvas.center(),
+                            egui::vec2(page_width, page_height),
+                        ),
+                        None,
                     )
                 };
+
+                if let (Some(partner_index), Some(partner_rect)) = (partner_index, partner_rect) {
+                    paint_static_page_surface(
+                        &painter,
+                        partner_rect,
+                        visual,
+                        self.editor.as_ref(),
+                        &self.image_textures,
+                        partner_index,
+                    );
+                    if response.clicked_by(egui::PointerButton::Primary)
+                        && response
+                            .interact_pointer_pos()
+                            .is_some_and(|pointer| partner_rect.contains(pointer))
+                    {
+                        spread_page_clicked = Some(partner_index);
+                    }
+                }
 
                 let pointer_document = response
                     .interact_pointer_pos()
@@ -2690,6 +2839,7 @@ impl ViewerApp {
                 }
 
                 if !reader_only_mode()
+                    && spread_page_clicked.is_none()
                     && response.clicked_by(egui::PointerButton::Primary)
                     && let Some(point) = pointer_document
                 {
@@ -2949,6 +3099,17 @@ impl ViewerApp {
                     }
                 }
             });
+
+        if let Some(index) = spread_page_clicked {
+            if self.selected_page != index {
+                self.selected_page = index;
+                self.canvas_selection.clear();
+                self.canvas_drag = None;
+                self.canvas_resize = None;
+                self.supporter_value
+                    .observe(supporter::ValueEvent::PageNavigated { page_index: index });
+            }
+        }
 
         let drag_instance = next_canvas_drag.and_then(|drag| {
             hit_index
@@ -3472,6 +3633,170 @@ fn paint_page_thumbnail(
     }
 }
 
+fn spread_partner_index(page_count: usize, active_index: usize) -> Option<usize> {
+    if page_count <= 1 || active_index >= page_count || active_index == 0 {
+        return None;
+    }
+
+    if active_index % 2 == 1 {
+        let right = active_index + 1;
+        (right < page_count).then_some(right)
+    } else {
+        Some(active_index - 1)
+    }
+}
+
+fn fitted_spread_scale(
+    first_width_emu: i64,
+    first_height_emu: i64,
+    second_width_emu: i64,
+    second_height_emu: i64,
+    viewport: egui::Vec2,
+) -> Option<f32> {
+    if first_width_emu <= 0
+        || first_height_emu <= 0
+        || second_width_emu <= 0
+        || second_height_emu <= 0
+    {
+        return None;
+    }
+
+    let usable_width = (viewport.x - PAGE_MARGIN * 2.0 - SPREAD_GUTTER_PX).max(1.0);
+    let usable_height = (viewport.y - PAGE_MARGIN * 2.0).max(1.0);
+    let total_width = first_width_emu as f32 + second_width_emu as f32;
+    let max_height = first_height_emu.max(second_height_emu) as f32;
+    Some((usable_width / total_width).min(usable_height / max_height))
+}
+
+fn paint_static_page_surface(
+    painter: &egui::Painter,
+    page_rect: egui::Rect,
+    visual: &ViewerGeometryDocument,
+    editor: Option<&pub_editor::EditorSession>,
+    image_textures: &BTreeMap<String, egui::TextureHandle>,
+    page_index: usize,
+) {
+    let Some(page) = visual.document.pages.get(page_index) else {
+        return;
+    };
+    let Some(surface) = visual
+        .scene
+        .surfaces
+        .iter()
+        .find(|surface| surface.origin == page.id)
+    else {
+        return;
+    };
+    if surface.size.width.get() <= 0 || surface.size.height.get() <= 0 {
+        return;
+    }
+
+    painter.rect_filled(page_rect, 0.0, egui::Color32::WHITE);
+    painter.rect_stroke(
+        page_rect,
+        0.0,
+        egui::Stroke::new(1.0, egui::Color32::DARK_GRAY),
+        egui::StrokeKind::Inside,
+    );
+    let scale_x = page_rect.width() / surface.size.width.get() as f32;
+    let scale_y = page_rect.height() / surface.size.height.get() as f32;
+    let page_origin = page.id.into_canonical();
+
+    for node in visual
+        .scene
+        .nodes
+        .iter()
+        .filter(|node| node.parent_origin == page_origin)
+    {
+        if node.bounds.width.get() <= 0 || node.bounds.height.get() <= 0 {
+            continue;
+        }
+        let node_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                page_rect.left() + node.bounds.x.get() as f32 * scale_x,
+                page_rect.top() + node.bounds.y.get() as f32 * scale_y,
+            ),
+            egui::vec2(
+                node.bounds.width.get() as f32 * scale_x,
+                node.bounds.height.get() as f32 * scale_y,
+            ),
+        );
+
+        let node_paint = visual
+            .paints
+            .iter()
+            .find(|paint| paint.node_id == node.origin);
+        if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
+            painter.rect_filled(
+                node_rect,
+                0.0,
+                egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+            );
+        }
+
+        let replacement_key = editor
+            .and_then(|editor| editor.image_replacement_for(node.origin))
+            .map(|sha256| format!("replacement:{:?}", sha256));
+        let replacement_texture = replacement_key
+            .as_ref()
+            .and_then(|key| image_textures.get(key));
+        let source_texture = visual
+            .images
+            .iter()
+            .find(|embedded| embedded.node_ids.contains(&node.origin))
+            .and_then(|embedded| {
+                let key = format!("{:?}", embedded.resource_id);
+                image_textures.get(&key)
+            });
+        if let Some(texture) = replacement_texture.or(source_texture) {
+            painter.image(
+                texture.id(),
+                node_rect,
+                egui::Rect::from_min_max(
+                    egui::pos2(0.0, 0.0),
+                    egui::pos2(1.0, 1.0),
+                ),
+                egui::Color32::WHITE,
+            );
+        }
+
+        if let Some(frame) = visual
+            .story_frames
+            .iter()
+            .find(|frame| frame.frame_id == node.origin)
+            && let Some(story) = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| story.id == frame.story_id)
+            && !story.text.is_empty()
+        {
+            let text_painter = painter.with_clip_rect(node_rect.shrink(2.0));
+            let font_size = (10.0 * scale_x / numeric_zoom_scene_scale(1.0).unwrap_or(scale_x))
+                .clamp(5.0, 18.0);
+            let galley = text_painter.layout(
+                story.text.clone(),
+                egui::FontId::proportional(font_size),
+                egui::Color32::BLACK,
+                node_rect.width().max(1.0),
+            );
+            text_painter.galley(node_rect.min, galley, egui::Color32::BLACK);
+        }
+
+        if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
+            painter.rect_stroke(
+                node_rect,
+                0.0,
+                egui::Stroke::new(
+                    (line.width_emu as f32 * scale_x).clamp(0.5, 4.0),
+                    egui::Color32::from_rgb(line.rgb[0], line.rgb[1], line.rgb[2]),
+                ),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
 fn numeric_zoom_scene_scale(zoom: f32) -> Option<f32> {
     if !zoom.is_finite() || zoom <= 0.0 {
         return None;
@@ -3536,6 +3861,40 @@ mod tests {
         assert!(preview_text_height_is_clipped(100.6, 100.0));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("preview-only"));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("not Publisher-native"));
+    }
+
+    #[test]
+    fn spread_pairing_keeps_cover_and_last_singletons_without_fake_pages() {
+        assert_eq!(spread_partner_index(8, 0), None);
+        assert_eq!(spread_partner_index(8, 1), Some(2));
+        assert_eq!(spread_partner_index(8, 2), Some(1));
+        assert_eq!(spread_partner_index(8, 3), Some(4));
+        assert_eq!(spread_partner_index(8, 7), None);
+        assert_eq!(spread_partner_index(3, 2), Some(1));
+    }
+
+    #[test]
+    fn fit_spread_uses_both_page_surfaces() {
+        let viewport = egui::vec2(1200.0, 800.0);
+        let spread = fitted_spread_scale(
+            8_229_600,
+            10_668_000,
+            8_229_600,
+            10_668_000,
+            viewport,
+        )
+        .expect("spread scale");
+        let single = fitted_scale(8_229_600, 10_668_000, viewport).expect("single scale");
+        assert!(spread < single);
+    }
+
+    #[test]
+    fn desktop_spread_surface_is_explicit_view_composition() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("\"Single Page\""));
+        assert!(source.contains("\"Two-Page Spread\""));
+        assert!(source.contains("\"Fit Spread\""));
+        assert!(source.contains("spread_partner_index"));
     }
 
     #[test]
@@ -3744,6 +4103,7 @@ mod tests {
             canvas_resize: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
+            canvas_arrangement: CanvasArrangement::SinglePage,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::Unsupported,
                 message: "unsupported".to_owned(),
@@ -3790,6 +4150,7 @@ mod tests {
             canvas_resize: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
+            canvas_arrangement: CanvasArrangement::SinglePage,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::FileAccess,
                 message: "permission denied".to_owned(),
@@ -4050,6 +4411,7 @@ mod tests {
             canvas_resize: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
+            canvas_arrangement: CanvasArrangement::SinglePage,
             load_error: None,
             search_query: String::new(),
             search_results: Vec::new(),
