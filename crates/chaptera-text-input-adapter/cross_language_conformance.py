@@ -153,7 +153,12 @@ def keyboard_case(name, command, story_text, provenance, anchor, focus, clusters
         "story_text": story_text,
         "domain": domain.to_dict(),
         "selection": asdict(selection),
-        "caret_map": caret_map_to_dict_v1(caret_map),
+        "caret_map": {
+            "layout_revision_id": caret_map.layout_revision_id,
+            "story_id": caret_map.story_id,
+            "story_scalar_len": caret_map.story_scalar_len,
+            "lines": caret_map_to_dict_v1(caret_map)["lines"],
+        },
         "expected_revision_id": REVISION,
     })
 
