@@ -1,0 +1,23 @@
+{
+  "schema": "pub-research-experiment.v1",
+  "id": "PGUIDES-WRITE-CAUSAL-01",
+  "publisher_environment": "publisher-2019",
+  "requires_publisher": true,
+  "publisher": {
+    "version_prefix": "16.0.12527.",
+    "exe_sha256": "e1ef8811b85b82045f37c4173b92726101be3a25e550b0dcb9f178df834ab20b"
+  },
+  "operation": {
+    "shell": "pwsh",
+    "script": "tools/research-runner/operations/pguides_write_causal_01.ps1",
+    "args": []
+  },
+  "evidence": {
+    "required": [
+      "environment.json",
+      "analysis/pguides-write-causal-01.json",
+      "analysis/raw-probe-status.json",
+      "logs/pguides-write-causal-01.txt"
+    ]
+  }
+}

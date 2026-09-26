@@ -1,0 +1,61 @@
+name: T631 PGUIDES-WRITE packet self-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/t631-pguides-write-packet.yml'
+      - 'tools/research-runner/experiments/pguides-write-causal-01.packet.json'
+      - 'tools/research-runner/operations/pguides_write_causal_01.ps1'
+      - 'tools/research-runner/pguides-probe/**'
+      - 'tools/windows/pub-runtime/PGUIDES-WRITE-CAUSAL-01.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate experiment packet
+        run: |
+          python3 tools/research-runner/validate_packet.py \
+            --packet tools/research-runner/experiments/pguides-write-causal-01.packet.json \
+            --expected-environment publisher-2019
+      - name: Parse native PowerShell without executing Publisher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/research-runner/operations/pguides_write_causal_01.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            throw 'PowerShell parse failed: pguides_write_causal_01.ps1'
+          }
+      - name: Compile task-specific raw probe
+        run: |
+          cargo check --manifest-path tools/research-runner/pguides-probe/Cargo.toml
+      - name: Enforce bounded causal matrix and exact fixture fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'REG-TST2-pub97-to-pub2007-with-pub2007.pub' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F '28481deeac014133b960e09376bfd31c2ec14bfb2a0679cb3c010855a9eeec29' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'Shape.Adjustments.Count > 0' tools/windows/pub-runtime/PGUIDES-WRITE-CAUSAL-01.md
+          grep -F 'Invoke-Arm -ArmId "C0" -Mode "noop"' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'Invoke-Arm -ArmId "A" -Mode "set"' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'Invoke-Arm -ArmId "B" -Mode "set"' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'Invoke-Arm -ArmId "R" -Mode "restore"' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'native_pub_outputs_private = $true' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'generic_officeart_parser_added = $false' tools/research-runner/operations/pguides_write_causal_01.ps1
+          grep -F 'inspect_sp_containers' tools/research-runner/pguides-probe/src/main.rs
+          grep -F 'read_stream_path' tools/research-runner/pguides-probe/src/main.rs
