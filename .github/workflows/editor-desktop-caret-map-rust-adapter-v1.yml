@@ -42,7 +42,7 @@ jobs:
           sys.path.insert(0, "services/editor-api")
           from resolved_text_caret_map_v1 import (
               ResolvedClusterV1, ResolvedLineFragmentV1, InternalCaretStopV1,
-              build_resolved_text_caret_map_v1, caret_map_to_dict_v1,
+              build_resolved_text_caret_map_v1, caret_map_to_dict_v1, caret_map_hash_v1,
           )
 
           fixtures = [
@@ -113,6 +113,17 @@ jobs:
               if rust != python:
                   print(name, "mismatch", file=sys.stderr)
                   print(json.dumps({"python":python,"rust":rust},indent=2),file=sys.stderr)
+                  raise SystemExit(1)
+
+              hash_proc=subprocess.run(
+                  ["cargo","run","--quiet","--manifest-path","crates/chaptera-text-caret-map-adapter/Cargo.toml","--example","conformance_hash_probe"],
+                  input=json.dumps(payload),text=True,capture_output=True,check=True,
+              )
+              rust_hash=hash_proc.stdout.strip()
+              python_hash=caret_map_hash_v1(canonical)
+              if rust_hash != python_hash:
+                  print(name, "hash mismatch", file=sys.stderr)
+                  print(json.dumps({"python_hash":python_hash,"rust_hash":rust_hash},indent=2),file=sys.stderr)
                   raise SystemExit(1)
               print(name, "PASS")
           PY
