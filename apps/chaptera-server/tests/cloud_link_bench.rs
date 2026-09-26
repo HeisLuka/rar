@@ -979,3 +979,73 @@ async fn cloud_link_first_bind_measurement_receipt() -> BenchResult<()> {
     println!("CLOUD_LINK_BENCH_RECEIPT={}", output_path.display());
     Ok(())
 }
+
+
+#[tokio::test]
+async fn cloud_link_shared_db_marginal_receipt() -> BenchResult<()> {
+    let Some(fixtures_root) = env::var_os("CHAPTERA_CLOUD_LINK_BENCH_FIXTURES") else {
+        eprintln!(
+            "CHAPTERA_CLOUD_LINK_BENCH_FIXTURES not set; dedicated CLOUD-LINK-BENCH workflow owns execution"
+        );
+        return Ok(());
+    };
+    let output_path = env::var_os("CHAPTERA_CLOUD_LINK_BENCH_SHARED_DB_RECEIPT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join("out/cloud-link-bench-01b.json"));
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let fixture_path = PathBuf::from(fixtures_root).join("Simple.pub");
+    let (fixture_sha256, fixture_bytes) = sha256_file(&fixture_path).await?;
+    let case_root = env::temp_dir().join(format!(
+        "chaptera-cloud-link-shared-db-bench-{}",
+        std::process::id()
+    ));
+    cleanup_case(&case_root);
+    fs::create_dir_all(&case_root)?;
+    let db = case_root.join("chaptera.sqlite");
+
+    SqliteMigrationRuntime::new(&db, Duration::from_secs(2))?
+        .migrate_up()
+        .await?;
+
+    const PROJECTS: u64 = 100;
+    for index in 1..=PROJECTS {
+        seed_principal(&db, &format!("principal-shared-{index:03}")).await?;
+    }
+
+    let runtime = BenchRuntime::open(&db, CountingProvider::default()).await?;
+    let mut checkpoints = vec![shared_db_checkpoint(&db, 0).await?];
+
+    for index in 1..=PROJECTS {
+        let fixture_id = format!("shared-{index:03}");
+        let work_root = case_root.join(format!("work-{index:03}"));
+        let _receipt =
+            run_fixture_with_runtime(&runtime, &fixture_id, &fixture_path, &work_root).await?;
+        if matches!(index, 1 | 10 | 100) {
+            checkpoints.push(shared_db_checkpoint(&db, index).await?);
+        }
+    }
+
+    runtime.close().await;
+
+    let receipt = SharedDbReceipt {
+        protocol_version: "chaptera.cloud-link-shared-sqlite-bench.v0",
+        build_sha: env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned()),
+        fixture_source_commit: FIXTURE_SOURCE_COMMIT,
+        fixture_file: "Simple.pub".to_owned(),
+        fixture_sha256,
+        fixture_bytes,
+        preseeded_principals: PROJECTS,
+        checkpoints,
+    };
+
+    fs::write(&output_path, serde_json::to_vec_pretty(&receipt)?)?;
+    cleanup_case(&case_root);
+    println!(
+        "CLOUD_LINK_SHARED_DB_BENCH_RECEIPT={}",
+        output_path.display()
+    );
+    Ok(())
+}
