@@ -4,7 +4,6 @@ use crate::{
     TrustBundle, TrustPlane, TrustedTimeError, TrustedTimeStateV1, bounded_nonempty,
     evaluate_time_bound_right_strict,
 };
-use ciborium::value::Value;
 use coset::{
     ContentType, CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable, iana,
 };
@@ -751,15 +750,18 @@ pub fn issue_borrow(
         .checked_add(command.drain_seconds)
         .ok_or(BorrowAuthorityError::InvalidCommand)?;
     let max_work = maximum_work_cutoff(authoritative_now, command.drain_seconds, parent)?;
-    if let Some(max_work) = max_work
-        && command.requested_new_paid_work_until > max_work
-    {
-        return Ok(BorrowAuthorityTransition {
-            outcome: BorrowAuthorityOutcome::NeedsConfirmation {
-                max_new_paid_work_until: max_work,
-            },
-            next_state: state.clone(),
-        });
+    if let Some(max_work) = max_work {
+        if max_work <= latest_lease.new_paid_work_until {
+            return Err(BorrowAuthorityError::ParentWindowTooShort);
+        }
+        if command.requested_new_paid_work_until > max_work {
+            return Ok(BorrowAuthorityTransition {
+                outcome: BorrowAuthorityOutcome::NeedsConfirmation {
+                    max_new_paid_work_until: max_work,
+                },
+                next_state: state.clone(),
+            });
+        }
     }
 
     let sequence = state.next_sequence;
@@ -991,6 +993,7 @@ pub fn end_offline_mode(
 mod tests {
     use super::*;
     use crate::{TrustedSigner, TrustBundle, TrustPlane};
+    use ciborium::value::Value;
     use coset::{CoseSign1Builder, HeaderBuilder};
     use p256::ecdsa::{SigningKey, signature::Signer};
 
@@ -1405,6 +1408,156 @@ mod tests {
             ),
             OfflineBorrowDecision::TimeUncertain
         );
+    }
+
+    #[test]
+    fn old_sequence_keeps_old_boundary_after_successor_extends_future_authority() {
+        let state = issued_state();
+        let first_lease = latest_lease(&state);
+        let extend = ExtendBorrowCommand {
+            command_id: "extend-boundary".into(),
+            expected_generation: state.generation(),
+            expected_lease_id: first_lease.lease_id().into(),
+            expected_sequence: first_lease.lease_sequence(),
+            new_lease_id: "borrow-lease-2".into(),
+            requested_new_paid_work_until: WORK + 24 * 60 * 60,
+            drain_seconds: 10 * 60,
+        };
+        let extended = extend_borrow(
+            &state,
+            &extend,
+            parent(Some(T0 + 30 * 24 * 60 * 60)),
+            T0 + 60,
+        )
+        .unwrap()
+        .into_next_state();
+        let second_lease = latest_lease(&extended);
+
+        let first = verified(&first_lease);
+        let second = verified(&second_lease);
+        let first_state = TrustedTimeStateV1::fresh(first.trusted_time_scope_id());
+        let second_state = TrustedTimeStateV1::fresh(second.trusted_time_scope_id());
+
+        assert_eq!(
+            evaluate_offline_borrow(
+                &first_state,
+                first_lease.hard_valid_until(),
+                None,
+                &first,
+                time_policy(),
+            ),
+            OfflineBorrowDecision::Expired
+        );
+        assert!(matches!(
+            evaluate_offline_borrow(
+                &second_state,
+                first_lease.hard_valid_until(),
+                None,
+                &second,
+                time_policy(),
+            ),
+            OfflineBorrowDecision::WorkAllowed { .. }
+        ));
+    }
+
+    #[test]
+    fn parent_revocation_blocks_future_extension_without_retroactively_revoking_bearer_bytes() {
+        let state = issued_state();
+        let lease = latest_lease(&state);
+        let verified = verified(&lease);
+        let local = TrustedTimeStateV1::fresh(verified.trusted_time_scope_id());
+
+        assert!(matches!(
+            evaluate_offline_borrow(
+                &local,
+                T0 + 60,
+                None,
+                &verified,
+                time_policy(),
+            ),
+            OfflineBorrowDecision::WorkAllowed { .. }
+        ));
+
+        let extend = ExtendBorrowCommand {
+            command_id: "extend-revoked".into(),
+            expected_generation: state.generation(),
+            expected_lease_id: lease.lease_id().into(),
+            expected_sequence: lease.lease_sequence(),
+            new_lease_id: "borrow-lease-revoked".into(),
+            requested_new_paid_work_until: WORK + 24 * 60 * 60,
+            drain_seconds: 10 * 60,
+        };
+        let revoked_parent = ParentEntitlementConstraint {
+            revision: 8,
+            hard_valid_until: Some(T0 + 30 * 24 * 60 * 60),
+            revoked: true,
+        };
+        assert_eq!(
+            extend_borrow(&state, &extend, revoked_parent, T0 + 60).unwrap_err(),
+            BorrowAuthorityError::ParentUnavailable
+        );
+
+        assert!(matches!(
+            evaluate_offline_borrow(
+                &local,
+                T0 + 120,
+                None,
+                &verified,
+                time_policy(),
+            ),
+            OfflineBorrowDecision::WorkAllowed { .. }
+        ));
+    }
+
+    #[test]
+    fn extension_at_hard_cutoff_cannot_resurrect_expired_lineage() {
+        let state = issued_state();
+        let lease = latest_lease(&state);
+        let extend = ExtendBorrowCommand {
+            command_id: "extend-too-late".into(),
+            expected_generation: state.generation(),
+            expected_lease_id: lease.lease_id().into(),
+            expected_sequence: lease.lease_sequence(),
+            new_lease_id: "borrow-lease-too-late".into(),
+            requested_new_paid_work_until: HARD + 24 * 60 * 60,
+            drain_seconds: 10 * 60,
+        };
+        assert_eq!(
+            extend_borrow(
+                &state,
+                &extend,
+                parent(Some(T0 + 30 * 24 * 60 * 60)),
+                HARD,
+            )
+            .unwrap_err(),
+            BorrowAuthorityError::SeatUnavailable
+        );
+    }
+
+    #[test]
+    fn exact_latest_signed_replay_is_idempotent_in_trusted_time() {
+        let lease = verified(&latest_lease(&issued_state()));
+        let scope = lease.trusted_time_scope_id();
+        let first = evaluate_offline_borrow(
+            &TrustedTimeStateV1::fresh(scope),
+            T0 + 60,
+            None,
+            &lease,
+            time_policy(),
+        );
+        let OfflineBorrowDecision::WorkAllowed { next_state } = first else {
+            panic!("first acceptance");
+        };
+        let replay =
+            evaluate_offline_borrow(&next_state, T0 + 120, None, &lease, time_policy());
+        let OfflineBorrowDecision::WorkAllowed {
+            next_state: replay_state,
+        } = replay
+        else {
+            panic!("exact replay should stay valid");
+        };
+        assert_eq!(replay_state.highest_lease_sequence, Some(1));
+        assert_eq!(replay_state.last_lease_commitment, Some(*lease.lease_commitment()));
     }
 
     #[test]
