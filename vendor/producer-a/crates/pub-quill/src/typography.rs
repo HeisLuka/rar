@@ -105,6 +105,25 @@ struct StyleObservation {
     text_sizes_emu: Vec<u32>,
 }
 
+fn validate_monotone_fdpc_text_offsets(
+    styles: &[StyleObservation],
+) -> Result<(), QuillTypographyReadError> {
+    for pair in styles.windows(2) {
+        if pair[0].absolute_text_end > pair[1].absolute_text_end {
+            return Err(QuillTypographyReadError::new(format!(
+                "FDPC text offsets regress in stored order: descriptor/style {}/{} ends at 0x{:x}, then {}/{} ends at 0x{:x}",
+                pair[0].fdpc_descriptor_ordinal,
+                pair[0].fdpc_style_ordinal,
+                pair[0].absolute_text_end,
+                pair[1].fdpc_descriptor_ordinal,
+                pair[1].fdpc_style_ordinal,
+                pair[1].absolute_text_end,
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BlockObservation {
     id: u8,
@@ -127,7 +146,7 @@ pub fn parse_bounded_typography(
 
     let font_names = parse_font_catalog(bytes, &descriptors)?;
     let mut unknown_block_types = BTreeSet::new();
-    let mut styles = parse_fdpc_styles(
+    let styles = parse_fdpc_styles(
         bytes,
         story_catalog,
         &descriptors,
@@ -135,7 +154,7 @@ pub fn parse_bounded_typography(
         &mut unknown_block_types,
     )?;
 
-    styles.sort_by_key(|style| style.absolute_text_end);
+    validate_monotone_fdpc_text_offsets(&styles)?;
 
     let text_start = u32::try_from(story_catalog.text.source.offset)
         .map_err(|_| QuillTypographyReadError::new("TEXT offset exceeds u32"))?;
@@ -654,6 +673,46 @@ fn checked_end(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn style_observation(end: u32, ordinal: u32) -> StyleObservation {
+        StyleObservation {
+            fdpc_descriptor_ordinal: 0,
+            fdpc_style_ordinal: ordinal,
+            absolute_text_end: end,
+            text_offset_source: RawSpan {
+                stream: pub_core::StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                offset: u64::from(ordinal) * 4,
+                len: 4,
+            },
+            style_source: RawSpan {
+                stream: pub_core::StreamPath("/Quill/QuillSub/CONTENTS".into()),
+                offset: 100 + u64::from(ordinal) * 8,
+                len: 8,
+            },
+            font_indices: Vec::new(),
+            font_names: Vec::new(),
+            text_sizes_emu: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn fdpc_text_offsets_must_be_monotone_in_stored_order() {
+        let monotone = vec![
+            style_observation(0x220, 0),
+            style_observation(0x240, 1),
+            style_observation(0x240, 2),
+            style_observation(0x280, 3),
+        ];
+        validate_monotone_fdpc_text_offsets(&monotone).expect("monotone offsets");
+
+        let regressed = vec![
+            style_observation(0x220, 0),
+            style_observation(0x280, 1),
+            style_observation(0x240, 2),
+        ];
+        let error = validate_monotone_fdpc_text_offsets(&regressed).unwrap_err();
+        assert!(error.to_string().contains("regress in stored order"));
+    }
 
     #[test]
     fn exact_point_conversion_is_fail_closed() {
