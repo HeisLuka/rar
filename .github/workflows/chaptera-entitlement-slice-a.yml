@@ -1,0 +1,22 @@
+name: chaptera-entitlement-slice-a
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-entitlement/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/chaptera-entitlement-slice-a.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - name: Test chaptera-entitlement
+        run: cargo test -p chaptera-entitlement --all-targets
+      - name: Clippy chaptera-entitlement
+        run: cargo clippy -p chaptera-entitlement --all-targets -- -D warnings
