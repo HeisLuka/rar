@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
-    env,
-    fs,
+    env, fs,
     io::Cursor,
     path::{Path, PathBuf},
     process::Command,
@@ -16,8 +15,8 @@ use async_trait::async_trait;
 use chaptera_server::{
     blob_store::{
         BlobIdGenerator, BlobProvider, BlobStoreError, BlobStoreService, ProviderCapabilities,
-        ProviderError, ProviderErrorKind, ProviderGrant,
-        ProviderGrantRequest, ProviderObjectMetadata,
+        ProviderError, ProviderErrorKind, ProviderGrant, ProviderGrantRequest,
+        ProviderObjectMetadata,
     },
     job_queue::{JobKind, SqliteJobQueue},
     job_worker::{CancellationFlag, JobExecutor},
@@ -44,10 +43,7 @@ use chaptera_server::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use sqlx::{
-    Connection, SqliteConnection,
-    sqlite::SqliteConnectOptions,
-};
+use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 const FIXTURE_SOURCE_COMMIT: &str = "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8";
@@ -140,12 +136,12 @@ impl BlobProvider for CountingProvider {
         mut input: Box<dyn AsyncRead + Unpin + Send>,
     ) -> Result<ProviderObjectMetadata, ProviderError> {
         let mut bytes = Vec::new();
-        input
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| ProviderError::new(ProviderErrorKind::Other, "bench_provider_read_failed"))?;
-        let byte_len = u64::try_from(bytes.len())
-            .map_err(|_| ProviderError::new(ProviderErrorKind::Other, "bench_provider_len_overflow"))?;
+        input.read_to_end(&mut bytes).await.map_err(|_| {
+            ProviderError::new(ProviderErrorKind::Other, "bench_provider_read_failed")
+        })?;
+        let byte_len = u64::try_from(bytes.len()).map_err(|_| {
+            ProviderError::new(ProviderErrorKind::Other, "bench_provider_len_overflow")
+        })?;
         if byte_len != expected_byte_len {
             return Err(ProviderError::new(
                 ProviderErrorKind::Other,
@@ -188,11 +184,13 @@ impl BlobProvider for CountingProvider {
     ) -> Result<Option<ProviderObjectMetadata>, ProviderError> {
         self.inner.heads.fetch_add(1, Ordering::Relaxed);
         let objects = self.inner.objects.lock().expect("provider object lock");
-        Ok(objects.get(object_locator).map(|object| ProviderObjectMetadata {
-            generation: object.generation.clone(),
-            byte_len: u64::try_from(object.bytes.len()).unwrap_or(u64::MAX),
-            etag: object.etag.clone(),
-        }))
+        Ok(objects
+            .get(object_locator)
+            .map(|object| ProviderObjectMetadata {
+                generation: object.generation.clone(),
+                byte_len: u64::try_from(object.bytes.len()).unwrap_or(u64::MAX),
+                etag: object.etag.clone(),
+            }))
     }
 
     async fn open_read(
@@ -204,7 +202,9 @@ impl BlobProvider for CountingProvider {
             let objects = self.inner.objects.lock().expect("provider object lock");
             objects.get(object_locator).cloned()
         }
-        .ok_or_else(|| ProviderError::new(ProviderErrorKind::NotFound, "bench_provider_not_found"))?;
+        .ok_or_else(|| {
+            ProviderError::new(ProviderErrorKind::NotFound, "bench_provider_not_found")
+        })?;
         if object.generation != generation {
             return Err(ProviderError::new(
                 ProviderErrorKind::NotFound,
@@ -223,9 +223,9 @@ impl BlobProvider for CountingProvider {
         generation: &str,
     ) -> Result<(), ProviderError> {
         let mut objects = self.inner.objects.lock().expect("provider object lock");
-        let object = objects
-            .get(object_locator)
-            .ok_or_else(|| ProviderError::new(ProviderErrorKind::NotFound, "bench_provider_not_found"))?;
+        let object = objects.get(object_locator).ok_or_else(|| {
+            ProviderError::new(ProviderErrorKind::NotFound, "bench_provider_not_found")
+        })?;
         if object.generation != generation {
             return Err(ProviderError::new(
                 ProviderErrorKind::NotFound,
@@ -370,7 +370,9 @@ async fn sha256_file(path: &Path) -> BenchResult<(String, u64)> {
             break;
         }
         hasher.update(&buffer[..read]);
-        total = total.checked_add(u64::try_from(read)?) .ok_or("fixture length overflow")?;
+        total = total
+            .checked_add(u64::try_from(read)?)
+            .ok_or("fixture length overflow")?;
     }
     Ok((format!("{:x}", hasher.finalize()), total))
 }
@@ -456,12 +458,11 @@ async fn durable_row_counts(db: &Path) -> BenchResult<BTreeMap<String, i64>> {
     let mut conn = SqliteConnection::connect_with(&options).await?;
     let mut counts = BTreeMap::new();
     for table in tables {
-        let exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-        )
-        .bind(table)
-        .fetch_one(&mut conn)
-        .await?;
+        let exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
+                .bind(table)
+                .fetch_one(&mut conn)
+                .await?;
         if exists == 1 {
             let sql = format!("SELECT COUNT(*) FROM \"{table}\"");
             let count: i64 = sqlx::query_scalar(&sql).fetch_one(&mut conn).await?;
@@ -564,12 +565,7 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     let phase = Instant::now();
     let mut fixture = tokio::fs::File::open(fixture_path).await?;
     let quarantine = blob_store
-        .create_quarantine_streamed(
-            &tenant_id,
-            &upload_id,
-            fixture_bytes,
-            &mut fixture,
-        )
+        .create_quarantine_streamed(&tenant_id, &upload_id, fixture_bytes, &mut fixture)
         .await?;
     phases.insert("streamed_upload".to_owned(), elapsed_ms(phase));
 
@@ -583,7 +579,10 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     }
     let mut stored = issued.clone();
     stored.state = UploadState::StoredUnverified;
-    stored.upload_generation = stored.upload_generation.checked_add(1).ok_or("upload generation")?;
+    stored.upload_generation = stored
+        .upload_generation
+        .checked_add(1)
+        .ok_or("upload generation")?;
     stored.object_version = Some(inspected.storage_generation.clone());
     stored.object_etag = Some(inspected.etag.clone());
     stored.observed_byte_len = Some(inspected.byte_len);
