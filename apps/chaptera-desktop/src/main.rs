@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod diagnostic_sweep;
+mod preview_typography;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
@@ -74,7 +75,7 @@ enum CanvasZoomMode {
     FitSelection,
 }
 
-const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Explicit source-owned font-size ranges can affect preview sizing, but the current renderer still uses a deterministic fallback font face; unresolved/default-inherited typography remains fallback. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +90,100 @@ struct ViewerLoadFailure {
     message: String,
     classification: Option<FailureIntakeClassification>,
     diagnostic_json: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct PreviewTextMetricDiagnostic {
+    signature: String,
+    page_index: u32,
+    page_id: String,
+    frame_id: String,
+    story_id: String,
+    frame_bounds_emu: [i64; 4],
+    clip_rect_px: [f32; 4],
+    zoom: f32,
+    font_face_disposition: &'static str,
+    layout_section_count: usize,
+    source_typography_sections: usize,
+    fallback_sections: usize,
+    executed_font_sizes_px: Vec<f32>,
+    wrap_width_px: f32,
+    galley_width_px: f32,
+    galley_height_px: f32,
+    clip_width_px: f32,
+    clip_height_px: f32,
+    overflow_delta_px: f32,
+    line_count: Option<usize>,
+}
+
+impl PreviewTextMetricDiagnostic {
+    fn from_preview(
+        page_index: u32,
+        page_id: String,
+        frame_id: String,
+        story_id: String,
+        frame_bounds: pub_editor::RectEmu,
+        clip_rect: egui::Rect,
+        zoom: f32,
+        typography_usage: preview_typography::PreviewTypographyUsage,
+        executed_font_sizes_px: Vec<f32>,
+        galley_size: egui::Vec2,
+        line_count: Option<usize>,
+    ) -> Self {
+        let font_face_disposition = "deterministic_proportional_fallback";
+        let wrap_width_px = clip_rect.width().max(1.0_f32);
+        let clip_width_px = clip_rect.width();
+        let clip_height_px = clip_rect.height();
+        let overflow_delta_px = (galley_size.y - clip_height_px).max(0.0_f32);
+        let layout_section_count = executed_font_sizes_px.len();
+        let signature = preview_text_metric_signature(
+            zoom,
+            font_face_disposition,
+            typography_usage.source_sections,
+            typography_usage.fallback_sections,
+            &executed_font_sizes_px,
+            wrap_width_px,
+            galley_size.x,
+            galley_size.y,
+            clip_width_px,
+            clip_height_px,
+            overflow_delta_px,
+            line_count,
+        );
+
+        Self {
+            signature,
+            page_index,
+            page_id,
+            frame_id,
+            story_id,
+            frame_bounds_emu: [
+                frame_bounds.x.get(),
+                frame_bounds.y.get(),
+                frame_bounds.width.get(),
+                frame_bounds.height.get(),
+            ],
+            clip_rect_px: [
+                clip_rect.left(),
+                clip_rect.top(),
+                clip_rect.right(),
+                clip_rect.bottom(),
+            ],
+            zoom,
+            font_face_disposition,
+            layout_section_count,
+            source_typography_sections: typography_usage.source_sections,
+            fallback_sections: typography_usage.fallback_sections,
+            executed_font_sizes_px,
+            wrap_width_px,
+            galley_width_px: galley_size.x,
+            galley_height_px: galley_size.y,
+            clip_width_px,
+            clip_height_px,
+            overflow_delta_px,
+            line_count,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -464,6 +559,7 @@ struct ViewerApp {
     project_status: Option<String>,
     preview_clipped_frames: usize,
     preview_clipped_story_keys: BTreeSet<String>,
+    preview_text_diagnostics: Vec<PreviewTextMetricDiagnostic>,
     diagnostic_save_path: String,
     diagnostic_status: Option<String>,
     diagnostic_sweep: Option<diagnostic_sweep::FolderSweepHandle>,
@@ -512,6 +608,7 @@ impl ViewerApp {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -808,6 +905,7 @@ impl ViewerApp {
         self.project_status = None;
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
         self.diagnostic_save_path.clear();
         self.diagnostic_status = None;
         self.exact_file_consent_open = false;
@@ -1509,6 +1607,57 @@ impl ViewerApp {
                         "Preview text clipping: {preview_clipped_frames} frame(s)"
                     ));
                     ui.small(PREVIEW_TEXT_CLIP_WARNING);
+
+                    if !self.preview_text_diagnostics.is_empty() {
+                        let mut grouped: BTreeMap<&str, Vec<&PreviewTextMetricDiagnostic>> =
+                            BTreeMap::new();
+                        for diagnostic in &self.preview_text_diagnostics {
+                            grouped
+                                .entry(diagnostic.signature.as_str())
+                                .or_default()
+                                .push(diagnostic);
+                        }
+
+                        ui.collapsing(
+                            format!("Preview text metrics · {} group(s)", grouped.len()),
+                            |ui| {
+                                if ui.button("Copy metrics JSON").clicked()
+                                    && let Ok(json) =
+                                        serde_json::to_string_pretty(&self.preview_text_diagnostics)
+                                {
+                                    ui.ctx().copy_text(json);
+                                }
+
+                                for (signature, rows) in grouped {
+                                    ui.add_space(4.0);
+                                    ui.strong(format!("{} × {}", rows.len(), signature));
+                                    for row in rows.iter().take(3) {
+                                        ui.monospace(format!(
+                                            "p{} frame={} story={} sections={} source={} fallback={} sizes={:?}px clip={:.1}×{:.1}px galley={:.1}×{:.1}px overflow={:.1}px lines={}",
+                                            row.page_index,
+                                            row.frame_id,
+                                            row.story_id,
+                                            row.layout_section_count,
+                                            row.source_typography_sections,
+                                            row.fallback_sections,
+                                            row.executed_font_sizes_px,
+                                            row.clip_width_px,
+                                            row.clip_height_px,
+                                            row.galley_width_px,
+                                            row.galley_height_px,
+                                            row.overflow_delta_px,
+                                            row.line_count
+                                                .map(|value| value.to_string())
+                                                .unwrap_or_else(|| "?".to_owned()),
+                                        ));
+                                    }
+                                    if rows.len() > 3 {
+                                        ui.small(format!("… and {} more frame(s)", rows.len() - 3));
+                                    }
+                                }
+                            },
+                        );
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -2441,6 +2590,7 @@ impl ViewerApp {
         self.ensure_image_textures(ui.ctx());
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
 
         let ctrl_held = ui.ctx().input(|input| input.modifiers.ctrl);
 
@@ -2597,6 +2747,7 @@ impl ViewerApp {
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
         let mut preview_clipped_story_keys = BTreeSet::new();
+        let mut preview_text_diagnostics = Vec::new();
         let selected_canvas_instance = self.canvas_selection.primary().map(str::to_owned);
         let mut canvas_clicked = false;
         let mut canvas_hit: Option<String> = None;
@@ -3021,14 +3172,28 @@ impl ViewerApp {
                         let numeric_100_scale =
                             numeric_zoom_scene_scale(1.0).unwrap_or(scene_scale);
                         let visual_zoom = scene_scale / numeric_100_scale;
-                        let font_size =
+                        let fallback_font_size =
                             (12.0_f32 * visual_zoom).clamp(8.0_f32, 28.0_f32);
-                        let galley = text_painter.layout(
-                            fragment.text.clone(),
-                            egui::FontId::proportional(font_size),
-                            egui::Color32::BLACK,
-                            text_clip_rect.width().max(1.0_f32),
-                        );
+                        let (layout_job, typography_usage) =
+                            preview_typography::layout_fragment(
+                                &visual.typography_runs,
+                                fragment,
+                                visual
+                                    .document
+                                    .stories
+                                    .iter()
+                                    .find(|story| story.id == fragment.story_id)
+                                    .map(|story| story.text.as_str()),
+                                scene_scale,
+                                fallback_font_size,
+                                text_clip_rect.width().max(1.0_f32),
+                            );
+                        let executed_font_sizes_px = layout_job
+                            .sections
+                            .iter()
+                            .map(|section| section.format.font_id.size)
+                            .collect::<Vec<_>>();
+                        let galley = text_painter.layout_job(layout_job);
                         if preview_text_height_is_clipped(
                             galley.size().y,
                             text_clip_rect.height(),
@@ -3036,18 +3201,36 @@ impl ViewerApp {
                             preview_clipped_frames += 1;
                             preview_clipped_story_keys
                                 .insert(format!("{:?}", fragment.story_id));
+                            let marker_center = preview_overflow_marker_center(node_rect);
                             painter.rect_stroke(
                                 node_rect,
                                 0,
                                 egui::Stroke::new(2.0_f32, egui::Color32::RED),
                                 egui::StrokeKind::Inside,
                             );
+                            painter.circle_filled(marker_center, 5.0_f32, egui::Color32::RED);
                             painter.text(
-                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                egui::Align2::RIGHT_TOP,
-                                "preview overflow",
-                                egui::FontId::proportional(10.0_f32),
-                                egui::Color32::RED,
+                                marker_center,
+                                egui::Align2::CENTER_CENTER,
+                                "!",
+                                egui::FontId::proportional(9.0_f32),
+                                egui::Color32::WHITE,
+                            );
+
+                            preview_text_diagnostics.push(
+                                PreviewTextMetricDiagnostic::from_preview(
+                                    page.index,
+                                    page.id.as_canonical().to_string(),
+                                    node.origin.as_canonical().to_string(),
+                                    fragment.story_id.as_canonical().to_string(),
+                                    node_bounds,
+                                    text_clip_rect,
+                                    self.zoom,
+                                    typography_usage,
+                                    executed_font_sizes_px,
+                                    galley.size(),
+                                    Some(galley.rows.len()),
+                                ),
                             );
                         }
                         text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
@@ -3177,6 +3360,7 @@ impl ViewerApp {
 
         self.preview_clipped_frames = preview_clipped_frames;
         self.preview_clipped_story_keys = preview_clipped_story_keys;
+        self.preview_text_diagnostics = preview_text_diagnostics;
     }
 }
 
@@ -3305,6 +3489,38 @@ fn resize_handle_label(handle: ResizeHandle) -> &'static str {
 fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool {
     const EPSILON_PX: f32 = 0.5;
     galley_height > clip_height + EPSILON_PX
+}
+
+fn preview_text_metric_signature(
+    zoom: f32,
+    font_face_disposition: &str,
+    source_typography_sections: usize,
+    fallback_sections: usize,
+    executed_font_sizes_px: &[f32],
+    wrap_width_px: f32,
+    galley_width_px: f32,
+    galley_height_px: f32,
+    clip_width_px: f32,
+    clip_height_px: f32,
+    overflow_delta_px: f32,
+    line_count: Option<usize>,
+) -> String {
+    let sizes = executed_font_sizes_px
+        .iter()
+        .map(|size| format!("{size:.1}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "preview_overflow:{font_face_disposition}:sections={}:source={source_typography_sections}:fallback={fallback_sections}:sizes=[{sizes}]px:zoom={zoom:.3}:wrap={wrap_width_px:.1}:galley={galley_width_px:.1}x{galley_height_px:.1}:clip={clip_width_px:.1}x{clip_height_px:.1}:overflow={overflow_delta_px:.1}:lines={}",
+        executed_font_sizes_px.len(),
+        line_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "?".to_owned())
+    )
+}
+
+fn preview_overflow_marker_center(frame_rect: egui::Rect) -> egui::Pos2 {
+    frame_rect.right_top() + egui::vec2(7.0, -7.0)
 }
 
 fn editable_export_path(
@@ -3605,6 +3821,116 @@ mod tests {
     }
 
     #[test]
+    fn preview_overflow_marker_stays_outside_text_frame() {
+        let frame = egui::Rect::from_min_max(
+            egui::pos2(10.0, 20.0),
+            egui::pos2(110.0, 70.0),
+        );
+        let marker = preview_overflow_marker_center(frame);
+        let marker_radius = 5.0_f32;
+
+        assert!(marker.x - marker_radius >= frame.right());
+        assert!(marker.y + marker_radius <= frame.top());
+    }
+
+    #[test]
+    fn preview_metric_diagnostic_records_section_aware_layout_inputs() {
+        let frame_bounds = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(100),
+            pub_editor::LengthEmu::new(200),
+            pub_editor::LengthEmu::new(300),
+            pub_editor::LengthEmu::new(400),
+        );
+        let clip_rect = egui::Rect::from_min_max(
+            egui::pos2(10.0, 20.0),
+            egui::pos2(210.0, 120.0),
+        );
+        let diagnostic = PreviewTextMetricDiagnostic::from_preview(
+            3,
+            "page-3".to_owned(),
+            "frame-9".to_owned(),
+            "story-7".to_owned(),
+            frame_bounds,
+            clip_rect,
+            1.25,
+            preview_typography::PreviewTypographyUsage {
+                source_sections: 2,
+                fallback_sections: 1,
+            },
+            vec![24.0, 9.0, 14.0],
+            egui::vec2(180.0, 145.0),
+            Some(7),
+        );
+
+        assert_eq!(diagnostic.page_index, 3);
+        assert_eq!(diagnostic.frame_bounds_emu, [100, 200, 300, 400]);
+        assert_eq!(diagnostic.clip_rect_px, [10.0, 20.0, 210.0, 120.0]);
+        assert_eq!(diagnostic.layout_section_count, 3);
+        assert_eq!(diagnostic.source_typography_sections, 2);
+        assert_eq!(diagnostic.fallback_sections, 1);
+        assert_eq!(diagnostic.executed_font_sizes_px, vec![24.0, 9.0, 14.0]);
+        assert_eq!(diagnostic.wrap_width_px, 200.0);
+        assert_eq!(diagnostic.galley_width_px, 180.0);
+        assert_eq!(diagnostic.galley_height_px, 145.0);
+        assert_eq!(diagnostic.clip_height_px, 100.0);
+        assert_eq!(diagnostic.overflow_delta_px, 45.0);
+        assert_eq!(diagnostic.line_count, Some(7));
+        assert_eq!(
+            diagnostic.signature,
+            "preview_overflow:deterministic_proportional_fallback:sections=3:source=2:fallback=1:sizes=[24.0,9.0,14.0]px:zoom=1.250:wrap=200.0:galley=180.0x145.0:clip=200.0x100.0:overflow=45.0:lines=7"
+        );
+    }
+
+    #[test]
+    fn preview_metric_signature_distinguishes_typography_section_failures() {
+        let base = preview_text_metric_signature(
+            1.0,
+            "deterministic_proportional_fallback",
+            2,
+            1,
+            &[24.0, 9.0, 14.0],
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+        let different_sizes = preview_text_metric_signature(
+            1.0,
+            "deterministic_proportional_fallback",
+            2,
+            1,
+            &[24.0, 9.0, 12.0],
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+        let different_ownership = preview_text_metric_signature(
+            1.0,
+            "deterministic_proportional_fallback",
+            1,
+            2,
+            &[24.0, 9.0, 14.0],
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+
+        assert_ne!(base, different_sizes);
+        assert_ne!(base, different_ownership);
+    }
+
+    #[test]
     fn fit_scale_keeps_page_inside_viewport() {
         let viewport = egui::vec2(1000.0, 800.0);
         let scale = fitted_scale(2_000_000, 1_000_000, viewport).expect("valid page");
@@ -3773,6 +4099,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -3824,6 +4151,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -3987,6 +4315,113 @@ mod tests {
 
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
+    fn sample_newsletter_preview_applies_source_owned_sizes_with_explicit_fallback_gaps() {
+        let pub_bytes = sample_newsletter_fixture();
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &pub_bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("SampleNewsletter should expose bounded typography");
+
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "pinned SampleNewsletter must expose at least one source-owned typography range"
+        );
+
+        let scene_scale = 1.0_f32 / 12_700.0_f32;
+        let fallback_font_size = 9.0_f32;
+        let mut source_sections = 0_usize;
+        let mut fallback_sections = 0_usize;
+        let mut saw_visible_rockwell_24pt = false;
+
+        for fragment in visual
+            .text_fragments
+            .iter()
+            .filter(|fragment| !fragment.text.is_empty())
+        {
+            let (job, usage) = preview_typography::layout_fragment(
+                &visual.typography_runs,
+                fragment,
+                visual
+                    .document
+                    .stories
+                    .iter()
+                    .find(|story| story.id == fragment.story_id)
+                    .map(|story| story.text.as_str()),
+                scene_scale,
+                fallback_font_size,
+                500.0,
+            );
+            source_sections += usage.source_sections;
+            fallback_sections += usage.fallback_sections;
+
+            let has_rockwell_24pt_intersection = visual.typography_runs.iter().any(|run| {
+                run.story_id == fragment.story_id
+                    && run.scalar_start < fragment.scalar_end
+                    && run.scalar_end > fragment.scalar_start
+                    && run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700
+            });
+            if has_rockwell_24pt_intersection
+                && job
+                    .sections
+                    .iter()
+                    .any(|section| (section.format.font_id.size - 24.0).abs() < 0.001)
+            {
+                saw_visible_rockwell_24pt = true;
+            }
+        }
+
+        eprintln!(
+            "SampleNewsletter preview typography: source_sections={source_sections} fallback_sections={fallback_sections}"
+        );
+        if let Some(path) = std::env::var_os("CHAPTERA_TYPOGRAPHY_PAINT_RECEIPT") {
+            let receipt = serde_json::json!({
+                "schema": "chaptera.viewer-typography-paint-receipt.v1",
+                "result": "pass",
+                "fixture": {
+                    "name": "SampleNewsletter.pub",
+                    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+                },
+                "viewer": {
+                    "text_fragment_count": visual.text_fragments.len(),
+                    "typography_run_count": visual.typography_runs.len()
+                },
+                "preview": {
+                    "source_typography_sections": source_sections,
+                    "fallback_sections": fallback_sections,
+                    "visible_rockwell_condensed_24pt_applied": saw_visible_rockwell_24pt,
+                    "font_face_disposition": "deterministic_proportional_fallback"
+                },
+                "claims": {
+                    "host_font_lookup_used": false,
+                    "source_font_size_applied_when_owned": source_sections > 0,
+                    "unowned_typography_remains_fallback": fallback_sections > 0,
+                    "publisher_exact_reflow_claimed": false
+                }
+            });
+            fs::write(
+                PathBuf::from(path),
+                serde_json::to_vec_pretty(&receipt).expect("serialize typography paint receipt"),
+            )
+            .expect("write typography paint receipt");
+        }
+        assert!(
+            source_sections > 0,
+            "at least one visible fragment must consume grounded source typography"
+        );
+        assert!(
+            fallback_sections > 0,
+            "unowned/default typography must remain explicit fallback"
+        );
+        assert!(
+            saw_visible_rockwell_24pt,
+            "a visible Rockwell Condensed 24pt source range must affect preview size"
+        );
+    }
+
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
     fn real_pub_exposes_decodable_exact_image_bound_to_scene_node() {
         let pub_bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
@@ -4084,6 +4519,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -5945,6 +6381,113 @@ mod tests {
         .expect("write private export proof");
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
+    #[ignore = "golden SampleNewsletter evidence requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
+    fn golden_sample_newsletter_page_2_renders_from_proven_model_state() {
+        use egui_kittest::Harness;
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
+
+        let fixture = std::env::var_os("CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER must name pinned SampleNewsletter.pub");
+        let output_dir = std::env::var_os("CHAPTERA_GOLDEN_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_OUT must name retained output directory");
+        fs::create_dir_all(&output_dir).expect("create golden output directory");
+
+        let bytes = fs::read(&fixture).expect("read pinned SampleNewsletter");
+        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            source_sha256,
+            "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+            "golden fixture identity drifted"
+        );
+
+        let visual = diagnostic_sweep::open_for_product(&bytes)
+            .expect("pinned SampleNewsletter must open through the product Viewer path");
+        let page_offset = 1_usize;
+        let page = visual
+            .document
+            .pages
+            .get(page_offset)
+            .expect("SampleNewsletter page 2 must exist");
+        let page_origin = page.id.into_canonical();
+        let page_scene_nodes = visual
+            .scene
+            .nodes
+            .iter()
+            .filter(|node| node.parent_origin == page_origin)
+            .count();
+        assert!(
+            page_scene_nodes > 0,
+            "golden page 2 must contain resolved page-owned scene nodes"
+        );
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "golden render must consume the proven source-neutral typography projection"
+        );
+        let visible_rockwell_24pt = visual.typography_runs.iter().any(|run| {
+            run.source_font_name == "Rockwell Condensed"
+                && run.text_size_emu == 24 * 12_700
+        });
+        assert!(
+            visible_rockwell_24pt,
+            "model chain must expose the proven Rockwell Condensed 24pt anchor before rendering"
+        );
+
+        let fixture_for_app = fixture.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(24)
+            .wgpu()
+            .build_eframe(move |cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                let mut app = ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                app.selected_page = page_offset;
+                app
+            });
+        harness.step();
+
+        let image = harness
+            .render()
+            .expect("headless WGPU golden render must succeed");
+        assert_eq!(image.width(), 1280);
+        assert_eq!(image.height(), 820);
+        let png = output_dir.join("samplenewsletter-page-002.png");
+        image.save(&png).expect("write golden SampleNewsletter PNG");
+
+        let rendered_visual = harness
+            .state()
+            .visual
+            .as_ref()
+            .expect("ViewerApp must retain loaded visual");
+        let receipt = json!({
+            "schema": "chaptera.samplenewsletter-golden.v1",
+            "source_sha256": source_sha256,
+            "page_number": page.index,
+            "page_offset": page_offset,
+            "page_scene_nodes": page_scene_nodes,
+            "text_fragment_count": rendered_visual.text_fragments.len(),
+            "typography_run_count": rendered_visual.typography_runs.len(),
+            "visible_rockwell_condensed_24pt": visible_rockwell_24pt,
+            "claims": {
+                "source_typography_drives_owned_size": true,
+                "frame_geometry_does_not_invent_font_size": true,
+                "host_font_lookup_used": false,
+                "publisher_exact_reflow_claimed": false
+            }
+        });
+        fs::write(
+            output_dir.join("samplenewsletter-golden-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize golden receipt"),
+        )
+        .expect("write golden receipt");
     }
 
     #[test]
