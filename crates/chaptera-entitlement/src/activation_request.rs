@@ -110,6 +110,7 @@ fn validate_facts(facts: &ActivationRequestFactsV1) -> Result<[u8; 65], Activati
     Ok(public)
 }
 
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn encode_activation_request_facts(
     facts: &ActivationRequestFactsV1,
 ) -> Result<Vec<u8>, ActivationRequestError> {
@@ -123,6 +124,7 @@ pub(crate) fn encode_activation_request_facts(
     Ok(encoded)
 }
 
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn assemble_activation_request(
     signed_facts: Vec<u8>,
     signature: [u8; 64],
