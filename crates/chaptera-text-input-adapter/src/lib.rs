@@ -294,4 +294,81 @@ mod tests {
         validate_ordinary_story_range_v1(&domain, 3, 3).unwrap();
         assert!(validate_ordinary_story_range_v1(&domain, 3, 4).is_err());
     }
+
+    #[test]
+    fn real_sample_newsletter_commit_is_one_replace_range_and_undo_exact() {
+        use crate::domain::{
+            StoryProvenanceHintV1, derive_editor_story_edit_domain_v1,
+        };
+        use pub_editor::{Sha256Digest, open_mature_0x2c_editor};
+        use sha2::{Digest, Sha256};
+        use std::{env, fs};
+
+        let Some(path) = env::var_os("CHAPTERA_SAMPLE_NEWSLETTER") else {
+            eprintln!("CHAPTERA_SAMPLE_NEWSLETTER not set; dedicated real-fixture gate owns this test");
+            return;
+        };
+        let bytes = fs::read(path).expect("read pinned SampleNewsletter");
+        let digest = Sha256::digest(&bytes);
+        let mut digest_bytes = [0_u8; 32];
+        digest_bytes.copy_from_slice(&digest);
+        let source_hash = Sha256Digest::from_bytes(digest_bytes);
+        let mut editor =
+            open_mature_0x2c_editor(&bytes, source_hash).expect("open real SampleNewsletter editor");
+
+        let story_id = editor
+            .graph()
+            .stories
+            .keys()
+            .copied()
+            .find(|story_id| {
+                editor.can_replace_story_text(*story_id).is_ok()
+                    && derive_editor_story_edit_domain_v1(
+                        &editor,
+                        *story_id,
+                        StoryProvenanceHintV1::ImportedAuto,
+                    )
+                    .is_ok_and(|domain| domain.status == "known")
+            })
+            .expect("real fixture should expose one provenance-qualified editable Story");
+        let before = editor.graph().stories[&story_id].text.clone();
+        let domain = derive_editor_story_edit_domain_v1(
+            &editor,
+            story_id,
+            StoryProvenanceHintV1::ImportedAuto,
+        )
+        .expect("derive mature Quill edit domain");
+        let caret = domain.caret_end_boundary.expect("known caret end");
+        let selection = TextSelectionStateV1 {
+            protocol_version: "chaptera.text-selection-state.v1".to_owned(),
+            story_id: domain.story_id.clone(),
+            anchor_scalar: caret,
+            focus_scalar: caret,
+            revision_id: "rev:real-fixture".to_owned(),
+            edit_domain_id: edit_domain_id_v1(&domain),
+            projection_state: "layout_pending".to_owned(),
+            layout_revision_id: None,
+            anchor_visual_stop_id: None,
+            focus_visual_stop_id: None,
+            preferred_inline_x_emu: None,
+        };
+
+        let commit = replace_selection_with_external_text_v1(
+            &mut editor,
+            story_id,
+            &domain,
+            &selection,
+            "rev:real-fixture",
+            "X",
+        )
+        .expect("one bounded real Story insertion");
+        assert!(matches!(commit.operation, EditOperation::ReplaceStoryRange { .. }));
+        assert_eq!(editor.operations().len(), 1);
+        assert_eq!(editor.source_hash(), source_hash);
+        assert_ne!(editor.graph().stories[&story_id].text, before);
+
+        editor.undo().expect("undo real Story insertion");
+        assert_eq!(editor.graph().stories[&story_id].text, before);
+        assert_eq!(editor.source_hash(), source_hash);
+    }
 }
