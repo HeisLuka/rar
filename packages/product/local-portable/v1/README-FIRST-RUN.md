@@ -29,3 +29,7 @@ Chaptera CI verifies the ZIP hash/size against the outer manifest and verifies e
 
 The hosted Windows clean-package smoke proves checkout/toolchain independence and package immutability, but it is not a claim that GitHub's runner is a virgin Windows installation. Native PE/DLL dependency closure for the shipped Chaptera Rust executables is checked separately during the package build.
 
+## First-run network dependency
+
+Portable V0 has one documented first-run network dependency: the public SampleNewsletter fixture is downloaded from its pinned URL and accepted only when both expected byte length and SHA-256 match. The package does not use the network to install Python packages, build Rust code, or fetch runtime dependencies.
+
