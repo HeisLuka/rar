@@ -8,12 +8,15 @@ on:
       - "apps/chaptera-server/src/sqlite_blob_metadata.rs"
       - "apps/chaptera-server/src/schema_migration.rs"
       - "apps/chaptera-server/tests/sqlite_blob_metadata.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/migrations/0004_blob_gc.sql"
       - "apps/chaptera-server/migrations/0012_blob_gc_delete_fence.sql"
       - "tools/run_cloud_migration_receipt.py"
       - ".github/workflows/cloud-blob-gc-v0.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -27,10 +30,6 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt -p chaptera-server -- --check
-      - name: Run clippy
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run Blob GC tests
         run: cargo test -p chaptera-server blob_gc::
       - name: Run durable blob metadata fence regressions

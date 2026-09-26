@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/Cargo.toml"
-      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/src/source_ingress_security.rs"
       - "crates/chaptera-untrusted-pub-scan/**"
       - "tools/migration_pdf_worker_isolation.py"
@@ -53,11 +52,7 @@ jobs:
       - name: Build isolated PUB worker
         run: cargo build -p chaptera-untrusted-pub-scan --bin chaptera-untrusted-pub-worker
 
-      - name: Check formatting
-        run: cargo fmt -p chaptera-server -- --check
 
-      - name: Lint scanner adapter
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
 
       - name: Test scanner adapter
         env:

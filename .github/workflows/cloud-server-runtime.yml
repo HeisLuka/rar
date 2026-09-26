@@ -4,7 +4,19 @@ on:
   pull_request:
     paths:
       - "Cargo.toml"
-      - "apps/chaptera-server/**"
+      - "apps/chaptera-server/Cargo.toml"
+      - "apps/chaptera-server/src/main.rs"
+      - "apps/chaptera-server/src/cli.rs"
+      - "apps/chaptera-server/src/config.rs"
+      - "apps/chaptera-server/src/serve.rs"
+      - "apps/chaptera-server/src/runtime_readiness.rs"
+      - "apps/chaptera-server/src/jobs_runtime.rs"
+      - "apps/chaptera-server/src/worker.rs"
+      - "apps/chaptera-server/src/worker_runtime.rs"
+      - "apps/chaptera-server/src/job_queue.rs"
+      - "apps/chaptera-server/src/job_worker.rs"
+      - "apps/chaptera-server/src/schema_migration.rs"
+      - "apps/chaptera-server/migrations/**"
       - "docs/cloud-server-runtime-v1.md"
       - "tools/run_cloud_server_runtime_receipt.py"
       - "tools/run_cloud_migration_receipt.py"
@@ -32,14 +44,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Rust format
-        run: cargo fmt --package chaptera-server -- --check
 
-      - name: Rust clippy
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
 
-      - name: Rust tests
-        run: cargo test -p chaptera-server
 
       - name: Fetch pinned real Publisher export fixture
         shell: bash

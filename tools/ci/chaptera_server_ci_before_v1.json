@@ -1,0 +1,132 @@
+{
+  "feature_workflows": [
+    "cloud-async-runtime-v0.yml",
+    "cloud-authz-rust-v1.yml",
+    "cloud-blob-gc-v0.yml",
+    "cloud-blob-metadata-sqlite-v1.yml",
+    "cloud-blob-store-v0.yml",
+    "cloud-edge-v1.yml",
+    "cloud-export-executor-producer-v1.yml",
+    "cloud-export-publication-v1.yml",
+    "cloud-jobs-serve-runtime-v1.yml",
+    "cloud-project-persistence-v1.yml",
+    "cloud-quota-sqlite-v1.yml",
+    "cloud-quota-worker-adapter-v1.yml",
+    "cloud-revision-identity-binding-v1.yml",
+    "cloud-revision-materializer-v1.yml",
+    "cloud-revision-v1.yml",
+    "cloud-runtime-ports-ready-v1.yml",
+    "cloud-server-runtime.yml",
+    "cloud-source-baseline-v1.yml",
+    "cloud-source-ingress-security-scanner-v1.yml",
+    "cloud-source-ingress-v1.yml",
+    "cloud-source-validation-job-v1.yml",
+    "cloud-sqlite-v0.yml",
+    "cloud-upload-admission-v1.yml",
+    "cloud-workspace-context-v1.yml"
+  ],
+  "historical_probe": {
+    "cloud_server_summed_job_runner_minutes": 44.216,
+    "cloud_server_workflow_count": 12,
+    "head_sha": "ad8ff4ab31daa890878f9ae350e4e6930ca679d2",
+    "pull_request": 787,
+    "summed_job_runner_minutes": 54.232,
+    "triggered_workflow_count": 17,
+    "workflow_runs": [
+      {
+        "name": "CLOUD-DEPLOY-01 static host packet",
+        "run_id": 36204651552,
+        "runner_minutes": 0.133
+      },
+      {
+        "name": "Rar public boundary guard",
+        "run_id": 36204651510,
+        "runner_minutes": 0.067
+      },
+      {
+        "name": "Cancel obsolete PR head runs",
+        "run_id": 36204651634,
+        "runner_minutes": 0.083
+      },
+      {
+        "name": "PR workflow concurrency guard",
+        "run_id": 36204651668,
+        "runner_minutes": 0.083
+      },
+      {
+        "name": "CLOUD-EDGE-01 HTTPS ingress integration",
+        "run_id": 36204651540,
+        "runner_minutes": 2.2
+      },
+      {
+        "name": "Cloud exact RevisionId materializer V1",
+        "run_id": 36204651478,
+        "runner_minutes": 3.5
+      },
+      {
+        "name": "CLOUD-PROJECT-PERSISTENCE-01",
+        "run_id": 36204651639,
+        "runner_minutes": 3.483
+      },
+      {
+        "name": "CLOUD-UPLOAD-ADMISSION-01",
+        "run_id": 36204651535,
+        "runner_minutes": 4.433
+      },
+      {
+        "name": "CLOUD-SERVER-RUNTIME-01 Rust runtime shell",
+        "run_id": 36204651475,
+        "runner_minutes": 3.9
+      },
+      {
+        "name": "CLOUD-SOURCE-VALIDATION-JOB-01",
+        "run_id": 36204651488,
+        "runner_minutes": 3.7
+      },
+      {
+        "name": "CLOUD-WORKSPACE-CONTEXT-01",
+        "run_id": 36204651541,
+        "runner_minutes": 3.567
+      },
+      {
+        "name": "Cloud SQLite V0",
+        "run_id": 36204651583,
+        "runner_minutes": 3.75
+      },
+      {
+        "name": "CLOUD-ASYNC-RUNTIME-01",
+        "run_id": 36204651479,
+        "runner_minutes": 3.65
+      },
+      {
+        "name": "CLOUD-SOURCE-BASELINE-01",
+        "run_id": 36204651602,
+        "runner_minutes": 3.783
+      },
+      {
+        "name": "Cloud source ingress V1",
+        "run_id": 36204651554,
+        "runner_minutes": 4.35
+      },
+      {
+        "name": "Cloud Source Ingress Security Scanner V1",
+        "run_id": 36204651617,
+        "runner_minutes": 3.9
+      },
+      {
+        "name": "LOCAL-FULL-STACK-01",
+        "run_id": 36204651500,
+        "runner_minutes": 9.65
+      }
+    ]
+  },
+  "pre_refactor_package_command_counts": {
+    "clippy": 22,
+    "fmt": 24,
+    "full_package_test": 3,
+    "rust_feature_workflows": 24
+  },
+  "representative_changed_path": "apps/chaptera-server/src/lib.rs",
+  "schema_version": "chaptera.ci.chaptera-server-routing-baseline.v1",
+  "source_commit": "b79ddfa478756e0368d0bb12504c66bb6aa0c52e"
+}

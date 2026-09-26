@@ -31,10 +31,6 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt -p chaptera-server -- --check
-      - name: Run clippy
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run durable queue and worker tests
         run: |
           cargo test -p chaptera-server job_queue::

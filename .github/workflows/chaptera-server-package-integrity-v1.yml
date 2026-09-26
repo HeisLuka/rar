@@ -1,0 +1,78 @@
+name: Chaptera Server Package Integrity V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "apps/chaptera-server/**"
+      - "crates/pub-model/**"
+      - "crates/chaptera-untrusted-pub-scan/**"
+      - "vendor/producer-a/crates/pub-editor/**"
+      - "tools/ci/chaptera_server_ci_audit.py"
+      - "tools/ci/chaptera_server_ci_before_v1.json"
+      - ".github/workflows/chaptera-server-package-integrity-v1.yml"
+      - ".github/workflows/cloud-async-runtime-v0.yml"
+      - ".github/workflows/cloud-authz-rust-v1.yml"
+      - ".github/workflows/cloud-blob-gc-v0.yml"
+      - ".github/workflows/cloud-blob-metadata-sqlite-v1.yml"
+      - ".github/workflows/cloud-blob-store-v0.yml"
+      - ".github/workflows/cloud-edge-v1.yml"
+      - ".github/workflows/cloud-export-executor-producer-v1.yml"
+      - ".github/workflows/cloud-export-publication-v1.yml"
+      - ".github/workflows/cloud-jobs-serve-runtime-v1.yml"
+      - ".github/workflows/cloud-project-persistence-v1.yml"
+      - ".github/workflows/cloud-quota-sqlite-v1.yml"
+      - ".github/workflows/cloud-quota-worker-adapter-v1.yml"
+      - ".github/workflows/cloud-revision-identity-binding-v1.yml"
+      - ".github/workflows/cloud-revision-materializer-v1.yml"
+      - ".github/workflows/cloud-revision-v1.yml"
+      - ".github/workflows/cloud-runtime-ports-ready-v1.yml"
+      - ".github/workflows/cloud-server-runtime.yml"
+      - ".github/workflows/cloud-source-baseline-v1.yml"
+      - ".github/workflows/cloud-source-ingress-security-scanner-v1.yml"
+      - ".github/workflows/cloud-source-ingress-v1.yml"
+      - ".github/workflows/cloud-source-validation-job-v1.yml"
+      - ".github/workflows/cloud-sqlite-v0.yml"
+      - ".github/workflows/cloud-upload-admission-v1.yml"
+      - ".github/workflows/cloud-workspace-context-v1.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  package-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check chaptera-server formatting once
+        run: cargo fmt -p chaptera-server -- --check
+
+      - name: Lint all chaptera-server targets once
+        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
+
+      - name: Run ordinary chaptera-server regression once
+        run: cargo test -p chaptera-server
+
+      - name: Audit Cloud/server CI routing
+        run: >-
+          python tools/ci/chaptera_server_ci_audit.py
+          --out target/ci/chaptera-server-routing-receipt.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-server-ci-routing-receipt-v1
+          path: target/ci/chaptera-server-routing-receipt.json
+          if-no-files-found: error
+          retention-days: 90

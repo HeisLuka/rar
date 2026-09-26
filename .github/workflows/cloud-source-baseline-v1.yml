@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/Cargo.toml"
-      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/src/cli.rs"
       - "apps/chaptera-server/src/main.rs"
       - "apps/chaptera-server/src/source_baseline.rs"
@@ -53,11 +52,7 @@ jobs:
           printf '%s  %s\n' "$FIXTURE_SHA256" "$RUNNER_TEMP/source/SampleNewsletter.pub" | sha256sum -c -
           test "$(stat -c %s "$RUNNER_TEMP/source/SampleNewsletter.pub")" = "$FIXTURE_BYTES"
 
-      - name: Check formatting
-        run: cargo fmt -p chaptera-server -- --check
 
-      - name: Lint baseline authority
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
 
       - name: Run baseline identity unit tests
         run: cargo test -p chaptera-server source_baseline

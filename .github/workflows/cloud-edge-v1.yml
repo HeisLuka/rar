@@ -36,8 +36,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check edge Rust formatting
-        run: cargo fmt --package chaptera-server -- --check
 
       - name: Run edge Rust tests
         run: cargo test -p chaptera-server edge::tests
