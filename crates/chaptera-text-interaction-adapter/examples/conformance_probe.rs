@@ -22,6 +22,7 @@ fn cluster(start: u32, end: u32, x0: i64, x1: i64) -> ResolvedClusterV1 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn line(
     story: &str,
     id: &str,
