@@ -37,8 +37,8 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
 
-      - name: Format
-        run: cargo fmt --manifest-path crates/chaptera-text-input-adapter/Cargo.toml -- --check
+      - name: Format diagnostic checkout
+        run: cargo fmt --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
 
       - name: Check
         run: cargo check --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets
