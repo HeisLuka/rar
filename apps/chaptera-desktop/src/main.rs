@@ -3241,6 +3241,24 @@ impl ViewerApp {
                             / line_height_ratio)
                             .clamp(base_font.size * 0.75_f32, base_font.size * 4.0_f32);
                         let mut fitted_size = frame_driven_size;
+                        if fragment.line_count <= 1 {
+                            for _ in 0..8 {
+                                let one_line = text_painter.layout_no_wrap(
+                                    fragment.text.clone(),
+                                    egui::FontId::new(fitted_size, base_font.family.clone()),
+                                    egui::Color32::BLACK,
+                                );
+                                if one_line.size().x <= text_clip_rect.width().max(1.0_f32) {
+                                    break;
+                                }
+                                let next_size = (fitted_size * 0.88_f32)
+                                    .max(base_font.size * 0.65_f32);
+                                if (next_size - fitted_size).abs() < f32::EPSILON {
+                                    break;
+                                }
+                                fitted_size = next_size;
+                            }
+                        }
                         let mut galley = text_painter.layout(
                             fragment.text.clone(),
                             egui::FontId::new(fitted_size, base_font.family.clone()),
