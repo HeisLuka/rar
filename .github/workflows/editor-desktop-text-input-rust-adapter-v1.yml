@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -37,8 +37,22 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
 
-      - name: Format diagnostic checkout
+      - name: Format task-owned Rust
         run: cargo fmt --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
+
+      - name: Commit rustfmt-only task files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- crates/chaptera-text-input-adapter/src; then
+            echo "already formatted"
+          else
+            git config user.name "chaptera-ci"
+            git config user.email "actions@users.noreply.github.com"
+            git add crates/chaptera-text-input-adapter/src
+            git commit -m "EDITOR-DESKTOP-TEXT-INPUT-RUST-ADAPTER-01: rustfmt"
+            git push origin HEAD:editor-desktop-text-input-rust-adapter-01-v2
+          fi
 
       - name: Check
         run: cargo check --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets
