@@ -201,7 +201,7 @@ fn shape_bounded_ltr_with_cluster_base(
     })
 }
 
-fn scale_font_units(
+pub(crate) fn scale_font_units(
     value: i32,
     font_size_emu: LengthEmu,
     units_per_em: u32,
