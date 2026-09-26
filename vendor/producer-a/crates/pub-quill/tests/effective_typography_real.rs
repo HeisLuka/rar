@@ -6,7 +6,7 @@ use pub_quill::{
 use std::io::Cursor;
 use std::path::Path;
 
-fn effective_counts(path: &Path) -> (usize, usize, usize, usize) {
+fn effective_counts(path: &Path) -> (usize, usize, usize, usize, Vec<u8>) {
     let pub_bytes = std::fs::read(path).expect("read pinned PUB fixture");
     let quill = pub_cfb::read_stream_reader(
         Cursor::new(pub_bytes.as_slice()),
@@ -74,12 +74,13 @@ fn effective_counts(path: &Path) -> (usize, usize, usize, usize) {
         explicit_complete,
         inherited_explicit_selector,
         inherited_implicit_zero,
+        typography.unknown_block_types_assumed_zero_length,
     )
 }
 
 #[test]
 #[ignore = "requires pinned Apache POI SampleNewsletter and SampleBrochure paths"]
-fn real_pub_effective_typography_reproduces_hosted_discriminator() {
+fn real_pub_effective_typography_matches_product_authority_and_brochure_fence() {
     let newsletter = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
         .map(std::path::PathBuf::from)
         .expect("CHAPTERA_SAMPLE_NEWSLETTER");
@@ -98,13 +99,21 @@ fn real_pub_effective_typography_reproduces_hosted_discriminator() {
         newsletter_counts.3,
     );
     eprintln!(
+        "SampleNewsletter FDPC unknown fixed block types: {:?}",
+        newsletter_counts.4
+    );
+    eprintln!(
         "SampleBrochure effective={} explicit={} inherited_explicit_selector={} inherited_implicit_zero={}",
         brochure_counts.0,
         brochure_counts.1,
         brochure_counts.2,
         brochure_counts.3,
     );
+    eprintln!(
+        "SampleBrochure FDPC unknown fixed block types: {:?}",
+        brochure_counts.4
+    );
 
-    assert_eq!(newsletter_counts, (123, 18, 88, 17));
-    assert_eq!(brochure_counts, (79, 13, 54, 12));
+    assert_eq!(newsletter_counts, (106, 18, 88, 0, Vec::new()));
+    assert_eq!(brochure_counts, (0, 0, 0, 0, vec![0x02]));
 }
