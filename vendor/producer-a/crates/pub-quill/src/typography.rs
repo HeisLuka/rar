@@ -131,7 +131,6 @@ impl QuillEffectiveTypographyRun {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuillTypographyReadError {
     message: String,
@@ -164,7 +163,6 @@ struct StyleObservation {
     font_names: Vec<String>,
     text_sizes_emu: Vec<u32>,
 }
-
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -218,7 +216,6 @@ fn validate_monotone_fdpc_text_offsets(
     }
     Ok(())
 }
-
 
 fn validate_monotone_fdpp_text_offsets(
     styles: &[ParagraphStyleObservation],
@@ -419,12 +416,8 @@ pub fn parse_bounded_typography(
             &mut inheritance_unknown_block_types,
         )?;
         validate_monotone_fdpp_text_offsets(&paragraph_styles)?;
-        let paragraph_ranges = materialize_paragraph_ranges(
-            &paragraph_styles,
-            text_start,
-            text_end,
-            total_utf16,
-        )?;
+        let paragraph_ranges =
+            materialize_paragraph_ranges(&paragraph_styles, text_start, text_end, total_utf16)?;
         let character_defaults = parse_stsh1_character_defaults(
             bytes,
             story_catalog,
@@ -461,8 +454,9 @@ pub fn parse_bounded_typography(
         explicit_runs,
         effective_runs,
         unknown_block_types_assumed_zero_length: unknown_block_types.into_iter().collect(),
-        inheritance_unknown_block_types_assumed_zero_length:
-            inheritance_unknown_block_types.into_iter().collect(),
+        inheritance_unknown_block_types_assumed_zero_length: inheritance_unknown_block_types
+            .into_iter()
+            .collect(),
         effective_inheritance_unavailable_reason,
     })
 }
@@ -494,7 +488,6 @@ fn build_story_extents(
     }
     Ok(extents)
 }
-
 
 fn parse_fdpp_styles(
     bytes: &[u8],
@@ -640,18 +633,17 @@ fn materialize_paragraph_ranges(
             continue;
         }
 
-        let (selected_style_index, selector_source) =
-            match style.default_style_indices.as_slice() {
-                [] => (
-                    Some(0),
-                    Some(QuillParagraphSelectorSource::ImplicitStyleZeroFromBoundedEvidence),
-                ),
-                [value] => (
-                    Some(*value),
-                    Some(QuillParagraphSelectorSource::ExplicitFdpp0x19),
-                ),
-                _ => (None, None),
-            };
+        let (selected_style_index, selector_source) = match style.default_style_indices.as_slice() {
+            [] => (
+                Some(0),
+                Some(QuillParagraphSelectorSource::ImplicitStyleZeroFromBoundedEvidence),
+            ),
+            [value] => (
+                Some(*value),
+                Some(QuillParagraphSelectorSource::ExplicitFdpp0x19),
+            ),
+            _ => (None, None),
+        };
 
         ranges.push(ParagraphTypographyRange {
             global_start_utf16: previous_end_utf16,
@@ -708,11 +700,12 @@ fn parse_stsh1_character_defaults(
         )));
     }
     let offsets_start = start + 20;
-    let offsets_end = offsets_start
-        .checked_add(count.checked_mul(4).ok_or_else(|| {
-            QuillTypographyReadError::new("STSH1 offset table overflows usize")
-        })?)
-        .ok_or_else(|| QuillTypographyReadError::new("STSH1 offset table end overflows"))?;
+    let offsets_end =
+        offsets_start
+            .checked_add(count.checked_mul(4).ok_or_else(|| {
+                QuillTypographyReadError::new("STSH1 offset table overflows usize")
+            })?)
+            .ok_or_else(|| QuillTypographyReadError::new("STSH1 offset table end overflows"))?;
     if offsets_end > end {
         return Err(QuillTypographyReadError::new(
             "STSH1 offset table exceeds chunk",
@@ -763,8 +756,7 @@ fn parse_stsh1_character_defaults(
         while cursor < style_end {
             let (block, next) = parse_block(bytes, cursor, style_end, unknown_block_types)?;
             if block.id == FONT_INDEX_CONTAINER_ID {
-                if let Some(index) =
-                    extract_primary_font_index(bytes, block, unknown_block_types)?
+                if let Some(index) = extract_primary_font_index(bytes, block, unknown_block_types)?
                 {
                     let index_usize = to_usize(index, "STSH1 font index")?;
                     if index_usize >= font_names.len() {
@@ -883,7 +875,11 @@ fn build_effective_runs(
 
         let (font_index, font_name, font_source) =
             if let [(font_index, font_name)] = explicit_font_pairs.as_slice() {
-                (*font_index, font_name.clone(), QuillTypographyValueSource::ExplicitFdpc)
+                (
+                    *font_index,
+                    font_name.clone(),
+                    QuillTypographyValueSource::ExplicitFdpc,
+                )
             } else if !explicit_font_present {
                 let Some(default) = default else {
                     continue;
@@ -891,35 +887,41 @@ fn build_effective_runs(
                 let [(font_index, font_name)] = default.font_pairs.as_slice() else {
                     continue;
                 };
-                (*font_index, font_name.clone(), QuillTypographyValueSource::InheritedStsh1)
+                (
+                    *font_index,
+                    font_name.clone(),
+                    QuillTypographyValueSource::InheritedStsh1,
+                )
             } else {
                 continue;
             };
 
-        let (text_size_emu, text_size_source) =
-            if let [text_size_emu] = explicit_sizes.as_slice() {
-                (*text_size_emu, QuillTypographyValueSource::ExplicitFdpc)
-            } else if !explicit_size_present {
-                let Some(default) = default else {
-                    continue;
-                };
-                let [text_size_emu] = default.text_sizes_emu.as_slice() else {
-                    continue;
-                };
-                (*text_size_emu, QuillTypographyValueSource::InheritedStsh1)
-            } else {
+        let (text_size_emu, text_size_source) = if let [text_size_emu] = explicit_sizes.as_slice() {
+            (*text_size_emu, QuillTypographyValueSource::ExplicitFdpc)
+        } else if !explicit_size_present {
+            let Some(default) = default else {
                 continue;
             };
+            let [text_size_emu] = default.text_sizes_emu.as_slice() else {
+                continue;
+            };
+            (*text_size_emu, QuillTypographyValueSource::InheritedStsh1)
+        } else {
+            continue;
+        };
 
         if text_size_emu == 0 || font_name.is_empty() {
             continue;
         }
 
-        let uses_inheritance =
-            font_source == QuillTypographyValueSource::InheritedStsh1
-                || text_size_source == QuillTypographyValueSource::InheritedStsh1;
-        let (inherited_style_index, inherited_selector_source, fdpp_style_source,
-            stsh_character_default_source) = if uses_inheritance {
+        let uses_inheritance = font_source == QuillTypographyValueSource::InheritedStsh1
+            || text_size_source == QuillTypographyValueSource::InheritedStsh1;
+        let (
+            inherited_style_index,
+            inherited_selector_source,
+            fdpp_style_source,
+            stsh_character_default_source,
+        ) = if uses_inheritance {
             let Some(style_index) = paragraph.selected_style_index else {
                 continue;
             };
@@ -1426,7 +1428,6 @@ mod tests {
         assert!(!explicit_run_projection_allowed(&unknown));
     }
 
-
     #[test]
     fn effective_typography_prefers_explicit_property_and_inherits_only_missing_property() {
         let story = StoryExtent {
@@ -1598,8 +1599,7 @@ mod tests {
                 default_style_indices: Vec::new(),
             },
         ];
-        let ranges = materialize_paragraph_ranges(&styles, 100, 140, 20)
-            .expect("paragraph ranges");
+        let ranges = materialize_paragraph_ranges(&styles, 100, 140, 20).expect("paragraph ranges");
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0].selected_style_index, Some(3));
         assert_eq!(
