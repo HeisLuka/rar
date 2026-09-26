@@ -25,7 +25,7 @@ use chaptera_server::{
     },
 };
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_11, EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_4,
+    EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_4, EDITOR_PROJECT_VERSION_V0_11,
     EditOperation, EditorProject, EditorProjectIdentity, LengthEmu, RectEmu, Sha256Digest,
 };
 use sha2::{Digest, Sha256};
