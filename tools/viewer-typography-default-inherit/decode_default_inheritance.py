@@ -103,6 +103,10 @@ def parse_stsh1_character_defaults(
     start = int(desc["offset"])
     end = int(desc["end"])
     count = donor.u32(data, start + 4)
+    if count % 2:
+        raise donor.DecodeError(
+            f"STSH1 paired character/paragraph record count is odd: {count}"
+        )
     offsets_start = start + 20
     offsets_end = offsets_start + count * 4
     if offsets_end > end:
