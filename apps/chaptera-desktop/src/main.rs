@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod diagnostic_sweep;
+mod fallback_font;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
@@ -417,6 +418,8 @@ fn main() -> eframe::Result<()> {
         APP_TITLE,
         options,
         Box::new(move |cc| {
+            fallback_font::install(&cc.egui_ctx)
+                .expect("pinned Chaptera fallback font resource must validate");
             Ok(Box::new(ViewerApp::new_with_storage(
                 initial_path,
                 cc.storage,
