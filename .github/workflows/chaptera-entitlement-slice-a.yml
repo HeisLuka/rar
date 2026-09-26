@@ -39,6 +39,6 @@ jobs:
           toolchain: 1.94.1
           components: clippy
       - name: Test chaptera-entitlement on Windows
-        run: cargo test -p chaptera-entitlement --all-targets
+        run: cargo test -p chaptera-entitlement --all-targets -- --nocapture
       - name: Clippy chaptera-entitlement on Windows
         run: cargo clippy -p chaptera-entitlement --all-targets -- -D warnings
