@@ -271,6 +271,14 @@ mod tests {
     }
 
     #[test]
+    fn preview_typography_never_resolves_source_family_through_host_fonts() {
+        let source = include_str!("preview_typography.rs");
+        assert!(!source.contains("source_font_name"));
+        assert!(!source.contains("FontFamily::Name"));
+        assert!(!source.contains("FontDefinitions"));
+    }
+
+    #[test]
     fn source_size_tracks_scene_scale_without_host_font_lookup() {
         let size = source_text_size_px(24 * 12_700, 2.0 / 12_700.0)
             .expect("positive source size");
