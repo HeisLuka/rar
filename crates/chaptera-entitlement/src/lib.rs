@@ -159,7 +159,7 @@ impl EntitlementVerifier {
         {
             return Err(EntitlementError::MalformedArtifact);
         }
-        match protected.alg {
+        match protected.alg.as_ref() {
             Some(RegisteredLabelWithPrivate::Assigned(iana::Algorithm::ESP256)) => {}
             _ => return Err(EntitlementError::UnsupportedAlgorithm),
         }
@@ -332,6 +332,46 @@ mod tests {
         let verifier = EntitlementVerifier::new(trust_bundle());
         let result = verifier.verify(&sign_artifact(&payload(), TEST_KID), &ctx());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ambiguous_signer_key_id_is_rejected() {
+        let signing = signing_key();
+        let public = signing
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
+        let verifier = EntitlementVerifier::new(TrustBundle {
+            keys: vec![
+                TrustedSigner {
+                    kid: TEST_KID.to_vec(),
+                    public_key_sec1: public.clone(),
+                },
+                TrustedSigner {
+                    kid: TEST_KID.to_vec(),
+                    public_key_sec1: public,
+                },
+            ],
+        });
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::AmbiguousSigner);
+    }
+
+    #[test]
+    fn unprotected_headers_are_rejected_even_if_signature_would_still_verify() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+        let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
+        sign1.unprotected.content_type =
+            Some(ContentType::Text("text/plain".to_owned()));
+        let changed = sign1.to_tagged_vec().unwrap();
+
+        let err = verifier.verify(&changed, &ctx()).unwrap_err();
+        assert_eq!(err, EntitlementError::UnexpectedUnprotectedHeaders);
     }
 
     #[test]
