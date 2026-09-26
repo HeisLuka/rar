@@ -1872,4 +1872,76 @@ mod tests {
         authority.close().await;
         cleanup(&path);
     }
+
+    #[tokio::test]
+    async fn revision_reconcile_error_releases_single_connection_transaction() {
+        let path = temp_db("revision-partial-rollback");
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+        let authority = SqliteAuthzAuthority::open(&path, 1, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let revisions = SqliteRevisionStore::open(&path, 1, Duration::from_secs(2))
+            .await
+            .unwrap();
+
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                DocumentRole::Editor,
+                None,
+                "grant-revision-editor",
+                10,
+            )
+            .await
+            .unwrap();
+
+        let request_hash = "a".repeat(64);
+        let edge = revision_edge(&request_hash);
+        assert_eq!(
+            revisions.append_edge(edge.clone()).await.unwrap(),
+            AppendOutcome::Committed(edge)
+        );
+
+        let committer =
+            SqliteAuthorizedRevisionCommitter::new(authority.clone(), revisions.clone()).unwrap();
+        let error = committer
+            .reconcile_geometry_revision(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                "operation:move-1",
+                &request_hash,
+                20,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "revision_identity_partial_commit");
+
+        let probe = tokio::time::timeout(
+            Duration::from_secs(1),
+            authority.authorize(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                CAP_EDIT_GEOMETRY,
+                "post-partial-transaction-probe",
+                30,
+            ),
+        )
+        .await
+        .expect("reconcile error must release the only AuthZ pool connection")
+        .unwrap();
+        assert_eq!(probe.authz_version, 1);
+
+        drop(committer);
+        revisions.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
 }
