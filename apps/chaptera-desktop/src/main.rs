@@ -3367,11 +3367,11 @@ mod tests {
     #[test]
     fn desktop_zoom_surface_separates_numeric_and_fit_modes() {
         let source = include_str!("main.rs");
-        assert!(source.contains(""100%""));
-        assert!(source.contains(""Fit Page""));
-        assert!(source.contains(""Page Width""));
-        assert!(source.contains(""Fit Selection""));
-        assert!(!source.contains(""100% fit""));
+        assert!(source.contains("\"100%\""));
+        assert!(source.contains("\"Fit Page\""));
+        assert!(source.contains("\"Page Width\""));
+        assert!(source.contains("\"Fit Selection\""));
+        assert!(!source.contains("\"100% fit\""));
     }
 
     #[test]
