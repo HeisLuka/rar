@@ -1,6 +1,4 @@
-use crate::domain::{
-    StoryEditDomainV1, edit_domain_id_v1, validate_ordinary_story_range_v1,
-};
+use crate::domain::{StoryEditDomainV1, edit_domain_id_v1, validate_ordinary_story_range_v1};
 use chaptera_text_caret_map_adapter::{ResolvedTextCaretMapV1, resolve_story_position_v1};
 use chaptera_text_interaction_adapter::TextSelectionStateV1;
 use serde::{Deserialize, Serialize};
@@ -168,9 +166,18 @@ fn validate_selection_state_v1(
             }
         }
         "projected" => {
-            if selection.layout_revision_id.as_deref().is_none_or(str::is_empty)
-                || selection.anchor_visual_stop_id.as_deref().is_none_or(str::is_empty)
-                || selection.focus_visual_stop_id.as_deref().is_none_or(str::is_empty)
+            if selection
+                .layout_revision_id
+                .as_deref()
+                .is_none_or(str::is_empty)
+                || selection
+                    .anchor_visual_stop_id
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                || selection
+                    .focus_visual_stop_id
+                    .as_deref()
+                    .is_none_or(str::is_empty)
             {
                 return Err(TextKeyboardPolicyError::new(
                     "invalid_selection_state",
@@ -304,9 +311,8 @@ fn delete_decision(
             grapheme_version: UNICODE_GRAPHEME_VERSION.to_owned(),
         });
     }
-    validate_ordinary_story_range_v1(domain, start, end).map_err(|error| {
-        TextKeyboardPolicyError::new(error.code, error.to_string())
-    })?;
+    validate_ordinary_story_range_v1(domain, start, end)
+        .map_err(|error| TextKeyboardPolicyError::new(error.code, error.to_string()))?;
     Ok(TextKeyboardDecisionV1 {
         protocol_version: "chaptera.text-keyboard-decision.v1".to_owned(),
         command,
@@ -400,9 +406,7 @@ pub fn apply_text_keyboard_policy_v1(
                 target,
             )
         }
-        KeyboardCommandV1::DeleteBackward | KeyboardCommandV1::DeleteForward
-            if !collapsed =>
-        {
+        KeyboardCommandV1::DeleteBackward | KeyboardCommandV1::DeleteForward if !collapsed => {
             delete_decision(command, domain, start, end)
         }
         KeyboardCommandV1::DeleteBackward => {
@@ -434,23 +438,14 @@ mod tests {
     #[test]
     fn pinned_unicode_15_graphemes_cover_v0_cases() {
         assert_eq!(grapheme_boundaries_v1("abc").unwrap(), vec![0, 1, 2, 3]);
-        assert_eq!(
-            grapheme_boundaries_v1("a\u{301}b").unwrap(),
-            vec![0, 2, 3]
-        );
+        assert_eq!(grapheme_boundaries_v1("a\u{301}b").unwrap(), vec![0, 2, 3]);
         let family = "👨‍👩‍👧‍👦";
         assert_eq!(
             grapheme_boundaries_v1(family).unwrap(),
             vec![0, u32::try_from(family.chars().count()).unwrap()]
         );
-        assert_eq!(
-            grapheme_boundaries_v1("🇺🇸🇨🇦").unwrap(),
-            vec![0, 2, 4]
-        );
-        assert_eq!(
-            grapheme_boundaries_v1("a\r\nb").unwrap(),
-            vec![0, 1, 3, 4]
-        );
+        assert_eq!(grapheme_boundaries_v1("🇺🇸🇨🇦").unwrap(), vec![0, 2, 4]);
+        assert_eq!(grapheme_boundaries_v1("a\r\nb").unwrap(), vec![0, 1, 3, 4]);
     }
 
     #[test]
