@@ -51,6 +51,12 @@ jobs:
           print({"byte_len": len(raw), "sha256": actual_sha})
           PY
 
+      - name: Test Viewer linked-text contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer
+
       - name: Build Rar-owned Producer A slice
         shell: bash
         run: |
