@@ -1,0 +1,34 @@
+name: One-shot fmt PR 847
+
+on:
+  push:
+    branches:
+      - editor-desktop-text-interaction-rust-adapter-01-v2
+
+permissions:
+  contents: write
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: editor-desktop-text-interaction-rust-adapter-01-v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format task-owned Rust
+        run: cargo fmt --manifest-path crates/chaptera-text-interaction-adapter/Cargo.toml
+      - name: Commit formatted files and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/autofmt-pr847.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/chaptera-text-interaction-adapter/examples/conformance_probe.rs
+          git add crates/chaptera-text-interaction-adapter/src/lib.rs
+          git add -u .github/workflows/autofmt-pr847.yml
+          git diff --cached --check
+          git commit -m "style: rustfmt text interaction adapter"
+          git push origin HEAD:editor-desktop-text-interaction-rust-adapter-01-v2
