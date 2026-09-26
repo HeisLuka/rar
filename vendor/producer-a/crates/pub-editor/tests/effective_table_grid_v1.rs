@@ -1,6 +1,7 @@
 use pub_editor::{
     EDITOR_PROJECT_VERSION_V0_6, EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8,
-    EDITOR_PROJECT_VERSION_V0_9, EditorProject, EditorProjectError, EditorSession,
+    EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_11, EditorProject, EditorProjectError,
+    EditorSession,
 };
 use pub_model::{
     Affine2D, CanonicalId, Document, DocumentId, LengthEmu, Node, NodeHeader, NodeId, NodeKind,
@@ -177,7 +178,7 @@ fn effective_grid_roundtrips_and_replays_exactly() {
     let mut session = EditorSession::new(graph()).unwrap();
     let baseline = session.project();
 
-    assert_eq!(baseline.schema_version, EDITOR_PROJECT_VERSION_V0_6);
+    assert_eq!(baseline.schema_version, EDITOR_PROJECT_VERSION_V0_11);
     assert_eq!(baseline.table_grids.len(), 1);
     let grid = &baseline.table_grids[0];
     assert_eq!(grid.rows.len(), 1);
@@ -228,6 +229,7 @@ fn legacy_v0_5_project_replays_on_table_source_without_v0_6_grid_payload() {
     let baseline_session = EditorSession::new(graph()).unwrap();
     let mut legacy = baseline_session.project();
     legacy.schema_version = "pub-editor-v0.5".into();
+    legacy.identity = None;
     legacy.table_grids.clear();
 
     let mut replay = EditorSession::new(graph()).unwrap();
@@ -243,6 +245,7 @@ fn v0_7_inherits_table_grid_replay_integrity() {
     let baseline_session = EditorSession::new(graph()).unwrap();
     let mut project = baseline_session.project();
     project.schema_version = EDITOR_PROJECT_VERSION_V0_7.into();
+    project.identity = None;
     project.table_grids[0].rows[0].extent = Some(LengthEmu::new(501));
 
     let mut replay = EditorSession::new(graph()).unwrap();
@@ -258,6 +261,7 @@ fn v0_8_inherits_table_grid_replay_integrity() {
     let baseline_session = EditorSession::new(graph()).unwrap();
     let mut project = baseline_session.project();
     project.schema_version = EDITOR_PROJECT_VERSION_V0_8.into();
+    project.identity = None;
     project.table_grids[0].rows[0].extent = Some(LengthEmu::new(502));
 
     let mut replay = EditorSession::new(graph()).unwrap();
@@ -273,6 +277,7 @@ fn v0_9_inherits_table_grid_replay_integrity() {
     let baseline_session = EditorSession::new(graph()).unwrap();
     let mut project = baseline_session.project();
     project.schema_version = EDITOR_PROJECT_VERSION_V0_9.into();
+    project.identity = None;
     project.table_grids[0].rows[0].extent = Some(LengthEmu::new(503));
 
     let mut replay = EditorSession::new(graph()).unwrap();

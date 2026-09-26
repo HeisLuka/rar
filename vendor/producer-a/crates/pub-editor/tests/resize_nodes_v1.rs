@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_10,
+    EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_11,
     EditOperation, EditorError, EditorProject, EditorProjectError, EditorSession, LengthEmu,
     RectEmu, ResizeNodeBatchEntry,
 };
@@ -151,7 +151,7 @@ fn entries(base: &PubResolvedGraph) -> Vec<ResizeNodeBatchEntry> {
 
 #[test]
 fn canonical_batch_is_one_history_and_project_replay_unit() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10);
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_11);
     let base = graph();
     let (page_id, node_a, node_b) = ids();
     let mut batch = entries(&base);
@@ -163,6 +163,7 @@ fn canonical_batch_is_one_history_and_project_replay_unit() {
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_9.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![operation.clone()],
@@ -228,6 +229,7 @@ fn stale_later_member_rejects_whole_batch_without_partial_mutation() {
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_9.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::ResizeNodes {
@@ -261,6 +263,7 @@ fn count_duplicate_translation_only_and_wrong_page_fail_closed() {
     let too_small = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_9.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::ResizeNodes {
@@ -280,6 +283,7 @@ fn count_duplicate_translation_only_and_wrong_page_fail_closed() {
     let duplicate = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_9.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::ResizeNodes {
@@ -308,6 +312,7 @@ fn count_duplicate_translation_only_and_wrong_page_fail_closed() {
     let translation_only_project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_9.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::ResizeNodes {
@@ -330,6 +335,7 @@ fn count_duplicate_translation_only_and_wrong_page_fail_closed() {
     let wrong_page = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_9.to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::ResizeNodes {
@@ -356,6 +362,7 @@ fn v0_8_project_cannot_smuggle_resize_nodes_history_shape() {
     let project = EditorProject {
         schema_version: "pub-editor-v0.8".to_owned(),
         source_hash: source_hash(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: vec![EditOperation::ResizeNodes {

@@ -1,5 +1,5 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
+    EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_11,
     EditOperation, EditorEditableTarget, EditorError, EditorSession,
 };
 use pub_model::{
@@ -218,7 +218,7 @@ fn break_link_splits_topology_without_moving_or_copying_story_text() {
     }
 
     let project = session.project();
-    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_7);
+    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_11);
     assert_eq!(project.operations, vec![operation]);
     let requirements = session.persistence_requirements();
     assert!(
@@ -261,6 +261,7 @@ fn undo_redo_and_fresh_project_replay_are_exact_and_reuse_story_id() {
 
     let mut v0_8_project = project.clone();
     v0_8_project.schema_version = EDITOR_PROJECT_VERSION_V0_8.into();
+    v0_8_project.identity = None;
     let mut v0_8_reopened = EditorSession::new(graph()).expect("fresh v0.8 replay");
     v0_8_reopened
         .apply_project(&v0_8_project)
@@ -269,6 +270,7 @@ fn undo_redo_and_fresh_project_replay_are_exact_and_reuse_story_id() {
 
     let mut v0_9_project = project.clone();
     v0_9_project.schema_version = EDITOR_PROJECT_VERSION_V0_9.into();
+    v0_9_project.identity = None;
     let mut v0_9_reopened = EditorSession::new(graph()).expect("fresh v0.9 replay");
     v0_9_reopened
         .apply_project(&v0_9_project)
