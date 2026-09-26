@@ -958,6 +958,163 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    fn sign_test_artifact<T: serde::Serialize>(
+        payload: &T,
+        signing: &p256::ecdsa::SigningKey,
+        kid: &[u8],
+        content_type: &str,
+    ) -> Vec<u8> {
+        use coset::{CoseSign1Builder, HeaderBuilder, TaggedCborSerializable, iana};
+        use p256::ecdsa::{Signature, signature::Signer};
+
+        let mut payload_bytes = Vec::new();
+        ciborium::ser::into_writer(payload, &mut payload_bytes).expect("test payload");
+        let protected = HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ESP256)
+            .key_id(kid.to_vec())
+            .content_type(content_type.to_owned())
+            .build();
+
+        CoseSign1Builder::new()
+            .protected(protected)
+            .payload(payload_bytes)
+            .create_signature(&[], |tbs| {
+                let signature: Signature = signing.sign(tbs);
+                signature.to_bytes().to_vec()
+            })
+            .build()
+            .to_tagged_vec()
+            .expect("test COSE")
+    }
+
+    #[test]
+    fn offline_activation_request_to_device_bound_license_round_trip() {
+        use p256::ecdsa::SigningKey;
+
+        const ENTITLEMENT_KID: &[u8] = b"prod:entitlement:slice-d";
+        const BUILD_KID: &[u8] = b"prod:build:slice-d";
+        let suffix = unique_suffix();
+        let key_a_name = format!(
+            "Chaptera.DeviceKey.slice-d.a.{}.{}",
+            std::process::id(),
+            suffix
+        );
+        let key_b_name = format!(
+            "Chaptera.DeviceKey.slice-d.b.{}.{}",
+            std::process::id(),
+            suffix
+        );
+
+        let device_a = WindowsDeviceKey::open_or_create(&key_a_name).expect("DeviceKey A");
+        let device_a_id = device_a.device_key_id().expect("DeviceKey A id");
+        let request = device_a
+            .create_activation_request("offline-request-1", "chaptera.editor")
+            .expect("device-signed activation request");
+
+        let verified_request =
+            crate::verify_activation_request(&request, "chaptera.editor")
+                .expect("test issuer verifies request proof");
+        assert_eq!(verified_request.device_key_id(), &device_a_id);
+        assert_eq!(verified_request.request_id(), "offline-request-1");
+
+        let entitlement_signing =
+            SigningKey::from_slice(&[0x51; 32]).expect("synthetic entitlement issuer");
+        let build_signing =
+            SigningKey::from_slice(&[0x52; 32]).expect("synthetic build issuer");
+
+        let entitlement_trust = crate::TrustBundle::production_entitlement(vec![
+            crate::TrustedSigner::new(
+                ENTITLEMENT_KID.to_vec(),
+                entitlement_signing
+                    .verifying_key()
+                    .to_sec1_point(false)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ])
+        .expect("entitlement trust");
+        let build_trust = crate::TrustBundle::production_build_identity(vec![
+            crate::TrustedSigner::new(
+                BUILD_KID.to_vec(),
+                build_signing
+                    .verifying_key()
+                    .to_sec1_point(false)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ])
+        .expect("build trust");
+        let verifier =
+            crate::EntitlementVerifier::new(entitlement_trust, build_trust)
+                .expect("separate trust planes");
+
+        let activation = crate::ActivationPayloadV1 {
+            schema_version: 1,
+            activation_id: "activation-offline-1".into(),
+            entitlement_id: "entitlement-offline-1".into(),
+            product_id: verified_request.product_id().to_owned(),
+            grants: vec!["edit".into(), "export".into()],
+            device_key_id: verified_request.device_key_id().to_vec(),
+            issued_at: 1_900_000_000,
+            right: crate::RightV1::Perpetual {
+                min_major: 2,
+                max_major: 2,
+                updates_until: Some(1_950_000_000),
+            },
+        };
+        let license = sign_test_artifact(
+            &activation,
+            &entitlement_signing,
+            ENTITLEMENT_KID,
+            crate::ENTITLEMENT_CONTENT_TYPE,
+        );
+
+        let build = crate::BuildIdentityPayloadV1 {
+            schema_version: 1,
+            product_id: "chaptera.editor".into(),
+            major: 2,
+            minor: 0,
+            patch: 0,
+            released_at: 1_925_000_000,
+            release_sequence: 200,
+        };
+        let build_identity = sign_test_artifact(
+            &build,
+            &build_signing,
+            BUILD_KID,
+            crate::BUILD_IDENTITY_CONTENT_TYPE,
+        );
+
+        let context_a = crate::VerifyContext {
+            build_identity_artifact: build_identity.clone(),
+            expected_device_key_id: &device_a_id,
+        };
+        let grant = verifier
+            .verify(&license, &context_a)
+            .expect("originating device imports license");
+        assert_eq!(grant.activation_id, "activation-offline-1");
+
+        let possession_challenge = Sha256::digest(&license);
+        device_a
+            .assert_possession(&possession_challenge)
+            .expect("originating DeviceKey proves possession");
+
+        let device_b = WindowsDeviceKey::open_or_create(&key_b_name).expect("DeviceKey B");
+        let device_b_id = device_b.device_key_id().expect("DeviceKey B id");
+        assert_ne!(device_a_id, device_b_id);
+        let context_b = crate::VerifyContext {
+            build_identity_artifact: build_identity,
+            expected_device_key_id: &device_b_id,
+        };
+        let error = verifier
+            .verify(&license, &context_b)
+            .expect_err("copied license must not bind to second DeviceKey");
+        assert_eq!(error, crate::EntitlementError::DeviceMismatch);
+
+        device_a.delete_for_test().expect("delete DeviceKey A");
+        device_b.delete_for_test().expect("delete DeviceKey B");
+    }
+
     #[test]
     fn persisted_device_key_reopens_and_proves_possession() {
         let key_name = format!(
