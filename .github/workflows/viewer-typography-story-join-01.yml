@@ -1,0 +1,31 @@
+name: VIEWER-TYPOGRAPHY-STORY-JOIN-01
+
+on:
+  push:
+    branches:
+      - viewer-typography-story-join-01
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-typography-ownership:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test source-free decoder guards and pinned Viewer census
+        run: python tools/viewer-typography-story-join/test_decode_quill_story_typography.py -v
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Test bounded Rust typography parser
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill typography -- --nocapture
