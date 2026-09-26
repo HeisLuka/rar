@@ -1,8 +1,10 @@
 use std::{fmt, str::FromStr, sync::Arc};
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_4, EditOperation, EditorProject,
-    Sha256Digest, open_mature_0x2c_editor,
+    EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_3,
+    EDITOR_PROJECT_VERSION_V0_4, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
+    EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
+    EditOperation, EditorProject, Sha256Digest, open_mature_0x2c_editor,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -154,7 +156,7 @@ impl EditorReplayEngine for PubEditorReplayEngine {
         source_sha256: &str,
     ) -> Result<EditorProject, RevisionMaterializerError> {
         let session = Self::open(source_bytes, source_sha256)?;
-        let project = session.project();
+        let project = cloud_revision_project(&session.project());
         require_project_source(&project, source_sha256)?;
         if !project.assets.is_empty() {
             return Err(RevisionMaterializerError::new(
@@ -459,6 +461,51 @@ pub fn decode_editor_revision_event_v1(
     Ok(event)
 }
 
+/// Project view used by Cloud revision identity/replay.
+///
+/// EditorProject v0.11 adds local project/document/history lineage. Those UUIDs
+/// are intentionally excluded from Cloud semantic revision identity because
+/// the Cloud Project/Document and RevisionStream authorities already own that
+/// axis and exact source reopen must be deterministic across processes.
+pub fn cloud_revision_project(project: &EditorProject) -> EditorProject {
+    let mut projected = project.clone();
+    projected.identity = None;
+    projected.schema_version = cloud_revision_project_schema(project).to_owned();
+    projected
+}
+
+fn cloud_revision_project_schema(project: &EditorProject) -> &'static str {
+    let mut rank = if project.table_grids.is_empty() { 2_u8 } else { 6_u8 };
+
+    for operation in &project.operations {
+        let operation_rank = match operation {
+            EditOperation::CreateShape { .. } => 10,
+            EditOperation::ResizeNodes { .. } => 9,
+            EditOperation::MoveNodes { .. } => 8,
+            EditOperation::BreakTextFrameForwardLink { .. } => 7,
+            EditOperation::ResizeNode { .. } => 5,
+            EditOperation::MoveNode { .. } => 4,
+            EditOperation::ReplaceImage { .. } => 3,
+            EditOperation::ReplaceStoryRange { .. }
+            | EditOperation::ReplaceStoryText { .. }
+            | EditOperation::ReplaceTableCellText { .. } => 2,
+        };
+        rank = rank.max(operation_rank);
+    }
+
+    match rank {
+        10 => EDITOR_PROJECT_VERSION_V0_10,
+        9 => EDITOR_PROJECT_VERSION_V0_9,
+        8 => EDITOR_PROJECT_VERSION_V0_8,
+        7 => EDITOR_PROJECT_VERSION_V0_7,
+        6 => EDITOR_PROJECT_VERSION_V0_6,
+        5 => EDITOR_PROJECT_VERSION_V0_5,
+        4 => EDITOR_PROJECT_VERSION_V0_4,
+        3 => EDITOR_PROJECT_VERSION_V0_3,
+        _ => EDITOR_PROJECT_VERSION_V0_2,
+    }
+}
+
 /// Raw lowercase SHA-256 of the existing Rar canonical JSON project law.
 pub fn project_sha256(project: &EditorProject) -> Result<String, RevisionMaterializerError> {
     let bytes = canonical_json_bytes(project, "project_encode_failed", "EditorProject")?;
@@ -500,16 +547,7 @@ fn append_event_operation(
         ));
     }
     project.operations.push(operation);
-    project.schema_version = if project
-        .operations
-        .iter()
-        .any(|item| matches!(item, EditOperation::MoveNode { .. }))
-    {
-        EDITOR_PROJECT_VERSION_V0_4.to_owned()
-    } else {
-        EDITOR_PROJECT_VERSION_V0_2.to_owned()
-    };
-    Ok(project)
+    Ok(cloud_revision_project(&project))
 }
 
 fn validate_event_fields(event: &EditorRevisionEventV1) -> Result<(), RevisionMaterializerError> {
