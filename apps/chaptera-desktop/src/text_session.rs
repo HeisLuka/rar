@@ -308,7 +308,6 @@ pub fn focus_caret(mode: &DesktopTextMode) -> Option<&CaretStopV1> {
         .find(|stop| stop.stop_id == stop_id)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
