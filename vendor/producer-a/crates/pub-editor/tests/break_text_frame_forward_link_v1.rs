@@ -1,5 +1,5 @@
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_11,
+    EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_12,
     EditOperation, EditorEditableTarget, EditorError, EditorSession,
 };
 use pub_model::{
@@ -218,7 +218,7 @@ fn break_link_splits_topology_without_moving_or_copying_story_text() {
     }
 
     let project = session.project();
-    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_11);
+    assert_eq!(project.schema_version, EDITOR_PROJECT_VERSION_V0_12);
     assert_eq!(project.operations, vec![operation]);
     let requirements = session.persistence_requirements();
     assert!(
