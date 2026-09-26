@@ -5,6 +5,10 @@ on:
     paths:
       - ".github/workflows/chaptera-vtpe-locale.yml"
       - "tools/chaptera-locale-contract/**"
+      - "apps/chaptera-desktop/src/locale.rs"
+      - "apps/chaptera-desktop/src/supporter.rs"
+      - "apps/chaptera-desktop/src/supporter_attribution.rs"
+      - "apps/chaptera-desktop/src/main.rs"
   workflow_dispatch:
 
 permissions:
@@ -22,10 +26,25 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+
       - name: Compile bounded validator
         shell: pwsh
         run: |
           python -m py_compile tools/chaptera-locale-contract/validate_locale_contract.py
+
+      - name: Compile real Reader product slice
+        shell: pwsh
+        run: cargo check -p chaptera-desktop --features reader-only --all-targets
+
+      - name: Test real locale source and closed support attribution
+        shell: pwsh
+        run: |
+          cargo test -p chaptera-desktop --features reader-only locale::tests -- --nocapture
+          cargo test -p chaptera-desktop --features reader-only supporter_attribution::tests -- --nocapture
 
       - name: Probe real Windows user locale and validate contract
         shell: pwsh
