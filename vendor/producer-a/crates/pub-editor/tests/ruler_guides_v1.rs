@@ -86,7 +86,11 @@ fn add_move_delete_are_canonical_history_units_with_exact_emu_state() {
     assert_eq!(guide.page_id, page_id());
     assert_eq!(guide.axis, RulerGuideAxis::Vertical);
     assert_eq!(guide.position, LengthEmu::new(1_000_000));
-    assert_eq!(session.graph(), &base, "guides live in authored overlay state");
+    assert_eq!(
+        session.graph(),
+        &base,
+        "guides live in authored overlay state"
+    );
     assert_eq!(session.authored_ruler_guide(guide.guide_id), Some(&guide));
     assert_eq!(session.operations().len(), 1);
 
@@ -176,7 +180,9 @@ fn v0_12_project_replay_preserves_guide_identity_state_and_operations() {
     let decoded = serde_json::from_slice(&json).expect("deserialize");
 
     let mut reopened = EditorSession::new(base).expect("fresh session");
-    reopened.apply_project(&decoded).expect("replay guide project");
+    reopened
+        .apply_project(&decoded)
+        .expect("replay guide project");
     assert_eq!(reopened.project(), project);
     assert_eq!(
         reopened
@@ -203,11 +209,7 @@ fn invalid_noop_and_legacy_smuggling_fail_closed() {
     assert!(session.operations().is_empty());
 
     let add = session
-        .add_ruler_guide(
-            page_id(),
-            RulerGuideAxis::Vertical,
-            LengthEmu::new(750_000),
-        )
+        .add_ruler_guide(page_id(), RulerGuideAxis::Vertical, LengthEmu::new(750_000))
         .expect("valid add");
     let guide_id = match add {
         EditOperation::AddRulerGuide { guide } => guide.guide_id,
