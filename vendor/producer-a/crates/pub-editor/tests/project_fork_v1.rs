@@ -258,3 +258,36 @@ fn parent_and_next_issue_reopen_diverge_and_export_independently() {
     assert!(!next_export.bytes.is_empty());
     assert_eq!(reopened_parent.source_hash(), reopened_next.source_hash());
 }
+
+
+#[test]
+fn crop_bearing_next_issue_preserves_v0_12_and_initial_state() {
+    let mut parent = project_with_identity();
+    parent.schema_version = EDITOR_PROJECT_VERSION_V0_12.to_owned();
+    parent.operations.push(EditOperation::SetImageCrop {
+        node_id: canonical_id::<NodeId>("22000000-0000-4000-8000-000000000001"),
+        before: ImageCropStateV1 {
+            top_raw: Some(10),
+            bottom_raw: Some(20),
+            left_raw: Some(30),
+            right_raw: Some(40),
+        },
+        after: ImageCropStateV1 {
+            top_raw: Some(11),
+            bottom_raw: Some(22),
+            left_raw: Some(33),
+            right_raw: Some(44),
+        },
+    });
+    let parent_state = parent.state_id_v1();
+
+    let fork = parent.fork_next_issue().expect("crop-bearing project should fork");
+
+    assert_eq!(fork.schema_version, EDITOR_PROJECT_VERSION_V0_12);
+    assert_eq!(fork.state_id_v1(), parent_state);
+    assert_eq!(fork.operations, parent.operations);
+    assert_ne!(
+        fork.identity.as_ref().expect("fork identity").project_id,
+        parent.identity.as_ref().expect("parent identity").project_id
+    );
+}
