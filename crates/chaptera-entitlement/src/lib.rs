@@ -265,7 +265,7 @@ mod tests {
         TrustBundle {
             keys: vec![TrustedSigner {
                 kid: TEST_KID.to_vec(),
-                public_key_sec1: verifying.to_encoded_point(false).as_bytes().to_vec(),
+                public_key_sec1: verifying.to_sec1_point(false).as_bytes().to_vec(),
             }],
         }
     }
@@ -339,7 +339,7 @@ mod tests {
         let signing = signing_key();
         let public = signing
             .verifying_key()
-            .to_encoded_point(false)
+            .to_sec1_point(false)
             .as_bytes()
             .to_vec();
         let verifier = EntitlementVerifier::new(TrustBundle {
