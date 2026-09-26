@@ -13,7 +13,7 @@ pub struct InstallLock {
 }
 
 impl InstallLock {
-    pub fn try_acquire(root: &Path) -> Result<Self, OrchestrationError> {
+    pub fn try_acquire(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
         let path = root.join(INSTALL_LOCK_FILENAME);
         let mut file = OpenOptions::new()
