@@ -3233,12 +3233,40 @@ impl ViewerApp {
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
                         let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let galley = text_painter.layout(
+                        let base_font = fallback_font::font_id_for_scene_scale(scene_scale);
+                        let recovered_lines = fragment.line_count.max(1) as f32;
+                        let line_height_ratio = 1.25_f32;
+                        let frame_driven_size = (text_clip_rect.height()
+                            / recovered_lines
+                            / line_height_ratio)
+                            .clamp(base_font.size * 0.75_f32, base_font.size * 4.0_f32);
+                        let mut fitted_size = frame_driven_size;
+                        let mut galley = text_painter.layout(
                             fragment.text.clone(),
-                            fallback_font::font_id_for_scene_scale(scene_scale),
+                            egui::FontId::new(fitted_size, base_font.family.clone()),
                             egui::Color32::BLACK,
                             text_clip_rect.width().max(1.0_f32),
                         );
+                        for _ in 0..8 {
+                            if !preview_text_height_is_clipped(
+                                galley.size().y,
+                                text_clip_rect.height(),
+                            ) {
+                                break;
+                            }
+                            let next_size = (fitted_size * 0.88_f32)
+                                .max(base_font.size * 0.65_f32);
+                            if (next_size - fitted_size).abs() < f32::EPSILON {
+                                break;
+                            }
+                            fitted_size = next_size;
+                            galley = text_painter.layout(
+                                fragment.text.clone(),
+                                egui::FontId::new(fitted_size, base_font.family.clone()),
+                                egui::Color32::BLACK,
+                                text_clip_rect.width().max(1.0_f32),
+                            );
+                        }
                         if preview_text_height_is_clipped(galley.size().y, text_clip_rect.height())
                         {
                             preview_clipped_frames += 1;
