@@ -42,8 +42,13 @@ def rust(request):
         input=json.dumps(request, ensure_ascii=False),
         text=True,
         capture_output=True,
-        check=True,
+        check=False,
     )
+    if proc.returncode != 0:
+        print("Rust conformance probe failed", file=sys.stderr)
+        print(proc.stderr, file=sys.stderr)
+        print(json.dumps(request, ensure_ascii=False, indent=2), file=sys.stderr)
+        raise SystemExit(proc.returncode)
     return json.loads(proc.stdout)
 
 
