@@ -38,7 +38,46 @@ env:
   RUSTFLAGS: -C target-feature=+crt-static
 
 jobs:
+  portable-surface:
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.surface.outputs.present }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: surface
+        name: Admit portable package surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_present=false
+          if [[ -f tools/package_local_portable.py && -f packages/product/local-portable/v1/requirements.txt ]]; then
+            head_present=true
+          fi
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_present=false
+            if git cat-file -e "${{ github.event.pull_request.base.sha }}:tools/package_local_portable.py" 2>/dev/null; then
+              base_present=true
+            fi
+            if [[ "$base_present" == true && "$head_present" != true ]]; then
+              echo "::error::portable package surface existed on the base branch but is missing from the PR head"
+              exit 1
+            fi
+            if [[ "$head_present" != true ]]; then
+              echo "::notice::Chaptera Local portable package surface is parked/not yet merged; heavy portable validation is skipped for this PR."
+            fi
+          elif [[ "$head_present" != true ]]; then
+            echo "::error::manual portable validation requires the package surface to exist on the selected ref"
+            exit 1
+          fi
+
+          echo "present=$head_present" >> "$GITHUB_OUTPUT"
+
   build-portable:
+    needs: portable-surface
+    if: needs.portable-surface.outputs.present == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
