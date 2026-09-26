@@ -1,9 +1,9 @@
 use chaptera_text_caret_map_adapter::{
-    build_resolved_text_caret_map_v1, hit_test_story_position_v1, resolve_story_position_v1,
-    selection_geometry_v1, CaretMapBuildInputV1,
+    CaretMapBuildInputV1, build_resolved_text_caret_map_v1, hit_test_story_position_v1,
+    resolve_story_position_v1, selection_geometry_v1,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{self, Read};
 
 #[derive(Debug, Deserialize)]
