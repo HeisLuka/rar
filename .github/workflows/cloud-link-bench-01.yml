@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -29,6 +29,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
+      - name: One-shot rustfmt benchmark harness
+        if: github.event_name == 'push'
+        run: rustfmt --edition 2024 apps/chaptera-server/tests/cloud_link_bench.rs
+
+      - name: Commit rustfmt-only benchmark delta
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps/chaptera-server/tests/cloud_link_bench.rs; then
+            echo "already formatted"
+          else
+            git config user.name "chaptera-ci"
+            git config user.email "actions@users.noreply.github.com"
+            git add apps/chaptera-server/tests/cloud_link_bench.rs
+            git commit -m "CLOUD-LINK-BENCH-01: rustfmt"
+            git push origin HEAD:cloud-link-bench-01
+          fi
 
       - name: Acquire immutable public PUB fixtures
         shell: bash
