@@ -467,7 +467,7 @@ impl SqliteAuthorizedRevisionCommitter {
         {
             Ok(decision) => decision,
             Err(AuthorizationCheckError::Denied(denied)) => {
-                insert_audit(
+                let audit_result = insert_audit(
                     &mut conn,
                     tenant_id,
                     document_id,
@@ -480,9 +480,17 @@ impl SqliteAuthorizedRevisionCommitter {
                     Some(denied.code),
                     now_ms,
                 )
-                .await?;
-                commit(&mut conn).await?;
-                return Err(AuthzError::new(denied.code, denied.message));
+                .await;
+                match audit_result {
+                    Ok(()) => {
+                        commit(&mut conn).await?;
+                        return Err(AuthzError::new(denied.code, denied.message));
+                    }
+                    Err(error) => {
+                        rollback(&mut conn).await?;
+                        return Err(error);
+                    }
+                }
             }
             Err(AuthorizationCheckError::Internal(error)) => {
                 rollback(&mut conn).await?;
@@ -490,58 +498,64 @@ impl SqliteAuthorizedRevisionCommitter {
             }
         };
 
-        let existing = self
-            .revisions
-            .read_edge_by_operation_in_transaction(&mut conn, document_id, operation_id)
-            .await
-            .map_err(revision_store_error)?;
+        let result = async {
+            let existing = self
+                .revisions
+                .read_edge_by_operation_in_transaction(&mut conn, document_id, operation_id)
+                .await
+                .map_err(revision_store_error)?;
 
-        let Some(edge) = existing else {
-            rollback(&mut conn).await?;
-            return Ok(None);
-        };
-        if edge.request_hash != request_hash {
-            rollback(&mut conn).await?;
-            return Err(AuthzError::new(
-                "idempotency_conflict",
-                "client operation id was reused with a different canonical request",
-            ));
-        }
+            let Some(edge) = existing else {
+                return Ok(None);
+            };
+            if edge.request_hash != request_hash {
+                return Err(AuthzError::new(
+                    "idempotency_conflict",
+                    "client operation id was reused with a different canonical request",
+                ));
+            }
 
-        let binding = self
-            .revisions
-            .read_revision_identity_in_transaction(&mut conn, document_id, &edge.child_revision)
-            .await
-            .map_err(revision_store_error)?
-            .ok_or_else(|| {
-                AuthzError::new(
-                    "revision_identity_partial_commit",
-                    "accepted revision edge is missing its canonical revision identity binding",
+            let binding = self
+                .revisions
+                .read_revision_identity_in_transaction(
+                    &mut conn,
+                    document_id,
+                    &edge.child_revision,
                 )
-            })?;
+                .await
+                .map_err(revision_store_error)?
+                .ok_or_else(|| {
+                    AuthzError::new(
+                        "revision_identity_partial_commit",
+                        "accepted revision edge is missing its canonical revision identity binding",
+                    )
+                })?;
 
-        insert_audit(
-            &mut conn,
-            tenant_id,
-            document_id,
-            principal_id,
-            operation_id,
-            "revision.commit",
-            "allowed",
-            CAP_EDIT_GEOMETRY,
-            decision.authz_version,
-            None,
-            now_ms,
-        )
-        .await?;
-        commit(&mut conn).await?;
+            insert_audit(
+                &mut conn,
+                tenant_id,
+                document_id,
+                principal_id,
+                operation_id,
+                "revision.commit",
+                "allowed",
+                CAP_EDIT_GEOMETRY,
+                decision.authz_version,
+                None,
+                now_ms,
+            )
+            .await?;
 
-        Ok(Some(AuthorizedRevisionCommitReceipt {
-            edge,
-            binding,
-            authz_version: decision.authz_version,
-            replayed: true,
-        }))
+            Ok(Some(AuthorizedRevisionCommitReceipt {
+                edge,
+                binding,
+                authz_version: decision.authz_version,
+                replayed: true,
+            }))
+        }
+        .await;
+
+        finish_transaction(&mut conn, result).await
     }
 
     pub async fn commit_geometry_revision(
@@ -574,7 +588,7 @@ impl SqliteAuthorizedRevisionCommitter {
         {
             Ok(decision) => decision,
             Err(AuthorizationCheckError::Denied(denied)) => {
-                insert_audit(
+                let audit_result = insert_audit(
                     &mut conn,
                     tenant_id,
                     &edge.document_id,
@@ -587,9 +601,17 @@ impl SqliteAuthorizedRevisionCommitter {
                     Some(denied.code),
                     now_ms,
                 )
-                .await?;
-                commit(&mut conn).await?;
-                return Err(AuthzError::new(denied.code, denied.message));
+                .await;
+                match audit_result {
+                    Ok(()) => {
+                        commit(&mut conn).await?;
+                        return Err(AuthzError::new(denied.code, denied.message));
+                    }
+                    Err(error) => {
+                        rollback(&mut conn).await?;
+                        return Err(error);
+                    }
+                }
             }
             Err(AuthorizationCheckError::Internal(error)) => {
                 rollback(&mut conn).await?;
@@ -713,16 +735,7 @@ impl SqliteAuthorizedRevisionCommitter {
         }
         .await;
 
-        match result {
-            Ok(receipt) => {
-                commit(&mut conn).await?;
-                Ok(receipt)
-            }
-            Err(error) => {
-                rollback(&mut conn).await?;
-                Err(error)
-            }
-        }
+        finish_transaction(&mut conn, result).await
     }
 }
 
