@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use pub_editor::{
     EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorEditableTarget, EditorProject,
     EditorProjectAsset, EditorProjectError, EditorProjectForkProvenance, EditorProjectIdentity,
-    EditorSession,
-    LengthEmu, RectEmu, Sha256Digest,
+    EditorSession, LengthEmu, RectEmu, Sha256Digest,
 };
 use pub_model::{
     Affine2D, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
@@ -159,9 +158,7 @@ fn fork_value_diverges_without_mutating_parent() {
 #[test]
 fn legacy_schema_cannot_smuggle_durable_identity() {
     let base = graph();
-    let mut project = EditorSession::new(base.clone())
-        .expect("session")
-        .project();
+    let mut project = EditorSession::new(base.clone()).expect("session").project();
     project.schema_version = "pub-editor-v0.10".to_owned();
 
     let mut replay = EditorSession::new(base).expect("replay session");
