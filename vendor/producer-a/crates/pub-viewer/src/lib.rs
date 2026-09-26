@@ -340,6 +340,19 @@ pub fn open_mature_0x2c_geometry(
         })
         .collect::<Vec<_>>();
 
+    let (text_fragments, text_flow_diagnostics) =
+        resolve_viewer_text_fragments(&projection)?;
+    document
+        .diagnostics
+        .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+    if !text_fragments.is_empty() {
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.text.fallback_flow_metrics".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: "Visible text fragments use explicit Viewer fallback metrics for bounded frame flow. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
+        });
+    }
+
     let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
         bytes,
         &pipeline.source.graph,
@@ -403,7 +416,7 @@ pub fn open_mature_0x2c_geometry(
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.visual.geometry_only".to_owned(),
             severity: ViewerDiagnosticSeverity::FidelityWarning,
-            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded single-frame semantic text, exact embedded PNG/JPEG bytes, and complete explicit shape-local solid fill/line state when available. Inherited/default paint, linked text flow, typography, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
+            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded semantic text, including explicit linked-frame chains with Viewer fallback metrics, exact embedded PNG/JPEG bytes, and complete explicit shape-local solid fill/line state when available. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
                 .to_owned(),
         });
     }
@@ -415,6 +428,7 @@ pub fn open_mature_0x2c_geometry(
         scene,
         paints,
         story_frames,
+        text_fragments,
         images,
     })
 }
