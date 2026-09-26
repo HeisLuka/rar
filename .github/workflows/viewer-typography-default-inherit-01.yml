@@ -27,6 +27,9 @@ jobs:
       - name: Install bounded read-only dependency
         run: python -m pip install "olefile==0.47"
 
+      - name: Test inheritance precedence and fail-closed range laws
+        run: python tools/viewer-typography-default-inherit/test_default_inheritance.py -v
+
       - name: Fetch pinned Apache POI PUB fixtures by Git blob
         env:
           GH_TOKEN: ${{ github.token }}
