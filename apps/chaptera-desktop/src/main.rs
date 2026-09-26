@@ -21,6 +21,7 @@ use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
     direct_page_local_instance_v1, geometry_sync_policy_v1,
 };
+use chaptera_viewer_render_plan::build_page_render_plan_v1;
 use eframe::egui;
 use pub_interaction::{
     MoveTransaction, ResizeCommit, ResizeHandle, ResizePointerDown, ResizeTransaction,
@@ -2743,6 +2744,16 @@ impl ViewerApp {
             );
             return;
         };
+        let render_plan = match build_page_render_plan_v1(visual, self.selected_page) {
+            Ok(plan) => plan,
+            Err(error) => {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    format!("Selected page has no render plan: {error}"),
+                );
+                return;
+            }
+        };
 
         let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
@@ -2768,17 +2779,19 @@ impl ViewerApp {
         let scene_scale = match self.zoom_mode {
             CanvasZoomMode::Percent => numeric_zoom_scene_scale(self.zoom),
             CanvasZoomMode::FitPage => fitted_scale(
-                surface.size.width.get(),
-                surface.size.height.get(),
+                render_plan.page_size.width.get(),
+                render_plan.page_size.height.get(),
                 viewport,
             ),
-            CanvasZoomMode::PageWidth => page_width_scale(surface.size.width.get(), viewport),
+            CanvasZoomMode::PageWidth => {
+                page_width_scale(render_plan.page_size.width.get(), viewport)
+            },
             CanvasZoomMode::FitSelection => selected_bounds
                 .and_then(|bounds| fitted_scale(bounds.width.get(), bounds.height.get(), viewport))
                 .or_else(|| {
                     fitted_scale(
-                        surface.size.width.get(),
-                        surface.size.height.get(),
+                        render_plan.page_size.width.get(),
+                        render_plan.page_size.height.get(),
                         viewport,
                     )
                 }),
@@ -2791,8 +2804,8 @@ impl ViewerApp {
             return;
         };
 
-        let page_width = surface.size.width.get() as f32 * scene_scale;
-        let page_height = surface.size.height.get() as f32 * scene_scale;
+        let page_width = render_plan.page_size.width.get() as f32 * scene_scale;
+        let page_height = render_plan.page_size.height.get() as f32 * scene_scale;
         let content_width = (page_width + PAGE_MARGIN * 2.0).max(viewport.x);
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
@@ -3119,6 +3132,13 @@ impl ViewerApp {
                 );
 
                 for node in page_nodes.iter().copied() {
+                    let Some(render_node) = render_plan
+                        .nodes
+                        .iter()
+                        .find(|planned| planned.node_id == node.origin)
+                    else {
+                        continue;
+                    };
                     let node_bounds = next_canvas_resize
                         .filter(|resize| resize.node_id() == node.origin)
                         .and_then(|resize| resize.preview_bounds())
@@ -3127,7 +3147,7 @@ impl ViewerApp {
                                 .filter(|drag| drag.node_id() == node.origin)
                                 .map(|drag| drag.preview_bounds())
                         })
-                        .unwrap_or(node.bounds);
+                        .unwrap_or(render_node.bounds);
                     let width = node_bounds.width.get();
                     let height = node_bounds.height.get();
                     if width <= 0 || height <= 0 {
@@ -3172,12 +3192,7 @@ impl ViewerApp {
                             )
                         });
                     }
-                    let node_paint = visual
-                        .paints
-                        .iter()
-                        .find(|paint| paint.node_id == node.origin);
-
-                    if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
+                    if let Some(rgb) = render_node.solid_fill_rgb {
                         painter.rect_filled(
                             node_rect,
                             0,
@@ -3193,14 +3208,10 @@ impl ViewerApp {
                     let replacement_texture = replacement_key
                         .as_ref()
                         .and_then(|key| self.image_textures.get(key));
-                    let source_texture = visual
-                        .images
-                        .iter()
-                        .find(|embedded| embedded.node_ids.contains(&node.origin))
-                        .and_then(|embedded| {
-                            let key = format!("{:?}", embedded.resource_id);
-                            self.image_textures.get(&key)
-                        });
+                    let source_texture = render_node.image.as_ref().and_then(|image| {
+                        let key = format!("{:?}", image.resource_id);
+                        self.image_textures.get(&key)
+                    });
                     if let Some(texture) = replacement_texture.or(source_texture) {
                         painter.image(
                             texture.id(),
@@ -3217,7 +3228,7 @@ impl ViewerApp {
                         egui::StrokeKind::Inside,
                     );
 
-                    if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
+                    if let Some(line) = render_node.solid_line.as_ref() {
                         let line_width_px = line.width_emu as f32 * scene_scale;
                         if line_width_px > 0.0_f32 {
                             painter.rect_stroke(
@@ -3232,10 +3243,7 @@ impl ViewerApp {
                         }
                     }
 
-                    if let Some(fragment) = visual
-                        .text_fragments
-                        .iter()
-                        .find(|fragment| fragment.frame_id == node.origin)
+                    if let Some(fragment) = render_node.text.as_ref()
                         && !fragment.text.is_empty()
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
