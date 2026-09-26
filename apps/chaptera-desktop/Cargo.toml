@@ -17,8 +17,8 @@ embedded-fixture-tests = []
 [dependencies]
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
 chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
+chaptera-desktop-fallback-font-resource = { path = "../../crates/chaptera-desktop-fallback-font-resource" }
 eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
-epaint_default_fonts = "=0.31.1"
 image = { version = "=0.25.8", default-features = false, features = ["jpeg", "png"] }
 pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
 pub-export = { path = "../../vendor/producer-a/crates/pub-export" }
