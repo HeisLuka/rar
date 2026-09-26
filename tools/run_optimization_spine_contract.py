@@ -20,7 +20,7 @@ snapshot=render_bench_measurement(receipt,build)
 if snapshot["producer"]["receipt_version"]!="chaptera.render-bench.v1":
     raise AssertionError("Render benchmark producer was not integrated")
 if snapshot["evidence_authority"]["technology_decision_allowed"] is not False:
-    raise AssertionError("synthetic public benchmark must not authorize technology choice")
+    raise AssertionError("reference render benchmark must not authorize product technology choice")
 if snapshot["metrics"]["gpu.draw_latency"]["state"]!="unknown":
     raise AssertionError("unmeasured GPU latency must remain unknown")
 if snapshot["metrics"]["cost.usd_per_1000_edits"]["state"]!="unknown":
