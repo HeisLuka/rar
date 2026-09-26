@@ -55,6 +55,9 @@ jobs:
           python services/editor-api/test_text_ingress_v1.py
           python services/editor-api/test_text_keyboard_policy_v1.py
 
+      - name: Cross-language Python Rust golden conformance
+        run: python crates/chaptera-text-input-adapter/cross_language_conformance.py
+
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: bash
         run: |
