@@ -212,8 +212,12 @@ mod tests {
         message.extend_from_slice(ACTIVATION_REQUEST_SIGNATURE_DOMAIN);
         message.extend_from_slice(&signed_facts);
         let signature: Signature = signing.sign(&message);
-        assemble_activation_request(signed_facts, signature.to_bytes().into())
-            .expect("request artifact")
+        let signature_bytes: [u8; 64] = signature
+            .to_bytes()
+            .as_slice()
+            .try_into()
+            .expect("P-256 signature width");
+        assemble_activation_request(signed_facts, signature_bytes).expect("request artifact")
     }
 
     #[test]
