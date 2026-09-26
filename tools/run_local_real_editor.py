@@ -17,8 +17,17 @@ import urllib.parse
 import urllib.request
 import venv
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-STATE = ROOT / ".chaptera-local" / "editor"
+DEV_ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(os.environ.get("CHAPTERA_LOCAL_RUNTIME_ROOT", DEV_ROOT)).resolve()
+PACKAGED = os.environ.get("CHAPTERA_LOCAL_PACKAGED") == "1" or (
+    (ROOT / "BUILD.json").is_file() and (ROOT / "bin" / "chaptera-producer-a.exe").is_file()
+)
+if os.environ.get("CHAPTERA_LOCAL_STATE_ROOT"):
+    STATE = pathlib.Path(os.environ["CHAPTERA_LOCAL_STATE_ROOT"]).resolve() / "editor"
+elif PACKAGED and os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+    STATE = pathlib.Path(os.environ["LOCALAPPDATA"]) / "Chaptera" / "Local" / "editor"
+else:
+    STATE = ROOT / ".chaptera-local" / "editor"
 VENV = STATE / "venv"
 FIXTURE = STATE / "SampleNewsletter.pub"
 GRAPH = STATE / "resolved-graph.json"
@@ -57,7 +66,21 @@ def run_checked(args: list[str], *, stdout=None) -> None:
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(args)}")
 
 
-def ensure_venv() -> pathlib.Path:
+def ensure_python() -> pathlib.Path:
+    if PACKAGED:
+        python = pathlib.Path(sys.executable).resolve()
+        check = subprocess.run(
+            [str(python), "-c", "import jsonschema; print(jsonschema.__version__)"],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if check.returncode != 0:
+            raise RuntimeError(
+                "packaged Python runtime is missing the vendored jsonschema dependency closure"
+            )
+        return python
+
     python = python_in_venv()
     if not python.exists():
         venv.EnvBuilder(with_pip=True).create(VENV)
@@ -95,22 +118,27 @@ def ensure_fixture() -> None:
 
 def producer_path() -> pathlib.Path:
     name = "chaptera-producer-a.exe" if os.name == "nt" else "chaptera-producer-a"
+    if PACKAGED:
+        return ROOT / "bin" / name
     return ROOT / "vendor/producer-a/target/debug" / name
 
 
 def build_inputs() -> pathlib.Path:
     ensure_fixture()
-    run_checked(
-        [
-            "cargo",
-            "build",
-            "--manifest-path",
-            "vendor/producer-a/Cargo.toml",
-            "-p",
-            "chaptera-producer-a",
-        ]
-    )
     producer = producer_path()
+    if not PACKAGED:
+        run_checked(
+            [
+                "cargo",
+                "build",
+                "--manifest-path",
+                "vendor/producer-a/Cargo.toml",
+                "-p",
+                "chaptera-producer-a",
+            ]
+        )
+    if not producer.is_file():
+        raise RuntimeError(f"chaptera-producer-a binary not found: {producer}")
     with GRAPH.open("wb") as output:
         proc = subprocess.run(
             [str(producer), "resolved-graph", str(FIXTURE)],
@@ -207,7 +235,7 @@ def main() -> int:
 
     STATE.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
-    python = ensure_venv()
+    python = ensure_python()
     producer = build_inputs()
 
     service = subprocess.Popen(
