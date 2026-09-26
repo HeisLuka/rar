@@ -34,9 +34,9 @@ use pub_idml::{
     IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
 };
 use pub_model::{
-    EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
-    ResourceId, SourceDerivedIdInput, Story, StoryFrame, TableColumnId, TableRowId,
-    derive_source_canonical_id, validate_story_frames,
+    Affine2D, EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1,
+    EffectiveTableTrackV1, Node, NodeHeader, NodeKind, ResourceId, SourceDerivedIdInput, Story,
+    StoryFrame, TableColumnId, TableRowId, derive_source_canonical_id, validate_story_frames,
 };
 pub use pub_model::{LengthEmu, NodeId, PageId, RectEmu, Sha256Digest, StoryId, TableCellId};
 use pub_odg::{
@@ -44,7 +44,7 @@ use pub_odg::{
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
-    PubResolvedGraph, PubResolvedNodePayload, build_mature_0x2c_source_graph,
+    PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame, build_mature_0x2c_source_graph,
     materialize_bounded_simple_table_cells, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -138,6 +138,15 @@ pub struct ResizeNodeBatchEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoringTextPresetV1 {
+    pub resource_id: String,
+    pub font_fingerprint_sha256: String,
+    pub face_index: u32,
+    pub font_size_emu: LengthEmu,
+    pub line_height_emu: LengthEmu,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
     ReplaceStoryRange {
@@ -194,6 +203,13 @@ pub enum EditOperation {
     ResizeNodes {
         page_id: PageId,
         entries: Vec<ResizeNodeBatchEntry>,
+    },
+    CreateTextBox {
+        node_id: NodeId,
+        story_id: StoryId,
+        page_id: PageId,
+        bounds: RectEmu,
+        text_preset: AuthoringTextPresetV1,
     },
     CreateShape {
         node_id: NodeId,
@@ -278,6 +294,30 @@ impl PersistenceRequirements for EditOperation {
                     property_path: Some("node.bounds".into()),
                 })
                 .collect(),
+            Self::CreateTextBox {
+                node_id, story_id, ..
+            } => vec![
+                PersistenceRequirement {
+                    feature: "node.created_identity".into(),
+                    origin: Some(node_id.into_canonical()),
+                    property_path: Some("node".into()),
+                },
+                PersistenceRequirement {
+                    feature: "story.created_identity".into(),
+                    origin: Some(story_id.into_canonical()),
+                    property_path: Some("story".into()),
+                },
+                PersistenceRequirement {
+                    feature: "node.geometry.bounds".into(),
+                    origin: Some(node_id.into_canonical()),
+                    property_path: Some("node.bounds".into()),
+                },
+                PersistenceRequirement {
+                    feature: "story.text".into(),
+                    origin: Some(story_id.into_canonical()),
+                    property_path: Some("story.text".into()),
+                },
+            ],
             Self::CreateShape { node_id, .. } => vec![
                 PersistenceRequirement {
                     feature: "node.created_identity".into(),
@@ -594,6 +634,29 @@ pub enum EditorError {
     StaleImageOperation {
         node_id: NodeId,
     },
+    CreateTextBoxInvalidNodeId {
+        node_id: NodeId,
+    },
+    CreateTextBoxInvalidStoryId {
+        story_id: StoryId,
+    },
+    CreateTextBoxPageMissing {
+        page_id: PageId,
+    },
+    CreateTextBoxNodeIdCollision {
+        node_id: NodeId,
+    },
+    CreateTextBoxStoryIdCollision {
+        story_id: StoryId,
+    },
+    CreateTextBoxInvalidBounds {
+        node_id: NodeId,
+    },
+    CreateTextBoxInvalidTextPreset,
+    StaleCreateTextBox {
+        node_id: NodeId,
+        story_id: StoryId,
+    },
     CreateShapeInvalidNodeId {
         node_id: NodeId,
     },
@@ -773,6 +836,45 @@ impl fmt::Display for EditorError {
                 formatter,
                 "image node {} no longer matches the replacement operation precondition",
                 node_id.as_canonical()
+            ),
+            Self::CreateTextBoxInvalidNodeId { node_id } => write!(
+                formatter,
+                "CreateTextBox node {} is not an editor-created UUIDv7",
+                node_id.as_canonical()
+            ),
+            Self::CreateTextBoxInvalidStoryId { story_id } => write!(
+                formatter,
+                "CreateTextBox Story {} is not an editor-created UUIDv7",
+                story_id.as_canonical()
+            ),
+            Self::CreateTextBoxPageMissing { page_id } => write!(
+                formatter,
+                "CreateTextBox page {} is not present in the opened document",
+                page_id.as_canonical()
+            ),
+            Self::CreateTextBoxNodeIdCollision { node_id } => write!(
+                formatter,
+                "CreateTextBox node {} collides with an existing visual node",
+                node_id.as_canonical()
+            ),
+            Self::CreateTextBoxStoryIdCollision { story_id } => write!(
+                formatter,
+                "CreateTextBox Story {} already exists",
+                story_id.as_canonical()
+            ),
+            Self::CreateTextBoxInvalidBounds { node_id } => write!(
+                formatter,
+                "CreateTextBox node {} has invalid or unsafe bounds",
+                node_id.as_canonical()
+            ),
+            Self::CreateTextBoxInvalidTextPreset => formatter.write_str(
+                "CreateTextBox requires a non-empty fingerprinted deterministic text preset with positive font metrics",
+            ),
+            Self::StaleCreateTextBox { node_id, story_id } => write!(
+                formatter,
+                "CreateTextBox node {} / Story {} no longer matches its atomic replay precondition",
+                node_id.as_canonical(),
+                story_id.as_canonical()
             ),
             Self::CreateShapeInvalidNodeId { node_id } => write!(
                 formatter,
@@ -1032,6 +1134,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesCreateShapeOperation {
         index: usize,
     },
+    LegacyProjectCarriesCreateTextBoxOperation {
+        index: usize,
+    },
     LegacyProjectCarriesTableGrids,
     LegacyProjectCarriesIdentity,
     MissingProjectIdentity,
@@ -1112,6 +1217,10 @@ impl fmt::Display for EditorProjectError {
             Self::LegacyProjectCarriesCreateShapeOperation { index } => write!(
                 formatter,
                 "editor project operation {index} uses CreateShape but the project schema predates pub-editor-v0.10"
+            ),
+            Self::LegacyProjectCarriesCreateTextBoxOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses CreateTextBox but the project schema predates pub-editor-v0.11"
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
@@ -1617,6 +1726,15 @@ impl EditorSession {
                 .position(|operation| matches!(operation, EditOperation::CreateShape { .. }))
             {
                 return Err(EditorProjectError::LegacyProjectCarriesCreateShapeOperation { index });
+            }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_11 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::CreateTextBox { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesCreateTextBoxOperation { index });
             }
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_some() {
@@ -2238,6 +2356,38 @@ impl EditorSession {
             after_asset: replacement_asset,
         };
         apply_image_forward(&mut self.image_replacements, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
+    pub fn create_text_box(
+        &mut self,
+        node_id: NodeId,
+        story_id: StoryId,
+        page_id: PageId,
+        bounds: RectEmu,
+        text_preset: AuthoringTextPresetV1,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+        validate_create_text_box_candidate(
+            &self.graph,
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            &text_preset,
+        )?;
+
+        let operation = EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset,
+        };
+        apply_forward(&mut self.graph, &operation)?;
         self.undo.push(operation.clone());
         self.redo.clear();
         self.validate_source_identity()?;
@@ -2870,6 +3020,34 @@ fn replay_canonical_operation(
         } => session
             .break_text_frame_forward_link(*upstream_frame_id, *downstream_frame_id, *new_story_id)
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset,
+        } => {
+            validate_create_text_box_candidate(
+                graph,
+                *node_id,
+                *story_id,
+                *page_id,
+                *bounds,
+                text_preset,
+            )?;
+            let page = graph
+                .pages
+                .get_mut(page_id)
+                .expect("CreateTextBox candidate validated page");
+            page.children.push(*node_id);
+            graph
+                .stories
+                .insert(*story_id, empty_editor_story(*story_id));
+            graph.nodes.insert(
+                *node_id,
+                authored_text_box_node_v1(*node_id, *story_id, *page_id, *bounds),
+            );
+        }
         EditOperation::ReplaceTableCellText {
             node_id,
             story_id,
@@ -2926,6 +3104,21 @@ fn replay_canonical_operation(
         EditOperation::ResizeNodes { page_id, entries } => session
             .consume_canonical_resize_nodes(*page_id, entries.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset,
+        } => session
+            .create_text_box(
+                *node_id,
+                *story_id,
+                *page_id,
+                *bounds,
+                text_preset.clone(),
+            )
+            .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::CreateShape { .. } => session
             .consume_canonical_create_shape(expected.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
@@ -2935,6 +3128,95 @@ fn replay_canonical_operation(
 fn is_editor_created_uuid_v7_story_id(story_id: StoryId) -> bool {
     let bytes = story_id.as_canonical().as_bytes();
     (bytes[6] & 0xf0) == 0x70 && (bytes[8] & 0xc0) == 0x80
+}
+
+fn is_editor_created_uuid_v7_node_id(node_id: NodeId) -> bool {
+    let bytes = node_id.as_canonical().as_bytes();
+    (bytes[6] & 0xf0) == 0x70 && (bytes[8] & 0xc0) == 0x80
+}
+
+fn validate_authoring_text_preset_v1(preset: &AuthoringTextPresetV1) -> bool {
+    !preset.resource_id.trim().is_empty()
+        && preset.font_fingerprint_sha256.len() == 64
+        && preset
+            .font_fingerprint_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        && preset.font_size_emu.get() > 0
+        && preset.line_height_emu.get() > 0
+}
+
+fn validate_create_text_box_candidate(
+    graph: &PubResolvedGraph,
+    node_id: NodeId,
+    story_id: StoryId,
+    page_id: PageId,
+    bounds: RectEmu,
+    text_preset: &AuthoringTextPresetV1,
+) -> Result<(), EditorError> {
+    if !is_editor_created_uuid_v7_node_id(node_id) {
+        return Err(EditorError::CreateTextBoxInvalidNodeId { node_id });
+    }
+    if !is_editor_created_uuid_v7_story_id(story_id) {
+        return Err(EditorError::CreateTextBoxInvalidStoryId { story_id });
+    }
+    if !graph.pages.contains_key(&page_id) {
+        return Err(EditorError::CreateTextBoxPageMissing { page_id });
+    }
+    if graph.nodes.contains_key(&node_id) {
+        return Err(EditorError::CreateTextBoxNodeIdCollision { node_id });
+    }
+    if graph.stories.contains_key(&story_id) {
+        return Err(EditorError::CreateTextBoxStoryIdCollision { story_id });
+    }
+    if bounds.width.get() <= 0
+        || bounds.height.get() <= 0
+        || bounds.right().is_none()
+        || bounds.bottom().is_none()
+    {
+        return Err(EditorError::CreateTextBoxInvalidBounds { node_id });
+    }
+    if !validate_authoring_text_preset_v1(text_preset) {
+        return Err(EditorError::CreateTextBoxInvalidTextPreset);
+    }
+    Ok(())
+}
+
+fn authored_text_box_node_v1(
+    node_id: NodeId,
+    story_id: StoryId,
+    page_id: PageId,
+    bounds: RectEmu,
+) -> Node<PubResolvedNodePayload> {
+    Node {
+        kind: NodeKind::TextFrame,
+        header: NodeHeader {
+            id: node_id,
+            parent_id: page_id.into_canonical(),
+            bounds,
+            transform: Affine2D::identity(),
+            source_refs: Vec::new(),
+            extensions: Vec::new(),
+        },
+        payload: PubResolvedNodePayload {
+            // Source sequence identity does not exist for Chaptera-created nodes.
+            // Zero is a bounded synthetic sentinel; source_refs remain empty.
+            contents_seq_num: 0,
+            officeart_shape_type: None,
+            officeart_spid: None,
+            image_slot: None,
+            explicit_image_crop: None,
+            explicit_paint: Default::default(),
+            story_frame: Some(PubResolvedStoryFrame {
+                story_id: Some(story_id),
+                ordinal: 0,
+                previous_frame: None,
+                next_frame: None,
+            }),
+            table_story: None,
+            table: None,
+        },
+    }
 }
 
 fn frame_snapshot(
@@ -3837,6 +4119,37 @@ fn apply_inverse(
             for frame in before_frames {
                 set_story_frame_snapshot(graph, frame)?;
             }
+        }
+        EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            ..
+        } => {
+            let expected_story = empty_editor_story(*story_id);
+            let expected_node = authored_text_box_node_v1(*node_id, *story_id, *page_id, *bounds);
+            let page_has_exact_child = graph
+                .pages
+                .get(page_id)
+                .is_some_and(|page| page.children.iter().filter(|id| **id == *node_id).count() == 1);
+            if graph.stories.get(story_id) != Some(&expected_story)
+                || graph.nodes.get(node_id) != Some(&expected_node)
+                || !page_has_exact_child
+            {
+                return Err(EditorError::StaleCreateTextBox {
+                    node_id: *node_id,
+                    story_id: *story_id,
+                });
+            }
+            graph.nodes.remove(node_id);
+            graph.stories.remove(story_id);
+            graph
+                .pages
+                .get_mut(page_id)
+                .expect("CreateTextBox inverse validated page")
+                .children
+                .retain(|id| id != node_id);
         }
         EditOperation::ReplaceTableCellText {
             node_id,
