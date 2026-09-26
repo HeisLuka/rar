@@ -105,9 +105,7 @@ mod tests {
     fn canonical_fragment_rejects_lf_but_preserves_cr() {
         assert!(validate_canonical_fragment_text_v1("A\nB").is_err());
         assert_eq!(
-            validate_canonical_fragment_text_v1("A\rB")
-                .unwrap()
-                .text,
+            validate_canonical_fragment_text_v1("A\rB").unwrap().text,
             "A\rB"
         );
     }
