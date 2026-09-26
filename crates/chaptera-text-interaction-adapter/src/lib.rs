@@ -31,7 +31,10 @@ pub struct TextInteractionError {
 
 impl TextInteractionError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 
     fn from_caret(error: CaretMapError) -> Self {
@@ -187,13 +190,24 @@ fn required(value: &str, code: &'static str, message: &str) -> Result<(), TextIn
 }
 
 fn validate_candidate(candidate: &TextEntryCandidateV1) -> Result<(), TextInteractionError> {
-    required(&candidate.target_id, "entry_owner_invalid", "entry target_id is required")?;
-    required(&candidate.story_id, "entry_owner_invalid", "entry story_id is required")?;
+    required(
+        &candidate.target_id,
+        "entry_owner_invalid",
+        "entry target_id is required",
+    )?;
+    required(
+        &candidate.story_id,
+        "entry_owner_invalid",
+        "entry story_id is required",
+    )?;
     match candidate.capability.as_str() {
         "editable" => Ok(()),
         "read_only" => Err(TextInteractionError::new(
             "read_only_story",
-            candidate.reason.clone().unwrap_or_else(|| "resolved Story is read-only".to_owned()),
+            candidate
+                .reason
+                .clone()
+                .unwrap_or_else(|| "resolved Story is read-only".to_owned()),
         )),
         "unsupported" => Err(TextInteractionError::new(
             "story_editing_unsupported",
@@ -282,10 +296,7 @@ fn validate_authoritative_context(
     Ok(boundaries)
 }
 
-fn ensure_admitted(
-    scalar: u32,
-    domain: &StoryEditDomainV1,
-) -> Result<(), TextInteractionError> {
+fn ensure_admitted(scalar: u32, domain: &StoryEditDomainV1) -> Result<(), TextInteractionError> {
     let (start, end) = validate_domain(domain, &domain.story_id)?;
     if scalar < start || scalar > end {
         return Err(TextInteractionError::new(
@@ -382,7 +393,9 @@ fn pointer_selection(
     Ok((selection, stop))
 }
 
-fn canonical_metadata(mut metadata: Vec<(String, String)>) -> Result<Vec<(String, String)>, TextInteractionError> {
+fn canonical_metadata(
+    mut metadata: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, TextInteractionError> {
     metadata.sort_by(|a, b| a.0.cmp(&b.0));
     for pair in metadata.windows(2) {
         if pair[0].0 == pair[1].0 {
@@ -460,7 +473,14 @@ pub fn enter_text_edit_session_v1(
         ));
     }
     let selection = if let Some(pointer) = pointer_context {
-        pointer_selection(revision_id, domain, caret_map, pointer, expected_layout_revision_id)?.0
+        pointer_selection(
+            revision_id,
+            domain,
+            caret_map,
+            pointer,
+            expected_layout_revision_id,
+        )?
+        .0
     } else {
         initial_selection(
             revision_id,
@@ -827,7 +847,9 @@ fn preflight_pointer_target(
     Ok(stop)
 }
 
-fn activation_from_transition(transition: TextSessionTransitionV1) -> Result<DesktopTextActivationResultV1, TextInteractionError> {
+fn activation_from_transition(
+    transition: TextSessionTransitionV1,
+) -> Result<DesktopTextActivationResultV1, TextInteractionError> {
     let status = match transition.kind.as_str() {
         "enter" => "entered",
         "same_story_handoff" => "same_story_handoff",
@@ -1152,7 +1174,11 @@ mod tests {
         }
     }
 
-    fn context(story: &str, text_len: u32, linked: bool) -> (StoryEditDomainV1, ResolvedTextCaretMapV1) {
+    fn context(
+        story: &str,
+        text_len: u32,
+        linked: bool,
+    ) -> (StoryEditDomainV1, ResolvedTextCaretMapV1) {
         let lines = if text_len == 0 {
             Vec::new()
         } else if linked && text_len >= 2 {
@@ -1433,15 +1459,9 @@ mod tests {
         .unwrap()
         .active_session
         .unwrap();
-        let fenced = exit_desktop_text_mode_v1(
-            Some(&active),
-            "escape",
-            "find_replace",
-            None,
-            &[],
-            false,
-        )
-        .unwrap();
+        let fenced =
+            exit_desktop_text_mode_v1(Some(&active), "escape", "find_replace", None, &[], false)
+                .unwrap();
         assert_eq!(fenced.status, "host_focus_owned");
         assert!(fenced.active_session.is_some());
         let exited = exit_desktop_text_mode_v1(

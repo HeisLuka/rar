@@ -48,12 +48,28 @@ fn line(
     }
 }
 
-fn context(story: &str, len: u32, linked: bool) -> (StoryEditDomainV1, chaptera_text_caret_map_adapter::ResolvedTextCaretMapV1) {
+fn context(
+    story: &str,
+    len: u32,
+    linked: bool,
+) -> (
+    StoryEditDomainV1,
+    chaptera_text_caret_map_adapter::ResolvedTextCaretMapV1,
+) {
     let lines = if len == 0 {
         Vec::new()
     } else if linked && len >= 2 {
         vec![
-            line(story, "l1", 0, "frame:A", None, Some("l2"), 0, vec![cluster(0, 1, 0, 10)]),
+            line(
+                story,
+                "l1",
+                0,
+                "frame:A",
+                None,
+                Some("l2"),
+                0,
+                vec![cluster(0, 1, 0, 10)],
+            ),
             line(
                 story,
                 "l2",
@@ -111,7 +127,12 @@ fn candidate(story: &str, frame: &str) -> TextEntryCandidateV1 {
     }
 }
 
-fn session_summary(status: &str, session: Option<&chaptera_text_interaction_adapter::TextEditSessionV1>, mutation_count: u32, undo: bool) -> Value {
+fn session_summary(
+    status: &str,
+    session: Option<&chaptera_text_interaction_adapter::TextEditSessionV1>,
+    mutation_count: u32,
+    undo: bool,
+) -> Value {
     json!({
         "status": status,
         "story_id": session.map(|s| s.story_id.clone()),
@@ -129,88 +150,244 @@ fn run(name: &str) -> Value {
         "pointer_enter" => {
             let (domain, map) = context("story:1", 3, false);
             let tr = enter_text_edit_session_v1(
-                "session:1", 0, "doc:1", &candidate("story:1", "frame:A"), "rev:1",
-                &domain, &map, "layout:1",
-                Some(&TextPointerTargetV1 { page_id:"page:1".into(), page_x_emu:19, page_y_emu:10 }),
-                None, Vec::new(),
-            ).unwrap();
-            session_summary(&tr.kind, Some(&tr.session), tr.lifecycle_document_mutation_count, tr.undo_group_boundary)
+                "session:1",
+                0,
+                "doc:1",
+                &candidate("story:1", "frame:A"),
+                "rev:1",
+                &domain,
+                &map,
+                "layout:1",
+                Some(&TextPointerTargetV1 {
+                    page_id: "page:1".into(),
+                    page_x_emu: 19,
+                    page_y_emu: 10,
+                }),
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+            session_summary(
+                &tr.kind,
+                Some(&tr.session),
+                tr.lifecycle_document_mutation_count,
+                tr.undo_group_boundary,
+            )
         }
         "empty_enter" => {
             let (domain, map) = context("story:new", 0, false);
             let tr = enter_text_edit_session_v1(
-                "session:new", 0, "doc:1", &candidate("story:new", "frame:new"), "rev:1",
-                &domain, &map, "layout:1", None,
-                Some(&TextInitialPositionV1 { scalar_boundary:0, visual_stop_id:None }),
+                "session:new",
+                0,
+                "doc:1",
+                &candidate("story:new", "frame:new"),
+                "rev:1",
+                &domain,
+                &map,
+                "layout:1",
+                None,
+                Some(&TextInitialPositionV1 {
+                    scalar_boundary: 0,
+                    visual_stop_id: None,
+                }),
                 Vec::new(),
-            ).unwrap();
-            session_summary(&tr.kind, Some(&tr.session), tr.lifecycle_document_mutation_count, tr.undo_group_boundary)
+            )
+            .unwrap();
+            session_summary(
+                &tr.kind,
+                Some(&tr.session),
+                tr.lifecycle_document_mutation_count,
+                tr.undo_group_boundary,
+            )
         }
         "linked_handoff" => {
             let (domain, map) = context("story:1", 2, true);
             let active = enter_text_edit_session_v1(
-                "session:1", 4, "doc:1", &candidate("story:1", "frame:A"), "rev:1",
-                &domain, &map, "layout:1",
-                Some(&TextPointerTargetV1 { page_id:"page:1".into(), page_x_emu:0, page_y_emu:10 }),
-                None, Vec::new(),
-            ).unwrap().session;
-            let tr = handoff_same_story_frame_v1(
-                &active, &candidate("story:1", "frame:B"), &domain, &map, "layout:1",
-                Some(&TextPointerTargetV1 { page_id:"page:1".into(), page_x_emu:10, page_y_emu:40 }),
+                "session:1",
+                4,
+                "doc:1",
+                &candidate("story:1", "frame:A"),
+                "rev:1",
+                &domain,
+                &map,
+                "layout:1",
+                Some(&TextPointerTargetV1 {
+                    page_id: "page:1".into(),
+                    page_x_emu: 0,
+                    page_y_emu: 10,
+                }),
                 None,
-            ).unwrap();
-            session_summary(&tr.kind, Some(&tr.session), tr.lifecycle_document_mutation_count, tr.undo_group_boundary)
+                Vec::new(),
+            )
+            .unwrap()
+            .session;
+            let tr = handoff_same_story_frame_v1(
+                &active,
+                &candidate("story:1", "frame:B"),
+                &domain,
+                &map,
+                "layout:1",
+                Some(&TextPointerTargetV1 {
+                    page_id: "page:1".into(),
+                    page_x_emu: 10,
+                    page_y_emu: 40,
+                }),
+                None,
+            )
+            .unwrap();
+            session_summary(
+                &tr.kind,
+                Some(&tr.session),
+                tr.lifecycle_document_mutation_count,
+                tr.undo_group_boundary,
+            )
         }
         "story_switch" => {
-            let (d1,m1)=context("story:1",1,false);
-            let active=enter_text_edit_session_v1(
-                "session:1",2,"doc:1",&candidate("story:1","frame:A"),"rev:1",
-                &d1,&m1,"layout:1",None,
-                Some(&TextInitialPositionV1{scalar_boundary:1,visual_stop_id:None}),Vec::new(),
-            ).unwrap().session;
-            let (d2,m2)=context("story:2",1,false);
-            let tr=switch_text_edit_session_v1(
-                &active,&candidate("story:2","frame:A"),"rev:2",&d2,&m2,"layout:1",
-                None,Some(&TextInitialPositionV1{scalar_boundary:0,visual_stop_id:None}),None,Vec::new(),
-            ).unwrap();
-            session_summary(&tr.kind,Some(&tr.session),tr.lifecycle_document_mutation_count,tr.undo_group_boundary)
+            let (d1, m1) = context("story:1", 1, false);
+            let active = enter_text_edit_session_v1(
+                "session:1",
+                2,
+                "doc:1",
+                &candidate("story:1", "frame:A"),
+                "rev:1",
+                &d1,
+                &m1,
+                "layout:1",
+                None,
+                Some(&TextInitialPositionV1 {
+                    scalar_boundary: 1,
+                    visual_stop_id: None,
+                }),
+                Vec::new(),
+            )
+            .unwrap()
+            .session;
+            let (d2, m2) = context("story:2", 1, false);
+            let tr = switch_text_edit_session_v1(
+                &active,
+                &candidate("story:2", "frame:A"),
+                "rev:2",
+                &d2,
+                &m2,
+                "layout:1",
+                None,
+                Some(&TextInitialPositionV1 {
+                    scalar_boundary: 0,
+                    visual_stop_id: None,
+                }),
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+            session_summary(
+                &tr.kind,
+                Some(&tr.session),
+                tr.lifecycle_document_mutation_count,
+                tr.undo_group_boundary,
+            )
         }
         "inactive_click" => {
-            let (domain,map)=context("story:1",3,false);
-            let r=activate_pointer_text_v1(
-                &candidate("story:1","frame:A"),"rev:1",&domain,&map,"layout:1",
-                &TextPointerTargetV1{page_id:"page:1".into(),page_x_emu:19,page_y_emu:10},
-                None,false,1,"session:1","doc:1",None,
-            ).unwrap();
-            session_summary(&r.status,r.active_session.as_ref(),r.document_mutation_count,false)
+            let (domain, map) = context("story:1", 3, false);
+            let r = activate_pointer_text_v1(
+                &candidate("story:1", "frame:A"),
+                "rev:1",
+                &domain,
+                &map,
+                "layout:1",
+                &TextPointerTargetV1 {
+                    page_id: "page:1".into(),
+                    page_x_emu: 19,
+                    page_y_emu: 10,
+                },
+                None,
+                false,
+                1,
+                "session:1",
+                "doc:1",
+                None,
+            )
+            .unwrap();
+            session_summary(
+                &r.status,
+                r.active_session.as_ref(),
+                r.document_mutation_count,
+                false,
+            )
         }
         "pointer_mismatch" => {
-            let (domain,map)=context("story:1",1,false);
-            let r=activate_pointer_text_v1(
-                &candidate("story:1","frame:B"),"rev:1",&domain,&map,"layout:1",
-                &TextPointerTargetV1{page_id:"page:1".into(),page_x_emu:5,page_y_emu:200},
-                None,true,1,"session:1","doc:1",None,
-            ).unwrap();
-            session_summary(&r.status,r.active_session.as_ref(),r.document_mutation_count,false)
+            let (domain, map) = context("story:1", 1, false);
+            let r = activate_pointer_text_v1(
+                &candidate("story:1", "frame:B"),
+                "rev:1",
+                &domain,
+                &map,
+                "layout:1",
+                &TextPointerTargetV1 {
+                    page_id: "page:1".into(),
+                    page_x_emu: 5,
+                    page_y_emu: 200,
+                },
+                None,
+                true,
+                1,
+                "session:1",
+                "doc:1",
+                None,
+            )
+            .unwrap();
+            session_summary(
+                &r.status,
+                r.active_session.as_ref(),
+                r.document_mutation_count,
+                false,
+            )
         }
         "escape_focus_fence" | "escape_exit" => {
-            let (domain,map)=context("story:1",1,false);
-            let active=activate_explicit_edit_text_v1(
-                "session:1","doc:1","rev:1",&candidate("story:1","frame:A"),
-                &domain,&map,"layout:1",None,None,
-            ).unwrap().active_session.unwrap();
-            let focus=if name=="escape_focus_fence"{"find_replace"}else{"story_text"};
-            let r=exit_desktop_text_mode_v1(
-                Some(&active),"escape",focus,None,&["op:already-submitted".to_owned()],false,
-            ).unwrap();
-            let undo=r.exit_receipt.as_ref().is_some_and(|x|x.undo_group_boundary);
-            session_summary(&r.status,r.active_session.as_ref(),r.document_mutation_count,undo)
+            let (domain, map) = context("story:1", 1, false);
+            let active = activate_explicit_edit_text_v1(
+                "session:1",
+                "doc:1",
+                "rev:1",
+                &candidate("story:1", "frame:A"),
+                &domain,
+                &map,
+                "layout:1",
+                None,
+                None,
+            )
+            .unwrap()
+            .active_session
+            .unwrap();
+            let focus = if name == "escape_focus_fence" {
+                "find_replace"
+            } else {
+                "story_text"
+            };
+            let r = exit_desktop_text_mode_v1(
+                Some(&active),
+                "escape",
+                focus,
+                None,
+                &["op:already-submitted".to_owned()],
+                false,
+            )
+            .unwrap();
+            let undo = r
+                .exit_receipt
+                .as_ref()
+                .is_some_and(|x| x.undo_group_boundary);
+            session_summary(
+                &r.status,
+                r.active_session.as_ref(),
+                r.document_mutation_count,
+                undo,
+            )
         }
         _ => panic!("unknown scenario"),
     }
 }
 
 fn main() {
-    let name=std::env::args().nth(1).expect("scenario");
+    let name = std::env::args().nth(1).expect("scenario");
     println!("{}", serde_json::to_string(&run(&name)).unwrap());
 }
