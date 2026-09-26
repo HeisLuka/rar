@@ -509,11 +509,7 @@ impl SqliteAuthorizedRevisionCommitter {
 
             let binding = self
                 .revisions
-                .read_revision_identity_in_transaction(
-                    &mut conn,
-                    document_id,
-                    &edge.child_revision,
-                )
+                .read_revision_identity_in_transaction(&mut conn, document_id, &edge.child_revision)
                 .await
                 .map_err(revision_store_error)?
                 .ok_or_else(|| {
