@@ -887,6 +887,36 @@ impl SqliteRevisionStore {
         row.map(decode_revision_identity_row).transpose()
     }
 
+    pub(crate) async fn read_revision_identity_in_transaction(
+        &self,
+        conn: &mut SqliteConnection,
+        document_id: &str,
+        service_revision_id: &str,
+    ) -> Result<Option<RevisionIdentityBinding>, SqliteStoreError> {
+        require_ident(document_id, "document_id")?;
+        require_ident(service_revision_id, "service_revision_id")?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT
+                document_id,
+                service_revision_id,
+                canonical_schema_version,
+                canonical_revision_id,
+                bound_at_ms
+            FROM revision_identity_bindings
+            WHERE document_id = ? AND service_revision_id = ?
+            "#,
+        )
+        .bind(document_id.as_bytes())
+        .bind(service_revision_id.as_bytes())
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(sqlite_read_error)?;
+
+        row.map(decode_revision_identity_row).transpose()
+    }
+
     pub async fn require_revision_identity(
         &self,
         document_id: &str,
