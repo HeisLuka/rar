@@ -1000,7 +1000,13 @@ mod tests {
     #[test]
     fn selection_preserves_partial_and_unplaced_ranges() {
         let map = build(
-            vec![line("l0", 0, None, None, vec![cluster(0, 2, 0, 20)])],
+            vec![line(
+                "l0",
+                0,
+                None,
+                None,
+                vec![cluster(0, 1, 0, 10), cluster(1, 2, 10, 20)],
+            )],
             5,
         );
         let partial = selection_geometry_v1(&map, 1, 4, None).unwrap();
