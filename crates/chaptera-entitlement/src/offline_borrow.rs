@@ -750,18 +750,15 @@ pub fn issue_borrow(
         .checked_add(command.drain_seconds)
         .ok_or(BorrowAuthorityError::InvalidCommand)?;
     let max_work = maximum_work_cutoff(authoritative_now, command.drain_seconds, parent)?;
-    if let Some(max_work) = max_work {
-        if max_work <= latest_lease.new_paid_work_until {
-            return Err(BorrowAuthorityError::ParentWindowTooShort);
-        }
-        if command.requested_new_paid_work_until > max_work {
-            return Ok(BorrowAuthorityTransition {
-                outcome: BorrowAuthorityOutcome::NeedsConfirmation {
-                    max_new_paid_work_until: max_work,
-                },
-                next_state: state.clone(),
-            });
-        }
+    if let Some(max_work) = max_work
+        && command.requested_new_paid_work_until > max_work
+    {
+        return Ok(BorrowAuthorityTransition {
+            outcome: BorrowAuthorityOutcome::NeedsConfirmation {
+                max_new_paid_work_until: max_work,
+            },
+            next_state: state.clone(),
+        });
     }
 
     let sequence = state.next_sequence;
@@ -866,15 +863,18 @@ pub fn extend_borrow(
     }
 
     let max_work = maximum_work_cutoff(authoritative_now, command.drain_seconds, parent)?;
-    if let Some(max_work) = max_work
-        && command.requested_new_paid_work_until > max_work
-    {
-        return Ok(BorrowAuthorityTransition {
-            outcome: BorrowAuthorityOutcome::NeedsConfirmation {
-                max_new_paid_work_until: max_work,
-            },
-            next_state: state.clone(),
-        });
+    if let Some(max_work) = max_work {
+        if max_work <= latest_lease.new_paid_work_until {
+            return Err(BorrowAuthorityError::ParentWindowTooShort);
+        }
+        if command.requested_new_paid_work_until > max_work {
+            return Ok(BorrowAuthorityTransition {
+                outcome: BorrowAuthorityOutcome::NeedsConfirmation {
+                    max_new_paid_work_until: max_work,
+                },
+                next_state: state.clone(),
+            });
+        }
     }
 
     let sequence = state.next_sequence;
