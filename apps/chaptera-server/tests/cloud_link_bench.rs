@@ -384,6 +384,90 @@ struct FixtureReceipt {
     canonical_source_sha256: String,
 }
 
+#[derive(Debug, Serialize)]
+struct SharedDbReceipt {
+    protocol_version: &'static str,
+    build_sha: String,
+    fixture_source_commit: &'static str,
+    fixture_file: String,
+    fixture_sha256: String,
+    fixture_bytes: u64,
+    preseeded_principals: u64,
+    checkpoints: Vec<SharedDbCheckpoint>,
+}
+
+#[derive(Debug, Serialize)]
+struct SharedDbCheckpoint {
+    after_projects: u64,
+    sqlite_main_bytes: u64,
+    sqlite_wal_bytes: u64,
+    sqlite_shm_bytes: u64,
+    sqlite_total_bytes: u64,
+    durable_row_counts: BTreeMap<String, i64>,
+}
+
+struct BenchRuntime {
+    db: PathBuf,
+    provider: CountingProvider,
+    source_repo: SqliteSourceIngressRepository,
+    admission: SqliteUploadAdmissionAuthority,
+    blob_repo: SqliteBlobBindingRepository,
+    blob_store: BlobStoreService,
+    job_queue: SqliteJobQueue,
+    validation_jobs: SourceValidationJobQueue,
+    projects: SqliteProjectPersistence,
+}
+
+impl BenchRuntime {
+    async fn open(db: &Path, provider: CountingProvider) -> BenchResult<Self> {
+        let busy = Duration::from_secs(2);
+        let source_repo = SqliteSourceIngressRepository::open(db, 4, busy).await?;
+        let admission = SqliteUploadAdmissionAuthority::open(
+            db,
+            4,
+            busy,
+            UploadAdmissionConfig {
+                principal_concurrent_cap: 2,
+                tenant_concurrent_cap: 8,
+                principal_bytes_cap: 512 * 1024 * 1024,
+                tenant_bytes_cap: 2 * 1024 * 1024 * 1024,
+                max_single_upload_bytes: 512 * 1024 * 1024,
+                lease_duration: Duration::from_secs(3600),
+                retention: Duration::from_secs(7 * 24 * 3600),
+            },
+        )
+        .await?;
+        let blob_repo = SqliteBlobBindingRepository::open(db, 4, busy).await?;
+        let blob_store = BlobStoreService::new(
+            Arc::new(provider.clone()),
+            Arc::new(blob_repo.clone()),
+            Arc::new(BenchIds::default()),
+        );
+        let job_queue = SqliteJobQueue::open(db, 4, busy).await?;
+        let validation_jobs = SourceValidationJobQueue::new(job_queue.clone());
+        let projects = SqliteProjectPersistence::open(db, 4, busy).await?;
+        Ok(Self {
+            db: db.to_path_buf(),
+            provider,
+            source_repo,
+            admission,
+            blob_repo,
+            blob_store,
+            job_queue,
+            validation_jobs,
+            projects,
+        })
+    }
+
+    async fn close(self) {
+        self.projects.close().await;
+        self.job_queue.close().await;
+        self.blob_repo.close().await;
+        self.admission.close().await;
+        self.source_repo.close().await;
+    }
+}
+
 fn unix_now_ms() -> BenchResult<i64> {
     let millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     Ok(i64::try_from(millis)?)
@@ -419,12 +503,33 @@ async fn sha256_file(path: &Path) -> BenchResult<(String, u64)> {
     Ok((format!("{:x}", hasher.finalize()), total))
 }
 
+fn sqlite_component_bytes(path: &Path, suffix: &str) -> u64 {
+    fs::metadata(format!("{}{}", path.display(), suffix))
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+}
+
 fn sqlite_storage_bytes(path: &Path) -> u64 {
     ["", "-wal", "-shm"]
         .iter()
-        .filter_map(|suffix| fs::metadata(format!("{}{}", path.display(), suffix)).ok())
-        .map(|metadata| metadata.len())
+        .map(|suffix| sqlite_component_bytes(path, suffix))
         .fold(0_u64, u64::saturating_add)
+}
+
+async fn shared_db_checkpoint(db: &Path, after_projects: u64) -> BenchResult<SharedDbCheckpoint> {
+    let sqlite_main_bytes = sqlite_component_bytes(db, "");
+    let sqlite_wal_bytes = sqlite_component_bytes(db, "-wal");
+    let sqlite_shm_bytes = sqlite_component_bytes(db, "-shm");
+    Ok(SharedDbCheckpoint {
+        after_projects,
+        sqlite_main_bytes,
+        sqlite_wal_bytes,
+        sqlite_shm_bytes,
+        sqlite_total_bytes: sqlite_main_bytes
+            .saturating_add(sqlite_wal_bytes)
+            .saturating_add(sqlite_shm_bytes),
+        durable_row_counts: durable_row_counts(db).await?,
+    })
 }
 
 fn proc_rss_bytes(field: &str) -> Option<u64> {
@@ -519,7 +624,12 @@ fn cleanup_case(root: &Path) {
     let _ = fs::remove_dir_all(root);
 }
 
-async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<FixtureReceipt> {
+async fn run_fixture_with_runtime(
+    runtime: &BenchRuntime,
+    fixture_id: &str,
+    fixture_path: &Path,
+    work_root: &Path,
+) -> BenchResult<FixtureReceipt> {
     let overall = Instant::now();
     let cpu_start = proc_cpu_ticks();
     let rss_start = proc_rss_bytes("VmRSS:");
@@ -529,49 +639,21 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         return Err(format!("fixture {fixture_id} outside benchmark size envelope").into());
     }
 
-    let case_root = env::temp_dir().join(format!(
-        "chaptera-cloud-link-bench-{}-{fixture_id}",
-        std::process::id()
-    ));
-    cleanup_case(&case_root);
-    fs::create_dir_all(&case_root)?;
-    let db = case_root.join("chaptera.sqlite");
+    cleanup_case(work_root);
+    fs::create_dir_all(work_root)?;
 
-    SqliteMigrationRuntime::new(&db, Duration::from_secs(2))?
-        .migrate_up()
-        .await?;
+    let db = &runtime.db;
     let principal_id = format!("principal-{fixture_id}");
     let tenant_id = format!("tenant-{fixture_id}");
-    seed_principal(&db, &principal_id).await?;
-    let sqlite_bytes_before = sqlite_storage_bytes(&db);
+    let sqlite_bytes_before = sqlite_storage_bytes(db);
 
-    let busy = Duration::from_secs(2);
-    let source_repo = SqliteSourceIngressRepository::open(&db, 4, busy).await?;
-    let admission = SqliteUploadAdmissionAuthority::open(
-        &db,
-        4,
-        busy,
-        UploadAdmissionConfig {
-            principal_concurrent_cap: 2,
-            tenant_concurrent_cap: 8,
-            principal_bytes_cap: 512 * 1024 * 1024,
-            tenant_bytes_cap: 2 * 1024 * 1024 * 1024,
-            max_single_upload_bytes: 512 * 1024 * 1024,
-            lease_duration: Duration::from_secs(3600),
-            retention: Duration::from_secs(7 * 24 * 3600),
-        },
-    )
-    .await?;
-    let blob_repo = SqliteBlobBindingRepository::open(&db, 4, busy).await?;
-    let provider = CountingProvider::default();
-    let blob_store = BlobStoreService::new(
-        Arc::new(provider.clone()),
-        Arc::new(blob_repo.clone()),
-        Arc::new(BenchIds::default()),
-    );
-    let job_queue = SqliteJobQueue::open(&db, 4, busy).await?;
-    let validation_jobs = SourceValidationJobQueue::new(job_queue.clone());
-    let projects = SqliteProjectPersistence::open(&db, 4, busy).await?;
+    let source_repo = runtime.source_repo.clone();
+    let admission = runtime.admission.clone();
+    let provider = runtime.provider.clone();
+    let blob_store = runtime.blob_store.clone();
+    let job_queue = runtime.job_queue.clone();
+    let validation_jobs = runtime.validation_jobs.clone();
+    let projects = runtime.projects.clone();
 
     let mut phases = BTreeMap::new();
     let mut provider_phase_deltas = BTreeMap::new();
@@ -733,7 +815,7 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         .ok_or("validated upload has no canonical sha")?;
 
     let root = repo_root();
-    let baseline_temp = case_root.join("baseline-temp");
+    let baseline_temp = work_root.join("baseline-temp");
     fs::create_dir_all(&baseline_temp)?;
     let baseline = IsolatedSourceBaselineProducer::new(
         SourceBaselineProducerConfig {
@@ -783,12 +865,6 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     let provider_metrics = provider.metrics();
     let sqlite_bytes_after = sqlite_storage_bytes(&db);
 
-    projects.close().await;
-    job_queue.close().await;
-    blob_repo.close().await;
-    admission.close().await;
-    source_repo.close().await;
-
     let cpu_end = proc_cpu_ticks();
     let rss_end = proc_rss_bytes("VmRSS:");
     let peak_rss = proc_rss_bytes("VmHWM:");
@@ -829,8 +905,36 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         canonical_source_sha256: source_sha,
     };
 
-    cleanup_case(&case_root);
+    cleanup_case(work_root);
     Ok(receipt)
+}
+
+async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<FixtureReceipt> {
+    let case_root = env::temp_dir().join(format!(
+        "chaptera-cloud-link-bench-{}-{fixture_id}",
+        std::process::id()
+    ));
+    cleanup_case(&case_root);
+    fs::create_dir_all(&case_root)?;
+    let db = case_root.join("chaptera.sqlite");
+    SqliteMigrationRuntime::new(&db, Duration::from_secs(2))?
+        .migrate_up()
+        .await?;
+
+    let principal_id = format!("principal-{fixture_id}");
+    seed_principal(&db, &principal_id).await?;
+
+    let runtime = BenchRuntime::open(&db, CountingProvider::default()).await?;
+    let result = run_fixture_with_runtime(
+        &runtime,
+        fixture_id,
+        fixture_path,
+        &case_root.join("work"),
+    )
+    .await;
+    runtime.close().await;
+    cleanup_case(&case_root);
+    result
 }
 
 #[tokio::test]
