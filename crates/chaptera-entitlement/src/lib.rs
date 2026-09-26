@@ -144,7 +144,7 @@ impl EntitlementVerifier {
 
         let protected = &sign1.protected.header;
         match protected.alg {
-            Some(RegisteredLabelWithPrivate::Assigned(iana::Algorithm::ES256)) => {}
+            Some(RegisteredLabelWithPrivate::Assigned(iana::Algorithm::ESP256)) => {}
             _ => return Err(EntitlementError::UnsupportedAlgorithm),
         }
 
@@ -281,7 +281,7 @@ mod tests {
     fn sign_artifact(payload: &ActivationPayloadV1, kid: &[u8]) -> Vec<u8> {
         let signing = signing_key();
         let protected = HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES256)
+            .algorithm(iana::Algorithm::ESP256)
             .key_id(kid.to_vec())
             .content_type(ENTITLEMENT_CONTENT_TYPE.to_owned())
             .build();
