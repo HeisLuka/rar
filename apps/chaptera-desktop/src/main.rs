@@ -78,6 +78,27 @@ struct ViewerLoadFailure {
 }
 
 #[derive(Debug, Clone)]
+struct PreviewTextMetricDiagnostic {
+    signature: String,
+    page_index: u32,
+    page_id: String,
+    frame_id: String,
+    story_id: String,
+    frame_bounds_emu: [i64; 4],
+    clip_rect_px: [f32; 4],
+    zoom: f32,
+    font_family: &'static str,
+    font_size_px: f32,
+    wrap_width_px: f32,
+    galley_width_px: f32,
+    galley_height_px: f32,
+    clip_width_px: f32,
+    clip_height_px: f32,
+    overflow_delta_px: f32,
+    line_count: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
     operation_count: usize,
@@ -452,6 +473,7 @@ struct ViewerApp {
     project_status: Option<String>,
     preview_clipped_frames: usize,
     preview_clipped_story_keys: BTreeSet<String>,
+    preview_text_diagnostics: Vec<PreviewTextMetricDiagnostic>,
     diagnostic_save_path: String,
     diagnostic_status: Option<String>,
     supporter_value: supporter::ValueTracker,
@@ -493,6 +515,7 @@ impl ViewerApp {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             supporter_value: supporter::ValueTracker::default(),
@@ -557,6 +580,7 @@ impl ViewerApp {
         self.project_status = None;
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
         self.diagnostic_save_path.clear();
         self.diagnostic_status = None;
         self.exact_file_consent_open = false;
@@ -2150,6 +2174,7 @@ impl ViewerApp {
         self.ensure_image_textures(ui.ctx());
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
 
         ui.horizontal(|ui| {
             ui.label("Zoom");
@@ -3299,6 +3324,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             supporter_value: supporter::ValueTracker::default(),
@@ -3343,6 +3369,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             supporter_value: supporter::ValueTracker::default(),
@@ -3587,6 +3614,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             supporter_value: supporter::ValueTracker::default(),
