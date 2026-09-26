@@ -188,6 +188,46 @@ pub fn evaluate_time_bound_right(
     lease: &LeaseTimeInputV1<'_>,
     policy: TimePolicy,
 ) -> Result<TimeAcceptance, TrustedTimeError> {
+    evaluate_time_bound_right_with_boundary_mode(
+        state,
+        expected_device_key_id,
+        now,
+        lease,
+        policy,
+        false,
+    )
+}
+
+/// Evaluates a signed lease using strict half-open authorization boundaries while
+/// retaining the normal rollback-skew and forward-jump checks. This is for
+/// capability models where clock skew must never extend paid authority:
+/// `not_before <= now < valid_until`, then optional grace/drain while
+/// `valid_until <= now < offline_grace_until`.
+pub fn evaluate_time_bound_right_strict(
+    state: &TrustedTimeStateV1,
+    expected_device_key_id: &[u8; DEVICE_KEY_ID_LEN],
+    now: i64,
+    lease: &LeaseTimeInputV1<'_>,
+    policy: TimePolicy,
+) -> Result<TimeAcceptance, TrustedTimeError> {
+    evaluate_time_bound_right_with_boundary_mode(
+        state,
+        expected_device_key_id,
+        now,
+        lease,
+        policy,
+        true,
+    )
+}
+
+fn evaluate_time_bound_right_with_boundary_mode(
+    state: &TrustedTimeStateV1,
+    expected_device_key_id: &[u8; DEVICE_KEY_ID_LEN],
+    now: i64,
+    lease: &LeaseTimeInputV1<'_>,
+    policy: TimePolicy,
+    strict_half_open: bool,
+) -> Result<TimeAcceptance, TrustedTimeError> {
     validate_policy(policy)?;
     validate_lease(lease)?;
 
@@ -217,19 +257,34 @@ pub fn evaluate_time_bound_right(
         }
     }
 
-    if now.saturating_add(policy.skew_seconds) < lease.not_before {
+    let not_yet_valid = if strict_half_open {
+        now < lease.not_before
+    } else {
+        now.saturating_add(policy.skew_seconds) < lease.not_before
+    };
+    if not_yet_valid {
         return Err(TrustedTimeError::NotYetValid);
     }
 
     let next_state = accepted_next_state(state, now, lease);
-    if now <= lease.valid_until.saturating_add(policy.skew_seconds) {
+    let valid = if strict_half_open {
+        now < lease.valid_until
+    } else {
+        now <= lease.valid_until.saturating_add(policy.skew_seconds)
+    };
+    if valid {
         return Ok(TimeAcceptance::Valid { next_state });
     }
 
-    if let Some(until) = lease.offline_grace_until
-        && now <= until.saturating_add(policy.skew_seconds)
-    {
-        return Ok(TimeAcceptance::Grace { until, next_state });
+    if let Some(until) = lease.offline_grace_until {
+        let in_grace = if strict_half_open {
+            now < until
+        } else {
+            now <= until.saturating_add(policy.skew_seconds)
+        };
+        if in_grace {
+            return Ok(TimeAcceptance::Grace { until, next_state });
+        }
     }
 
     Err(TrustedTimeError::Expired)
@@ -432,6 +487,43 @@ mod tests {
         let err = evaluate_time_bound_right(&state, &DEVICE, now, &lease(), policy()).unwrap_err();
 
         assert_eq!(err, TrustedTimeError::NotYetValid);
+    }
+
+    #[test]
+    fn strict_half_open_boundaries_do_not_turn_clock_skew_into_paid_grace() {
+        let state = TrustedTimeStateV1::fresh(DEVICE);
+        let lease = lease();
+        let p = policy();
+
+        let before = evaluate_time_bound_right_strict(
+            &state,
+            &DEVICE,
+            lease.valid_until - 1,
+            &lease,
+            p,
+        )
+        .unwrap();
+        assert!(matches!(before, TimeAcceptance::Valid { .. }));
+
+        let at_work_cutoff = evaluate_time_bound_right_strict(
+            &state,
+            &DEVICE,
+            lease.valid_until,
+            &lease,
+            p,
+        )
+        .unwrap();
+        assert!(matches!(at_work_cutoff, TimeAcceptance::Grace { .. }));
+
+        let at_hard_cutoff = evaluate_time_bound_right_strict(
+            &state,
+            &DEVICE,
+            lease.offline_grace_until.unwrap(),
+            &lease,
+            p,
+        )
+        .unwrap_err();
+        assert_eq!(at_hard_cutoff, TrustedTimeError::Expired);
     }
 
     #[test]
