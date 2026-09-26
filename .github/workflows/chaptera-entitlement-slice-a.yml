@@ -1,6 +1,9 @@
 name: chaptera-entitlement-slice-a
 
 on:
+  push:
+    branches:
+      - "chaptera-entitlement-slice-a"
   pull_request:
     paths:
       - "crates/chaptera-entitlement/**"
