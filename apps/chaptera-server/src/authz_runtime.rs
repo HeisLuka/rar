@@ -1865,4 +1865,73 @@ mod tests {
         authority.close().await;
         cleanup(&path);
     }
+
+    #[tokio::test]
+    async fn reconcile_partial_binding_rolls_back_single_connection() {
+        let path = temp_db("revision-reconcile-rollback");
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+        let authority = SqliteAuthzAuthority::open(&path, 1, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let revisions = SqliteRevisionStore::open(&path, 1, Duration::from_secs(2))
+            .await
+            .unwrap();
+
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                DocumentRole::Editor,
+                None,
+                "grant-revision-editor",
+                10,
+            )
+            .await
+            .unwrap();
+
+        let request_hash = "a".repeat(64);
+        let edge = revision_edge(&request_hash);
+        assert_eq!(
+            revisions.append_edge(edge.clone()).await.unwrap(),
+            AppendOutcome::Committed(edge)
+        );
+
+        let committer =
+            SqliteAuthorizedRevisionCommitter::new(authority.clone(), revisions.clone()).unwrap();
+        let error = committer
+            .reconcile_geometry_revision(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                "operation:move-1",
+                &request_hash,
+                20,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "revision_identity_partial_commit");
+
+        let decision = authority
+            .authorize(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                CAP_EDIT_GEOMETRY,
+                "authorize-after-reconcile-error",
+                25,
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision.authz_version, 1);
+
+        drop(committer);
+        revisions.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
 }
