@@ -1,4 +1,6 @@
+use chaptera_desktop_shaped_flow_runtime::ExplicitDesktopFontResourceV1;
 use eframe::egui;
+use pub_editor::LengthEmu;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -47,6 +49,17 @@ pub fn validate() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+pub fn shaping_resource() -> ExplicitDesktopFontResourceV1<'static> {
+    ExplicitDesktopFontResourceV1 {
+        resource_id: RESOURCE_ID,
+        expected_sha256: EXPECTED_SHA256,
+        face_index: 0,
+        font_size_emu: LengthEmu::new(FONT_SIZE_EMU),
+        line_height_emu: LengthEmu::new(LINE_HEIGHT_EMU),
+        bytes: bytes(),
+    }
 }
 
 pub fn family() -> egui::FontFamily {
@@ -110,6 +123,16 @@ mod tests {
         let scene_scale = 96.0_f32 / 914_400.0_f32;
         assert!((screen_font_size(scene_scale) - 12.0).abs() < f32::EPSILON);
         assert!((screen_line_height(scene_scale) - 15.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn shaped_flow_runtime_consumes_the_exact_paint_resource() {
+        let resource = shaping_resource();
+        assert_eq!(resource.resource_id, RESOURCE_ID);
+        assert_eq!(resource.expected_sha256, EXPECTED_SHA256);
+        assert_eq!(resource.bytes, bytes());
+        chaptera_desktop_shaped_flow_runtime::validate_explicit_font_resource_v1(&resource)
+            .expect("pinned paint bytes must satisfy the authoritative shaping resource fence");
     }
 
     #[test]
