@@ -880,7 +880,11 @@ impl ViewerApp {
                 };
                 self.visual = Some(visual);
                 self.editor = editor;
-                self.sync_visual_stories_from_editor();
+                if let Err(error) = self.sync_visual_stories_from_editor() {
+                    self.edit_status = Some(format!(
+                        "Viewer text projection refresh failed closed: {error}"
+                    ));
+                }
                 self.sync_visual_geometry_from_editor();
             }
             Err(error) => {
@@ -1966,12 +1970,17 @@ impl ViewerApp {
     fn finish_authoring_change(&mut self, status: &str) {
         self.canvas_drag = None;
         self.canvas_resize = None;
-        self.sync_visual_stories_from_editor();
+        let text_projection_refresh = self.sync_visual_stories_from_editor();
         self.sync_visual_geometry_from_editor();
         self.refresh_search();
         self.export_preview = None;
         self.project_status = Some("Editor project has unsaved changes.".to_owned());
-        self.edit_status = Some(status.to_owned());
+        self.edit_status = Some(match text_projection_refresh {
+            Ok(()) => status.to_owned(),
+            Err(error) => format!(
+                "{status} Viewer text projection refresh failed closed: {error}"
+            ),
+        });
     }
 
     fn apply_undo(&mut self) {
@@ -2160,15 +2169,23 @@ impl ViewerApp {
         Ok(sidecar)
     }
 
-    fn sync_visual_stories_from_editor(&mut self) {
+    fn sync_visual_stories_from_editor(&mut self) -> Result<(), String> {
         let (Some(editor), Some(visual)) = (&self.editor, &mut self.visual) else {
-            return;
+            return Ok(());
         };
 
-        for viewer_story in &mut visual.document.stories {
-            if let Some(story) = editor.graph().stories.get(&viewer_story.id) {
-                viewer_story.text.clone_from(&story.text);
+        if let Err(error) = visual.refresh_text_projection_from_resolved(editor.graph()) {
+            // The refresh operation is transactional, so a failure would otherwise
+            // leave source-time fragments looking current after an accepted edit.
+            // Fail closed instead of painting stale text in the canvas/thumbnails.
+            visual.text_fragments.clear();
+            visual.story_frames.clear();
+            for viewer_story in &mut visual.document.stories {
+                if let Some(story) = editor.graph().stories.get(&viewer_story.id) {
+                    viewer_story.text.clone_from(&story.text);
+                }
             }
+            return Err(error.to_string());
         }
 
         if let Some(index) = self.selected_search_result
@@ -2181,6 +2198,8 @@ impl ViewerApp {
         {
             self.edit_buffer.clone_from(&story.text);
         }
+
+        Ok(())
     }
 
     fn sync_visual_geometry_from_editor(&mut self) {
@@ -4315,7 +4334,8 @@ mod tests {
             .expect("editor loaded")
             .replace_story_text(story_id, replacement.clone())
             .expect("bounded desktop Story edit should succeed");
-        app.sync_visual_stories_from_editor();
+        app.sync_visual_stories_from_editor()
+            .expect("current editor graph should refresh Viewer text projection");
 
         let rendered_story = app
             .visual
@@ -4327,6 +4347,18 @@ mod tests {
             .find(|story| story.id == story_id)
             .expect("edited Story remains visible");
         assert_eq!(rendered_story.text, replacement);
+        assert_eq!(
+            app.visual
+                .as_ref()
+                .expect("Viewer document remains loaded")
+                .text_fragments
+                .iter()
+                .filter(|fragment| fragment.story_id == story_id)
+                .map(|fragment| fragment.text.as_str())
+                .collect::<String>(),
+            replacement,
+            "accepted Story edits must refresh the painted fragment projection"
+        );
         assert_eq!(
             app.editor
                 .as_ref()
