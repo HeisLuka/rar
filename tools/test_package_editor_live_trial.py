@@ -67,16 +67,20 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.assertEqual(len(result["binary_sha256"]), 64)
         self.assertEqual(len(result["agent_catalog_sha256"]), 64)
+        self.assertEqual(len(result["third_party_notices_sha256"]), 64)
         self.assertEqual(len(result["zip_sha256"]), 64)
         self.assertNotEqual(result["binary_sha256"], result["zip_sha256"])
         self.assertEqual(result["agent_catalog_entry"], "agent-control-v1.catalog.json")
         self.assertEqual(result["agent_catalog_size"], self.catalog.stat().st_size)
+        self.assertEqual(result["third_party_notices_entry"], "THIRD-PARTY-NOTICES.txt")
+        self.assertGreater(result["third_party_notices_size"], 0)
 
         with zipfile.ZipFile(output) as archive:
             self.assertEqual(
                 sorted(archive.namelist()),
                 [
                     "Chaptera-Editor.exe",
+                    "THIRD-PARTY-NOTICES.txt",
                     "TRIAL-README.md",
                     "agent-control-v1.catalog.json",
                 ],
@@ -86,6 +90,13 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
                 archive.read("agent-control-v1.catalog.json"),
                 self.catalog.read_bytes(),
             )
+            notices = archive.read("THIRD-PARTY-NOTICES.txt").decode("utf-8")
+            self.assertIn("Copyright 2011 Canonical Ltd.", notices)
+            self.assertIn("UBUNTU FONT LICENCE Version 1.0", notices)
+            self.assertIn(
+                "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70",
+                notices,
+            )
 
     def test_package_is_deterministic(self):
         first = self.root / "first.zip"
@@ -94,6 +105,9 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
         two = self.package(second)
         self.assertEqual(one["zip_sha256"], two["zip_sha256"])
         self.assertEqual(one["agent_catalog_sha256"], two["agent_catalog_sha256"])
+        self.assertEqual(
+            one["third_party_notices_sha256"], two["third_party_notices_sha256"]
+        )
 
     def test_rejects_non_pe_binary(self):
         bad = self.root / "bad.exe"
@@ -138,6 +152,11 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
             self.package(
                 self.root / "bad.zip",
                 agent_catalog_entry="TRIAL-README.md",
+            )
+        with self.assertRaisesRegex(RuntimeError, "entry names must be distinct"):
+            self.package(
+                self.root / "bad-notices.zip",
+                third_party_notices_entry="TRIAL-README.md",
             )
 
 
