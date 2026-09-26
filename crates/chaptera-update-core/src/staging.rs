@@ -288,7 +288,7 @@ fn path_from_manifest(path: &str) -> Result<PathBuf> {
     Ok(output)
 }
 
-fn is_zip_symlink<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> bool {
+fn is_zip_symlink(entry: &zip::read::ZipFile<'_>) -> bool {
     entry
         .unix_mode()
         .map(|mode| mode & 0o170000 == 0o120000)
@@ -298,7 +298,6 @@ fn is_zip_symlink<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use tempfile::tempdir;
     use zip::write::SimpleFileOptions;
 
