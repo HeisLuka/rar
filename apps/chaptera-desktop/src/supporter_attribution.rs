@@ -245,9 +245,9 @@ mod tests {
     #[test]
     fn no_route_builder_performs_network_io() {
         let source = include_str!("supporter_attribution.rs");
-        assert!(!source.contains("reqwest"));
-        assert!(!source.contains("ureq"));
-        assert!(!source.contains("TcpStream"));
-        assert!(!source.contains("open_url"));
+        assert!(!source.contains(concat!("req", "west")));
+        assert!(!source.contains(concat!("u", "req")));
+        assert!(!source.contains(concat!("Tcp", "Stream")));
+        assert!(!source.contains(concat!("open", "_url")));
     }
 }
