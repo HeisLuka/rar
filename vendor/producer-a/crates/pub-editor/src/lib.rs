@@ -3020,34 +3020,6 @@ fn replay_canonical_operation(
         } => session
             .break_text_frame_forward_link(*upstream_frame_id, *downstream_frame_id, *new_story_id)
             .map_err(|error| EditorProjectError::Operation { index, error }),
-        EditOperation::CreateTextBox {
-            node_id,
-            story_id,
-            page_id,
-            bounds,
-            text_preset,
-        } => {
-            validate_create_text_box_candidate(
-                graph,
-                *node_id,
-                *story_id,
-                *page_id,
-                *bounds,
-                text_preset,
-            )?;
-            let page = graph
-                .pages
-                .get_mut(page_id)
-                .expect("CreateTextBox candidate validated page");
-            page.children.push(*node_id);
-            graph
-                .stories
-                .insert(*story_id, empty_editor_story(*story_id));
-            graph.nodes.insert(
-                *node_id,
-                authored_text_box_node_v1(*node_id, *story_id, *page_id, *bounds),
-            );
-        }
         EditOperation::ReplaceTableCellText {
             node_id,
             story_id,
@@ -3913,6 +3885,35 @@ fn apply_forward(
             for frame in after_frames {
                 set_story_frame_snapshot(graph, frame)?;
             }
+        }
+        EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset,
+        } => {
+            validate_create_text_box_candidate(
+                graph,
+                *node_id,
+                *story_id,
+                *page_id,
+                *bounds,
+                text_preset,
+            )?;
+            graph
+                .pages
+                .get_mut(page_id)
+                .expect("CreateTextBox candidate validated page")
+                .children
+                .push(*node_id);
+            graph
+                .stories
+                .insert(*story_id, empty_editor_story(*story_id));
+            graph.nodes.insert(
+                *node_id,
+                authored_text_box_node_v1(*node_id, *story_id, *page_id, *bounds),
+            );
         }
         EditOperation::ReplaceTableCellText {
             node_id,
