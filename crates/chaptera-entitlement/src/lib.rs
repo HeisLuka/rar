@@ -1,5 +1,6 @@
 mod activation_request;
 mod build_identity;
+mod recovery;
 mod trusted_time;
 #[cfg(target_os = "windows")]
 mod windows_platform;
@@ -8,6 +9,11 @@ pub use activation_request::{
 };
 pub use build_identity::{
     BUILD_IDENTITY_CONTENT_TYPE, BuildIdentityPayloadV1, TrustedBuildIdentity,
+};
+pub use recovery::{
+    ActivationRecoveryError, ActivationRecoveryOutcome, ActivationRecoveryTransition,
+    ActivationSlotRecord, ActivationSlotState, EntitlementActivationState, RebindRequestV1,
+    rebind_activation, release_activation, reuse_surviving_device, revoke_activation,
 };
 pub use trusted_time::{
     LEASE_COMMITMENT_LEN, LeaseTimeInputV1, TimeAcceptance, TimePolicy, TrustedTimeError,
