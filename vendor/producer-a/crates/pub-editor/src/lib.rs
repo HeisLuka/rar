@@ -2367,8 +2367,9 @@ impl EditorSession {
         }
         if !self
             .graph
+            .document
             .pages
-            .keys()
+            .iter()
             .any(|page_id| page_id.into_canonical() == node.header.parent_id)
         {
             return Err(EditorError::ImageReplaceUnsupported { node_id });
@@ -2405,8 +2406,9 @@ impl EditorSession {
             || node.header.bounds.bottom().is_none()
             || !self
                 .graph
+                .document
                 .pages
-                .keys()
+                .iter()
                 .any(|page_id| page_id.into_canonical() == node.header.parent_id)
         {
             return Err(EditorError::ImageCropUnsupported { node_id });
