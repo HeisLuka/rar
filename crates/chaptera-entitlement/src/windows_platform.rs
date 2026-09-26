@@ -237,7 +237,12 @@ impl WindowsDeviceKey {
 
     #[cfg(test)]
     fn delete_for_test(mut self) -> Result<(), WindowsPlatformError> {
-        let status = unsafe {\n            windows_sys::Win32::Security::Cryptography::NCryptDeleteKey(\n                self.handles.key,\n                NCRYPT_SILENT_FLAG,\n            )\n        };
+        let status = unsafe {
+            windows_sys::Win32::Security::Cryptography::NCryptDeleteKey(
+                self.handles.key,
+                NCRYPT_SILENT_FLAG,
+            )
+        };
         cng_ok("NCryptDeleteKey", status)?;
         self.handles.key = 0;
         Ok(())
