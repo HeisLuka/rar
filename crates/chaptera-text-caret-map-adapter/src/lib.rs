@@ -522,13 +522,13 @@ fn require_layout(
     map: &ResolvedTextCaretMapV1,
     expected: Option<&str>,
 ) -> Result<(), CaretMapError> {
-    if let Some(expected) = expected {
-        if expected != map.layout_revision_id {
-            return Err(CaretMapError::new(
-                "stale_layout_map",
-                "caret map belongs to a different layout revision",
-            ));
-        }
+    if let Some(expected) = expected
+        && expected != map.layout_revision_id
+    {
+        return Err(CaretMapError::new(
+            "stale_layout_map",
+            "caret map belongs to a different layout revision",
+        ));
     }
     Ok(())
 }
@@ -826,7 +826,7 @@ fn push_python_json_ascii_string(out: &mut String, value: &str) {
             character if character.is_ascii() => out.push(character),
             character => {
                 let mut units = [0_u16; 2];
-                for unit in character.encode_utf16(&mut units).iter().copied() {
+                for unit in character.encode_utf16(&mut units).iter() {
                     out.push_str(&format!("\\u{unit:04x}"));
                 }
             }
@@ -854,7 +854,7 @@ fn push_python_canonical_json(out: &mut String, value: &Value) {
         Value::Object(values) => {
             out.push('{');
             let mut entries = values.iter().collect::<Vec<_>>();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_by_key(|(left, _)| *left);
             for (index, (key, value)) in entries.into_iter().enumerate() {
                 if index != 0 {
                     out.push(',');
