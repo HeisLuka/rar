@@ -312,7 +312,9 @@ fn parse_font_catalog(
         let len = to_usize(descriptor.data_length.value, "FONT length")?;
         let end = checked_end(start, len, bytes.len(), "FONT chunk")?;
         if start + 8 > end {
-            return Err(QuillTypographyReadError::new("FONT chunk is shorter than fixed prefix"));
+            return Err(QuillTypographyReadError::new(
+                "FONT chunk is shorter than fixed prefix",
+            ));
         }
 
         let count = read_u32(bytes, start + 4, end)?;
@@ -325,7 +327,9 @@ fn parse_font_catalog(
             .and_then(|value| value.checked_add(index_bytes))
             .ok_or_else(|| QuillTypographyReadError::new("FONT records offset overflows usize"))?;
         if cursor > end {
-            return Err(QuillTypographyReadError::new("FONT index table exceeds chunk"));
+            return Err(QuillTypographyReadError::new(
+                "FONT index table exceeds chunk",
+            ));
         }
 
         for _ in 0..count {
@@ -348,8 +352,9 @@ fn parse_font_catalog(
             for pair in bytes[cursor..name_end].chunks_exact(2) {
                 units.push(u16::from_le_bytes([pair[0], pair[1]]));
             }
-            let name = String::from_utf16(&units)
-                .map_err(|error| QuillTypographyReadError::new(format!("FONT name is invalid UTF-16: {error}")))?;
+            let name = String::from_utf16(&units).map_err(|error| {
+                QuillTypographyReadError::new(format!("FONT name is invalid UTF-16: {error}"))
+            })?;
             names.push(name);
             cursor = trailing_end;
         }
@@ -387,7 +392,9 @@ fn parse_fdpc_styles(
         let len = to_usize(descriptor.data_length.value, "FDPC length")?;
         let end = checked_end(start, len, bytes.len(), "FDPC chunk")?;
         if start + 8 > end {
-            return Err(QuillTypographyReadError::new("FDPC chunk is shorter than fixed prefix"));
+            return Err(QuillTypographyReadError::new(
+                "FDPC chunk is shorter than fixed prefix",
+            ));
         }
 
         let count = usize::from(read_u16(bytes, start, end)?);
@@ -401,7 +408,9 @@ fn parse_fdpc_styles(
             .checked_add(count.checked_mul(2).ok_or_else(|| {
                 QuillTypographyReadError::new("FDPC style offset table overflows usize")
             })?)
-            .ok_or_else(|| QuillTypographyReadError::new("FDPC style offset table end overflows"))?;
+            .ok_or_else(|| {
+                QuillTypographyReadError::new("FDPC style offset table end overflows")
+            })?;
         if body_start > end {
             return Err(QuillTypographyReadError::new("FDPC tables exceed chunk"));
         }
@@ -420,7 +429,9 @@ fn parse_fdpc_styles(
             let style_len_u32 = read_u32(bytes, style_start, end)?;
             let style_len = to_usize(style_len_u32, "FDPC style length")?;
             if style_len < 4 {
-                return Err(QuillTypographyReadError::new("FDPC style length is smaller than header"));
+                return Err(QuillTypographyReadError::new(
+                    "FDPC style length is smaller than header",
+                ));
             }
             let style_end = checked_end(style_start, style_len, end, "FDPC style")?;
             let mut cursor = style_start + 4;
@@ -430,11 +441,9 @@ fn parse_fdpc_styles(
             while cursor < style_end {
                 let (block, next) = parse_block(bytes, cursor, style_end, unknown_block_types)?;
                 if block.id == FONT_INDEX_CONTAINER_ID {
-                    if let Some(index) = extract_primary_font_index(
-                        bytes,
-                        block,
-                        unknown_block_types,
-                    )? {
+                    if let Some(index) =
+                        extract_primary_font_index(bytes, block, unknown_block_types)?
+                    {
                         let index_usize = to_usize(index, "FDPC font index")?;
                         if index_usize >= font_names.len() {
                             return Err(QuillTypographyReadError::new(format!(
@@ -453,7 +462,9 @@ fn parse_fdpc_styles(
                 cursor = next;
             }
             if cursor != style_end {
-                return Err(QuillTypographyReadError::new("FDPC style did not close exactly"));
+                return Err(QuillTypographyReadError::new(
+                    "FDPC style did not close exactly",
+                ));
             }
 
             let joined_names = font_indices
@@ -506,15 +517,13 @@ fn extract_primary_font_index(
     while cursor < block.end {
         let (child, next) = parse_block(bytes, cursor, block.end, unknown_block_types)?;
         if child.block_type == GENERAL_CONTAINER {
-            let inner_start = child
-                .data_offset
-                .checked_add(4)
-                .ok_or_else(|| QuillTypographyReadError::new("general container payload overflows"))?;
+            let inner_start = child.data_offset.checked_add(4).ok_or_else(|| {
+                QuillTypographyReadError::new("general container payload overflows")
+            })?;
             if inner_start >= child.end {
                 return Ok(None);
             }
-            let (value_block, _) =
-                parse_block(bytes, inner_start, child.end, unknown_block_types)?;
+            let (value_block, _) = parse_block(bytes, inner_start, child.end, unknown_block_types)?;
             return Ok(value_block.value);
         }
         cursor = next;
@@ -538,7 +547,10 @@ fn parse_block(
     let data_offset = start + 2;
 
     let (end, value) = if VARIABLE_BLOCK_TYPES.contains(&block_type) {
-        let declared = to_usize(read_u32(bytes, data_offset, limit)?, "variable block length")?;
+        let declared = to_usize(
+            read_u32(bytes, data_offset, limit)?,
+            "variable block length",
+        )?;
         if declared < 4 {
             return Err(QuillTypographyReadError::new(format!(
                 "variable block at 0x{start:x} has length {declared}"
@@ -594,11 +606,7 @@ fn parse_block(
     ))
 }
 
-fn read_u16(
-    bytes: &[u8],
-    offset: usize,
-    limit: usize,
-) -> Result<u16, QuillTypographyReadError> {
+fn read_u16(bytes: &[u8], offset: usize, limit: usize) -> Result<u16, QuillTypographyReadError> {
     if offset + 2 > limit || offset + 2 > bytes.len() {
         return Err(QuillTypographyReadError::new(format!(
             "u16 read out of bounds at 0x{offset:x}"
@@ -607,11 +615,7 @@ fn read_u16(
     Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
 }
 
-fn read_u32(
-    bytes: &[u8],
-    offset: usize,
-    limit: usize,
-) -> Result<u32, QuillTypographyReadError> {
+fn read_u32(bytes: &[u8], offset: usize, limit: usize) -> Result<u32, QuillTypographyReadError> {
     if offset + 4 > limit || offset + 4 > bytes.len() {
         return Err(QuillTypographyReadError::new(format!(
             "u32 read out of bounds at 0x{offset:x}"
@@ -680,8 +684,7 @@ mod tests {
     fn fixed_block_parser_preserves_known_size_value() {
         let bytes = [TEXT_SIZE_ID, 0x20, 0x40, 0xa6, 0x04, 0x00];
         let mut unknown = BTreeSet::new();
-        let (block, end) =
-            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("parse block");
+        let (block, end) = parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("parse block");
         assert_eq!(block.id, TEXT_SIZE_ID);
         assert_eq!(block.value, Some(304_704));
         assert_eq!(end, bytes.len());
