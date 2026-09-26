@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/src/writer_assessment.rs"
       - "vendor/producer-a/crates/pub-editor/tests/ruler_guides_v1.rs"
       - "vendor/producer-a/crates/pub-editor/tests/*.rs"
       - ".github/workflows/authoring-ruler-guide-v1.yml"
