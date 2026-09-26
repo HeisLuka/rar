@@ -1,4 +1,6 @@
-use chaptera_text_caret_map_adapter::ResolvedTextCaretMapV1;
+use chaptera_text_caret_map_adapter::{
+    CaretMapBuildInputV1, build_resolved_text_caret_map_v1,
+};
 use chaptera_text_input_adapter::domain::{StoryEditDomainV1, StoryProvenanceV1, derive_story_edit_domain_v1};
 use chaptera_text_input_adapter::ingress::normalize_external_text_v1;
 use chaptera_text_input_adapter::keyboard::{KeyboardCommandV1, apply_text_keyboard_policy_v1, grapheme_boundaries_v1};
@@ -26,7 +28,7 @@ enum Request {
         story_text: String,
         domain: StoryEditDomainV1,
         selection: Box<TextSelectionStateV1>,
-        caret_map: Box<ResolvedTextCaretMapV1>,
+        caret_map: Box<CaretMapBuildInputV1>,
         expected_revision_id: String,
     },
 }
@@ -57,15 +59,18 @@ fn main() {
             selection,
             caret_map,
             expected_revision_id,
-        } => match apply_text_keyboard_policy_v1(
-            command,
-            &story_text,
-            &domain,
-            &selection,
-            &caret_map,
-            &expected_revision_id,
-        ) {
-            Ok(value) => json!({"ok": value}),
+        } => match build_resolved_text_caret_map_v1(*caret_map) {
+            Ok(caret_map) => match apply_text_keyboard_policy_v1(
+                command,
+                &story_text,
+                &domain,
+                &selection,
+                &caret_map,
+                &expected_revision_id,
+            ) {
+                Ok(value) => json!({"ok": value}),
+                Err(error) => json!({"error_code": error.code}),
+            },
             Err(error) => json!({"error_code": error.code}),
         },
     };
