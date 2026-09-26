@@ -1,5 +1,5 @@
 name: Editor Desktop Text Interaction Rust Adapter V1
-# Head-refresh after task-owned rustfmt; no semantic workflow change.
+# CI retrigger after task-owned rustfmt; no semantic workflow change.
 
 on:
   pull_request:
