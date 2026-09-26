@@ -1,6 +1,6 @@
 use pub_editor::{
     EDITOR_PROJECT_VERSION_V0_6, EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8,
-    EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_11, EditorProject, EditorProjectError,
+    EDITOR_PROJECT_VERSION_V0_9, EDITOR_PROJECT_VERSION_V0_12, EditorProject, EditorProjectError,
     EditorSession,
 };
 use pub_model::{
@@ -178,7 +178,7 @@ fn effective_grid_roundtrips_and_replays_exactly() {
     let mut session = EditorSession::new(graph()).unwrap();
     let baseline = session.project();
 
-    assert_eq!(baseline.schema_version, EDITOR_PROJECT_VERSION_V0_11);
+    assert_eq!(baseline.schema_version, EDITOR_PROJECT_VERSION_V0_12);
     assert_eq!(baseline.table_grids.len(), 1);
     let grid = &baseline.table_grids[0];
     assert_eq!(grid.rows.len(), 1);
