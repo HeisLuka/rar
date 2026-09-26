@@ -1,0 +1,331 @@
+name: Editor Desktop Caret Map Rust Adapter V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "services/editor-api/resolved_text_caret_map_v1.py"
+      - ".github/workflows/editor-desktop-caret-map-rust-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml --all-targets -- -D warnings
+      - name: Rust contract tests
+        run: cargo test --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml
+      - name: Canonical Python caret-map tests
+        run: python services/editor-api/test_resolved_text_caret_map_v1.py
+      - name: Cross-language golden conformance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          sys.path.insert(0, "services/editor-api")
+          from resolved_text_caret_map_v1 import (
+              ResolvedClusterV1, ResolvedLineFragmentV1, InternalCaretStopV1,
+              build_resolved_text_caret_map_v1, caret_map_to_dict_v1, caret_map_hash_v1,
+          )
+
+          fixtures = [
+              ("ascii","story:1",2,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:1",page_id="page:1",frame_id="frame:1",line_id="line:1",
+                      flow_ordinal=0,previous_line_id=None,next_line_id=None,
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,1,0,10,0,10),ResolvedClusterV1(1,2,10,20,10,20)),
+                  ),
+              )),
+              ("unicode_ids","story:é😀",1,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:é😀",page_id="page:é",frame_id="frame:😀",line_id="line:é😀",
+                      flow_ordinal=0,previous_line_id=None,next_line_id=None,
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,1,0,10,0,10),),
+                  ),
+              )),
+              ("internal","story:2",2,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:2",page_id="page:1",frame_id="frame:1",line_id="line:1",
+                      flow_ordinal=0,previous_line_id=None,next_line_id=None,
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,2,0,20,0,20,True,(InternalCaretStopV1(1,7,7),)),),
+                  ),
+              )),
+              ("linked","story:3",2,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:3",page_id="page:1",frame_id="frame:a",line_id="line:a",
+                      flow_ordinal=0,previous_line_id=None,next_line_id="line:b",
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,1,0,10,0,10),),
+                  ),
+                  ResolvedLineFragmentV1(
+                      story_id="story:3",page_id="page:1",frame_id="frame:b",line_id="line:b",
+                      flow_ordinal=1,previous_line_id="line:a",next_line_id=None,
+                      page_y_top_emu=30,page_y_bottom_emu=50,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(1,2,100,110,0,10),),
+                  ),
+              )),
+          ]
+
+          def line_dict(line):
+              return {
+                  "story_id":line.story_id,"page_id":line.page_id,"frame_id":line.frame_id,
+                  "line_id":line.line_id,"flow_ordinal":line.flow_ordinal,
+                  "previous_line_id":line.previous_line_id,"next_line_id":line.next_line_id,
+                  "page_y_top_emu":line.page_y_top_emu,"page_y_bottom_emu":line.page_y_bottom_emu,
+                  "frame_y_top_emu":line.frame_y_top_emu,"frame_y_bottom_emu":line.frame_y_bottom_emu,
+                  "clusters":[{
+                      "start_scalar":c.start_scalar,"end_scalar":c.end_scalar,
+                      "page_x_start_emu":c.page_x_start_emu,"page_x_end_emu":c.page_x_end_emu,
+                      "frame_x_start_emu":c.frame_x_start_emu,"frame_x_end_emu":c.frame_x_end_emu,
+                      "painted":c.painted,
+                      "internal_caret_stops":[{
+                          "scalar_boundary":s.scalar_boundary,"page_x_emu":s.page_x_emu,"frame_x_emu":s.frame_x_emu
+                      } for s in c.internal_caret_stops],
+                  } for c in line.clusters],
+              }
+
+          for name, story_id, story_len, lines in fixtures:
+              canonical=build_resolved_text_caret_map_v1(
+                  layout_revision_id="layout:golden",story_id=story_id,story_scalar_len=story_len,lines=lines
+              )
+              payload={
+                  "layout_revision_id":"layout:golden","story_id":story_id,
+                  "story_scalar_len":story_len,"lines":[line_dict(line) for line in lines],
+              }
+              proc=subprocess.run(
+                  ["cargo","run","--quiet","--manifest-path","crates/chaptera-text-caret-map-adapter/Cargo.toml","--example","conformance_probe"],
+                  input=json.dumps(payload),text=True,capture_output=True,check=True,
+              )
+              rust=json.loads(proc.stdout)
+              python=caret_map_to_dict_v1(canonical)
+              if rust != python:
+                  print(name, "mismatch", file=sys.stderr)
+                  print(json.dumps({"python":python,"rust":rust},indent=2),file=sys.stderr)
+                  raise SystemExit(1)
+
+              hash_proc=subprocess.run(
+                  ["cargo","run","--quiet","--manifest-path","crates/chaptera-text-caret-map-adapter/Cargo.toml","--example","conformance_hash_probe"],
+                  input=json.dumps(payload),text=True,capture_output=True,check=True,
+              )
+              rust_hash=hash_proc.stdout.strip()
+              python_hash=caret_map_hash_v1(canonical)
+              if rust_hash != python_hash:
+                  print(name, "hash mismatch", file=sys.stderr)
+                  print(json.dumps({"python_hash":python_hash,"rust_hash":rust_hash},indent=2),file=sys.stderr)
+                  raise SystemExit(1)
+              print(name, "PASS")
+          PY
+      - name: Cross-language behavior conformance
+        shell: bash
+        run: |
+          python - <<'PY'
+          from dataclasses import asdict
+          import json, subprocess, sys
+          sys.path.insert(0, "services/editor-api")
+          from resolved_text_caret_map_v1 import (
+              ResolvedClusterV1, ResolvedLineFragmentV1, InternalCaretStopV1,
+              ResolvedTextCaretMapError, build_resolved_text_caret_map_v1,
+              resolve_story_position_v1, hit_test_story_position_v1,
+              selection_geometry_v1,
+          )
+
+          def line(story, frame, line_id, order, prev, nxt, clusters, y):
+              return ResolvedLineFragmentV1(
+                  story_id=story, page_id="page:1", frame_id=frame, line_id=line_id,
+                  flow_ordinal=order, previous_line_id=prev, next_line_id=nxt,
+                  page_y_top_emu=y, page_y_bottom_emu=y + 20,
+                  frame_y_top_emu=0, frame_y_bottom_emu=20, clusters=clusters,
+              )
+
+          def line_dict(value):
+              return {
+                  "story_id": value.story_id, "page_id": value.page_id,
+                  "frame_id": value.frame_id, "line_id": value.line_id,
+                  "flow_ordinal": value.flow_ordinal,
+                  "previous_line_id": value.previous_line_id,
+                  "next_line_id": value.next_line_id,
+                  "page_y_top_emu": value.page_y_top_emu,
+                  "page_y_bottom_emu": value.page_y_bottom_emu,
+                  "frame_y_top_emu": value.frame_y_top_emu,
+                  "frame_y_bottom_emu": value.frame_y_bottom_emu,
+                  "clusters": [{
+                      "start_scalar": c.start_scalar, "end_scalar": c.end_scalar,
+                      "page_x_start_emu": c.page_x_start_emu,
+                      "page_x_end_emu": c.page_x_end_emu,
+                      "frame_x_start_emu": c.frame_x_start_emu,
+                      "frame_x_end_emu": c.frame_x_end_emu,
+                      "painted": c.painted,
+                      "internal_caret_stops": [{
+                          "scalar_boundary": stop.scalar_boundary,
+                          "page_x_emu": stop.page_x_emu,
+                          "frame_x_emu": stop.frame_x_emu,
+                      } for stop in c.internal_caret_stops],
+                  } for c in value.clusters],
+              }
+
+          def canonical_result(call):
+              try:
+                  return {"ok": json.loads(json.dumps(asdict(call())))}
+              except ResolvedTextCaretMapError as error:
+                  return {"error_code": error.code}
+
+          cases = []
+
+          # Supplementary Unicode is already one canonical scalar before this
+          # boundary; this case proves both implementations treat that scalar as
+          # one step rather than UTF-16 code units.
+          story = "story:supplementary"
+          lines = (line(
+              story, "frame:a", "line:a", 0, None, None,
+              (ResolvedClusterV1(0, 1, 100, 250, 0, 150),), 100,
+          ),)
+          cases.append(("supplementary_unicode_scalar", story, 1, lines, [
+              {"kind":"resolve","scalar_boundary":1},
+              {"kind":"hit_test","page_id":"page:1","page_x_emu":230,"page_y_emu":110},
+          ]))
+
+          story = "story:combining"
+          lines = (line(
+              story, "frame:a", "line:a", 0, None, None,
+              (ResolvedClusterV1(0, 2, 100, 300, 0, 200),), 100,
+          ),)
+          cases.append(("combining_cluster_unsupported", story, 2, lines, [
+              {"kind":"resolve","scalar_boundary":1},
+              {"kind":"selection","start_scalar":1,"end_scalar":2},
+          ]))
+
+          story = "story:ligature-authority"
+          lines = (line(
+              story, "frame:a", "line:a", 0, None, None,
+              (ResolvedClusterV1(
+                  0, 2, 100, 300, 0, 200, True,
+                  (InternalCaretStopV1(1, 230, 130),),
+              ),), 100,
+          ),)
+          cases.append(("ligature_explicit_internal_authority", story, 2, lines, [
+              {"kind":"resolve","scalar_boundary":1},
+              {"kind":"selection","start_scalar":0,"end_scalar":1},
+          ]))
+
+          story = "story:linked"
+          lines = (
+              line(
+                  story, "frame:a", "line:a", 0, None, "line:b",
+                  (ResolvedClusterV1(0, 1, 100, 200, 0, 100),), 100,
+              ),
+              line(
+                  story, "frame:b", "line:b", 1, "line:a", None,
+                  (ResolvedClusterV1(1, 2, 500, 600, 0, 100),), 300,
+              ),
+          )
+          cases.append(("linked_same_scalar_multi_stop", story, 2, lines, [
+              {"kind":"resolve","scalar_boundary":1},
+              {"kind":"hit_test","page_id":"page:1","page_x_emu":550,"page_y_emu":310},
+              {"kind":"selection","start_scalar":0,"end_scalar":2},
+          ]))
+
+          story = "story:overset"
+          lines = (line(
+              story, "frame:a", "line:a", 0, None, None,
+              (ResolvedClusterV1(0, 2, 100, 300, 0, 200),), 100,
+          ),)
+          cases.append(("partial_unplaced_and_stale", story, 5, lines, [
+              {"kind":"selection","start_scalar":1,"end_scalar":4},
+              {"kind":"selection","start_scalar":3,"end_scalar":5},
+              {"kind":"selection","start_scalar":3,"end_scalar":3},
+              {"kind":"resolve","scalar_boundary":3},
+              {
+                  "kind":"resolve","scalar_boundary":0,
+                  "expected_layout_revision_id":"layout:stale",
+              },
+          ]))
+
+          story = "story:logical"
+          lines = (line(
+              story, "frame:a", "line:a", 0, None, None,
+              (ResolvedClusterV1(0, 1, 100, 100, 0, 0, False),), 100,
+          ),)
+          cases.append(("logical_unpainted_cluster", story, 1, lines, [
+              {"kind":"selection","start_scalar":0,"end_scalar":1},
+          ]))
+
+          for name, story_id, story_len, lines, queries in cases:
+              caret_map = build_resolved_text_caret_map_v1(
+                  layout_revision_id="layout:golden",
+                  story_id=story_id,
+                  story_scalar_len=story_len,
+                  lines=lines,
+              )
+              expected = []
+              for query in queries:
+                  kind = query["kind"]
+                  expected_revision = query.get("expected_layout_revision_id")
+                  if kind == "resolve":
+                      expected.append(canonical_result(lambda q=query: resolve_story_position_v1(
+                          caret_map=caret_map,
+                          scalar_boundary=q["scalar_boundary"],
+                          stop_id=q.get("stop_id"),
+                          expected_layout_revision_id=q.get("expected_layout_revision_id"),
+                      )))
+                  elif kind == "hit_test":
+                      expected.append(canonical_result(lambda q=query: hit_test_story_position_v1(
+                          caret_map=caret_map,
+                          page_id=q["page_id"],
+                          page_x_emu=q["page_x_emu"],
+                          page_y_emu=q["page_y_emu"],
+                          expected_layout_revision_id=q.get("expected_layout_revision_id"),
+                      )))
+                  elif kind == "selection":
+                      expected.append(canonical_result(lambda q=query: selection_geometry_v1(
+                          caret_map=caret_map,
+                          start_scalar=q["start_scalar"],
+                          end_scalar=q["end_scalar"],
+                          expected_layout_revision_id=q.get("expected_layout_revision_id"),
+                      )))
+                  else:
+                      raise AssertionError(kind)
+
+              envelope = {
+                  "input": {
+                      "layout_revision_id": "layout:golden",
+                      "story_id": story_id,
+                      "story_scalar_len": story_len,
+                      "lines": [line_dict(item) for item in lines],
+                  },
+                  "queries": queries,
+              }
+              proc = subprocess.run(
+                  [
+                      "cargo", "run", "--quiet", "--manifest-path",
+                      "crates/chaptera-text-caret-map-adapter/Cargo.toml", "--example",
+                      "conformance_query_probe",
+                  ],
+                  input=json.dumps(envelope), text=True, capture_output=True, check=True,
+              )
+              actual = json.loads(proc.stdout)["results"]
+              if actual != expected:
+                  print(name, "behavior mismatch", file=sys.stderr)
+                  print(json.dumps({"python": expected, "rust": actual}, indent=2), file=sys.stderr)
+                  raise SystemExit(1)
+              print(name, "PASS")
+          PY
