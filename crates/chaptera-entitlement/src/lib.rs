@@ -17,7 +17,6 @@ pub const MAX_KID_LEN: usize = 64;
 pub const DEVICE_KEY_ID_LEN: usize = 32;
 pub const MAX_ID_LEN: usize = 128;
 pub const MAX_PRODUCT_ID_LEN: usize = 64;
-pub const MAX_EDITION_LEN: usize = 64;
 pub const MAX_GRANTS: usize = 64;
 pub const MAX_GRANT_LEN: usize = 64;
 
@@ -27,9 +26,7 @@ pub struct ActivationPayloadV1 {
     pub schema_version: u16,
     pub activation_id: String,
     pub entitlement_id: String,
-    pub subject_id: String,
     pub product_id: String,
-    pub edition: String,
     pub grants: Vec<String>,
     pub device_key_id: Vec<u8>,
     pub issued_at: i64,
@@ -63,7 +60,6 @@ pub enum RightV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyContext<'a> {
     pub build_identity_artifact: Vec<u8>,
-    pub expected_subject: Option<&'a str>,
     pub expected_device_key_id: &'a [u8],
 }
 
@@ -126,8 +122,6 @@ pub enum EntitlementError {
     BuildIdentityPolicyViolation,
     #[error("product mismatch")]
     ProductMismatch,
-    #[error("subject mismatch")]
-    SubjectMismatch,
     #[error("device mismatch")]
     DeviceMismatch,
     #[error("version not covered")]
@@ -148,9 +142,7 @@ pub(crate) fn bounded_nonempty(value: &str, max_len: usize) -> bool {
 fn validate_payload_shape(payload: &ActivationPayloadV1) -> Result<(), EntitlementError> {
     if !bounded_nonempty(&payload.activation_id, MAX_ID_LEN)
         || !bounded_nonempty(&payload.entitlement_id, MAX_ID_LEN)
-        || !bounded_nonempty(&payload.subject_id, MAX_ID_LEN)
         || !bounded_nonempty(&payload.product_id, MAX_PRODUCT_ID_LEN)
-        || !bounded_nonempty(&payload.edition, MAX_EDITION_LEN)
         || payload.device_key_id.len() != DEVICE_KEY_ID_LEN
         || payload.grants.is_empty()
         || payload.grants.len() > MAX_GRANTS
@@ -272,12 +264,6 @@ impl EntitlementVerifier {
             return Err(EntitlementError::ProductMismatch);
         }
 
-        if let Some(expected_subject) = ctx.expected_subject
-            && payload.subject_id != expected_subject
-        {
-            return Err(EntitlementError::SubjectMismatch);
-        }
-
         if payload.device_key_id.as_slice() != ctx.expected_device_key_id {
             return Err(EntitlementError::DeviceMismatch);
         }
@@ -306,7 +292,6 @@ impl EntitlementVerifier {
             activation_id: payload.activation_id,
             entitlement_id: payload.entitlement_id,
             product_id: payload.product_id,
-            edition: payload.edition,
             grants: payload.grants,
         })
     }
@@ -366,9 +351,7 @@ mod tests {
             schema_version: 1,
             activation_id: "act-1".into(),
             entitlement_id: "ent-1".into(),
-            subject_id: "user-1".into(),
             product_id: "chaptera.editor".into(),
-            edition: "personal".into(),
             grants: vec!["edit".into(), "export".into()],
             device_key_id: DEVICE_ID.to_vec(),
             issued_at: 1_800_000_000,
@@ -458,7 +441,6 @@ mod tests {
     fn ctx() -> VerifyContext<'static> {
         VerifyContext {
             build_identity_artifact: sign_build_identity(&build_payload()),
-            expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         }
     }
@@ -470,7 +452,6 @@ mod tests {
         build.released_at = 1_950_000_000;
         let context = VerifyContext {
             build_identity_artifact: sign_build_identity(&build),
-            expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         };
 
@@ -489,7 +470,6 @@ mod tests {
                 &signing_key(),
                 TEST_KID,
             ),
-            expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         };
 
@@ -509,7 +489,6 @@ mod tests {
         sign1.payload = Some(encode_build_payload(&changed));
         let context = VerifyContext {
             build_identity_artifact: sign1.to_tagged_vec().unwrap(),
-            expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         };
 
@@ -526,7 +505,6 @@ mod tests {
         build.release_sequence = 0;
         let context = VerifyContext {
             build_identity_artifact: sign_build_identity(&build),
-            expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         };
 
@@ -543,7 +521,6 @@ mod tests {
         build.product_id = "chaptera.reader".into();
         let context = VerifyContext {
             build_identity_artifact: sign_build_identity(&build),
-            expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         };
 
@@ -615,7 +592,7 @@ mod tests {
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         let mut changed = payload();
-        changed.edition = "enterprise".into();
+        changed.entitlement_id = "ent-tampered".into();
         sign1.payload = Some(encode_payload(&changed));
         let tampered = sign1.to_tagged_vec().unwrap();
 
