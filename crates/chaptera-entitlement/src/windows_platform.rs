@@ -24,7 +24,8 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::Cryptography::{
     BCRYPT_ECCPUBLIC_BLOB, BCRYPT_ECDSA_P256_ALGORITHM, BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
-    CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
+    BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom, CRYPT_INTEGER_BLOB,
+    CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
     MS_KEY_STORAGE_PROVIDER, MS_PLATFORM_CRYPTO_PROVIDER, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE,
     NCRYPT_SILENT_FLAG, NCryptCreatePersistedKey, NCryptExportKey,
     NCryptFinalizeKey, NCryptFreeObject, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty,
@@ -301,13 +302,26 @@ impl WindowsDeviceKey {
         &self,
         request_id: &str,
         product_id: &str,
+        requested_major: u32,
     ) -> Result<Vec<u8>, WindowsPlatformError> {
         let public = self.public_key_sec1()?;
         let device_key_id = self.device_key_id()?;
+        let mut request_nonce = [0_u8; 32];
+        let status = unsafe {
+            BCryptGenRandom(
+                0,
+                request_nonce.as_mut_ptr(),
+                request_nonce.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        cng_ok("BCryptGenRandom", status)?;
         let facts = ActivationRequestFactsV1 {
             schema_version: 1,
             request_id: request_id.to_owned(),
             product_id: product_id.to_owned(),
+            requested_major,
+            request_nonce,
             device_key_id,
             device_public_key_sec1: public.to_vec(),
         };
@@ -1008,7 +1022,7 @@ mod tests {
         let device_a = WindowsDeviceKey::open_or_create(&key_a_name).expect("DeviceKey A");
         let device_a_id = device_a.device_key_id().expect("DeviceKey A id");
         let request = device_a
-            .create_activation_request("offline-request-1", "chaptera.editor")
+            .create_activation_request("offline-request-1", "chaptera.editor", 2)
             .expect("device-signed activation request");
 
         let verified_request =
@@ -1016,6 +1030,8 @@ mod tests {
                 .expect("test issuer verifies request proof");
         assert_eq!(verified_request.device_key_id(), &device_a_id);
         assert_eq!(verified_request.request_id(), "offline-request-1");
+        assert_eq!(verified_request.requested_major(), 2);
+        assert_ne!(verified_request.request_nonce(), &[0_u8; 32]);
 
         let entitlement_signing =
             SigningKey::from_slice(&[0x51; 32]).expect("synthetic entitlement issuer");
@@ -1047,6 +1063,12 @@ mod tests {
         let verifier =
             crate::EntitlementVerifier::new(entitlement_trust, build_trust)
                 .expect("separate trust planes");
+
+        assert_eq!(
+            verified_request.requested_major(),
+            2,
+            "test issuer policy must authorize the requested major before issuance"
+        );
 
         let activation = crate::ActivationPayloadV1 {
             schema_version: 1,
