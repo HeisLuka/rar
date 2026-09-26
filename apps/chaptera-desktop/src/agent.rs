@@ -2181,6 +2181,34 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "paint":paint,
             "provenance":provenance
         }),
+        EditOperation::AddRulerGuide { guide } => json!({
+            "kind":"add_ruler_guide",
+            "guide_id":guide.guide_id.to_string(),
+            "page_id":guide.page_id.as_canonical().to_string(),
+            "axis":guide.axis,
+            "position_emu":guide.position.get()
+        }),
+        EditOperation::MoveRulerGuide {
+            guide_id,
+            page_id,
+            axis,
+            before_position,
+            after_position,
+        } => json!({
+            "kind":"move_ruler_guide",
+            "guide_id":guide_id.to_string(),
+            "page_id":page_id.as_canonical().to_string(),
+            "axis":axis,
+            "before_position_emu":before_position.get(),
+            "after_position_emu":after_position.get()
+        }),
+        EditOperation::DeleteRulerGuide { guide } => json!({
+            "kind":"delete_ruler_guide",
+            "guide_id":guide.guide_id.to_string(),
+            "page_id":guide.page_id.as_canonical().to_string(),
+            "axis":guide.axis,
+            "position_emu":guide.position.get()
+        }),
     }
 }
 
