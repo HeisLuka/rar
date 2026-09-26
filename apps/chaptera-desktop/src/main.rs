@@ -458,6 +458,7 @@ struct ViewerApp {
     supporter_state: supporter::SupporterState,
     exact_file_consent_open: bool,
     exact_file_consent_status: Option<String>,
+    show_diagnostics: bool,
 }
 
 impl ViewerApp {
@@ -499,6 +500,7 @@ impl ViewerApp {
             supporter_state: restore_supporter_state(storage),
             exact_file_consent_open: false,
             exact_file_consent_status: None,
+            show_diagnostics: false,
         };
 
         if let Some(path) = initial_path {
@@ -561,6 +563,7 @@ impl ViewerApp {
         self.diagnostic_status = None;
         self.exact_file_consent_open = false;
         self.exact_file_consent_status = None;
+        self.show_diagnostics = false;
 
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -822,40 +825,43 @@ impl ViewerApp {
         })
     }
 
-    fn show_fidelity_status(&self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+    fn show_fidelity_status(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
             ui.strong("Fidelity:");
 
             match self.fidelity_status() {
                 Some(status) => {
                     ui.strong(fidelity_status_label(status));
-                    ui.label(fidelity_status_summary(status));
+                    match status {
+                        ViewerFidelityStatus::Supported => {
+                            ui.weak("No known fidelity warnings");
+                        }
+                        ViewerFidelityStatus::Partial | ViewerFidelityStatus::Unsupported => {
+                            ui.label("· Needs attention");
+                        }
+                    }
                 }
                 None => {
                     ui.weak("Not evaluated");
-                    ui.label("Open a PUB file to evaluate the current Viewer scope.");
                 }
             }
+
+            if self.preview_clipped_frames > 0 {
+                ui.label("·");
+                ui.label(format!(
+                    "{} preview text clipping issue(s)",
+                    self.preview_clipped_frames
+                ));
+            }
+
+            let details_available = self.visual.is_some();
+            if ui
+                .add_enabled(details_available, egui::Button::new("Details…"))
+                .clicked()
+            {
+                self.show_diagnostics = true;
+            }
         });
-
-        if self.visual.as_ref().is_some_and(|visual| {
-            visual
-                .document
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "viewer.visual.geometry_only")
-        }) {
-            ui.small(GEOMETRY_WARNING);
-        }
-
-        if self.preview_clipped_frames > 0 {
-            ui.add_space(4.0);
-            ui.strong(format!(
-                "Preview text clipping: {} frame(s)",
-                self.preview_clipped_frames
-            ));
-            ui.small(PREVIEW_TEXT_CLIP_WARNING);
-        }
     }
 
     fn accept_dropped_file(&mut self, ctx: &egui::Context) {
@@ -1149,20 +1155,6 @@ impl ViewerApp {
             }
         });
 
-        ui.add_space(16.0);
-        ui.heading("Fidelity");
-        ui.separator();
-        let fidelity = visual.document.fidelity_status();
-        ui.strong(fidelity_status_label(fidelity));
-        ui.label(fidelity_status_summary(fidelity));
-        let warning_count = visual
-            .document
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.severity == ViewerDiagnosticSeverity::FidelityWarning)
-            .count();
-        ui.label(format!("Known fidelity warnings: {warning_count}"));
-
         if let Some(index) = self.selected_search_result {
             ui.add_space(16.0);
             ui.heading("Selected search match");
@@ -1215,25 +1207,6 @@ impl ViewerApp {
             }
         }
 
-        ui.add_space(16.0);
-        ui.heading("Diagnostics");
-        ui.separator();
-
-        if visual.document.diagnostics.is_empty() {
-            ui.weak("No Viewer diagnostics.");
-        } else {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for diagnostic in &visual.document.diagnostics {
-                    ui.group(|ui| {
-                        ui.strong(&diagnostic.code);
-                        ui.small(diagnostic_severity_label(diagnostic.severity));
-                        ui.label(&diagnostic.message);
-                    });
-                    ui.add_space(4.0);
-                }
-            });
-        }
-
         if !reader_only_mode() {
             self.show_object_edit_controls(ui);
             self.show_editor_controls(ui);
@@ -1243,6 +1216,75 @@ impl ViewerApp {
             ui.add_space(12.0);
             ui.colored_label(ui.visuals().error_fg_color, &error.message);
         }
+    }
+
+    fn show_diagnostics_window(&mut self, ctx: &egui::Context) {
+        if !self.show_diagnostics {
+            return;
+        }
+
+        let Some(visual) = self.visual.as_ref() else {
+            self.show_diagnostics = false;
+            return;
+        };
+
+        let fidelity = visual.document.fidelity_status();
+        let has_geometry_warning = visual
+            .document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "viewer.visual.geometry_only");
+        let preview_clipped_frames = self.preview_clipped_frames;
+        let diagnostics = &visual.document.diagnostics;
+        let mut open = self.show_diagnostics;
+
+        egui::Window::new("Fidelity & diagnostics")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(fidelity_status_label(fidelity));
+                    ui.label(fidelity_status_summary(fidelity));
+                });
+
+                if has_geometry_warning {
+                    ui.add_space(8.0);
+                    ui.strong("Current preview boundary");
+                    ui.small(GEOMETRY_WARNING);
+                }
+
+                if preview_clipped_frames > 0 {
+                    ui.add_space(8.0);
+                    ui.strong(format!(
+                        "Preview text clipping: {preview_clipped_frames} frame(s)"
+                    ));
+                    ui.small(PREVIEW_TEXT_CLIP_WARNING);
+                }
+
+                ui.add_space(12.0);
+                ui.heading("Diagnostics");
+                ui.separator();
+
+                if diagnostics.is_empty() {
+                    ui.weak("No Viewer diagnostics.");
+                } else {
+                    egui::ScrollArea::vertical()
+                        .max_height(360.0)
+                        .show(ui, |ui| {
+                            for diagnostic in diagnostics {
+                                ui.group(|ui| {
+                                    ui.strong(&diagnostic.code);
+                                    ui.small(diagnostic_severity_label(diagnostic.severity));
+                                    ui.label(&diagnostic.message);
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                }
+            });
+
+        self.show_diagnostics = open;
     }
 
     fn show_exact_file_consent_dialog(&mut self, ctx: &egui::Context) {
@@ -2853,6 +2895,7 @@ impl eframe::App for ViewerApp {
             .show(ctx, |ui| self.show_inspector(ui));
 
         egui::CentralPanel::default().show(ctx, |ui| self.show_canvas(ui));
+        self.show_diagnostics_window(ctx);
         self.show_exact_file_consent_dialog(ctx);
     }
 }
@@ -3318,6 +3361,7 @@ mod tests {
             supporter_state: supporter::SupporterState::default(),
             exact_file_consent_open: false,
             exact_file_consent_status: None,
+            show_diagnostics: false,
         };
 
         assert_eq!(
@@ -3362,6 +3406,7 @@ mod tests {
             supporter_state: supporter::SupporterState::default(),
             exact_file_consent_open: false,
             exact_file_consent_status: None,
+            show_diagnostics: false,
         };
 
         assert_eq!(app.fidelity_status(), None);
@@ -3476,6 +3521,15 @@ mod tests {
             assert!(!fidelity_status_label(status).contains('%'));
             assert!(!fidelity_status_summary(status).contains('%'));
         }
+    }
+
+    #[test]
+    fn desktop_normal_mode_keeps_raw_diagnostics_behind_disclosure() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("Fidelity & diagnostics"));
+        assert!(source.contains("Needs attention"));
+        assert!(source.contains("show_diagnostics_window(ctx)"));
+        assert!(source.contains("Technical details"));
     }
 
     #[test]
@@ -3606,6 +3660,7 @@ mod tests {
             supporter_state: supporter::SupporterState::default(),
             exact_file_consent_open: false,
             exact_file_consent_status: None,
+            show_diagnostics: false,
         };
 
         app.editor
