@@ -1,0 +1,25 @@
+name: VIEWER-EDITOR-TEXT-SYNC-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-viewer/src/lib.rs"
+      - ".github/workflows/viewer-editor-text-sync-v1.yml"
+  push:
+    branches:
+      - viewer-editor-text-projection-sync-01
+
+permissions:
+  contents: read
+
+jobs:
+  viewer-editor-text-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Viewer text refresh seam
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer --lib
+      - name: Check Viewer crate
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer
