@@ -28,6 +28,9 @@ use windows_sys::core::PCWSTR;
 const POSSESSION_DOMAIN: &[u8] = b"Chaptera.DeviceKey.possession.v1\0";
 const STATE_ENTROPY_DOMAIN: &[u8] = b"Chaptera.TrustedTimeState.dpapi.v1\0";
 const P256_PUBLIC_BLOB_LEN: usize = 8 + 32 + 32;
+const NTE_NOT_SUPPORTED_STATUS: u32 = 0x8009_0029;
+const NTE_DEVICE_NOT_READY_STATUS: u32 = 0x8009_0030;
+const NTE_DEVICE_NOT_FOUND_STATUS: u32 = 0x8009_0035;
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -49,6 +52,8 @@ pub enum WindowsPlatformError {
     InvalidSignature,
     #[error("DeviceKey possession proof failed")]
     PossessionProofFailed,
+    #[error("persisted DeviceKey is missing from pinned backing {0:?}")]
+    DeviceKeyMissing(DeviceKeyBacking),
     #[error("protected TrustedTime state belongs to another DeviceKey")]
     StateDeviceMismatch,
     #[error("TrustedTime state CBOR encode failed: {0}")]
@@ -85,16 +90,16 @@ pub struct WindowsDeviceKey {
 }
 
 impl WindowsDeviceKey {
+    /// Bootstrap a DeviceKey backing once. Existing software fallback wins so
+    /// a machine does not silently migrate back to TPM later. If no key exists,
+    /// TPM is preferred; a software key is created only when the TPM provider
+    /// is unavailable/unsupported during bootstrap.
+    ///
+    /// After bootstrap, persist `backing()` and use `open_existing` on later
+    /// launches. That pins identity and prevents a transient TPM failure from
+    /// silently creating a different software DeviceKey.
     pub fn open_or_create(key_name: &str) -> Result<Self, WindowsPlatformError> {
         let key_name = wide(key_name);
-
-        if let Some(existing) = try_open_existing(
-            MS_PLATFORM_CRYPTO_PROVIDER,
-            DeviceKeyBacking::HardwareTpm,
-            &key_name,
-        )? {
-            return Ok(existing);
-        }
 
         if let Some(existing) = try_open_existing(
             MS_KEY_STORAGE_PROVIDER,
@@ -104,12 +109,25 @@ impl WindowsDeviceKey {
             return Ok(existing);
         }
 
-        if let Ok(created) = create_with_provider(
+        match try_open_existing(
             MS_PLATFORM_CRYPTO_PROVIDER,
             DeviceKeyBacking::HardwareTpm,
             &key_name,
         ) {
-            return Ok(created);
+            Ok(Some(existing)) => return Ok(existing),
+            Ok(None) => {
+                match create_with_provider(
+                    MS_PLATFORM_CRYPTO_PROVIDER,
+                    DeviceKeyBacking::HardwareTpm,
+                    &key_name,
+                ) {
+                    Ok(created) => return Ok(created),
+                    Err(error) if is_bootstrap_tpm_unavailable(&error) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) if is_bootstrap_tpm_unavailable(&error) => {}
+            Err(error) => return Err(error),
         }
 
         create_with_provider(
@@ -117,6 +135,19 @@ impl WindowsDeviceKey {
             DeviceKeyBacking::SoftwareKsp,
             &key_name,
         )
+    }
+
+    pub fn open_existing(
+        key_name: &str,
+        backing: DeviceKeyBacking,
+    ) -> Result<Self, WindowsPlatformError> {
+        let key_name = wide(key_name);
+        let provider = match backing {
+            DeviceKeyBacking::HardwareTpm => MS_PLATFORM_CRYPTO_PROVIDER,
+            DeviceKeyBacking::SoftwareKsp => MS_KEY_STORAGE_PROVIDER,
+        };
+        try_open_existing(provider, backing, &key_name)?
+            .ok_or(WindowsPlatformError::DeviceKeyMissing(backing))
     }
 
     pub fn backing(&self) -> DeviceKeyBacking {
@@ -364,6 +395,19 @@ fn open_provider(provider_name: PCWSTR) -> Result<NCRYPT_PROV_HANDLE, i32> {
     }
 }
 
+fn is_bootstrap_tpm_unavailable(error: &WindowsPlatformError) -> bool {
+    matches!(
+        error,
+        WindowsPlatformError::Cng { status, .. }
+            if matches!(
+                *status,
+                NTE_NOT_SUPPORTED_STATUS
+                    | NTE_DEVICE_NOT_READY_STATUS
+                    | NTE_DEVICE_NOT_FOUND_STATUS
+            )
+    )
+}
+
 fn cng_ok(api: &'static str, status: i32) -> Result<(), WindowsPlatformError> {
     if status == 0 {
         Ok(())
@@ -604,7 +648,8 @@ mod tests {
             .expect("CNG possession proof");
         drop(first);
 
-        let second = WindowsDeviceKey::open_or_create(&key_name).expect("reopen DeviceKey");
+        let second = WindowsDeviceKey::open_existing(&key_name, backing)
+            .expect("reopen DeviceKey from pinned backing");
         let second_id = second.device_key_id().expect("derive reopened DeviceKeyId");
         assert_eq!(first_id, second_id);
         assert_eq!(backing, second.backing());
