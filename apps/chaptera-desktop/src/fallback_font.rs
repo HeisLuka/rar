@@ -57,9 +57,6 @@ mod tests {
             egui::FontFamily::Name(resource::RESOURCE_ID.into())
         );
         assert_eq!(resource::DISPOSITION, "fallback_not_source_font");
-        assert_eq!(
-            resource::sha256_hex(),
-            resource::EXPECTED_SHA256
-        );
+        assert_eq!(resource::sha256_hex(), resource::EXPECTED_SHA256);
     }
 }
