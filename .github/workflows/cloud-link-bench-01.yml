@@ -102,6 +102,19 @@ jobs:
           PYTHON: python
         run: cargo test -p chaptera-server --test cloud_link_bench cloud_link_shared_db_marginal_receipt -- --nocapture
 
+      - name: Run cold/warm latency order probes
+        env:
+          RUST_BACKTRACE: "1"
+          PYTHON: python
+        shell: bash
+        run: |
+          set -euo pipefail
+          for order in simple-first newsletter-first brochure-first; do
+            CHAPTERA_CLOUD_LINK_LATENCY_ORDER="$order" \
+            CHAPTERA_CLOUD_LINK_LATENCY_RECEIPT="$GITHUB_WORKSPACE/out/cloud-link-bench-01c-$order.json" \
+            cargo test -p chaptera-server --test cloud_link_bench cloud_link_cold_warm_latency_receipt -- --nocapture
+          done
+
       - name: Validate receipt shape and publish summary
         shell: bash
         run: |
@@ -216,6 +229,116 @@ jobs:
               fh.write("\n" + summary)
           PY
 
+      - name: Aggregate cold/warm latency receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, math, os, pathlib, statistics
+
+          expected_orders = {"simple-first", "newsletter-first", "brochure-first"}
+          paths = sorted(pathlib.Path("out").glob("cloud-link-bench-01c-*-first.json"))
+          assert len(paths) == 3, paths
+
+          receipts = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+          assert {r["order_id"] for r in receipts} == expected_orders
+          for receipt in receipts:
+              assert receipt["protocol_version"] == "chaptera.cloud-link-first-bind-latency.v0"
+              assert receipt["fixture_source_commit"] == "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8"
+              assert receipt["warm_repetitions_per_fixture"] == 20
+              assert len(receipt["samples"]) == 63
+
+          all_samples = [sample for receipt in receipts for sample in receipt["samples"]]
+          probes = [sample for sample in all_samples if sample["sample_kind"] == "order_probe"]
+          warm = [sample for sample in all_samples if sample["sample_kind"] == "warm_repeat"]
+          cold = [sample for sample in probes if sample["process_cold"]]
+          assert len(probes) == 9
+          assert len(cold) == 3
+          assert {sample["logical_fixture_id"] for sample in cold} == {
+              "f0-simple", "f1-newsletter", "f2-brochure"
+          }
+
+          fixture_ids = ("f0-simple", "f1-newsletter", "f2-brochure")
+          for fixture_id in fixture_ids:
+              assert sum(sample["logical_fixture_id"] == fixture_id for sample in warm) == 60
+
+          def nearest_rank(values, fraction):
+              values = sorted(values)
+              assert values
+              index = max(0, min(len(values) - 1, math.ceil(fraction * len(values)) - 1))
+              return values[index]
+
+          metric_defs = (
+              ("total_wall_ms", None),
+              ("streamed_upload", "streamed_upload"),
+              ("validation_and_promotion", "validation_and_promotion"),
+              ("baseline_materialization", "baseline_materialization"),
+              ("project_genesis_commit", "project_genesis_commit"),
+          )
+
+          warm_stats = []
+          for fixture_id in fixture_ids:
+              fixture_samples = [s for s in warm if s["logical_fixture_id"] == fixture_id]
+              for metric_name, phase_name in metric_defs:
+                  if phase_name is None:
+                      values = [s["total_wall_ms"] for s in fixture_samples]
+                  else:
+                      values = [s["phase_wall_ms"][phase_name] for s in fixture_samples]
+                  warm_stats.append({
+                      "fixture_id": fixture_id,
+                      "metric": metric_name,
+                      "count": len(values),
+                      "p50_ms": statistics.median(values),
+                      "p95_ms": nearest_rank(values, 0.95),
+                      "min_ms": min(values),
+                      "max_ms": max(values),
+                  })
+
+          aggregate = {
+              "protocol_version": "chaptera.cloud-link-first-bind-latency-aggregate.v0",
+              "build_sha": os.environ.get("GITHUB_SHA", "local"),
+              "fixture_source_commit": "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8",
+              "source_receipts": [path.name for path in paths],
+              "process_cold_probes": cold,
+              "all_order_probes": probes,
+              "warm_stats": warm_stats,
+          }
+          pathlib.Path("out/cloud-link-bench-01c-aggregate.json").write_text(
+              json.dumps(aggregate, indent=2), encoding="utf-8"
+          )
+
+          lines = ["## CLOUD-LINK-BENCH-01C — cold/warm latency", ""]
+          lines.append("Process-cold means first first-bind in a fresh Rust test process; OS page cache is not claimed cold.")
+          lines.append("")
+          lines.append("| order | position | fixture | process-cold | total ms | baseline ms |")
+          lines.append("|---|---:|---|---|---:|---:|")
+          for receipt in receipts:
+              for sample in receipt["samples"]:
+                  if sample["sample_kind"] != "order_probe":
+                      continue
+                  lines.append(
+                      f"| {receipt['order_id']} | {sample['process_position']} | "
+                      f"{sample['logical_fixture_id']} | {str(sample['process_cold']).lower()} | "
+                      f"{sample['total_wall_ms']} | "
+                      f"{sample['phase_wall_ms']['baseline_materialization']} |"
+                  )
+
+          lines.append("")
+          lines.append("| fixture | metric | n | p50 ms | p95 ms | min | max |")
+          lines.append("|---|---|---:|---:|---:|---:|---:|")
+          for stat in warm_stats:
+              lines.append(
+                  f"| {stat['fixture_id']} | {stat['metric']} | {stat['count']} | "
+                  f"{stat['p50_ms']} | {stat['p95_ms']} | {stat['min_ms']} | {stat['max_ms']} |"
+              )
+
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          pathlib.Path("out/cloud-link-bench-01c-summary.md").write_text(summary, encoding="utf-8")
+          with open(pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]), "a", encoding="utf-8") as fh:
+              fh.write("\n" + summary)
+          PY
+
       - uses: actions/upload-artifact@v4
         with:
           name: cloud-link-bench-01-${{ github.sha }}
@@ -225,4 +348,9 @@ jobs:
             out/cloud-link-bench-summary.md
             out/cloud-link-bench-01b.json
             out/cloud-link-bench-01b-summary.md
+            out/cloud-link-bench-01c-simple-first.json
+            out/cloud-link-bench-01c-newsletter-first.json
+            out/cloud-link-bench-01c-brochure-first.json
+            out/cloud-link-bench-01c-aggregate.json
+            out/cloud-link-bench-01c-summary.md
           if-no-files-found: error
