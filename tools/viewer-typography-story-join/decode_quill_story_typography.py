@@ -298,9 +298,8 @@ def materialize_ranges(
         if delta % 2:
             raise DecodeError(f"FDPC text_offset 0x{absolute:x} is not UTF-16 aligned")
         endpoints.append((delta // 2, style))
-    endpoints.sort(key=lambda item: item[0])
     if any(left[0] > right[0] for left, right in zip(endpoints, endpoints[1:])):
-        raise DecodeError("FDPC endpoints not monotone after sort")
+        raise DecodeError("FDPC endpoints regress in stored order")
 
     ranges = []
     previous = 0
