@@ -253,6 +253,21 @@ mod tests {
     }
 
     #[test]
+    fn tampered_product_fails_signature_before_product_policy() {
+        let artifact = signed_request();
+        let mut envelope: ActivationRequestEnvelopeV1 = decode_exact(&artifact).expect("envelope");
+        let mut facts: ActivationRequestFactsV1 =
+            decode_exact(&envelope.signed_facts).expect("facts");
+        facts.product_id = "chaptera.reader".into();
+        envelope.signed_facts = encode_activation_request_facts(&facts).expect("facts");
+
+        let mut changed = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut changed).expect("envelope");
+        let error = verify_activation_request(&changed, "chaptera.editor").unwrap_err();
+        assert_eq!(error, ActivationRequestError::SignatureInvalid);
+    }
+
+    #[test]
     fn mismatched_public_key_hash_is_rejected_before_signature() {
         let artifact = signed_request();
         let mut envelope: ActivationRequestEnvelopeV1 = decode_exact(&artifact).expect("envelope");
