@@ -61,6 +61,15 @@ impl MarketProfile {
             _ => Self::NeutralEnglish,
         }
     }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Us => "US",
+            Self::Uk => "UK",
+            Self::Ru => "Russia",
+            Self::NeutralEnglish => "NeutralEnglish",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
