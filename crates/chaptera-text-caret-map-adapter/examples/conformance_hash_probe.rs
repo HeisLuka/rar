@@ -1,5 +1,5 @@
 use chaptera_text_caret_map_adapter::{
-    build_resolved_text_caret_map_v1, caret_map_hash_v1, CaretMapBuildInputV1,
+    CaretMapBuildInputV1, build_resolved_text_caret_map_v1, caret_map_hash_v1,
 };
 use std::io::{self, Read};
 
