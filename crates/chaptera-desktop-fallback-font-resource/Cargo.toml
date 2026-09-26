@@ -1,0 +1,10 @@
+[package]
+name = "chaptera-desktop-fallback-font-resource"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+epaint_default_fonts = "=0.31.1"
+sha2.workspace = true

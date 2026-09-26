@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod diagnostic_sweep;
+mod fallback_font;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
@@ -417,6 +418,8 @@ fn main() -> eframe::Result<()> {
         APP_TITLE,
         options,
         Box::new(move |cc| {
+            fallback_font::install(&cc.egui_ctx)
+                .expect("pinned Chaptera fallback font resource must validate");
             Ok(Box::new(ViewerApp::new_with_storage(
                 initial_path,
                 cc.storage,
@@ -537,11 +540,9 @@ impl ViewerApp {
         #[cfg(target_os = "windows")]
         {
             if let Some(root) = rfd::FileDialog::new().pick_folder() {
-                self.diagnostic_sweep_progress =
-                    diagnostic_sweep::FolderSweepProgress::default();
+                self.diagnostic_sweep_progress = diagnostic_sweep::FolderSweepProgress::default();
                 self.diagnostic_sweep_report = None;
-                self.diagnostic_sweep_status =
-                    Some(format!("Scanning {}…", root.display()));
+                self.diagnostic_sweep_status = Some(format!("Scanning {}…", root.display()));
                 self.diagnostic_sweep = Some(diagnostic_sweep::start_folder_sweep(root));
                 self.diagnostic_sweep_open = true;
             }
@@ -549,8 +550,9 @@ impl ViewerApp {
 
         #[cfg(not(target_os = "windows"))]
         {
-            self.diagnostic_sweep_status =
-                Some("Folder diagnostics picker is currently available in the Windows build.".to_owned());
+            self.diagnostic_sweep_status = Some(
+                "Folder diagnostics picker is currently available in the Windows build.".to_owned(),
+            );
             self.diagnostic_sweep_open = true;
         }
     }
@@ -620,10 +622,11 @@ impl ViewerApp {
                 .set_file_name("chaptera-pub-folder-diagnostics.json")
                 .save_file()
             {
-                self.diagnostic_sweep_status = Some(match diagnostic_sweep::write_report(report, &path) {
-                    Ok(()) => format!("Saved diagnostic report to {}.", path.display()),
-                    Err(error) => format!("Could not save diagnostic report: {error}"),
-                });
+                self.diagnostic_sweep_status =
+                    Some(match diagnostic_sweep::write_report(report, &path) {
+                        Ok(()) => format!("Saved diagnostic report to {}.", path.display()),
+                        Err(error) => format!("Could not save diagnostic report: {error}"),
+                    });
             }
         }
 
@@ -2455,8 +2458,7 @@ impl ViewerApp {
                         .show_value(true),
                 );
                 if slider.changed() {
-                    self.zoom =
-                        (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                    self.zoom = (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
                 }
             } else {
                 ui.label("Fit mode");
@@ -2553,14 +2555,17 @@ impl ViewerApp {
             .iter()
             .filter(|node| node.parent_origin == page_origin)
             .collect::<Vec<_>>();
-        let selected_bounds = self.canvas_selection.primary().and_then(|selected_instance| {
-            self.editor.as_ref().and_then(|editor| {
-                page_nodes.iter().find_map(|node| {
-                    let instance = direct_scene_instance(editor, &page_id_text, node.origin)?;
-                    (instance.instance_id == selected_instance).then_some(node.bounds)
+        let selected_bounds = self
+            .canvas_selection
+            .primary()
+            .and_then(|selected_instance| {
+                self.editor.as_ref().and_then(|editor| {
+                    page_nodes.iter().find_map(|node| {
+                        let instance = direct_scene_instance(editor, &page_id_text, node.origin)?;
+                        (instance.instance_id == selected_instance).then_some(node.bounds)
+                    })
                 })
-            })
-        });
+            });
 
         let viewport = ui.available_size();
         let scene_scale = match self.zoom_mode {
@@ -2572,9 +2577,7 @@ impl ViewerApp {
             ),
             CanvasZoomMode::PageWidth => page_width_scale(surface.size.width.get(), viewport),
             CanvasZoomMode::FitSelection => selected_bounds
-                .and_then(|bounds| {
-                    fitted_scale(bounds.width.get(), bounds.height.get(), viewport)
-                })
+                .and_then(|bounds| fitted_scale(bounds.width.get(), bounds.height.get(), viewport))
                 .or_else(|| {
                     fitted_scale(
                         surface.size.width.get(),
@@ -2715,12 +2718,12 @@ impl ViewerApp {
                 let page_rect = if self.zoom_mode == CanvasZoomMode::FitSelection {
                     selected_bounds
                         .map(|bounds| {
-                            let selection_center_x =
-                                (bounds.x.get() as f32 + bounds.width.get() as f32 / 2.0)
-                                    * scene_scale;
-                            let selection_center_y =
-                                (bounds.y.get() as f32 + bounds.height.get() as f32 / 2.0)
-                                    * scene_scale;
+                            let selection_center_x = (bounds.x.get() as f32
+                                + bounds.width.get() as f32 / 2.0)
+                                * scene_scale;
+                            let selection_center_y = (bounds.y.get() as f32
+                                + bounds.height.get() as f32 / 2.0)
+                                * scene_scale;
                             egui::Rect::from_min_size(
                                 canvas.center()
                                     - egui::vec2(selection_center_x, selection_center_y),
@@ -3018,24 +3021,16 @@ impl ViewerApp {
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
                         let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let numeric_100_scale =
-                            numeric_zoom_scene_scale(1.0).unwrap_or(scene_scale);
-                        let visual_zoom = scene_scale / numeric_100_scale;
-                        let font_size =
-                            (12.0_f32 * visual_zoom).clamp(8.0_f32, 28.0_f32);
                         let galley = text_painter.layout(
                             fragment.text.clone(),
-                            egui::FontId::proportional(font_size),
+                            fallback_font::font_id_for_scene_scale(scene_scale),
                             egui::Color32::BLACK,
                             text_clip_rect.width().max(1.0_f32),
                         );
-                        if preview_text_height_is_clipped(
-                            galley.size().y,
-                            text_clip_rect.height(),
-                        ) {
+                        if preview_text_height_is_clipped(galley.size().y, text_clip_rect.height())
+                        {
                             preview_clipped_frames += 1;
-                            preview_clipped_story_keys
-                                .insert(format!("{:?}", fragment.story_id));
+                            preview_clipped_story_keys.insert(format!("{:?}", fragment.story_id));
                             painter.rect_stroke(
                                 node_rect,
                                 0,
@@ -3560,10 +3555,10 @@ mod tests {
         let scale = numeric_zoom_scene_scale(1.0).expect("numeric 100%");
         assert!((scale - (96.0 / 914_400.0)).abs() < f32::EPSILON);
 
-        let fit_small = fitted_scale(8_229_600, 10_668_000, egui::vec2(800.0, 600.0))
-            .expect("fit small");
-        let fit_large = fitted_scale(8_229_600, 10_668_000, egui::vec2(1600.0, 1200.0))
-            .expect("fit large");
+        let fit_small =
+            fitted_scale(8_229_600, 10_668_000, egui::vec2(800.0, 600.0)).expect("fit small");
+        let fit_large =
+            fitted_scale(8_229_600, 10_668_000, egui::vec2(1600.0, 1200.0)).expect("fit large");
         assert_ne!(fit_small, fit_large);
         assert_eq!(numeric_zoom_scene_scale(1.0), Some(scale));
     }
@@ -4383,6 +4378,8 @@ mod tests {
                 .with_max_steps(20)
                 .wgpu()
                 .build_eframe(move |cc| {
+                    fallback_font::install(&cc.egui_ctx)
+                        .expect("pinned Chaptera fallback font resource must validate");
                     ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
                 });
             harness.step();
@@ -4430,7 +4427,11 @@ mod tests {
             .with_size(egui::vec2(1280.0, 820.0))
             .with_pixels_per_point(1.0)
             .with_max_steps(20)
-            .build_eframe(|cc| ViewerApp::new_with_storage(None, cc.storage));
+            .build_eframe(|cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                ViewerApp::new_with_storage(None, cc.storage)
+            });
 
         {
             let open = harness.get_by_label("Open PUB…");
@@ -4832,7 +4833,11 @@ mod tests {
             .with_size(egui::vec2(1280.0, 820.0))
             .with_pixels_per_point(1.0)
             .with_max_steps(24)
-            .build_eframe(move |cc| ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage));
+            .build_eframe(move |cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+            });
         harness.step();
 
         let (page_label, target_document_point) = {
@@ -5700,7 +5705,10 @@ mod tests {
         assert!(redo_restores_replacement_asset);
 
         let project = app.editor.as_ref().expect("editor").project();
-        assert_eq!(project.schema_version, pub_editor::EDITOR_PROJECT_VERSION_V0_11);
+        assert_eq!(
+            project.schema_version,
+            pub_editor::EDITOR_PROJECT_VERSION_V0_11
+        );
         assert_eq!(project.assets.len(), 1);
         let asset_bytes = app
             .editor
