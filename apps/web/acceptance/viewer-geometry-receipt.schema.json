@@ -270,6 +270,7 @@
         "scalar_end": {"type": "integer", "minimum": 0},
         "source_font_name": {"type": "string", "minLength": 1},
         "text_size_emu": {"type": "integer", "minimum": 1},
+        "source_story_text_sha256": {"$ref": "#/$defs/sha256"},
         "render_disposition": {"const": "source_identity_known_render_fallback"}
       }
     },
