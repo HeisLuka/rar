@@ -1,0 +1,48 @@
+name: Chaptera golden model fidelity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/src/main.rs"
+      - "apps/chaptera-desktop/src/preview_typography.rs"
+      - "vendor/producer-a/crates/pub-viewer/src/lib.rs"
+      - "vendor/producer-a/crates/pub-quill/src/**"
+      - ".github/workflows/chaptera-golden-model-fidelity.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  golden:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire pinned SampleNewsletter
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $fixture
+          $out = Join-Path $env:RUNNER_TEMP "chaptera-golden-model-fidelity"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_UX_SNAPSHOT_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prove source typography reaches preview
+        run: cargo test -p chaptera-desktop ci_sample_newsletter_applies_grounded_source_size_when_fixture_is_available -- --nocapture
+
+      - name: Render golden page
+        run: cargo test -p chaptera-desktop headless_wgpu_ux_snapshots_render_current_viewer_app -- --ignored --nocapture
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-golden-model-fidelity
+          path: ${{ env.CHAPTERA_UX_SNAPSHOT_DIR }}
+          if-no-files-found: error
