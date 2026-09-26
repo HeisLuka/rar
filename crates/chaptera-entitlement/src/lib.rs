@@ -627,7 +627,9 @@ mod tests {
     fn wrong_product_is_rejected() {
         let verifier = verifier();
         let mut c = ctx();
-        c.build.product_id = "chaptera.reader";
+        let mut build = build_payload();
+        build.product_id = "chaptera.reader".into();
+        c.build_identity_artifact = sign_build_identity(&build);
         let err = verifier
             .verify(&sign_artifact(&payload(), TEST_KID), &c)
             .unwrap_err();
@@ -662,7 +664,9 @@ mod tests {
     fn uncovered_major_is_rejected() {
         let verifier = verifier();
         let mut c = ctx();
-        c.build.major = 3;
+        let mut build = build_payload();
+        build.major = 3;
+        c.build_identity_artifact = sign_build_identity(&build);
         let err = verifier
             .verify(&sign_artifact(&payload(), TEST_KID), &c)
             .unwrap_err();
@@ -673,7 +677,9 @@ mod tests {
     fn build_after_updates_until_is_rejected_without_using_current_time() {
         let verifier = verifier();
         let mut c = ctx();
-        c.build.released_at = 1_950_000_000;
+        let mut build = build_payload();
+        build.released_at = 1_950_000_000;
+        c.build_identity_artifact = sign_build_identity(&build);
         let err = verifier
             .verify(&sign_artifact(&payload(), TEST_KID), &c)
             .unwrap_err();
