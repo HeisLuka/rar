@@ -124,6 +124,10 @@ fn validate_monotone_fdpc_text_offsets(
     Ok(())
 }
 
+fn explicit_run_projection_allowed(unknown_block_types: &BTreeSet<u8>) -> bool {
+    unknown_block_types.is_empty()
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BlockObservation {
     id: u8,
@@ -250,7 +254,7 @@ pub fn parse_bounded_typography(
     // authority. It may shift all later block boundaries. Keep the raw/range
     // observations and diagnostic, but suppress product-facing explicit
     // typography until every physical block width in this catalog is known.
-    if unknown_block_types.is_empty() {
+    if explicit_run_projection_allowed(&unknown_block_types) {
         for range in &ranges {
             let mut font_pairs = range
                 .font_indices
@@ -719,6 +723,15 @@ mod tests {
         ];
         let error = validate_monotone_fdpc_text_offsets(&regressed).unwrap_err();
         assert!(error.to_string().contains("regress in stored order"));
+    }
+
+    #[test]
+    fn unknown_fixed_block_widths_suppress_explicit_run_projection() {
+        let mut unknown = BTreeSet::new();
+        assert!(explicit_run_projection_allowed(&unknown));
+
+        unknown.insert(0x33);
+        assert!(!explicit_run_projection_allowed(&unknown));
     }
 
     #[test]
