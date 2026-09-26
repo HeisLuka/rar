@@ -2912,6 +2912,12 @@ impl ViewerApp {
                             preview_typography::layout_fragment(
                                 &visual.typography_runs,
                                 fragment,
+                                visual
+                                    .document
+                                    .stories
+                                    .iter()
+                                    .find(|story| story.id == fragment.story_id)
+                                    .map(|story| story.text.as_str()),
                                 scene_scale,
                                 fallback_font_size,
                                 text_clip_rect.width().max(1.0_f32),
@@ -3824,6 +3830,12 @@ mod tests {
             let (job, usage) = preview_typography::layout_fragment(
                 &visual.typography_runs,
                 fragment,
+                visual
+                    .document
+                    .stories
+                    .iter()
+                    .find(|story| story.id == fragment.story_id)
+                    .map(|story| story.text.as_str()),
                 scene_scale,
                 fallback_font_size,
                 500.0,
