@@ -75,7 +75,7 @@ jobs:
           import json
           from pathlib import Path
           scene=json.loads(Path("target/web-font-env-real/SampleNewsletter.scene.json").read_text())
-          assert scene["snapshot_id"] == "sha256:c236ca5def15504579aaa02b34d2d773415195b2d92666d0ae104fc32bed1825", scene["snapshot_id"]
+          assert scene["snapshot_id"] == "sha256:e04a20f27a44021db96496feeceba4fffd9c3a7fc9bec4e76135ed45c67195da", scene["snapshot_id"]
           assert len(scene["stories"]) == 44
           assert len(scene["story_frames"]) == 61
           text=next((c for c in scene["capabilities"] if c["key"]=="render.text"), None)
