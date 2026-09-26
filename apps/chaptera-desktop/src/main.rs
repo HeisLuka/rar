@@ -2523,7 +2523,11 @@ impl ViewerApp {
     }
 
     fn process_canvas_text_input(&mut self, ctx: &egui::Context) {
-        if self.text_mode.is_none() || ctx.wants_keyboard_input() {
+        if self.text_mode.is_none() {
+            return;
+        }
+        if ctx.wants_keyboard_input() {
+            self.exit_canvas_text_mode("focus_transfer");
             return;
         }
         let events = ctx.input(|input| input.events.clone());
