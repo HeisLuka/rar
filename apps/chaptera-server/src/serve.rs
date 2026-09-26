@@ -74,6 +74,16 @@ pub fn router_with_edge_auth_and_local(
     auth: Option<AuthHttpState>,
     local_ui: bool,
 ) -> Router {
+    router_with_edge_auth_local_and_product(state, edge_policy, auth, local_ui, None)
+}
+
+pub fn router_with_edge_auth_local_and_product(
+    state: AppState,
+    edge_policy: EdgePolicy,
+    auth: Option<AuthHttpState>,
+    local_ui: bool,
+    product: Option<Router>,
+) -> Router {
     let base = Router::new()
         .route("/live", get(live))
         .route("/ready", get(ready))
@@ -90,6 +100,10 @@ pub fn router_with_edge_auth_and_local(
 
     let base = match auth {
         Some(auth) => base.merge(auth_http::router(auth)),
+        None => base,
+    };
+    let base = match product {
+        Some(product) => base.merge(product),
         None => base,
     };
 
@@ -257,6 +271,17 @@ pub async fn run_with_auth_local(
     auth: Option<AuthHttpState>,
     local_ui: bool,
 ) -> io::Result<()> {
+    run_with_auth_local_product(config, edge_policy, state, auth, local_ui, None).await
+}
+
+pub async fn run_with_auth_local_product(
+    config: RuntimeConfig,
+    edge_policy: EdgePolicy,
+    state: AppState,
+    auth: Option<AuthHttpState>,
+    local_ui: bool,
+    product: Option<Router>,
+) -> io::Result<()> {
     config
         .validate()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
@@ -267,12 +292,13 @@ pub async fn run_with_auth_local(
         listener.local_addr()?,
         local_ui
     );
-    run_with_listener_policy_auth_and_local(
+    run_with_listener_policy_auth_local_and_product(
         listener,
         state,
         edge_policy,
         auth,
         local_ui,
+        product,
         shutdown::signal(),
     )
     .await
@@ -308,9 +334,33 @@ async fn run_with_listener_policy_auth_and_local<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
+    run_with_listener_policy_auth_local_and_product(
+        listener,
+        state,
+        edge_policy,
+        auth,
+        local_ui,
+        None,
+        shutdown,
+    )
+    .await
+}
+
+async fn run_with_listener_policy_auth_local_and_product<F>(
+    listener: TcpListener,
+    state: AppState,
+    edge_policy: EdgePolicy,
+    auth: Option<AuthHttpState>,
+    local_ui: bool,
+    product: Option<Router>,
+    shutdown: F,
+) -> io::Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     axum::serve(
         listener,
-        router_with_edge_auth_and_local(state, edge_policy, auth, local_ui)
+        router_with_edge_auth_local_and_product(state, edge_policy, auth, local_ui, product)
             .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown)

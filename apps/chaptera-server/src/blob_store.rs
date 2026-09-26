@@ -592,6 +592,97 @@ impl BlobStoreService {
         })
     }
 
+    pub async fn create_quarantine_streamed(
+        &self,
+        tenant_id: &str,
+        upload_id: &str,
+        expected_byte_len: u64,
+        input: &mut (dyn AsyncRead + Unpin + Send),
+    ) -> Result<QuarantineObjectMetadata, BlobStoreError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(upload_id, "upload_id")?;
+        if expected_byte_len == 0 {
+            return Err(BlobStoreError::new(
+                "invalid_upload_size",
+                "streamed quarantine upload byte length must be positive",
+            ));
+        }
+
+        let object_locator = object_locator(BlobNamespace::Quarantine, tenant_id, upload_id);
+        let mut bounded = HashingBoundedReader::new(input, expected_byte_len);
+        let (mut upload_writer, upload_reader) = tokio::io::duplex(COPY_BUFFER_BYTES);
+        let create = self.provider.create_immutable(
+            &object_locator,
+            expected_byte_len,
+            Box::new(upload_reader),
+        );
+        // Move the duplex writer into the pump future. If bounded input fails
+        // before the normal shutdown path (for example, one byte over the
+        // declared length), dropping the completed pump future must close the
+        // writer so the provider reader observes EOF instead of deadlocking
+        // inside read_to_end while join! waits for both sides.
+        let bounded_ref = &mut bounded;
+        let pump = async move {
+            tokio::io::copy(bounded_ref, &mut upload_writer)
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))?;
+            upload_writer
+                .shutdown()
+                .await
+                .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))
+        };
+        let (create_result, pump_result) = tokio::join!(create, pump);
+
+        let metadata = match create_result {
+            Ok(metadata) => {
+                pump_result?;
+                bounded.require_exact_eof(expected_byte_len)?;
+                metadata
+            }
+            Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => {
+                pump_result?;
+                bounded.require_exact_eof(expected_byte_len)?;
+                self.provider
+                    .head_exact(&object_locator)
+                    .await
+                    .map_err(provider_error)?
+                    .ok_or_else(|| {
+                        BlobStoreError::new(
+                            "provider_unknown_unreconciled",
+                            "quarantine create outcome is unknown and exact object is absent",
+                        )
+                    })?
+            }
+            Err(error) if error.kind == ProviderErrorKind::AlreadyExists => {
+                return Err(BlobStoreError::new(
+                    "quarantine_object_exists",
+                    "create-only quarantine object already exists",
+                ));
+            }
+            Err(error) => {
+                // Prefer the authoritative input-side failure when the
+                // provider error is merely a consequence of a truncated
+                // duplex stream. For a cleanly exhausted short input, the
+                // bounded reader reports the more precise length mismatch.
+                pump_result?;
+                bounded.require_exact_eof(expected_byte_len)?;
+                return Err(provider_error(error));
+            }
+        };
+        validate_provider_metadata(&metadata, expected_byte_len)?;
+        require_ident(&metadata.generation, "storage_generation")?;
+        require_ident(&metadata.etag, "object_etag")?;
+
+        Ok(QuarantineObjectMetadata {
+            tenant_id: tenant_id.to_owned(),
+            upload_id: upload_id.to_owned(),
+            object_locator,
+            storage_generation: metadata.generation,
+            etag: metadata.etag,
+            byte_len: metadata.byte_len,
+        })
+    }
+
     pub async fn inspect_quarantine_upload(
         &self,
         tenant_id: &str,
@@ -1572,6 +1663,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output, bytes);
+    }
+
+    #[tokio::test]
+    async fn streamed_quarantine_fallback_is_exact_create_once_and_reopenable() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, _repo) = service(provider);
+        let bytes = b"streamed-quarantine";
+        let mut input = Cursor::new(bytes.to_vec());
+
+        let metadata = service
+            .create_quarantine_streamed(
+                "tenant-a",
+                "upload-streamed-1",
+                bytes.len() as u64,
+                &mut input,
+            )
+            .await
+            .unwrap();
+        assert_eq!(metadata.byte_len, bytes.len() as u64);
+        assert_eq!(
+            metadata.object_locator,
+            "quarantine/tenant-a/upload-streamed-1"
+        );
+
+        let mut reopened = service
+            .open_quarantine_exact(
+                "tenant-a",
+                "upload-streamed-1",
+                &metadata.storage_generation,
+                &metadata.etag,
+                metadata.byte_len,
+            )
+            .await
+            .unwrap();
+        let mut observed = Vec::new();
+        reopened.read_to_end(&mut observed).await.unwrap();
+        assert_eq!(observed, bytes);
+
+        let mut duplicate = Cursor::new(bytes.to_vec());
+        let error = service
+            .create_quarantine_streamed(
+                "tenant-a",
+                "upload-streamed-1",
+                bytes.len() as u64,
+                &mut duplicate,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "quarantine_object_exists");
+    }
+
+    #[tokio::test]
+    async fn streamed_quarantine_fallback_rejects_length_mismatch() {
+        let provider = Arc::new(FakeProvider::new(capabilities()));
+        let (service, _repo) = service(provider);
+
+        let mut too_long = Cursor::new(b"four".to_vec());
+        let error = service
+            .create_quarantine_streamed("tenant-a", "upload-long", 3, &mut too_long)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "blob_input_failed");
+
+        let mut too_short = Cursor::new(b"two".to_vec());
+        let error = service
+            .create_quarantine_streamed("tenant-a", "upload-short", 4, &mut too_short)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "blob_length_mismatch");
     }
 
     #[tokio::test]

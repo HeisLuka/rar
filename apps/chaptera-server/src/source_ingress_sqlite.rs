@@ -154,6 +154,25 @@ impl SqliteSourceIngressRepository {
         decode_optional_unique(rows, "upload_id_ambiguous")
     }
 
+    pub async fn find_issue_by_idempotency(
+        &self,
+        tenant_id: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<UploadRecord>, IngressError> {
+        require_ident(tenant_id, "tenant_id")?;
+        require_ident(idempotency_key, "idempotency_key")?;
+        let query = format!(
+            "SELECT {UPLOAD_COLUMNS} FROM uploads WHERE tenant_id = ? AND idempotency_key = ? LIMIT 2"
+        );
+        let rows = sqlx::query(&query)
+            .bind(tenant_id.as_bytes())
+            .bind(idempotency_key.as_bytes())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(sqlite_error)?;
+        decode_optional_unique(rows, "upload_idempotency_ambiguous")
+    }
+
     pub async fn compare_and_swap(
         &self,
         upload_id: &str,

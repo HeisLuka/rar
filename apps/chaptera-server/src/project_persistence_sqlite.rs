@@ -12,6 +12,7 @@ use sqlx::{
 };
 
 use crate::{
+    authz_runtime::CAP_MEMBER_MANAGE,
     source_ingress::{ConsumeUploadRequest, IngressError, ProjectCreateResult},
     sqlite_store::AUTHORING_REVISION_SCHEMA_V1,
 };
@@ -122,6 +123,39 @@ impl SqliteProjectPersistence {
             .await
     }
 
+    /// Reconcile an already-committed CreateProjectFromUpload without invoking
+    /// the baseline producer again. This is the unknown-outcome/idempotent
+    /// retry path: durable consumption + project/document + persisted genesis
+    /// identity are authoritative once the original transaction committed.
+    pub async fn reconcile_project_from_upload(
+        &self,
+        request: &ConsumeUploadRequest,
+    ) -> Result<Option<ProjectCreateResult>, IngressError> {
+        validate_request(request)?;
+        let request_hash = consumption_request_hash(request)?;
+        let mut tx = self.pool.begin().await.map_err(sqlite_error)?;
+
+        let Some(prior) =
+            fetch_consumption_by_key(&mut tx, &request.tenant_id, &request.client_idempotency_id)
+                .await?
+        else {
+            tx.commit().await.map_err(sqlite_error)?;
+            return Ok(None);
+        };
+
+        if prior.upload_id != request.upload_id || prior.request_hash != request_hash {
+            return Err(IngressError::new(
+                "idempotency_conflict",
+                "project creation idempotency key was reused with different input",
+            ));
+        }
+
+        let baseline = persisted_baseline_identity(&mut tx, &prior.project).await?;
+        verify_lifecycle_rows(&mut tx, &request.tenant_id, &prior.project, &baseline).await?;
+        tx.commit().await.map_err(sqlite_error)?;
+        Ok(Some(prior.project))
+    }
+
     async fn create_project_from_upload_inner(
         &self,
         request: ConsumeUploadRequest,
@@ -152,7 +186,7 @@ impl SqliteProjectPersistence {
 
         let upload = sqlx::query(
             r#"
-            SELECT tenant_id, state, upload_generation, canonical_sha256, durable_binding_id
+            SELECT tenant_id, principal_id, state, upload_generation, canonical_sha256, durable_binding_id
             FROM uploads
             WHERE upload_id = ?
             LIMIT 2
@@ -183,6 +217,8 @@ impl SqliteProjectPersistence {
                 "validated source is outside authenticated tenant",
             ));
         }
+        let creator_principal_id = blob_text(upload, "principal_id")?;
+        require_ident(&creator_principal_id, "principal_id")?;
 
         let state: String = upload.try_get("state").map_err(sqlite_error)?;
         if state != "VALIDATED_DURABLE" {
@@ -261,6 +297,56 @@ impl SqliteProjectPersistence {
         .bind(durable_binding_id.as_bytes())
         .bind(source_sha256.as_bytes())
         .bind(project.genesis_revision_id.as_bytes())
+        .bind(to_i64(request.now_ms, "now_ms")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlite_error)?;
+
+        // Project creation is also the initial document-access bootstrap.
+        // Bind the durable uploader principal as Owner inside the same SQLite
+        // transaction so no committed Project/Document can be born
+        // inaccessible, and retry after a later revoke can never resurrect
+        // access by replaying a separate grant mutation.
+        sqlx::query(
+            r#"
+            INSERT INTO authz_documents (tenant_id, document_id, authz_version)
+            VALUES (?, ?, 1)
+            "#,
+        )
+        .bind(request.tenant_id.as_bytes())
+        .bind(project.document_id.as_bytes())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlite_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO authz_principal_grants (
+                tenant_id, document_id, principal_id, role, expires_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, 'owner', NULL, ?)
+            "#,
+        )
+        .bind(request.tenant_id.as_bytes())
+        .bind(project.document_id.as_bytes())
+        .bind(creator_principal_id.as_bytes())
+        .bind(to_i64(request.now_ms, "now_ms")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlite_error)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO authz_audit_events (
+                tenant_id, document_id, principal_id, operation_id,
+                action, result, capability, authz_version, error_code, created_at_ms
+            ) VALUES (?, ?, ?, ?, 'grant.bootstrap', 'allowed', ?, 1, NULL, ?)
+            "#,
+        )
+        .bind(request.tenant_id.as_bytes())
+        .bind(project.document_id.as_bytes())
+        .bind(creator_principal_id.as_bytes())
+        .bind(request.client_idempotency_id.as_bytes())
+        .bind(CAP_MEMBER_MANAGE)
         .bind(to_i64(request.now_ms, "now_ms")?)
         .execute(&mut *tx)
         .await
@@ -382,6 +468,9 @@ impl SqliteProjectPersistence {
             "projects",
             "documents",
             "revision_identity_bindings",
+            "authz_documents",
+            "authz_principal_grants",
+            "authz_audit_events",
         ] {
             let count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?",
@@ -447,6 +536,44 @@ async fn fetch_consumption_by_key(
             })
         })
         .transpose()
+}
+
+async fn persisted_baseline_identity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    project: &ProjectCreateResult,
+) -> Result<ProjectBaselineIdentity, IngressError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT canonical_schema_version, canonical_revision_id
+        FROM revision_identity_bindings
+        WHERE document_id = ? AND service_revision_id = ?
+        LIMIT 2
+        "#,
+    )
+    .bind(project.document_id.as_bytes())
+    .bind(project.genesis_revision_id.as_bytes())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(sqlite_error)?;
+
+    if rows.len() != 1 {
+        return Err(IngressError::new(
+            "project_persistence_corrupt",
+            "persisted project genesis is missing one exact canonical revision identity",
+        ));
+    }
+    let row = &rows[0];
+    let baseline = ProjectBaselineIdentity {
+        service_revision_id: project.genesis_revision_id.clone(),
+        canonical_schema_version: row
+            .try_get("canonical_schema_version")
+            .map_err(sqlite_error)?,
+        canonical_authoring_revision_id: row
+            .try_get("canonical_revision_id")
+            .map_err(sqlite_error)?,
+    };
+    validate_baseline_identity(&baseline)?;
+    Ok(baseline)
 }
 
 async fn verify_lifecycle_rows(
@@ -680,7 +807,9 @@ mod tests {
     use sqlx::SqlitePool;
 
     use crate::{
-        schema_migration::SqliteMigrationRuntime, source_authority::SqliteDocumentSourceAuthority,
+        authz_runtime::{CAP_VIEW, SqliteAuthzAuthority},
+        schema_migration::SqliteMigrationRuntime,
+        source_authority::SqliteDocumentSourceAuthority,
         source_ingress::UploadState,
     };
 
@@ -869,6 +998,34 @@ mod tests {
             baseline("upload-1").canonical_authoring_revision_id
         );
 
+        let bootstrap: (i64, String, Option<i64>) = sqlx::query_as(
+            r#"
+            SELECT d.authz_version, g.role, g.expires_at_ms
+            FROM authz_documents d
+            JOIN authz_principal_grants g
+              ON g.tenant_id=d.tenant_id AND g.document_id=d.document_id
+            WHERE d.tenant_id=? AND d.document_id=? AND g.principal_id=?
+            "#,
+        )
+        .bind(b"tenant-a".as_slice())
+        .bind(created.document_id.as_bytes())
+        .bind(b"principal-a".as_slice())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(bootstrap, (1, "owner".into(), None));
+        let bootstrap_audit: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM authz_audit_events WHERE tenant_id=? AND document_id=? AND principal_id=? AND action='grant.bootstrap' AND result='allowed' AND capability=? AND authz_version=1",
+        )
+        .bind(b"tenant-a".as_slice())
+        .bind(created.document_id.as_bytes())
+        .bind(b"principal-a".as_slice())
+        .bind(CAP_MEMBER_MANAGE)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(bootstrap_audit, 1);
+
         adapter.close().await;
         pool.close().await;
         cleanup(&path);
@@ -899,12 +1056,91 @@ mod tests {
             .await
             .unwrap();
         let second = reopened
+            .reconcile_project_from_upload(&req)
+            .await
+            .unwrap()
+            .expect("committed project must reconcile before baseline production");
+        assert_eq!(second, first);
+
+        // The full producer-backed API remains exact too; reconciliation is a
+        // fast path, not a second project identity law.
+        let third = reopened
             .create_project_from_upload(req, identity)
             .await
             .unwrap();
-        assert_eq!(second, first);
+        assert_eq!(third, first);
 
         reopened.close().await;
+        pool.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn retry_after_owner_revoke_does_not_restore_creator_access() {
+        let (path, adapter, pool) = setup("retry-after-revoke").await;
+        seed_upload(
+            &pool,
+            "upload-1",
+            "tenant-a",
+            UploadState::ValidatedDurable,
+            3,
+            &"c".repeat(64),
+            "binding-1",
+        )
+        .await;
+        let req = request("upload-1", "create-1", 3);
+        let identity = baseline("upload-1");
+        let first = adapter
+            .create_project_from_upload(req.clone(), identity.clone())
+            .await
+            .unwrap();
+
+        let authz = SqliteAuthzAuthority::open(&path, 2, Duration::from_secs(2))
+            .await
+            .unwrap();
+        authz
+            .authorize(
+                "tenant-a",
+                &first.document_id,
+                "principal-a",
+                CAP_VIEW,
+                "view-before-revoke",
+                550,
+            )
+            .await
+            .unwrap();
+        authz
+            .revoke(
+                "tenant-a",
+                &first.document_id,
+                "principal-a",
+                "revoke-owner",
+                600,
+            )
+            .await
+            .unwrap();
+
+        let replay = adapter
+            .reconcile_project_from_upload(&req)
+            .await
+            .unwrap()
+            .expect("committed project must reconcile after revoke");
+        assert_eq!(replay, first);
+        let denied = authz
+            .authorize(
+                "tenant-a",
+                &first.document_id,
+                "principal-a",
+                CAP_VIEW,
+                "view-after-retry",
+                650,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "grant_missing");
+
+        authz.close().await;
+        adapter.close().await;
         pool.close().await;
         cleanup(&path);
     }
@@ -1071,6 +1307,9 @@ mod tests {
             "documents",
             "upload_consumptions",
             "revision_identity_bindings",
+            "authz_documents",
+            "authz_principal_grants",
+            "authz_audit_events",
         ] {
             let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
                 .fetch_one(&pool)
