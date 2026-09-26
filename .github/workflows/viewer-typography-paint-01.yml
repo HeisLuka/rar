@@ -1,0 +1,61 @@
+name: VIEWER-TYPOGRAPHY-PAINT-01
+
+on:
+  push:
+    branches:
+      - viewer-typography-paint-01-v8
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-preview-typography:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          }
+          if ((Get-Item $fixture).Length -ne 291840) {
+            throw "SampleNewsletter byte length mismatch"
+          }
+          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_TYPOGRAPHY_PAINT_RECEIPT=$env:RUNNER_TEMP\viewer-typography-paint.real.json" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Test bounded typography layout policy
+        run: cargo test -p chaptera-desktop preview_typography -- --nocapture
+
+      - name: Prove real SampleNewsletter source-size preview
+        run: cargo test -p chaptera-desktop --features embedded-fixture-tests sample_newsletter_preview_applies_source_owned_sizes_with_explicit_fallback_gaps -- --nocapture
+
+      - name: Validate source-free receipt
+        shell: pwsh
+        run: |
+          $receipt = Get-Content -Raw $env:CHAPTERA_TYPOGRAPHY_PAINT_RECEIPT | ConvertFrom-Json
+          if ($receipt.schema -ne "chaptera.viewer-typography-paint-receipt.v1") { throw "receipt schema mismatch" }
+          if ($receipt.result -ne "pass") { throw "typography paint did not pass" }
+          if ([int]$receipt.preview.source_typography_sections -le 0) { throw "no source typography sections were painted" }
+          if ([int]$receipt.preview.fallback_sections -le 0) { throw "unowned typography did not remain fallback" }
+          if ($receipt.preview.visible_rockwell_condensed_24pt_applied -ne $true) { throw "24pt public anchor was not applied" }
+          if ($receipt.claims.host_font_lookup_used -ne $false) { throw "host-font lookup widened the claim" }
+          if ($receipt.claims.publisher_exact_reflow_claimed -ne $false) { throw "receipt widened Publisher reflow claim" }
+          Copy-Item $env:CHAPTERA_TYPOGRAPHY_PAINT_RECEIPT viewer-typography-paint.real.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer-typography-paint-receipt
+          path: viewer-typography-paint.real.json
+          if-no-files-found: error
