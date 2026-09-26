@@ -1,7 +1,11 @@
+mod activation_request;
 mod build_identity;
 mod trusted_time;
 #[cfg(target_os = "windows")]
 mod windows_platform;
+pub use activation_request::{
+    ActivationRequestError, VerifiedActivationRequest, verify_activation_request,
+};
 pub use build_identity::{
     BUILD_IDENTITY_CONTENT_TYPE, BuildIdentityPayloadV1, TrustedBuildIdentity,
 };
