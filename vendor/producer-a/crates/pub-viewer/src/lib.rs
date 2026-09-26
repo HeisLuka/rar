@@ -161,6 +161,8 @@ pub struct ViewerGeometryDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_fragments: Vec<ViewerTextFragment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typography_runs: Vec<ViewerTypographyRun>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
 
@@ -194,6 +196,22 @@ pub struct ViewerTextFragment {
     pub scalar_end: u32,
     pub text: String,
     pub line_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerTypographyRun {
+    pub story_id: StoryId,
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+    pub source_font_name: String,
+    pub text_size_emu: u32,
+    pub render_disposition: ViewerTypographyRenderDisposition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerTypographyRenderDisposition {
+    SourceIdentityKnownRenderFallback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +371,31 @@ pub fn open_mature_0x2c_geometry(
         });
     }
 
+    let typography_runs = pipeline
+        .source
+        .explicit_typography
+        .iter()
+        .map(|run| ViewerTypographyRun {
+            story_id: run.story_id,
+            scalar_start: run.story_scalar_start,
+            scalar_end: run.story_scalar_end,
+            source_font_name: run.source_font_name.clone(),
+            text_size_emu: run.text_size_emu,
+            render_disposition:
+                ViewerTypographyRenderDisposition::SourceIdentityKnownRenderFallback,
+        })
+        .collect::<Vec<_>>();
+    if !typography_runs.is_empty() {
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.text.source_typography_partial".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: format!(
+                "{} explicit source typography range(s) have grounded font identity and size. Rendering still uses a deterministic fallback font face; unresolved/default-inherited ranges remain fallback.",
+                typography_runs.len()
+            ),
+        });
+    }
+
     let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
         bytes,
         &pipeline.source.graph,
@@ -433,6 +476,7 @@ pub fn open_mature_0x2c_geometry(
         paints,
         story_frames,
         text_fragments,
+        typography_runs,
         images,
     })
 }
