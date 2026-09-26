@@ -163,9 +163,6 @@ pub fn verify_activation_request(
 
     let facts: ActivationRequestFactsV1 = decode_exact(&envelope.signed_facts)?;
     let public = validate_facts(&facts)?;
-    if facts.product_id != expected_product_id {
-        return Err(ActivationRequestError::ProductMismatch);
-    }
 
     let verifying_key = VerifyingKey::from_sec1_bytes(&public)
         .map_err(|_| ActivationRequestError::PolicyViolation)?;
@@ -179,6 +176,10 @@ pub fn verify_activation_request(
     verifying_key
         .verify(&signed_message, &signature)
         .map_err(|_| ActivationRequestError::SignatureInvalid)?;
+
+    if facts.product_id != expected_product_id {
+        return Err(ActivationRequestError::ProductMismatch);
+    }
 
     Ok(VerifiedActivationRequest {
         request_id: facts.request_id,
