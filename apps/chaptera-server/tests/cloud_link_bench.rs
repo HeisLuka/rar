@@ -15,8 +15,8 @@ use std::{
 use async_trait::async_trait;
 use chaptera_server::{
     blob_store::{
-        BlobIdGenerator, BlobNamespace, BlobProvider, BlobStoreError, BlobStoreService,
-        GrantOperation, ProviderCapabilities, ProviderError, ProviderErrorKind, ProviderGrant,
+        BlobIdGenerator, BlobProvider, BlobStoreError, BlobStoreService, ProviderCapabilities,
+        ProviderError, ProviderErrorKind, ProviderGrant,
         ProviderGrantRequest, ProviderObjectMetadata,
     },
     job_queue::{JobKind, SqliteJobQueue},
@@ -478,6 +478,9 @@ fn cleanup_case(root: &Path) {
 
 async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<FixtureReceipt> {
     let overall = Instant::now();
+    let cpu_start = proc_cpu_ticks();
+    let rss_start = proc_rss_bytes("VmRSS:");
+    let hz = clock_ticks_per_second();
     let (fixture_sha256, fixture_bytes) = sha256_file(fixture_path).await?;
     if fixture_bytes == 0 || fixture_bytes > MAX_SOURCE_BYTES {
         return Err(format!("fixture {fixture_id} outside benchmark size envelope").into());
@@ -707,6 +710,10 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     admission.close().await;
     source_repo.close().await;
 
+    let cpu_end = proc_cpu_ticks();
+    let rss_end = proc_rss_bytes("VmRSS:");
+    let peak_rss = proc_rss_bytes("VmHWM:");
+
     let receipt = FixtureReceipt {
         fixture_id: fixture_id.to_owned(),
         fixture_file: fixture_path
@@ -729,10 +736,10 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         sqlite_storage_delta_bytes: i64::try_from(sqlite_bytes_after)
             .unwrap_or(i64::MAX)
             .saturating_sub(i64::try_from(sqlite_bytes_before).unwrap_or(i64::MAX)),
-        parent_process_cpu_ms: None,
-        parent_process_rss_start_bytes: None,
-        parent_process_rss_end_bytes: None,
-        parent_process_peak_rss_bytes: None,
+        parent_process_cpu_ms: cpu_delta_ms(cpu_start, cpu_end, hz),
+        parent_process_rss_start_bytes: rss_start,
+        parent_process_rss_end_bytes: rss_end,
+        parent_process_peak_rss_bytes: peak_rss,
         source_validation_jobs_enqueued: 1,
         source_validation_jobs_executed: 1,
         project_id: project.project_id,
@@ -768,24 +775,9 @@ async fn cloud_link_first_bind_measurement_receipt() -> BenchResult<()> {
         ("f2-brochure", "SampleBrochure.pub"),
     ];
 
-    let cpu_start = proc_cpu_ticks();
-    let rss_start = proc_rss_bytes("VmRSS:");
-    let hz = clock_ticks_per_second();
-
     let mut runs = Vec::new();
     for (fixture_id, filename) in fixture_specs {
         runs.push(run_fixture(fixture_id, &fixture_root.join(filename)).await?);
-    }
-
-    let cpu_end = proc_cpu_ticks();
-    let rss_end = proc_rss_bytes("VmRSS:");
-    let peak = proc_rss_bytes("VmHWM:");
-    let total_cpu = cpu_delta_ms(cpu_start, cpu_end, hz);
-    for run in &mut runs {
-        run.parent_process_cpu_ms = total_cpu;
-        run.parent_process_rss_start_bytes = rss_start;
-        run.parent_process_rss_end_bytes = rss_end;
-        run.parent_process_peak_rss_bytes = peak;
     }
 
     let receipt = BenchReceipt {
