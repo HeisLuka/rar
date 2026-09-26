@@ -98,6 +98,52 @@ struct PreviewTextMetricDiagnostic {
     line_count: Option<usize>,
 }
 
+impl PreviewTextMetricDiagnostic {
+    fn from_preview(
+        page_index: u32,
+        page_id: String,
+        frame_id: String,
+        story_id: String,
+        frame_bounds: pub_editor::RectEmu,
+        clip_rect: egui::Rect,
+        zoom: f32,
+        font_family: &'static str,
+        font_size_px: f32,
+        galley_size: egui::Vec2,
+        line_count: Option<usize>,
+    ) -> Self {
+        Self {
+            signature: preview_text_metric_signature(font_family, font_size_px),
+            page_index,
+            page_id,
+            frame_id,
+            story_id,
+            frame_bounds_emu: [
+                frame_bounds.x.get(),
+                frame_bounds.y.get(),
+                frame_bounds.width.get(),
+                frame_bounds.height.get(),
+            ],
+            clip_rect_px: [
+                clip_rect.left(),
+                clip_rect.top(),
+                clip_rect.right(),
+                clip_rect.bottom(),
+            ],
+            zoom,
+            font_family,
+            font_size_px,
+            wrap_width_px: clip_rect.width().max(1.0_f32),
+            galley_width_px: galley_size.x,
+            galley_height_px: galley_size.y,
+            clip_width_px: clip_rect.width(),
+            clip_height_px: clip_rect.height(),
+            overflow_delta_px: (galley_size.y - clip_rect.height()).max(0.0_f32),
+            line_count,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
@@ -2741,41 +2787,21 @@ impl ViewerApp {
                                 egui::Color32::WHITE,
                             );
 
-                            let galley_size = galley.size();
-                            let font_family = "egui-proportional-fallback";
-                            preview_text_diagnostics.push(PreviewTextMetricDiagnostic {
-                                signature: preview_text_metric_signature(
-                                    font_family,
+                            preview_text_diagnostics.push(
+                                PreviewTextMetricDiagnostic::from_preview(
+                                    page.index,
+                                    page.id.as_canonical().to_string(),
+                                    node.origin.as_canonical().to_string(),
+                                    fragment.story_id.as_canonical().to_string(),
+                                    node_bounds,
+                                    text_clip_rect,
+                                    self.zoom,
+                                    "egui-proportional-fallback",
                                     font_size,
+                                    galley.size(),
+                                    Some(galley.rows.len()),
                                 ),
-                                page_index: page.index,
-                                page_id: page.id.as_canonical().to_string(),
-                                frame_id: node.origin.as_canonical().to_string(),
-                                story_id: fragment.story_id.as_canonical().to_string(),
-                                frame_bounds_emu: [
-                                    node_bounds.x.get(),
-                                    node_bounds.y.get(),
-                                    node_bounds.width.get(),
-                                    node_bounds.height.get(),
-                                ],
-                                clip_rect_px: [
-                                    text_clip_rect.left(),
-                                    text_clip_rect.top(),
-                                    text_clip_rect.right(),
-                                    text_clip_rect.bottom(),
-                                ],
-                                zoom: self.zoom,
-                                font_family,
-                                font_size_px: font_size,
-                                wrap_width_px: text_clip_rect.width().max(1.0_f32),
-                                galley_width_px: galley_size.x,
-                                galley_height_px: galley_size.y,
-                                clip_width_px: text_clip_rect.width(),
-                                clip_height_px: text_clip_rect.height(),
-                                overflow_delta_px: (galley_size.y - text_clip_rect.height())
-                                    .max(0.0_f32),
-                                line_count: Some(galley.rows.len()),
-                            });
+                            );
                         }
                         text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
                     }
