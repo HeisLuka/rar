@@ -2855,6 +2855,16 @@ mod tests {
     }
 
     #[test]
+    fn utf16_typography_boundaries_reject_surrogate_interior_and_map_scalars_exactly() {
+        let text = "A😀B";
+        assert_eq!(utf16_range_to_scalar_range(text, 0, 1), Some((0, 1)));
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 3), Some((1, 2)));
+        assert_eq!(utf16_range_to_scalar_range(text, 3, 4), Some((2, 3)));
+        assert_eq!(utf16_range_to_scalar_range(text, 2, 3), None);
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 2), None);
+    }
+
+    #[test]
     fn page_extent_consensus_accepts_one_extent() {
         assert_eq!(
             require_consensus_page_extent(&[(7_560_000, 10_692_000)]).unwrap(),
