@@ -7,7 +7,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use sqlx::{
-    Row, SqlitePool,
+    Row, SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
@@ -237,6 +237,53 @@ impl SqliteRevisionStore {
         }
 
         let mut transaction = self.pool.begin().await.map_err(sqlite_read_error)?;
+        let result = self
+            .append_edge_with_revision_identity_in_transaction(
+                &mut transaction,
+                &edge,
+                &binding,
+            )
+            .await;
+
+        match result {
+            Ok(outcome) => {
+                transaction.commit().await.map_err(sqlite_read_error)?;
+                Ok(outcome)
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                if let Some(outcome) = self.reconcile_edge_identity_state(&edge, &binding).await? {
+                    return Ok(outcome);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) async fn append_edge_with_revision_identity_in_transaction(
+        &self,
+        conn: &mut SqliteConnection,
+        edge: &RevisionEdge,
+        binding: &RevisionIdentityBinding,
+    ) -> Result<AppendOutcome, SqliteStoreError> {
+        validate_edge(edge)?;
+        validate_revision_identity_binding(binding)?;
+
+        if edge.document_id != binding.document_id
+            || edge.child_revision != binding.service_revision_id
+        {
+            return Err(SqliteStoreError::new(
+                "revision_identity_edge_mismatch",
+                "revision identity binding must name the exact document and child service/history revision",
+            ));
+        }
+
+        if let Some(outcome) = self
+            .reconcile_edge_identity_state_on_connection(conn, edge, binding)
+            .await?
+        {
+            return Ok(outcome);
+        }
 
         let edge_result = sqlx::query(
             r#"
@@ -268,16 +315,15 @@ impl SqliteRevisionStore {
         .bind(edge.authoring_root_hash.as_ref().map(String::as_bytes))
         .bind(edge.semantic_schema_version)
         .bind(edge.committed_at_ms)
-        .execute(&mut *transaction)
-        .await;
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| SqliteStoreError::new("sqlite_append_failed", bounded_sqlx_message(&error)))?;
 
-        if let Err(error) = edge_result {
-            let message = bounded_sqlx_message(&error);
-            let _ = transaction.rollback().await;
-            if let Some(outcome) = self.reconcile_edge_identity_state(&edge, &binding).await? {
-                return Ok(outcome);
-            }
-            return Err(SqliteStoreError::new("sqlite_append_failed", message));
+        if edge_result.rows_affected() != 1 {
+            return Err(SqliteStoreError::new(
+                "sqlite_append_no_effect",
+                "revision edge INSERT succeeded without creating one row",
+            ));
         }
 
         let binding_result = sqlx::query(
@@ -296,23 +342,20 @@ impl SqliteRevisionStore {
         .bind(&binding.canonical_schema_version)
         .bind(&binding.canonical_revision_id)
         .bind(binding.bound_at_ms)
-        .execute(&mut *transaction)
-        .await;
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| {
+            SqliteStoreError::new("revision_identity_bind_failed", bounded_sqlx_message(&error))
+        })?;
 
-        if let Err(error) = binding_result {
-            let message = bounded_sqlx_message(&error);
-            let _ = transaction.rollback().await;
-            if let Some(outcome) = self.reconcile_edge_identity_state(&edge, &binding).await? {
-                return Ok(outcome);
-            }
+        if binding_result.rows_affected() != 1 {
             return Err(SqliteStoreError::new(
-                "revision_identity_bind_failed",
-                message,
+                "revision_identity_bind_no_effect",
+                "revision identity INSERT succeeded without creating one row",
             ));
         }
 
-        transaction.commit().await.map_err(sqlite_read_error)?;
-        Ok(AppendOutcome::Committed(edge))
+        Ok(AppendOutcome::Committed(edge.clone()))
     }
 
     pub async fn read_edge(
@@ -560,6 +603,117 @@ impl SqliteRevisionStore {
             )
             .await?
         {
+            if same_revision_identity(&existing_binding, requested_binding) {
+                return Err(SqliteStoreError::new(
+                    "revision_identity_orphan_binding",
+                    "canonical revision identity binding exists without the corresponding RevisionStream edge",
+                ));
+            }
+            return Err(SqliteStoreError::new(
+                "revision_identity_conflict",
+                "service/history revision is already bound to a different canonical AuthoringRevisionId",
+            ));
+        }
+
+        Ok(None)
+    }
+
+    async fn reconcile_edge_identity_state_on_connection(
+        &self,
+        conn: &mut SqliteConnection,
+        requested_edge: &RevisionEdge,
+        requested_binding: &RevisionIdentityBinding,
+    ) -> Result<Option<AppendOutcome>, SqliteStoreError> {
+        let existing_edge = sqlx::query(
+            r#"
+            SELECT
+                document_id,
+                parent_revision,
+                parent_cursor,
+                operation_id,
+                request_hash,
+                canonical_event,
+                child_revision,
+                child_cursor,
+                resulting_state_hash,
+                authoring_root_hash,
+                semantic_schema_version,
+                committed_at_ms
+            FROM revision_edges
+            WHERE document_id = ? AND parent_revision = ?
+            "#,
+        )
+        .bind(requested_edge.document_id.as_bytes())
+        .bind(requested_edge.parent_revision.as_bytes())
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(sqlite_read_error)?
+        .map(decode_edge_row)
+        .transpose()?;
+
+        if let Some(existing_edge) = existing_edge {
+            if !same_retry_identity(&existing_edge, requested_edge) {
+                return Ok(Some(AppendOutcome::Conflict(existing_edge)));
+            }
+
+            let existing_binding = sqlx::query(
+                r#"
+                SELECT
+                    document_id,
+                    service_revision_id,
+                    canonical_schema_version,
+                    canonical_revision_id,
+                    bound_at_ms
+                FROM revision_identity_bindings
+                WHERE document_id = ? AND service_revision_id = ?
+                "#,
+            )
+            .bind(requested_binding.document_id.as_bytes())
+            .bind(requested_binding.service_revision_id.as_bytes())
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(sqlite_read_error)?
+            .map(decode_revision_identity_row)
+            .transpose()?;
+
+            return match existing_binding {
+                Some(existing_binding)
+                    if same_revision_identity(&existing_binding, requested_binding) =>
+                {
+                    Ok(Some(AppendOutcome::AlreadyCommitted(existing_edge)))
+                }
+                Some(_) => Err(SqliteStoreError::new(
+                    "revision_identity_conflict",
+                    "exact RevisionStream retry is bound to a different canonical AuthoringRevisionId",
+                )),
+                None => Err(SqliteStoreError::new(
+                    "revision_identity_partial_commit",
+                    "RevisionStream edge exists without its required canonical revision identity binding",
+                )),
+            };
+        }
+
+        let existing_binding = sqlx::query(
+            r#"
+            SELECT
+                document_id,
+                service_revision_id,
+                canonical_schema_version,
+                canonical_revision_id,
+                bound_at_ms
+            FROM revision_identity_bindings
+            WHERE document_id = ? AND service_revision_id = ?
+            "#,
+        )
+        .bind(requested_binding.document_id.as_bytes())
+        .bind(requested_binding.service_revision_id.as_bytes())
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(sqlite_read_error)?
+        .map(decode_revision_identity_row)
+        .transpose()?;
+
+        if let Some(existing_binding) = existing_binding {
             if same_revision_identity(&existing_binding, requested_binding) {
                 return Err(SqliteStoreError::new(
                     "revision_identity_orphan_binding",
