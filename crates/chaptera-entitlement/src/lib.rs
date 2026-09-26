@@ -1,9 +1,15 @@
+mod activation_issuer;
 mod activation_request;
 mod build_identity;
 mod recovery;
 mod trusted_time;
 #[cfg(target_os = "windows")]
 mod windows_platform;
+pub use activation_issuer::{
+    ActivationIssuance, ActivationIssuanceDisposition, ActivationIssuanceOutcome,
+    ActivationIssuerError, ActivationIssuerSlot, ActivationIssuerState,
+    ActivationIssuerTransition, ProposedActivationIds, issue_verified_activation,
+};
 pub use activation_request::{
     ActivationRequestError, VerifiedActivationRequest, verify_activation_request,
 };
