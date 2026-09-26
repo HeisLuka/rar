@@ -6,6 +6,7 @@
 // The cadence API is intentionally staged one PR before its UI consumer (#227).
 mod acceptance;
 mod agent;
+mod locale;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
