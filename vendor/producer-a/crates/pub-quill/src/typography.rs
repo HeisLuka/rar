@@ -193,7 +193,7 @@ pub fn parse_bounded_typography(
             .filter_map(|extent| {
                 let start = previous_end_utf16.max(extent.global_start_utf16);
                 let end = global_end_utf16.min(extent.global_end_utf16);
-                (start < end).then_some(QuillTypographyStoryIntersection {
+                (start < end).then(|| QuillTypographyStoryIntersection {
                     story_index: extent.story_index,
                     story_syid: extent.story_syid,
                     global_start_utf16: start,
