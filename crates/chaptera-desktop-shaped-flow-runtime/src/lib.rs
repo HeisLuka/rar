@@ -121,14 +121,13 @@ pub fn build_current_story_layout_v1(
     })?;
 
     let fingerprint = validate_explicit_font_resource_v1(font)?;
-    let authoring = pub_viewer::bounded_authoring_slice_from_resolved(editor.graph()).map_err(
-        |error| {
+    let authoring =
+        pub_viewer::bounded_authoring_slice_from_resolved(editor.graph()).map_err(|error| {
             DesktopShapedFlowRuntimeError::new(
                 "authoring_projection_failed",
                 format!("resolved graph could not enter bounded layout projection: {error}"),
             )
-        },
-    )?;
+        })?;
     let projection = project_bounded(authoring);
 
     let runtime = BoundedShapedFlowRuntime {
@@ -219,8 +218,8 @@ mod tests {
         let mut digest_bytes = [0_u8; 32];
         digest_bytes.copy_from_slice(&digest);
         let source_hash = Sha256Digest::from_bytes(digest_bytes);
-        let mut editor =
-            open_mature_0x2c_editor(&bytes, source_hash).expect("open real SampleNewsletter editor");
+        let mut editor = open_mature_0x2c_editor(&bytes, source_hash)
+            .expect("open real SampleNewsletter editor");
         let font = test_font();
 
         let story_ids = editor.graph().stories.keys().copied().collect::<Vec<_>>();
@@ -233,7 +232,9 @@ mod tests {
                     .filter(|layout| !layout.caret_map.lines.is_empty())
                     .map(|layout| (story_id, layout))
             })
-            .expect("real fixture should expose one editable Story with authoritative shaped lines");
+            .expect(
+                "real fixture should expose one editable Story with authoritative shaped lines",
+            );
 
         let deterministic =
             build_current_story_layout_v1(&editor, story_id, "layout:before", &font)
