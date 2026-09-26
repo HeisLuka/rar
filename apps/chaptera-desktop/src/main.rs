@@ -3210,13 +3210,6 @@ impl ViewerApp {
                         );
                     }
 
-                    painter.rect_stroke(
-                        node_rect,
-                        0,
-                        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 120, 210)),
-                        egui::StrokeKind::Inside,
-                    );
-
                     if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
                         let line_width_px = line.width_emu as f32 * scene_scale;
                         if line_width_px > 0.0_f32 {
@@ -3250,19 +3243,6 @@ impl ViewerApp {
                         {
                             preview_clipped_frames += 1;
                             preview_clipped_story_keys.insert(format!("{:?}", fragment.story_id));
-                            painter.rect_stroke(
-                                node_rect,
-                                0,
-                                egui::Stroke::new(2.0_f32, egui::Color32::RED),
-                                egui::StrokeKind::Inside,
-                            );
-                            painter.text(
-                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                egui::Align2::RIGHT_TOP,
-                                "preview overflow",
-                                egui::FontId::proportional(10.0_f32),
-                                egui::Color32::RED,
-                            );
                         }
                         text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
                     }
