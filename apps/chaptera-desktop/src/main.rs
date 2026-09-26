@@ -2603,6 +2603,76 @@ impl ViewerApp {
             })
             .unwrap_or_default();
 
+        let partner_interaction = partner_index.and_then(|partner_index| {
+            let partner_page = visual.document.pages.get(partner_index)?;
+            let partner_page_origin = partner_page.id.into_canonical();
+            let partner_page_id_text = partner_page.id.as_canonical().to_string();
+            let partner_nodes = visual
+                .scene
+                .nodes
+                .iter()
+                .filter(|node| node.parent_origin == partner_page_origin)
+                .collect::<Vec<_>>();
+            let partner_hit_index = SceneHitTestIndex::new(
+                self.editor
+                    .as_ref()
+                    .map(|editor| {
+                        partner_nodes
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(paint_order, node)| {
+                                let instance = direct_scene_instance(
+                                    editor,
+                                    &partner_page_id_text,
+                                    node.origin,
+                                )?;
+                                Some(SceneHitEntry {
+                                    instance_id: instance.instance_id,
+                                    node_id: node.origin,
+                                    bounds: node.bounds,
+                                    z_order: 0,
+                                    paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
+            let partner_movable_nodes = self
+                .editor
+                .as_ref()
+                .map(|editor| {
+                    partner_hit_index
+                        .entries
+                        .iter()
+                        .filter_map(|hit| {
+                            let instance = direct_scene_instance(
+                                editor,
+                                &partner_page_id_text,
+                                hit.node_id,
+                            )?;
+                            let admission =
+                                admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                            let origin_node_id = hit.node_id.as_canonical().to_string();
+                            if !admission.admitted
+                                || admission.origin_node_id.as_deref()
+                                    != Some(origin_node_id.as_str())
+                            {
+                                return None;
+                            }
+                            let authored_node = editor.graph().nodes.get(&hit.node_id)?;
+                            let bounds = authored_node.header.bounds;
+                            editor
+                                .can_move_node_to(hit.node_id, bounds.x, bounds.y)
+                                .ok()
+                                .map(|_| (hit.instance_id.clone(), (hit.node_id, bounds)))
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default();
+            Some((partner_hit_index, partner_movable_nodes))
+        });
+
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -2692,10 +2762,18 @@ impl ViewerApp {
                         partner_index,
                     );
                     if response.clicked_by(egui::PointerButton::Primary)
-                        && response
-                            .interact_pointer_pos()
-                            .is_some_and(|pointer| partner_rect.contains(pointer))
+                        && let Some(pointer) = response.interact_pointer_pos()
+                        && partner_rect.contains(pointer)
                     {
+                        let partner_hit = partner_interaction
+                            .as_ref()
+                            .and_then(|(hit_index, _)| {
+                                canvas_document_point(partner_rect, scene_scale, pointer)
+                                    .and_then(|point| hit_index.topmost_at(point))
+                            })
+                            .map(|hit| hit.instance_id.clone());
+                        canvas_clicked = true;
+                        canvas_hit = partner_hit;
                         spread_page_clicked = Some(partner_index);
                     }
                 }
@@ -2709,6 +2787,44 @@ impl ViewerApp {
 
                 if !reader_only_mode()
                     && response.drag_started_by(egui::PointerButton::Primary)
+                    && let (Some(partner_index), Some(partner_rect), Some(pointer_start_screen), Some(pointer_current_screen)) =
+                        (
+                            partner_index,
+                            partner_rect,
+                            press_screen,
+                            response.interact_pointer_pos(),
+                        )
+                    && partner_rect.contains(pointer_start_screen)
+                    && let (Some(pointer_start), Some(pointer_current)) = (
+                        canvas_document_point(partner_rect, scene_scale, pointer_start_screen),
+                        canvas_document_point(partner_rect, scene_scale, pointer_current_screen),
+                    )
+                    && let Some((partner_hit_index, partner_movable_nodes)) =
+                        partner_interaction.as_ref()
+                    && let Some(hit) = partner_hit_index.topmost_at(pointer_start)
+                {
+                    spread_page_clicked = Some(partner_index);
+                    canvas_hit = Some(hit.instance_id.clone());
+                    next_canvas_resize = None;
+                    if let Some((node_id, before)) =
+                        partner_movable_nodes.get(&hit.instance_id).copied()
+                    {
+                        match MoveTransaction::begin(node_id, before, pointer_start).and_then(
+                            |mut drag| {
+                                drag.update(pointer_current)?;
+                                Ok(drag)
+                            },
+                        ) {
+                            Ok(drag) => next_canvas_drag = Some(drag),
+                            Err(error) => {
+                                next_canvas_drag = None;
+                                drag_error = Some(format!("Object move cancelled: {error}"));
+                            }
+                        }
+                    }
+                } else if !reader_only_mode()
+                    && response.drag_started_by(egui::PointerButton::Primary)
+                    && spread_page_clicked.is_none()
                     && let (Some(pointer_start), Some(pointer_current)) =
                         (press_document, pointer_document)
                 {
@@ -3103,9 +3219,6 @@ impl ViewerApp {
         if let Some(index) = spread_page_clicked {
             if self.selected_page != index {
                 self.selected_page = index;
-                self.canvas_selection.clear();
-                self.canvas_drag = None;
-                self.canvas_resize = None;
                 self.supporter_value
                     .observe(supporter::ValueEvent::PageNavigated { page_index: index });
             }
@@ -3895,6 +4008,8 @@ mod tests {
         assert!(source.contains("\"Two-Page Spread\""));
         assert!(source.contains("\"Fit Spread\""));
         assert!(source.contains("spread_partner_index"));
+        assert!(source.contains("partner_movable_nodes"));
+        assert!(source.contains("canvas_document_point(partner_rect"));
     }
 
     #[test]
