@@ -1,0 +1,213 @@
+name: Editor Desktop Text Interaction Rust Adapter V1
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-text-interaction-adapter/**"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "services/editor-api/text_selection_state_v1.py"
+      - "services/editor-api/text_edit_session_v1.py"
+      - "services/editor-api/editor_text_session_gestures_v1.py"
+      - "services/editor-api/test_text_selection_state_v1.py"
+      - "services/editor-api/test_text_edit_session_v1.py"
+      - "services/editor-api/test_editor_text_session_gestures_v1.py"
+      - ".github/workflows/editor-desktop-text-interaction-rust-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --manifest-path crates/chaptera-text-interaction-adapter/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path crates/chaptera-text-interaction-adapter/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/chaptera-text-interaction-adapter/Cargo.toml --all-targets -- -D warnings
+      - name: Rust contract tests
+        run: cargo test --manifest-path crates/chaptera-text-interaction-adapter/Cargo.toml
+
+      - name: Canonical Python selection/session/gesture tests
+        run: |
+          python services/editor-api/test_text_selection_state_v1.py
+          python services/editor-api/test_text_edit_session_v1.py
+          python services/editor-api/test_editor_text_session_gestures_v1.py
+
+      - name: Cross-language bounded Desktop behavior conformance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          sys.path.insert(0, "services/editor-api")
+
+          import test_text_edit_session_v1 as session_fixture
+          import test_editor_text_session_gestures_v1 as gesture_fixture
+
+          from text_edit_session_v1 import (
+              TextInitialPositionV1,
+              TextPointerEntryContextV1,
+              enter_text_edit_session_v1,
+              handoff_same_story_frame_v1,
+              switch_text_edit_session_v1,
+          )
+          from editor_text_session_gestures_v1 import (
+              activate_explicit_edit_text_v1,
+              activate_pointer_text_v1,
+              exit_desktop_text_mode_v1,
+          )
+
+          def summary(status, session, mutation_count, undo):
+              return {
+                  "status": status,
+                  "story_id": None if session is None else session.story_id,
+                  "frame_id": None if session is None else session.current_frame_id,
+                  "focus_scalar": None if session is None else session.selection.focus_scalar,
+                  "session_id": None if session is None else session.session_id,
+                  "incarnation": None if session is None else session.incarnation,
+                  "mutation_count": mutation_count,
+                  "undo_group_boundary": undo,
+              }
+
+          def canonical(name):
+              if name == "pointer_enter":
+                  d,m,f=session_fixture.context("story:1","ABC")
+                  tr=enter_text_edit_session_v1(
+                      session_id="session:1",incarnation=0,document_id="doc:1",
+                      entry_candidates=(session_fixture.candidate("story:1"),),
+                      revision_id="rev:1",domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                      pointer_context=TextPointerEntryContextV1("page:1",19,10),
+                  )
+                  return summary(tr.kind,tr.session,tr.lifecycle_document_mutation_count,tr.undo_group_boundary)
+
+              if name == "empty_enter":
+                  d,m,f=session_fixture.context("story:new","")
+                  tr=enter_text_edit_session_v1(
+                      session_id="session:new",incarnation=0,document_id="doc:1",
+                      entry_candidates=(session_fixture.candidate("story:new","frame:new"),),
+                      revision_id="rev:1",domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                      initial_position=TextInitialPositionV1(0),
+                  )
+                  return summary(tr.kind,tr.session,tr.lifecycle_document_mutation_count,tr.undo_group_boundary)
+
+              if name == "linked_handoff":
+                  d,m,f=session_fixture.context("story:1","AB",linked=True)
+                  active=enter_text_edit_session_v1(
+                      session_id="session:1",incarnation=4,document_id="doc:1",
+                      entry_candidates=(session_fixture.candidate("story:1","frame:A"),),
+                      revision_id="rev:1",domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                      pointer_context=TextPointerEntryContextV1("page:1",0,10),
+                  ).session
+                  tr=handoff_same_story_frame_v1(
+                      active,
+                      entry_candidate=session_fixture.candidate("story:1","frame:B"),
+                      domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                      pointer_context=TextPointerEntryContextV1("page:1",10,40),
+                  )
+                  return summary(tr.kind,tr.session,tr.lifecycle_document_mutation_count,tr.undo_group_boundary)
+
+              if name == "story_switch":
+                  d1,m1,f1=session_fixture.context("story:1","A")
+                  active=enter_text_edit_session_v1(
+                      session_id="session:1",incarnation=2,document_id="doc:1",
+                      entry_candidates=(session_fixture.candidate("story:1"),),
+                      revision_id="rev:1",domain=d1,caret_map=m1,format_state=f1,
+                      expected_layout_revision_id="layout:1",
+                      initial_position=TextInitialPositionV1(1),
+                  ).session
+                  d2,m2,f2=session_fixture.context("story:2","B")
+                  tr=switch_text_edit_session_v1(
+                      active,
+                      entry_candidates=(session_fixture.candidate("story:2","frame:A"),),
+                      revision_id="rev:2",domain=d2,caret_map=m2,format_state=f2,
+                      expected_layout_revision_id="layout:1",
+                      initial_position=TextInitialPositionV1(0),
+                  )
+                  return summary(tr.kind,tr.session,tr.lifecycle_document_mutation_count,tr.undo_group_boundary)
+
+              if name == "inactive_click":
+                  d,m,f=gesture_fixture.context("story:1","ABC")
+                  r=activate_pointer_text_v1(
+                      candidate=gesture_fixture.candidate("story:1"),
+                      revision_id="rev:1",domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                      pointer_context=TextPointerEntryContextV1("page:1",19,10),
+                      active_session=None,explicit_edit_requested=False,document_id="doc:1",
+                  )
+                  return summary(r.status,r.active_session,r.document_mutation_count,False)
+
+              if name == "pointer_mismatch":
+                  d,m,f=gesture_fixture.context("story:1","A")
+                  r=activate_pointer_text_v1(
+                      candidate=gesture_fixture.candidate("story:1","frame:B"),
+                      revision_id="rev:1",domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                      pointer_context=TextPointerEntryContextV1("page:1",5,200),
+                      active_session=None,explicit_edit_requested=True,document_id="doc:1",
+                  )
+                  return summary(r.status,r.active_session,r.document_mutation_count,False)
+
+              if name in {"escape_focus_fence","escape_exit"}:
+                  d,m,f=gesture_fixture.context("story:1","A")
+                  active=activate_explicit_edit_text_v1(
+                      session_id="session:1",document_id="doc:1",revision_id="rev:1",
+                      candidate=gesture_fixture.candidate("story:1"),
+                      domain=d,caret_map=m,format_state=f,
+                      expected_layout_revision_id="layout:1",
+                  ).active_session
+                  owner="find_replace" if name=="escape_focus_fence" else "story_text"
+                  r=exit_desktop_text_mode_v1(
+                      active_session=active,trigger="escape",focus_owner=owner,
+                      submitted_durable_operation_ids=("op:already-submitted",),
+                  )
+                  undo=False if r.exit_receipt is None else r.exit_receipt.undo_group_boundary
+                  return summary(r.status,r.active_session,r.document_mutation_count,undo)
+
+              raise AssertionError(name)
+
+          scenarios=[
+              "pointer_enter",
+              "empty_enter",
+              "linked_handoff",
+              "story_switch",
+              "inactive_click",
+              "pointer_mismatch",
+              "escape_focus_fence",
+              "escape_exit",
+          ]
+
+          for name in scenarios:
+              proc=subprocess.run(
+                  [
+                      "cargo","run","--quiet",
+                      "--manifest-path","crates/chaptera-text-interaction-adapter/Cargo.toml",
+                      "--example","conformance_probe","--",name,
+                  ],
+                  text=True,capture_output=True,check=True,
+              )
+              rust=json.loads(proc.stdout)
+              python=canonical(name)
+              if rust != python:
+                  print(name,"mismatch",file=sys.stderr)
+                  print(json.dumps({"python":python,"rust":rust},indent=2),file=sys.stderr)
+                  raise SystemExit(1)
+              print(name,"PASS")
+          PY
