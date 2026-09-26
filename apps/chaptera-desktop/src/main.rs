@@ -3021,13 +3021,9 @@ impl ViewerApp {
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
                         let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let numeric_100_scale =
-                            numeric_zoom_scene_scale(1.0).unwrap_or(scene_scale);
-                        let visual_zoom = scene_scale / numeric_100_scale;
-                        let font_size = (12.0_f32 * visual_zoom).clamp(8.0_f32, 28.0_f32);
                         let galley = text_painter.layout(
                             fragment.text.clone(),
-                            egui::FontId::proportional(font_size),
+                            fallback_font::font_id_for_scene_scale(scene_scale),
                             egui::Color32::BLACK,
                             text_clip_rect.width().max(1.0_f32),
                         );
