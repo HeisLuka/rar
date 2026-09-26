@@ -69,7 +69,10 @@ use pub_model::{
     SourceDerivedIdInput, SourceDescriptor, SourceGraph, SourceRef, SourceRole, Story, StoryId,
     derive_source_canonical_id,
 };
-use pub_quill::{QuillMcldReadError, parse_bounded_mcld, parse_confirmed_story_catalog};
+use pub_quill::{
+    QuillMcldReadError, parse_bounded_mcld, parse_bounded_typography,
+    parse_confirmed_story_catalog,
+};
 pub use resolve::{
     PUB_RESOLVER_VERSION_V1, PubResolveDiagnostic, PubResolvedGraph, PubResolvedGraphBuild,
     PubResolvedNodePayload, PubResolvedStoryFrame, resolve_pub_source_graph,
@@ -128,6 +131,23 @@ pub struct PubSourceGraphBuild {
     pub graph: PubSourceGraph,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<PubBridgeDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub explicit_typography: Vec<PubExplicitTypographyRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubExplicitTypographyRun {
+    pub story_id: StoryId,
+    pub story_utf16_start: u32,
+    pub story_utf16_end: u32,
+    pub story_scalar_start: u32,
+    pub story_scalar_end: u32,
+    pub source_font_index: u32,
+    pub source_font_name: String,
+    pub text_size_emu: u32,
+    pub fdpc_descriptor_ordinal: u32,
+    pub fdpc_style_ordinal: u32,
+    pub source_ref: SourceRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -397,6 +417,12 @@ pub enum PubBridgeDiagnostic {
         text_id: u32,
         layout_key: Option<u32>,
         reason: String,
+    },
+    TypographyProjectionUnavailable {
+        reason: String,
+    },
+    TypographyUnknownZeroLengthBlockTypes {
+        block_types: Vec<u8>,
     },
 }
 
@@ -1557,6 +1583,22 @@ pub fn build_mature_0x2c_from_streams(
     let quill_stream = StreamPath(QUILL_STREAM_PATH.into());
     let quill_catalog = parse_confirmed_story_catalog(quill_stream.clone(), quill)
         .context("parse grounded Quill story catalog")?;
+    let typography_catalog = match parse_bounded_typography(quill, &quill_catalog) {
+        Ok(catalog) => {
+            if !catalog.unknown_block_types_assumed_zero_length.is_empty() {
+                diagnostics.push(PubBridgeDiagnostic::TypographyUnknownZeroLengthBlockTypes {
+                    block_types: catalog.unknown_block_types_assumed_zero_length.clone(),
+                });
+            }
+            Some(catalog)
+        }
+        Err(error) => {
+            diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                reason: error.to_string(),
+            });
+            None
+        }
+    };
     let mcld = match parse_bounded_mcld(quill_stream, quill, &quill_catalog.descriptor_nodes) {
         Ok(mcld) => Some(mcld),
         Err(QuillMcldReadError::MissingMcldDescriptor) => None,
@@ -1615,6 +1657,64 @@ pub fn build_mature_0x2c_from_streams(
             },
         );
         story_by_syid.insert(syid, story_id);
+    }
+
+    let mut explicit_typography = Vec::new();
+    if let Some(typography_catalog) = typography_catalog {
+        for run in typography_catalog.explicit_runs {
+            if run.text_size_emu == 0 || run.font_name.is_empty() {
+                continue;
+            }
+
+            let syid = run.story_syid.0;
+            let Some(story_id) = story_by_syid.get(&syid).copied() else {
+                diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                    reason: format!("FDPC typography references missing Story SYID {syid}"),
+                });
+                continue;
+            };
+            let Some(story) = graph.stories.get(&story_id) else {
+                diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                    reason: format!("FDPC typography Story {story_id:?} is absent from graph"),
+                });
+                continue;
+            };
+            let Some((story_scalar_start, story_scalar_end)) = utf16_range_to_scalar_range(
+                &story.text,
+                run.story_start_utf16,
+                run.story_end_utf16,
+            ) else {
+                diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                    reason: format!(
+                        "FDPC typography range {}..{} splits a UTF-16 scalar boundary for Story SYID {syid}",
+                        run.story_start_utf16, run.story_end_utf16
+                    ),
+                });
+                continue;
+            };
+
+            explicit_typography.push(PubExplicitTypographyRun {
+                story_id,
+                story_utf16_start: run.story_start_utf16,
+                story_utf16_end: run.story_end_utf16,
+                story_scalar_start,
+                story_scalar_end,
+                source_font_index: run.font_index,
+                source_font_name: run.font_name,
+                text_size_emu: run.text_size_emu,
+                fdpc_descriptor_ordinal: run.fdpc_descriptor_ordinal,
+                fdpc_style_ordinal: run.fdpc_style_ordinal,
+                source_ref: source_ref(
+                    &graph.source,
+                    &run.fdpc_style_source,
+                    Some(quill_story_object_key(syid)),
+                    Some("explicit_character_typography".into()),
+                    SourceRole::Semantic,
+                    AuthorityClass::Authoritative,
+                    ReadConfidence::Exact,
+                ),
+            });
+        }
     }
 
     let escher_inventory = inspect_sp_containers(StreamPath(ESCHER_STREAM_PATH.into()), escher)
@@ -1859,7 +1959,41 @@ pub fn build_mature_0x2c_from_streams(
 
     add_missing_link_target_diagnostics(&graph, &mut diagnostics);
 
-    Ok(PubSourceGraphBuild { graph, diagnostics })
+    Ok(PubSourceGraphBuild {
+        graph,
+        diagnostics,
+        explicit_typography,
+    })
+}
+
+
+fn utf16_range_to_scalar_range(text: &str, start_utf16: u32, end_utf16: u32) -> Option<(u32, u32)> {
+    if start_utf16 > end_utf16 {
+        return None;
+    }
+
+    fn boundary(text: &str, target_utf16: u32) -> Option<u32> {
+        if target_utf16 == 0 {
+            return Some(0);
+        }
+
+        let mut utf16_cursor = 0_u32;
+        let mut scalar_cursor = 0_u32;
+        for scalar in text.chars() {
+            utf16_cursor = utf16_cursor.checked_add(scalar.len_utf16() as u32)?;
+            scalar_cursor = scalar_cursor.checked_add(1)?;
+            if utf16_cursor == target_utf16 {
+                return Some(scalar_cursor);
+            }
+            if utf16_cursor > target_utf16 {
+                return None;
+            }
+        }
+
+        (utf16_cursor == target_utf16).then_some(scalar_cursor)
+    }
+
+    Some((boundary(text, start_utf16)?, boundary(text, end_utf16)?))
 }
 
 fn build_reference_index(
@@ -2718,6 +2852,16 @@ mod tests {
             project_rect_trunc(child_anchor, group_coords, group_absolute).unwrap(),
             [942_921, -3_037_454, 2_755_392, -1_640_185]
         );
+    }
+
+    #[test]
+    fn utf16_typography_boundaries_reject_surrogate_interior_and_map_scalars_exactly() {
+        let text = "A😀B";
+        assert_eq!(utf16_range_to_scalar_range(text, 0, 1), Some((0, 1)));
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 3), Some((1, 2)));
+        assert_eq!(utf16_range_to_scalar_range(text, 3, 4), Some((2, 3)));
+        assert_eq!(utf16_range_to_scalar_range(text, 2, 3), None);
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 2), None);
     }
 
     #[test]
