@@ -2442,34 +2442,24 @@ impl ViewerApp {
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
 
-        let ctrl_scroll_y = ui.ctx().input(|input| {
-            if input.modifiers.ctrl {
-                input.raw_scroll_delta.y
-            } else {
-                0.0
-            }
-        });
-        let pointer_over_canvas = ui
-            .ctx()
-            .input(|input| input.pointer.hover_pos())
-            .is_some_and(|pointer| ui.max_rect().contains(pointer));
-        if pointer_over_canvas && ctrl_scroll_y.abs() > f32::EPSILON {
-            self.zoom = ctrl_wheel_zoom(self.zoom, ctrl_scroll_y);
-            self.zoom_mode = CanvasZoomMode::Percent;
-        }
+        let ctrl_held = ui.ctx().input(|input| input.modifiers.ctrl);
 
         ui.horizontal_wrapped(|ui| {
             ui.label("Zoom");
 
-            let mut zoom_percent = self.zoom * 100.0;
-            let slider = ui.add(
-                egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
-                    .suffix("%")
-                    .show_value(true),
-            );
-            if slider.changed() {
-                self.zoom = (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
-                self.zoom_mode = CanvasZoomMode::Percent;
+            if self.zoom_mode == CanvasZoomMode::Percent {
+                let mut zoom_percent = self.zoom * 100.0;
+                let slider = ui.add(
+                    egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
+                        .suffix("%")
+                        .show_value(true),
+                );
+                if slider.changed() {
+                    self.zoom =
+                        (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                }
+            } else {
+                ui.label("Fit mode");
             }
 
             if ui
@@ -2696,6 +2686,7 @@ impl ViewerApp {
             .unwrap_or_default();
 
         egui::ScrollArea::both()
+            .enable_scrolling(!ctrl_held)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let canvas_sense = if reader_only_mode() {
@@ -2712,6 +2703,14 @@ impl ViewerApp {
                         "Document canvas",
                     )
                 });
+                if response.hovered() && ctrl_held {
+                    let ctrl_scroll_y = ui.ctx().input(|input| input.raw_scroll_delta.y);
+                    if ctrl_scroll_y.abs() > f32::EPSILON {
+                        self.zoom = ctrl_wheel_zoom(self.zoom, ctrl_scroll_y);
+                        self.zoom_mode = CanvasZoomMode::Percent;
+                    }
+                }
+
                 let canvas = response.rect;
                 let page_rect = if self.zoom_mode == CanvasZoomMode::FitSelection {
                     selected_bounds
