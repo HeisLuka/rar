@@ -164,6 +164,68 @@ pub struct ViewerGeometryDocument {
     pub images: Vec<ViewerEmbeddedImage>,
 }
 
+impl ViewerGeometryDocument {
+    /// Reprojects Viewer Story text and bounded frame fragments from the current
+    /// resolved graph without reparsing the immutable source PUB.
+    ///
+    /// This is the authoring-to-Viewer synchronization seam: EditorSession owns
+    /// canonical mutations, while the Viewer continues to consume the same
+    /// source-neutral pub-layout text-flow authority used during initial open.
+    /// The update is transactional: on projection failure the existing Viewer
+    /// text state is left untouched.
+    pub fn refresh_text_projection_from_resolved(
+        &mut self,
+        graph: &PubResolvedGraph,
+    ) -> Result<()> {
+        if graph.source.source_hash != self.document.source.source_hash
+            || graph.document.source_hash != self.document.source.source_hash
+        {
+            return Err(anyhow!(
+                "Viewer text refresh rejected a resolved graph with different source identity"
+            ));
+        }
+
+        let authoring = bounded_authoring_slice_from_resolved(graph)?;
+        let projection = project_bounded(authoring);
+        let (text_fragments, text_flow_diagnostics) =
+            resolve_viewer_text_fragments(&projection)?;
+
+        let stories = graph
+            .stories
+            .values()
+            .map(|story| ViewerStory {
+                id: story.id,
+                text: story.text.clone(),
+            })
+            .collect::<Vec<_>>();
+        let story_frames = projection
+            .story_frames
+            .iter()
+            .map(|frame| ViewerStoryFrame {
+                story_id: frame.story_origin,
+                frame_id: frame.frame_origin,
+                ordinal: frame.ordinal,
+            })
+            .collect::<Vec<_>>();
+
+        let mut diagnostics = self.document.diagnostics.clone();
+        diagnostics.retain(|diagnostic| {
+            !is_refreshable_text_flow_diagnostic(diagnostic.code.as_str())
+        });
+        diagnostics.extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+        if !text_fragments.is_empty() {
+            diagnostics.push(viewer_fallback_flow_metrics_diagnostic());
+        }
+        normalize_diagnostics(&mut diagnostics);
+
+        self.document.stories = stories;
+        self.story_frames = story_frames;
+        self.text_fragments = text_fragments;
+        self.document.diagnostics = diagnostics;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerNodePaint {
     pub node_id: NodeId,
@@ -346,11 +408,9 @@ pub fn open_mature_0x2c_geometry(
         .diagnostics
         .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
     if !text_fragments.is_empty() {
-        document.diagnostics.push(ViewerDiagnostic {
-            code: "viewer.text.fallback_flow_metrics".to_owned(),
-            severity: ViewerDiagnosticSeverity::FidelityWarning,
-            message: "Visible text fragments use explicit Viewer fallback metrics for bounded frame flow. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
-        });
+        document
+            .diagnostics
+            .push(viewer_fallback_flow_metrics_diagnostic());
     }
 
     let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
@@ -450,6 +510,26 @@ fn viewer_fallback_text_flow_environment_v0_1() -> BoundedTextFlowEnvironment {
             line_height: LengthEmu::new(VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1),
         }),
     }
+}
+
+fn viewer_fallback_flow_metrics_diagnostic() -> ViewerDiagnostic {
+    ViewerDiagnostic {
+        code: "viewer.text.fallback_flow_metrics".to_owned(),
+        severity: ViewerDiagnosticSeverity::FidelityWarning,
+        message: "Visible text fragments use explicit Viewer fallback metrics for bounded frame flow. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
+    }
+}
+
+fn is_refreshable_text_flow_diagnostic(code: &str) -> bool {
+    matches!(
+        code,
+        "viewer.text.flow_not_explicit"
+            | "viewer.text.flow_partial"
+            | "viewer.text.fallback_overset"
+            | "viewer.text.frame_capacity_partial"
+            | "viewer.text.fallback_metrics_unavailable"
+            | "viewer.text.fallback_flow_metrics"
+    )
 }
 
 fn resolve_viewer_text_fragments(
@@ -1366,6 +1446,141 @@ mod tests {
                 "Viewer text fragment must not expose parser-private {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn viewer_text_projection_refresh_uses_current_resolved_story_state() {
+        let mut graph = resolved_graph_fixture();
+        let page_id = graph.document.pages[0];
+        let node_id = *graph.nodes.keys().next().expect("fixture node");
+        let story_id = *graph.stories.keys().next().expect("fixture story");
+
+        graph.pages.get_mut(&page_id).expect("fixture page").size = Size2D::new(
+            LengthEmu::new(2_000_000),
+            LengthEmu::new(2_000_000),
+        );
+        graph
+            .pages
+            .get_mut(&page_id)
+            .expect("fixture page")
+            .children = vec![node_id];
+        graph
+            .nodes
+            .get_mut(&node_id)
+            .expect("fixture node")
+            .header
+            .bounds = RectEmu::new(
+            LengthEmu::ZERO,
+            LengthEmu::ZERO,
+            LengthEmu::new(1_000_000),
+            LengthEmu::new(1_000_000),
+        );
+
+        let projection =
+            project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
+        let scene =
+            resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
+                .expect("scene");
+        let (initial_fragments, _) =
+            resolve_viewer_text_fragments(&projection).expect("initial text flow");
+        assert!(!initial_fragments.is_empty());
+
+        let source_hash = graph.source.source_hash;
+        let mut visual = ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document: ViewerDocument {
+                schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
+                source: ViewerSource {
+                    format: "pub".to_owned(),
+                    format_version: Some("0x2c".to_owned()),
+                    source_hash,
+                    byte_len: 1,
+                },
+                pages: Vec::new(),
+                stories: vec![ViewerStory {
+                    id: story_id,
+                    text: graph.stories[&story_id].text.clone(),
+                }],
+                diagnostics: vec![viewer_fallback_flow_metrics_diagnostic()],
+            },
+            scene,
+            paints: Vec::new(),
+            story_frames: Vec::new(),
+            text_fragments: initial_fragments,
+            images: Vec::new(),
+        };
+
+        graph
+            .stories
+            .get_mut(&story_id)
+            .expect("fixture story")
+            .text = "Changed after edit".to_owned();
+
+        visual
+            .refresh_text_projection_from_resolved(&graph)
+            .expect("refresh current editor graph");
+
+        assert_eq!(visual.document.stories[0].text, "Changed after edit");
+        assert_eq!(
+            visual
+                .text_fragments
+                .iter()
+                .map(|fragment| fragment.text.as_str())
+                .collect::<String>(),
+            "Changed after edit"
+        );
+        assert_eq!(visual.story_frames.len(), 1);
+        assert_eq!(
+            visual
+                .document
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "viewer.text.fallback_flow_metrics")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn viewer_text_projection_refresh_rejects_source_identity_change_transactionally() {
+        let graph = resolved_graph_fixture();
+        let source_hash = graph.source.source_hash;
+        let mut visual = ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document: ViewerDocument {
+                schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
+                source: ViewerSource {
+                    format: "pub".to_owned(),
+                    format_version: Some("0x2c".to_owned()),
+                    source_hash,
+                    byte_len: 1,
+                },
+                pages: Vec::new(),
+                stories: vec![ViewerStory {
+                    id: StoryId::from_canonical(id(99)),
+                    text: "keep me".to_owned(),
+                }],
+                diagnostics: Vec::new(),
+            },
+            scene: resolve_bounded_geometry(
+                &project_bounded(
+                    bounded_authoring_slice_from_resolved(&graph).expect("projection"),
+                ),
+                viewer_geometry_environment_v0_1(),
+            )
+            .expect("scene"),
+            paints: Vec::new(),
+            story_frames: Vec::new(),
+            text_fragments: Vec::new(),
+            images: Vec::new(),
+        };
+        let before = visual.clone();
+        visual.document.source.source_hash = Sha256Digest::from_bytes([0xCD; 32]);
+        let mismatched_before = visual.clone();
+
+        assert!(visual.refresh_text_projection_from_resolved(&graph).is_err());
+        assert_eq!(visual, mismatched_before);
+        assert_ne!(visual, before);
     }
 
     #[test]
