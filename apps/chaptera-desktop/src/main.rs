@@ -3600,7 +3600,8 @@ mod tests {
         let source = include_str!("main.rs");
         assert!(source.contains(".enable_scrolling(!ctrl_held)"));
         assert!(source.contains("response.hovered() && ctrl_held"));
-        assert!(!source.contains("pointer_over_canvas"));
+        let legacy_pointer_gate = ["pointer", "over", "canvas"].join("_");
+        assert!(!source.contains(&legacy_pointer_gate));
     }
 
     #[test]
