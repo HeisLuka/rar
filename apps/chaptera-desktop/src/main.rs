@@ -77,7 +77,7 @@ struct ViewerLoadFailure {
     diagnostic_json: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct PreviewTextMetricDiagnostic {
     signature: String,
     page_index: u32,
@@ -879,6 +879,56 @@ impl ViewerApp {
                 self.preview_clipped_frames
             ));
             ui.small(PREVIEW_TEXT_CLIP_WARNING);
+
+            if !self.preview_text_diagnostics.is_empty() {
+                let mut grouped: BTreeMap<&str, Vec<&PreviewTextMetricDiagnostic>> =
+                    BTreeMap::new();
+                for diagnostic in &self.preview_text_diagnostics {
+                    grouped
+                        .entry(diagnostic.signature.as_str())
+                        .or_default()
+                        .push(diagnostic);
+                }
+
+                ui.collapsing(
+                    format!(
+                        "Preview text metrics · {} group(s)",
+                        grouped.len()
+                    ),
+                    |ui| {
+                        if ui.button("Copy metrics JSON").clicked()
+                            && let Ok(json) =
+                                serde_json::to_string_pretty(&self.preview_text_diagnostics)
+                        {
+                            ui.ctx().copy_text(json);
+                        }
+
+                        for (signature, rows) in grouped {
+                            ui.add_space(4.0);
+                            ui.strong(format!("{} × {}", rows.len(), signature));
+                            for row in rows.iter().take(3) {
+                                ui.monospace(format!(
+                                    "p{} frame={} story={} clip={:.1}×{:.1}px galley={:.1}×{:.1}px overflow={:.1}px lines={}",
+                                    row.page_index,
+                                    row.frame_id,
+                                    row.story_id,
+                                    row.clip_width_px,
+                                    row.clip_height_px,
+                                    row.galley_width_px,
+                                    row.galley_height_px,
+                                    row.overflow_delta_px,
+                                    row.line_count
+                                        .map(|value| value.to_string())
+                                        .unwrap_or_else(|| "?".to_owned()),
+                                ));
+                            }
+                            if rows.len() > 3 {
+                                ui.small(format!("… and {} more frame(s)", rows.len() - 3));
+                            }
+                        }
+                    },
+                );
+            }
         }
     }
 
@@ -2256,6 +2306,7 @@ impl ViewerApp {
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
         let mut preview_clipped_story_keys = BTreeSet::new();
+        let mut preview_text_diagnostics = Vec::new();
         let selected_canvas_instance = self.canvas_selection.primary().map(str::to_owned);
         let mut canvas_clicked = false;
         let mut canvas_hit: Option<String> = None;
@@ -2669,19 +2720,62 @@ impl ViewerApp {
                             preview_clipped_frames += 1;
                             preview_clipped_story_keys
                                 .insert(format!("{:?}", fragment.story_id));
+
+                            let marker_center = preview_overflow_marker_center(node_rect);
                             painter.rect_stroke(
                                 node_rect,
                                 0,
                                 egui::Stroke::new(2.0_f32, egui::Color32::RED),
                                 egui::StrokeKind::Inside,
                             );
-                            painter.text(
-                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                egui::Align2::RIGHT_TOP,
-                                "preview overflow",
-                                egui::FontId::proportional(10.0_f32),
+                            painter.circle_filled(
+                                marker_center,
+                                5.0_f32,
                                 egui::Color32::RED,
                             );
+                            painter.text(
+                                marker_center,
+                                egui::Align2::CENTER_CENTER,
+                                "!",
+                                egui::FontId::proportional(9.0_f32),
+                                egui::Color32::WHITE,
+                            );
+
+                            let galley_size = galley.size();
+                            let font_family = "egui-proportional-fallback";
+                            preview_text_diagnostics.push(PreviewTextMetricDiagnostic {
+                                signature: preview_text_metric_signature(
+                                    font_family,
+                                    font_size,
+                                ),
+                                page_index: page.index,
+                                page_id: page.id.as_canonical().to_string(),
+                                frame_id: node.origin.as_canonical().to_string(),
+                                story_id: fragment.story_id.as_canonical().to_string(),
+                                frame_bounds_emu: [
+                                    node_bounds.x.get(),
+                                    node_bounds.y.get(),
+                                    node_bounds.width.get(),
+                                    node_bounds.height.get(),
+                                ],
+                                clip_rect_px: [
+                                    text_clip_rect.left(),
+                                    text_clip_rect.top(),
+                                    text_clip_rect.right(),
+                                    text_clip_rect.bottom(),
+                                ],
+                                zoom: self.zoom,
+                                font_family,
+                                font_size_px: font_size,
+                                wrap_width_px: text_clip_rect.width().max(1.0_f32),
+                                galley_width_px: galley_size.x,
+                                galley_height_px: galley_size.y,
+                                clip_width_px: text_clip_rect.width(),
+                                clip_height_px: text_clip_rect.height(),
+                                overflow_delta_px: (galley_size.y - text_clip_rect.height())
+                                    .max(0.0_f32),
+                                line_count: Some(galley.rows.len()),
+                            });
                         }
                         text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
                     }
@@ -2810,6 +2904,7 @@ impl ViewerApp {
 
         self.preview_clipped_frames = preview_clipped_frames;
         self.preview_clipped_story_keys = preview_clipped_story_keys;
+        self.preview_text_diagnostics = preview_text_diagnostics;
     }
 }
 
@@ -2935,6 +3030,14 @@ fn resize_handle_label(handle: ResizeHandle) -> &'static str {
 fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool {
     const EPSILON_PX: f32 = 0.5;
     galley_height > clip_height + EPSILON_PX
+}
+
+fn preview_text_metric_signature(font_family: &str, font_size_px: f32) -> String {
+    format!("preview_fallback_overflow:{font_family}:{font_size_px:.1}px")
+}
+
+fn preview_overflow_marker_center(frame_rect: egui::Rect) -> egui::Pos2 {
+    frame_rect.right_top() + egui::vec2(7.0, -7.0)
 }
 
 fn editable_export_path(
