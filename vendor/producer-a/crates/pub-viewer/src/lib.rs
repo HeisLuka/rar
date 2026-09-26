@@ -1210,6 +1210,136 @@ mod tests {
         assert!(!object.contains_key("page"));
     }
 
+    fn linked_text_projection(explicit_links: bool) -> pub_layout::BoundedLayoutProjection {
+        let page_id = PageId::from_canonical(id(40));
+        let first_frame = NodeId::from_canonical(id(41));
+        let second_frame = NodeId::from_canonical(id(42));
+        let story_id = StoryId::from_canonical(id(43));
+        let scalar_advance = VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1;
+        let line_height = VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1;
+
+        project_bounded(BoundedAuthoringSlice {
+            pages: vec![Page {
+                id: page_id,
+                size: Size2D::new(
+                    LengthEmu::new(scalar_advance * 12),
+                    LengthEmu::new(line_height * 4),
+                ),
+                bleed: None,
+                margins: None,
+                children: vec![first_frame, second_frame],
+                extensions: Vec::new(),
+            }],
+            node_geometry: vec![
+                BoundedNodeGeometryInput {
+                    node_id: first_frame,
+                    parent_origin: page_id.into_canonical(),
+                    bounds: RectEmu::new(
+                        LengthEmu::ZERO,
+                        LengthEmu::ZERO,
+                        LengthEmu::new(scalar_advance * 4),
+                        LengthEmu::new(line_height),
+                    ),
+                    transform: Affine2D::identity(),
+                },
+                BoundedNodeGeometryInput {
+                    node_id: second_frame,
+                    parent_origin: page_id.into_canonical(),
+                    bounds: RectEmu::new(
+                        LengthEmu::ZERO,
+                        LengthEmu::new(line_height * 2),
+                        LengthEmu::new(scalar_advance * 4),
+                        LengthEmu::new(line_height),
+                    ),
+                    transform: Affine2D::identity(),
+                },
+            ],
+            stories: vec![Story {
+                id: story_id,
+                text: "ABCDEFG".to_owned(),
+                paragraphs: Vec::new(),
+                runs: Vec::new(),
+                fields: Vec::new(),
+                hyperlinks: Vec::new(),
+                source_refs: Vec::new(),
+            }],
+            story_frames: vec![
+                StoryFrame {
+                    story_id,
+                    frame_id: first_frame,
+                    ordinal: 0,
+                    previous: None,
+                    next: explicit_links.then_some(second_frame),
+                },
+                StoryFrame {
+                    story_id,
+                    frame_id: second_frame,
+                    ordinal: 1,
+                    previous: explicit_links.then_some(first_frame),
+                    next: None,
+                },
+            ],
+            tables: Vec::new(),
+            guides: Vec::new(),
+            unknown_layout_state: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn viewer_fallback_flow_materializes_explicit_linked_story_frames() {
+        let projection = linked_text_projection(true);
+        let (fragments, diagnostics) =
+            resolve_viewer_text_fragments(&projection).expect("fallback flow should resolve");
+
+        assert_eq!(fragments.len(), 2);
+        assert_eq!(fragments[0].text, "ABCD");
+        assert_eq!(fragments[0].scalar_start, 0);
+        assert_eq!(fragments[0].scalar_end, 4);
+        assert_eq!(fragments[1].text, "EFG");
+        assert_eq!(fragments[1].scalar_start, 4);
+        assert_eq!(fragments[1].scalar_end, 7);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "story_overset")
+        );
+    }
+
+    #[test]
+    fn viewer_fallback_flow_does_not_invent_ordinal_only_chain() {
+        let projection = linked_text_projection(false);
+        let (fragments, diagnostics) =
+            resolve_viewer_text_fragments(&projection).expect("fallback flow should resolve");
+
+        assert!(fragments.is_empty());
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "shared_story_without_explicit_flow"
+        }));
+    }
+
+    #[test]
+    fn viewer_text_fragment_contract_is_source_neutral() {
+        let fragment = ViewerTextFragment {
+            story_id: StoryId::from_canonical(id(50)),
+            frame_id: NodeId::from_canonical(id(51)),
+            scalar_start: 2,
+            scalar_end: 5,
+            text: "abc".to_owned(),
+            line_count: 1,
+        };
+        let json = serde_json::to_string(&fragment).expect("serialize Viewer text fragment");
+
+        assert!(json.contains("story_id"));
+        assert!(json.contains("frame_id"));
+        assert!(json.contains("scalar_start"));
+        for forbidden in ["Quill", "FDPC", "BTEC", "Contents", "Escher", "offset"] {
+            assert!(
+                !json.contains(forbidden),
+                "Viewer text fragment must not expose parser-private {forbidden}"
+            );
+        }
+    }
+
     #[test]
     fn viewer_geometry_environment_is_explicit_and_stable() {
         assert_eq!(
