@@ -1,0 +1,79 @@
+name: VIEWER-TYPOGRAPHY-EFFECTIVE-INHERIT-01
+
+on:
+  push:
+    branches:
+      - viewer-typography-effective-inherit-01
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-effective-typography:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEWSLETTER_BLOB: "94900925af5832c493784f3cb51563f838a64df8"
+      BROCHURE_BLOB: "00deec14dc6cff6d8a47b120d6d84e7e20c72166"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Fetch pinned Apache POI PUB fixtures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .inputs
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import pathlib
+          import urllib.request
+
+          fixtures = [
+              ("SampleNewsletter.pub", os.environ["NEWSLETTER_BLOB"]),
+              ("SampleBrochure.pub", os.environ["BROCHURE_BLOB"]),
+          ]
+          for name, blob in fixtures:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/apache/poi/git/blobs/{blob}",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = json.load(response)
+              if payload.get("sha") != blob or payload.get("encoding") != "base64":
+                  raise SystemExit(f"unexpected Git blob response for {name}")
+              raw = base64.b64decode(payload["content"])
+              if not raw.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+                  raise SystemExit(f"{name}: not OLE/CFB")
+              pathlib.Path(".inputs", name).write_bytes(raw)
+          PY
+          echo "CHAPTERA_SAMPLE_NEWSLETTER=$PWD/.inputs/SampleNewsletter.pub" >> "$GITHUB_ENV"
+          echo "CHAPTERA_SAMPLE_BROCHURE=$PWD/.inputs/SampleBrochure.pub" >> "$GITHUB_ENV"
+
+      - name: Test effective typography unit laws
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill typography::tests -- --nocapture
+
+      - name: Reproduce hosted discriminator in Rust
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill real_pub_effective_typography_reproduces_hosted_discriminator -- --ignored --nocapture
+
+      - name: Prove fixture bytes are not retained
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short
+          if find vendor/producer-a/crates/pub-quill -type f \( -iname '*.pub' -o -iname '*.ole' \) | grep -q .; then
+            echo "raw PUB/CFB leaked into repository tree" >&2
+            exit 1
+          fi
