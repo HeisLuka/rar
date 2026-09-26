@@ -1043,3 +1043,156 @@ async fn cloud_link_shared_db_marginal_receipt() -> BenchResult<()> {
     );
     Ok(())
 }
+
+
+#[derive(Debug, Serialize)]
+struct LatencyReceipt {
+    protocol_version: &'static str,
+    build_sha: String,
+    fixture_source_commit: &'static str,
+    order_id: String,
+    process_order: Vec<String>,
+    warm_repetitions_per_fixture: u32,
+    scope: &'static str,
+    samples: Vec<LatencySample>,
+}
+
+#[derive(Debug, Serialize)]
+struct LatencySample {
+    logical_fixture_id: String,
+    fixture_file: String,
+    fixture_sha256: String,
+    fixture_bytes: u64,
+    sample_kind: &'static str,
+    process_cold: bool,
+    process_position: Option<u32>,
+    warm_iteration: Option<u32>,
+    total_wall_ms: u64,
+    phase_wall_ms: BTreeMap<String, u64>,
+}
+
+fn latency_order(order_id: &str) -> BenchResult<Vec<(&'static str, &'static str)>> {
+    let order = match order_id {
+        "simple-first" => vec![
+            ("f0-simple", "Simple.pub"),
+            ("f1-newsletter", "SampleNewsletter.pub"),
+            ("f2-brochure", "SampleBrochure.pub"),
+        ],
+        "newsletter-first" => vec![
+            ("f1-newsletter", "SampleNewsletter.pub"),
+            ("f2-brochure", "SampleBrochure.pub"),
+            ("f0-simple", "Simple.pub"),
+        ],
+        "brochure-first" => vec![
+            ("f2-brochure", "SampleBrochure.pub"),
+            ("f0-simple", "Simple.pub"),
+            ("f1-newsletter", "SampleNewsletter.pub"),
+        ],
+        other => return Err(format!("unsupported latency order: {other}").into()),
+    };
+    Ok(order)
+}
+
+fn latency_sample(
+    logical_fixture_id: &str,
+    receipt: FixtureReceipt,
+    sample_kind: &'static str,
+    process_cold: bool,
+    process_position: Option<u32>,
+    warm_iteration: Option<u32>,
+) -> LatencySample {
+    LatencySample {
+        logical_fixture_id: logical_fixture_id.to_owned(),
+        fixture_file: receipt.fixture_file,
+        fixture_sha256: receipt.fixture_sha256,
+        fixture_bytes: receipt.fixture_bytes,
+        sample_kind,
+        process_cold,
+        process_position,
+        warm_iteration,
+        total_wall_ms: receipt.total_wall_ms,
+        phase_wall_ms: receipt.phase_wall_ms,
+    }
+}
+
+#[tokio::test]
+async fn cloud_link_cold_warm_latency_receipt() -> BenchResult<()> {
+    let Some(fixtures_root) = env::var_os("CHAPTERA_CLOUD_LINK_BENCH_FIXTURES") else {
+        eprintln!(
+            "CHAPTERA_CLOUD_LINK_BENCH_FIXTURES not set; dedicated CLOUD-LINK-BENCH workflow owns execution"
+        );
+        return Ok(());
+    };
+
+    let order_id =
+        env::var("CHAPTERA_CLOUD_LINK_LATENCY_ORDER").unwrap_or_else(|_| "simple-first".to_owned());
+    let output_path = env::var_os("CHAPTERA_CLOUD_LINK_LATENCY_RECEIPT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            repo_root().join(format!("out/cloud-link-bench-01c-{order_id}.json"))
+        });
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let fixture_root = PathBuf::from(fixtures_root);
+    let order = latency_order(&order_id)?;
+    let mut samples = Vec::new();
+
+    for (position, (logical_fixture_id, filename)) in order.iter().enumerate() {
+        let run_id = format!(
+            "latency-{}-probe-{position}-{logical_fixture_id}",
+            order_id
+        );
+        let receipt = run_fixture(&run_id, &fixture_root.join(filename)).await?;
+        samples.push(latency_sample(
+            logical_fixture_id,
+            receipt,
+            "order_probe",
+            position == 0,
+            Some(u32::try_from(position)?),
+            None,
+        ));
+    }
+
+    const WARM_REPETITIONS: u32 = 20;
+    for repetition in 0..WARM_REPETITIONS {
+        for (logical_fixture_id, filename) in &order {
+            let run_id = format!(
+                "latency-{}-warm-{repetition:02}-{logical_fixture_id}",
+                order_id
+            );
+            let receipt = run_fixture(&run_id, &fixture_root.join(filename)).await?;
+            samples.push(latency_sample(
+                logical_fixture_id,
+                receipt,
+                "warm_repeat",
+                false,
+                None,
+                Some(repetition),
+            ));
+        }
+    }
+
+    let receipt = LatencyReceipt {
+        protocol_version: "chaptera.cloud-link-first-bind-latency.v0",
+        build_sha: env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned()),
+        fixture_source_commit: FIXTURE_SOURCE_COMMIT,
+        order_id: order_id.clone(),
+        process_order: order
+            .iter()
+            .map(|(fixture_id, _)| (*fixture_id).to_owned())
+            .collect(),
+        warm_repetitions_per_fixture: WARM_REPETITIONS,
+        scope: "process-cold/order-effect + same-process warm distribution over hosted deterministic provider/scanner; not OS-cache-cold and not production S3/ClamD latency",
+        samples,
+    };
+
+    fs::write(&output_path, serde_json::to_vec_pretty(&receipt)?)?;
+    println!(
+        "CLOUD_LINK_LATENCY_RECEIPT={} order={}",
+        output_path.display(),
+        order_id
+    );
+    Ok(())
+}
