@@ -2,6 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
+set "CHAPTERA_SMOKE="
+for %%A in (%*) do (
+  if /I "%%~A"=="--smoke" set "CHAPTERA_SMOKE=1"
+)
+
 if exist "%~dp0runtime\python\python.exe" goto packaged
 
 where py >nul 2>nul
@@ -28,6 +33,6 @@ set "CHAPTERA_EXIT=%errorlevel%"
 if not "%CHAPTERA_EXIT%"=="0" (
   echo.
   echo Chaptera Local failed. A browser error page should have opened.
-  pause
+  if not defined CHAPTERA_SMOKE pause
 )
 exit /b %CHAPTERA_EXIT%
