@@ -33,14 +33,14 @@ use pub_idml::{
     IMAGE_CONTENT_TRANSFORM_FEATURE, IMAGE_FRAME_GEOMETRY_FEATURE, IdmlEmbeddedImagePlacement,
     IdmlWireProfile, add_embedded_images_to_idml, project_resolved_graph_to_idml, write_idml_ucf,
 };
+pub use pub_model::{
+    CanonicalId, LengthEmu, NodeId, PageId, RectEmu, RulerGuideAxis, Sha256Digest, StoryId,
+    TableCellId,
+};
 use pub_model::{
     EFFECTIVE_TABLE_GRID_V1, EffectiveTableCellV1, EffectiveTableGridV1, EffectiveTableTrackV1,
     ResourceId, SourceDerivedIdInput, Story, StoryFrame, TableColumnId, TableRowId,
     derive_source_canonical_id, new_editor_canonical_id, validate_story_frames,
-};
-pub use pub_model::{
-    CanonicalId, LengthEmu, NodeId, PageId, RectEmu, RulerGuideAxis, Sha256Digest, StoryId,
-    TableCellId,
 };
 use pub_odg::{
     ODG_ADAPTER_VERSION_V0_1, ODG_SCHEMA_FENCE_ODF_1_4, OdgEmbeddedImagePlacement,
@@ -2560,22 +2560,19 @@ impl EditorSession {
         Ok(operation)
     }
 
-    fn validate_ruler_guide_candidate(
-        &self,
-        guide: &EditorRulerGuide,
-    ) -> Result<(), EditorError> {
+    fn validate_ruler_guide_candidate(&self, guide: &EditorRulerGuide) -> Result<(), EditorError> {
         if !is_editor_created_uuid_v7_canonical_id(guide.guide_id) {
             return Err(EditorError::RulerGuideInvalidId {
                 guide_id: guide.guide_id,
             });
         }
-        let page = self
-            .graph
-            .pages
-            .get(&guide.page_id)
-            .ok_or(EditorError::RulerGuidePageMissing {
-                page_id: guide.page_id,
-            })?;
+        let page =
+            self.graph
+                .pages
+                .get(&guide.page_id)
+                .ok_or(EditorError::RulerGuidePageMissing {
+                    page_id: guide.page_id,
+                })?;
         let limit = match guide.axis {
             RulerGuideAxis::Horizontal => page.size.height,
             RulerGuideAxis::Vertical => page.size.width,
