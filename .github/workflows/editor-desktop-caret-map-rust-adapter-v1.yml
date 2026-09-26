@@ -185,7 +185,7 @@ jobs:
 
           def canonical_result(call):
               try:
-                  return {"ok": asdict(call())}
+                  return {"ok": json.loads(json.dumps(asdict(call())))}
               except ResolvedTextCaretMapError as error:
                   return {"error_code": error.code}
 
