@@ -1,0 +1,36 @@
+name: Chaptera update control handoff
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-update-engine/**"
+      - "crates/chaptera-update-orchestrator/**"
+      - "crates/chaptera-update-handoff/**"
+      - ".github/workflows/chaptera-update-handoff.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaptera-update-handoff-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  handoff:
+    name: copied U1 control handoff (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+      - name: Test copied-control process and lock ownership transfer
+        run: cargo test -p chaptera-update-handoff --all-targets

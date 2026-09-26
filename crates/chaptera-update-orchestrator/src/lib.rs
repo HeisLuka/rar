@@ -13,14 +13,18 @@ pub struct InstallLock {
 }
 
 impl InstallLock {
+    /// Blocking acquisition for a copied control updater. The control process
+    /// can start while its parent still owns the lock; it cannot mutate the
+    /// install until the parent's file handle is closed or explicitly unlocked.
+    pub fn acquire(root: &Path) -> Result<Self> {
+        let (file, path) = Self::open_file(root)?;
+        file.lock()?;
+        Self::finish_acquire(file, path)
+    }
+
+    /// Non-blocking acquisition used by an interactive/front-door updater.
     pub fn try_acquire(root: &Path) -> Result<Self> {
-        std::fs::create_dir_all(root)?;
-        let path = root.join(INSTALL_LOCK_FILENAME);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(&path)?;
+        let (file, path) = Self::open_file(root)?;
 
         match file.try_lock() {
             Ok(()) => {}
@@ -28,17 +32,31 @@ impl InstallLock {
             Err(TryLockError::Error(err)) => return Err(err.into()),
         }
 
+        Self::finish_acquire(file, path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn open_file(root: &Path) -> Result<(File, PathBuf)> {
+        std::fs::create_dir_all(root)?;
+        let path = root.join(INSTALL_LOCK_FILENAME);
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        Ok((file, path))
+    }
+
+    fn finish_acquire(mut file: File, path: PathBuf) -> Result<Self> {
         // The file may survive a previous crash; the OS lock, not existence,
         // is authoritative. Rewrite diagnostic metadata only after locking.
         file.set_len(0)?;
         file.write_all(format!("pid={}\n", std::process::id()).as_bytes())?;
         file.sync_all()?;
-
         Ok(Self { file, path })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 }
 
