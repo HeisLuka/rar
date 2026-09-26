@@ -3911,6 +3911,37 @@ mod tests {
         eprintln!(
             "SampleNewsletter preview typography: source_sections={source_sections} fallback_sections={fallback_sections}"
         );
+        if let Some(path) = std::env::var_os("CHAPTERA_TYPOGRAPHY_PAINT_RECEIPT") {
+            let receipt = serde_json::json!({
+                "schema": "chaptera.viewer-typography-paint-receipt.v1",
+                "result": "pass",
+                "fixture": {
+                    "name": "SampleNewsletter.pub",
+                    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+                },
+                "viewer": {
+                    "text_fragment_count": visual.text_fragments.len(),
+                    "typography_run_count": visual.typography_runs.len()
+                },
+                "preview": {
+                    "source_typography_sections": source_sections,
+                    "fallback_sections": fallback_sections,
+                    "visible_rockwell_condensed_24pt_applied": saw_visible_rockwell_24pt,
+                    "font_face_disposition": "deterministic_proportional_fallback"
+                },
+                "claims": {
+                    "host_font_lookup_used": false,
+                    "source_font_size_applied_when_owned": source_sections > 0,
+                    "unowned_typography_remains_fallback": fallback_sections > 0,
+                    "publisher_exact_reflow_claimed": false
+                }
+            });
+            fs::write(
+                PathBuf::from(path),
+                serde_json::to_vec_pretty(&receipt).expect("serialize typography paint receipt"),
+            )
+            .expect("write typography paint receipt");
+        }
         assert!(
             source_sections > 0,
             "at least one visible fragment must consume grounded source typography"
