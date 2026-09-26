@@ -1,0 +1,15 @@
+[package]
+name = "chaptera-viewer-render-plan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+serde.workspace = true
+
+[dev-dependencies]
+pub-layout = { path = "../../vendor/producer-a/crates/pub-layout" }
+serde_json.workspace = true
