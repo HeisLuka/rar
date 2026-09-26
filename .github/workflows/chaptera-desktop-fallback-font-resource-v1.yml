@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -26,26 +26,6 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: One-shot format task-owned desktop files
-        shell: bash
-        env:
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" != "push" ]] || [[ "${COMMIT_MESSAGE}" == *"style: rustfmt fallback font resource"* ]]; then
-            echo "One-shot formatter skipped."
-            exit 0
-          fi
-          cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml
-          if git diff --quiet -- apps/chaptera-desktop; then
-            echo "No rustfmt changes needed."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/chaptera-desktop
-          git commit -m "style: rustfmt fallback font resource"
-          git push origin HEAD:chaptera-desktop-fallback-font-resource-01
       - name: Format
         run: cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml -- --check
       - name: Check
