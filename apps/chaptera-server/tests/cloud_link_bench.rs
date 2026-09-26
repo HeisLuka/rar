@@ -975,7 +975,6 @@ async fn cloud_link_first_bind_measurement_receipt() -> BenchResult<()> {
     Ok(())
 }
 
-
 #[tokio::test]
 async fn cloud_link_shared_db_marginal_receipt() -> BenchResult<()> {
     let Some(fixtures_root) = env::var_os("CHAPTERA_CLOUD_LINK_BENCH_FIXTURES") else {
