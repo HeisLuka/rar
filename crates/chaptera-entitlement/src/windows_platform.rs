@@ -1,6 +1,9 @@
 #![cfg(target_os = "windows")]
 
-use crate::{DEVICE_KEY_ID_LEN, TrustedTimeStateV1};
+use crate::{
+    DEVICE_KEY_ID_LEN, LeaseTimeInputV1, TimeAcceptance, TimePolicy, TrustedTimeError,
+    TrustedTimeStateV1, evaluate_time_bound_right,
+};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use sha2::{Digest, Sha256};
 use std::ffi::{OsStr, c_void};
@@ -11,7 +14,10 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
-use windows_sys::Win32::Foundation::{GetLastError, LocalFree, NTE_BAD_KEYSET, NTE_EXISTS};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, HANDLE, LocalFree, NTE_BAD_KEYSET, NTE_EXISTS, WAIT_ABANDONED,
+    WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::Security::Cryptography::{
     BCRYPT_ECCPUBLIC_BLOB, BCRYPT_ECDSA_P256_ALGORITHM, BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
     CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
@@ -23,10 +29,13 @@ use windows_sys::Win32::Security::Cryptography::{
 use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
+use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 use windows_sys::core::PCWSTR;
 
 const POSSESSION_DOMAIN: &[u8] = b"Chaptera.DeviceKey.possession.v1\0";
 const STATE_ENTROPY_DOMAIN: &[u8] = b"Chaptera.TrustedTimeState.dpapi.v1\0";
+const STATE_MUTEX_DOMAIN: &[u8] = b"Chaptera.TrustedTimeState.mutex.v1\0";
+const STATE_MUTEX_WAIT_MS: u32 = 30_000;
 const P256_PUBLIC_BLOB_LEN: usize = 8 + 32 + 32;
 const NTE_NOT_SUPPORTED_STATUS: u32 = 0x8009_0029;
 const NTE_DEVICE_NOT_READY_STATUS: u32 = 0x8009_0030;
@@ -62,6 +71,10 @@ pub enum WindowsPlatformError {
     StateDecode(String),
     #[error("path has no file name")]
     InvalidStatePath,
+    #[error("TrustedTime state transaction lock timed out")]
+    StateLockTimeout,
+    #[error("TrustedTime policy rejected the candidate: {0}")]
+    TrustedTime(#[from] TrustedTimeError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -427,6 +440,88 @@ fn wide(value: &str) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(Some(0)).collect()
 }
 
+struct TrustedTimeMutexGuard {
+    handle: HANDLE,
+    owned: bool,
+}
+
+impl TrustedTimeMutexGuard {
+    fn acquire(
+        path: &Path,
+        device_key_id: &[u8; DEVICE_KEY_ID_LEN],
+    ) -> Result<Self, WindowsPlatformError> {
+        let name = trusted_time_mutex_name(path, device_key_id)?;
+        let handle = unsafe { CreateMutexW(null(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return Err(last_error("CreateMutexW"));
+        }
+
+        let wait = unsafe { WaitForSingleObject(handle, STATE_MUTEX_WAIT_MS) };
+        match wait {
+            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self {
+                handle,
+                owned: true,
+            }),
+            WAIT_TIMEOUT => {
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                Err(WindowsPlatformError::StateLockTimeout)
+            }
+            WAIT_FAILED => {
+                let error = last_error("WaitForSingleObject");
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                Err(error)
+            }
+            _ => {
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                Err(last_error("WaitForSingleObject(unexpected)"))
+            }
+        }
+    }
+}
+
+impl Drop for TrustedTimeMutexGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if self.owned {
+                let _ = ReleaseMutex(self.handle);
+            }
+            let _ = CloseHandle(self.handle);
+        }
+    }
+}
+
+fn trusted_time_mutex_name(
+    path: &Path,
+    device_key_id: &[u8; DEVICE_KEY_ID_LEN],
+) -> Result<Vec<u16>, WindowsPlatformError> {
+    let parent = path.parent().ok_or(WindowsPlatformError::InvalidStatePath)?;
+    let file_name = path.file_name().ok_or(WindowsPlatformError::InvalidStatePath)?;
+    fs::create_dir_all(parent)?;
+    let canonical_parent = fs::canonicalize(parent)?;
+    let canonical_path = canonical_parent.join(file_name);
+
+    let mut hasher = Sha256::new();
+    hasher.update(STATE_MUTEX_DOMAIN);
+    for unit in canonical_path.as_os_str().encode_wide() {
+        hasher.update(unit.to_le_bytes());
+    }
+    hasher.update(device_key_id);
+    let digest = hasher.finalize();
+
+    let mut name = String::from("Local\\Chaptera.TrustedTimeState.");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut name, "{byte:02x}").expect("write mutex hash");
+    }
+    Ok(wide(&name))
+}
+
 struct OutBlob(CRYPT_INTEGER_BLOB);
 
 impl Default for OutBlob {
@@ -584,6 +679,23 @@ pub fn save_trusted_time_state(
     write_result
 }
 
+pub fn evaluate_trusted_time_transaction(
+    path: &Path,
+    expected_device_key_id: &[u8; DEVICE_KEY_ID_LEN],
+    now: i64,
+    lease: &LeaseTimeInputV1<'_>,
+    policy: TimePolicy,
+) -> Result<TimeAcceptance, WindowsPlatformError> {
+    let _guard = TrustedTimeMutexGuard::acquire(path, expected_device_key_id)?;
+    let state = load_trusted_time_state(path, expected_device_key_id)?
+        .unwrap_or_else(|| TrustedTimeStateV1::fresh(*expected_device_key_id));
+
+    let accepted =
+        evaluate_time_bound_right(&state, expected_device_key_id, now, lease, policy)?;
+    save_trusted_time_state(path, accepted.next_state())?;
+    Ok(accepted)
+}
+
 pub fn load_trusted_time_state(
     path: &Path,
     expected_device_key_id: &[u8; DEVICE_KEY_ID_LEN],
@@ -623,6 +735,7 @@ fn wide_path(path: &Path) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_suffix() -> u128 {
@@ -630,6 +743,179 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time after unix epoch")
             .as_nanos()
+    }
+
+    const TXN_CHILD_ENV: &str = "CHAPTERA_ENTITLEMENT_TXN_CHILD";
+    const TXN_PATH_ENV: &str = "CHAPTERA_ENTITLEMENT_TXN_PATH";
+    const TXN_DEVICE: [u8; DEVICE_KEY_ID_LEN] = [0x4C; DEVICE_KEY_ID_LEN];
+
+    fn txn_policy() -> TimePolicy {
+        TimePolicy {
+            skew_seconds: 0,
+            forward_jump_limit_seconds: None,
+        }
+    }
+
+    fn txn_lease() -> LeaseTimeInputV1<'static> {
+        LeaseTimeInputV1 {
+            lease_id: "txn-lease-1",
+            lease_sequence: 1,
+            issued_at: 1_900_000_000,
+            not_before: 1_900_000_000,
+            valid_until: 1_900_100_000,
+            offline_grace_until: Some(1_900_200_000),
+            authenticated_server_time: Some(1_900_000_000),
+            lease_commitment: [0x44; crate::LEASE_COMMITMENT_LEN],
+        }
+    }
+
+    #[test]
+    fn trusted_time_transaction_child() {
+        let Some(mode) = std::env::var_os(TXN_CHILD_ENV) else {
+            return;
+        };
+        let path = PathBuf::from(
+            std::env::var_os(TXN_PATH_ENV).expect("transaction child path"),
+        );
+
+        if mode == "abandon" {
+            let _guard =
+                TrustedTimeMutexGuard::acquire(&path, &TXN_DEVICE).expect("child mutex acquire");
+            std::process::exit(0);
+        }
+
+        evaluate_trusted_time_transaction(
+            &path,
+            &TXN_DEVICE,
+            1_900_000_100,
+            &txn_lease(),
+            txn_policy(),
+        )
+        .expect("child transaction");
+    }
+
+    #[test]
+    fn cross_process_transactions_serialize_without_lost_generations() {
+        if std::env::var_os(TXN_CHILD_ENV).is_some() {
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "chaptera-entitlement-txn-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let path = dir.join("trusted-time-v1.bin");
+        let exe = std::env::current_exe().expect("current test executable");
+
+        let mut children = Vec::new();
+        for _ in 0..8 {
+            let child = Command::new(&exe)
+                .arg("--exact")
+                .arg("windows_platform::tests::trusted_time_transaction_child")
+                .arg("--nocapture")
+                .env(TXN_CHILD_ENV, "commit")
+                .env(TXN_PATH_ENV, &path)
+                .spawn()
+                .expect("spawn transaction child");
+            children.push(child);
+        }
+
+        for mut child in children {
+            let status = child.wait().expect("wait for transaction child");
+            assert!(status.success(), "transaction child failed: {status}");
+        }
+
+        let final_state = load_trusted_time_state(&path, &TXN_DEVICE)
+            .expect("load final transaction state")
+            .expect("transaction state exists");
+        assert_eq!(final_state.generation, 8);
+        assert_eq!(final_state.highest_lease_sequence, Some(1));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejected_transaction_does_not_persist_candidate_state() {
+        let dir = std::env::temp_dir().join(format!(
+            "chaptera-entitlement-txn-reject-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let path = dir.join("trusted-time-v1.bin");
+
+        evaluate_trusted_time_transaction(
+            &path,
+            &TXN_DEVICE,
+            1_900_000_100,
+            &txn_lease(),
+            txn_policy(),
+        )
+        .expect("first accepted transaction");
+
+        let mut replay = txn_lease();
+        replay.lease_sequence = 0;
+        let error = evaluate_trusted_time_transaction(
+            &path,
+            &TXN_DEVICE,
+            1_900_000_101,
+            &replay,
+            txn_policy(),
+        )
+        .expect_err("invalid replay must fail");
+        assert!(matches!(
+            error,
+            WindowsPlatformError::TrustedTime(TrustedTimeError::InvalidLease)
+        ));
+
+        let final_state = load_trusted_time_state(&path, &TXN_DEVICE)
+            .expect("load after rejected transaction")
+            .expect("state exists");
+        assert_eq!(final_state.generation, 1);
+        assert_eq!(final_state.highest_lease_sequence, Some(1));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn abandoned_cross_process_mutex_is_recovered() {
+        if std::env::var_os(TXN_CHILD_ENV).is_some() {
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "chaptera-entitlement-txn-abandon-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let path = dir.join("trusted-time-v1.bin");
+        let exe = std::env::current_exe().expect("current test executable");
+
+        let status = Command::new(&exe)
+            .arg("--exact")
+            .arg("windows_platform::tests::trusted_time_transaction_child")
+            .arg("--nocapture")
+            .env(TXN_CHILD_ENV, "abandon")
+            .env(TXN_PATH_ENV, &path)
+            .status()
+            .expect("spawn abandoned mutex child");
+        assert!(status.success());
+
+        evaluate_trusted_time_transaction(
+            &path,
+            &TXN_DEVICE,
+            1_900_000_100,
+            &txn_lease(),
+            txn_policy(),
+        )
+        .expect("recover abandoned mutex and commit");
+
+        let final_state = load_trusted_time_state(&path, &TXN_DEVICE)
+            .expect("load recovered state")
+            .expect("recovered state exists");
+        assert_eq!(final_state.generation, 1);
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
