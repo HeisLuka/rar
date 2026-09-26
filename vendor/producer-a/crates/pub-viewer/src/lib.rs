@@ -866,7 +866,7 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
         TypographyUnknownZeroLengthBlockTypes { .. } => (
             "viewer.text.typography_unknown_block_type",
             ViewerDiagnosticSeverity::FidelityWarning,
-            "The typography stream contains block types outside the bounded decoded subset; only explicitly grounded typography ranges are exposed.",
+            "The typography stream contains block types whose physical width is outside the bounded decoded subset; source typography projection is suppressed for this catalog and deterministic fallback remains in use.",
         ),
     };
 
