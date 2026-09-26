@@ -1,0 +1,44 @@
+name: Editor Desktop Text Runtime Reachability V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "apps/chaptera-desktop/Cargo.toml"
+      - "apps/chaptera-desktop/src/bin/text_runtime_reachability_probe.rs"
+      - ".github/workflows/editor-desktop-text-runtime-reachability-v1.yml"
+  push:
+    branches:
+      - editor-desktop-text-runtime-reachability-01
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reachability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Format probe
+        run: rustfmt --edition 2024 --check apps/chaptera-desktop/src/bin/text_runtime_reachability_probe.rs
+      - name: Check Desktop runtime probe
+        run: cargo check --manifest-path apps/chaptera-desktop/Cargo.toml --bin text_runtime_reachability_probe
+      - name: Clippy Desktop runtime probe
+        run: cargo clippy --manifest-path apps/chaptera-desktop/Cargo.toml --bin text_runtime_reachability_probe -- -D warnings
+      - name: Caret map adapter tests
+        run: cargo test --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml
+      - name: Interaction adapter tests
+        run: cargo test --manifest-path crates/chaptera-text-interaction-adapter/Cargo.toml
+      - name: Input adapter tests
+        run: cargo test --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
+      - name: Shaped-flow runtime tests
+        run: cargo test --manifest-path crates/chaptera-desktop-shaped-flow-runtime/Cargo.toml
