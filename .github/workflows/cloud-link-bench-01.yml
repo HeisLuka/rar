@@ -117,6 +117,31 @@ jobs:
                   f"| {run['fixture_id']} | {run['fixture_bytes']} | {run['total_wall_ms']} | "
                   f"{p['object_bytes_written']} | {p['object_bytes_read']} | {p['persisted_object_bytes']} |"
               )
+
+              phases = run["provider_phase_deltas"]
+              for key in (
+                  "object_puts",
+                  "object_gets",
+                  "object_heads",
+                  "object_deletes",
+                  "object_bytes_written",
+                  "object_bytes_read",
+              ):
+                  assert sum(delta[key] for delta in phases.values()) == p[key], (
+                      run["fixture_id"], key, phases, p
+                  )
+
+          lines.append("")
+          lines.append("| fixture | phase | PUT | GET | HEAD | DEL | write bytes | read bytes |")
+          lines.append("|---|---|---:|---:|---:|---:|---:|---:|")
+          for run in payload["runs"]:
+              for phase, delta in run["provider_phase_deltas"].items():
+                  lines.append(
+                      f"| {run['fixture_id']} | {phase} | "
+                      f"{delta['object_puts']} | {delta['object_gets']} | "
+                      f"{delta['object_heads']} | {delta['object_deletes']} | "
+                      f"{delta['object_bytes_written']} | {delta['object_bytes_read']} |"
+                  )
           summary = "\n".join(lines) + "\n"
           print(summary)
           pathlib.Path("out/cloud-link-bench-summary.md").write_text(summary, encoding="utf-8")
