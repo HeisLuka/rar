@@ -25,8 +25,8 @@ enum Request {
         command: KeyboardCommandV1,
         story_text: String,
         domain: StoryEditDomainV1,
-        selection: TextSelectionStateV1,
-        caret_map: ResolvedTextCaretMapV1,
+        selection: Box<TextSelectionStateV1>,
+        caret_map: Box<ResolvedTextCaretMapV1>,
         expected_revision_id: String,
     },
 }
