@@ -60,7 +60,7 @@ fn failure_mailto_recipient_configured() -> bool {
 }
 const SUPPORTER_STORAGE_KEY: &str = "chaptera.supporter.v1";
 const PAGE_MARGIN: f32 = 24.0;
-const GEOMETRY_WARNING: &str = "Partial preview: bounded single-frame text, exact embedded PNG/JPEG images, and complete explicit shape-local solid fill/line state may be painted; inherited/default paint, linked text flow, typography, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2622,56 +2622,43 @@ impl ViewerApp {
                         }
                     }
 
-                    if let Some(frame) = visual
-                        .story_frames
+                    if let Some(fragment) = visual
+                        .text_fragments
                         .iter()
-                        .find(|frame| frame.frame_id == node.origin)
+                        .find(|fragment| fragment.frame_id == node.origin)
+                        && !fragment.text.is_empty()
                     {
-                        let frame_count = visual
-                            .story_frames
-                            .iter()
-                            .filter(|candidate| candidate.story_id == frame.story_id)
-                            .count();
-
-                        if frame_count == 1
-                            && let Some(story) = visual
-                                .document
-                                .stories
-                                .iter()
-                                .find(|story| story.id == frame.story_id)
-                            && !story.text.is_empty()
-                        {
-                            let text_clip_rect = node_rect.shrink(2.0);
-                            let text_painter = painter.with_clip_rect(text_clip_rect);
-                            let font_size = (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
-                            let galley = text_painter.layout(
-                                story.text.clone(),
-                                egui::FontId::proportional(font_size),
-                                egui::Color32::BLACK,
-                                text_clip_rect.width().max(1.0_f32),
+                        let text_clip_rect = node_rect.shrink(2.0);
+                        let text_painter = painter.with_clip_rect(text_clip_rect);
+                        let font_size = (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
+                        let galley = text_painter.layout(
+                            fragment.text.clone(),
+                            egui::FontId::proportional(font_size),
+                            egui::Color32::BLACK,
+                            text_clip_rect.width().max(1.0_f32),
+                        );
+                        if preview_text_height_is_clipped(
+                            galley.size().y,
+                            text_clip_rect.height(),
+                        ) {
+                            preview_clipped_frames += 1;
+                            preview_clipped_story_keys
+                                .insert(format!("{:?}", fragment.story_id));
+                            painter.rect_stroke(
+                                node_rect,
+                                0,
+                                egui::Stroke::new(2.0_f32, egui::Color32::RED),
+                                egui::StrokeKind::Inside,
                             );
-                            if preview_text_height_is_clipped(
-                                galley.size().y,
-                                text_clip_rect.height(),
-                            ) {
-                                preview_clipped_frames += 1;
-                                preview_clipped_story_keys.insert(format!("{:?}", frame.story_id));
-                                painter.rect_stroke(
-                                    node_rect,
-                                    0,
-                                    egui::Stroke::new(2.0_f32, egui::Color32::RED),
-                                    egui::StrokeKind::Inside,
-                                );
-                                painter.text(
-                                    node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                    egui::Align2::RIGHT_TOP,
-                                    "preview overflow",
-                                    egui::FontId::proportional(10.0_f32),
-                                    egui::Color32::RED,
-                                );
-                            }
-                            text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
+                            painter.text(
+                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
+                                egui::Align2::RIGHT_TOP,
+                                "preview overflow",
+                                egui::FontId::proportional(10.0_f32),
+                                egui::Color32::RED,
+                            );
                         }
+                        text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
                     }
                 }
 

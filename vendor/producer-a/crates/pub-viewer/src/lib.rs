@@ -9,11 +9,12 @@
 
 use anyhow::{Context, Result, anyhow};
 use pub_layout::{
-    BoundedAuthoringSlice, BoundedNodeGeometryInput, ProjectionDiagnostic, ResolveDiagnostic,
-    project_bounded, resolve_bounded_geometry,
+    BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
+    BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, project_bounded,
+    resolve_bounded_geometry, resolve_bounded_text_flow,
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
-use pub_model::{NodeId, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId};
+use pub_model::{LengthEmu, NodeId, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId};
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -34,6 +35,10 @@ pub const VIEWER_DOCUMENT_SCHEMA_V0_1: &str = "0.1";
 pub const VIEWER_GEOMETRY_SCHEMA_V0_1: &str = "0.1";
 
 pub const VIEWER_FAILURE_REPORT_SCHEMA_V0_1: &str = "chaptera-viewer-failure-report/v0.1";
+pub const VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1: &str =
+    "viewer-fallback-text-metrics-v0.1";
+const VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1: i64 = 57_150;
+const VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1: i64 = 142_875;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerFailureDiagnosticReport {
@@ -154,6 +159,8 @@ pub struct ViewerGeometryDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub story_frames: Vec<ViewerStoryFrame>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_fragments: Vec<ViewerTextFragment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
 
@@ -177,6 +184,16 @@ pub struct ViewerStoryFrame {
     pub story_id: StoryId,
     pub frame_id: NodeId,
     pub ordinal: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerTextFragment {
+    pub story_id: StoryId,
+    pub frame_id: NodeId,
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+    pub text: String,
+    pub line_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,6 +340,19 @@ pub fn open_mature_0x2c_geometry(
         })
         .collect::<Vec<_>>();
 
+    let (text_fragments, text_flow_diagnostics) =
+        resolve_viewer_text_fragments(&projection)?;
+    document
+        .diagnostics
+        .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+    if !text_fragments.is_empty() {
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.text.fallback_flow_metrics".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: "Visible text fragments use explicit Viewer fallback metrics for bounded frame flow. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
+        });
+    }
+
     let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
         bytes,
         &pipeline.source.graph,
@@ -378,15 +408,19 @@ pub fn open_mature_0x2c_geometry(
         anyhow!("Viewer geometry resolution blocked by layout projection errors: {codes}")
     })?;
 
-    document
-        .diagnostics
-        .extend(scene.diagnostics.iter().map(map_scene_diagnostic));
+    document.diagnostics.extend(
+        scene
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != "story_text_layout_not_implemented")
+            .map(map_scene_diagnostic),
+    );
 
     if !scene.nodes.is_empty() {
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.visual.geometry_only".to_owned(),
             severity: ViewerDiagnosticSeverity::FidelityWarning,
-            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded single-frame semantic text, exact embedded PNG/JPEG bytes, and complete explicit shape-local solid fill/line state when available. Inherited/default paint, linked text flow, typography, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
+            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded semantic text, including explicit linked-frame chains with Viewer fallback metrics, exact embedded PNG/JPEG bytes, and complete explicit shape-local solid fill/line state when available. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
                 .to_owned(),
         });
     }
@@ -398,8 +432,57 @@ pub fn open_mature_0x2c_geometry(
         scene,
         paints,
         story_frames,
+        text_fragments,
         images,
     })
+}
+
+fn viewer_fallback_text_flow_environment_v0_1() -> BoundedTextFlowEnvironment {
+    BoundedTextFlowEnvironment {
+        layout: BoundedLayoutEnvironment {
+            engine_revision: VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1.to_owned(),
+            font_set_fingerprint: VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1.to_owned(),
+            resource_fingerprint: "resources:not-consumed:text-flow-v0.1".to_owned(),
+        },
+        text_metrics: Some(BoundedTextMetrics {
+            font_fingerprint: VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1.to_owned(),
+            scalar_advance: LengthEmu::new(VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1),
+            line_height: LengthEmu::new(VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1),
+        }),
+    }
+}
+
+fn resolve_viewer_text_fragments(
+    projection: &pub_layout::BoundedLayoutProjection,
+) -> Result<(Vec<ViewerTextFragment>, Vec<ResolveDiagnostic>)> {
+    let flow = resolve_bounded_text_flow(
+        projection,
+        viewer_fallback_text_flow_environment_v0_1(),
+    )
+    .map_err(|blocked| {
+        let codes = blocked
+            .projection_errors
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow!("Viewer text-flow resolution blocked by layout projection errors: {codes}")
+    })?;
+
+    let fragments = flow
+        .text_fragments
+        .into_iter()
+        .map(|fragment| ViewerTextFragment {
+            story_id: fragment.story_origin,
+            frame_id: fragment.frame_origin,
+            scalar_start: fragment.scalar_start,
+            scalar_end: fragment.scalar_end,
+            text: fragment.text,
+            line_count: fragment.line_count,
+        })
+        .collect::<Vec<_>>();
+
+    Ok((fragments, flow.diagnostics))
 }
 
 /// Explicit deterministic environment profile for the geometry-only Viewer
@@ -750,6 +833,30 @@ fn map_scene_diagnostic(diagnostic: &ResolveDiagnostic) -> ViewerDiagnostic {
         "story_text_layout_not_implemented" => (
             "viewer.layout.text_not_rendered",
             "Text is recovered for search and copy, but is not yet visually laid out in this Viewer slice.",
+        ),
+        "shared_story_without_explicit_flow" => (
+            "viewer.text.flow_not_explicit",
+            "Several frames share one recovered Story, but no explicit reciprocal flow chain is proven, so the Viewer does not invent one.",
+        ),
+        "ambiguous_story_flow"
+        | "cyclic_story_flow"
+        | "broken_story_flow"
+        | "non_reciprocal_story_flow"
+        | "disconnected_story_flow" => (
+            "viewer.text.flow_partial",
+            "A recovered multi-frame Story does not form one bounded explicit flow chain, so its preview text placement remains partial.",
+        ),
+        "story_overset" => (
+            "viewer.text.fallback_overset",
+            "The explicit frame chain cannot place all Story text under the Viewer fallback metrics. This is not Publisher-native overset evidence.",
+        ),
+        "text_frame_geometry_missing" | "text_frame_has_no_capacity" => (
+            "viewer.text.frame_capacity_partial",
+            "A recovered text frame cannot accept bounded fallback text placement with the current resolved geometry.",
+        ),
+        "text_metrics_missing" | "text_metrics_font_mismatch" | "invalid_text_metrics" => (
+            "viewer.text.fallback_metrics_unavailable",
+            "The Viewer fallback text environment is unavailable or inconsistent, so text flow is not materialized.",
         ),
         _ => (
             "viewer.layout.scene_partial",
@@ -1129,6 +1236,136 @@ mod tests {
         assert!(object.contains_key("story_id"));
         assert!(!object.contains_key("page_id"));
         assert!(!object.contains_key("page"));
+    }
+
+    fn linked_text_projection(explicit_links: bool) -> pub_layout::BoundedLayoutProjection {
+        let page_id = PageId::from_canonical(id(40));
+        let first_frame = NodeId::from_canonical(id(41));
+        let second_frame = NodeId::from_canonical(id(42));
+        let story_id = StoryId::from_canonical(id(43));
+        let scalar_advance = VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1;
+        let line_height = VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1;
+
+        project_bounded(BoundedAuthoringSlice {
+            pages: vec![Page {
+                id: page_id,
+                size: Size2D::new(
+                    LengthEmu::new(scalar_advance * 12),
+                    LengthEmu::new(line_height * 4),
+                ),
+                bleed: None,
+                margins: None,
+                children: vec![first_frame, second_frame],
+                extensions: Vec::new(),
+            }],
+            node_geometry: vec![
+                BoundedNodeGeometryInput {
+                    node_id: first_frame,
+                    parent_origin: page_id.into_canonical(),
+                    bounds: RectEmu::new(
+                        LengthEmu::ZERO,
+                        LengthEmu::ZERO,
+                        LengthEmu::new(scalar_advance * 4),
+                        LengthEmu::new(line_height),
+                    ),
+                    transform: Affine2D::identity(),
+                },
+                BoundedNodeGeometryInput {
+                    node_id: second_frame,
+                    parent_origin: page_id.into_canonical(),
+                    bounds: RectEmu::new(
+                        LengthEmu::ZERO,
+                        LengthEmu::new(line_height * 2),
+                        LengthEmu::new(scalar_advance * 4),
+                        LengthEmu::new(line_height),
+                    ),
+                    transform: Affine2D::identity(),
+                },
+            ],
+            stories: vec![Story {
+                id: story_id,
+                text: "ABCDEFG".to_owned(),
+                paragraphs: Vec::new(),
+                runs: Vec::new(),
+                fields: Vec::new(),
+                hyperlinks: Vec::new(),
+                source_refs: Vec::new(),
+            }],
+            story_frames: vec![
+                StoryFrame {
+                    story_id,
+                    frame_id: first_frame,
+                    ordinal: 0,
+                    previous: None,
+                    next: explicit_links.then_some(second_frame),
+                },
+                StoryFrame {
+                    story_id,
+                    frame_id: second_frame,
+                    ordinal: 1,
+                    previous: explicit_links.then_some(first_frame),
+                    next: None,
+                },
+            ],
+            tables: Vec::new(),
+            guides: Vec::new(),
+            unknown_layout_state: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn viewer_fallback_flow_materializes_explicit_linked_story_frames() {
+        let projection = linked_text_projection(true);
+        let (fragments, diagnostics) =
+            resolve_viewer_text_fragments(&projection).expect("fallback flow should resolve");
+
+        assert_eq!(fragments.len(), 2);
+        assert_eq!(fragments[0].text, "ABCD");
+        assert_eq!(fragments[0].scalar_start, 0);
+        assert_eq!(fragments[0].scalar_end, 4);
+        assert_eq!(fragments[1].text, "EFG");
+        assert_eq!(fragments[1].scalar_start, 4);
+        assert_eq!(fragments[1].scalar_end, 7);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "story_overset")
+        );
+    }
+
+    #[test]
+    fn viewer_fallback_flow_does_not_invent_ordinal_only_chain() {
+        let projection = linked_text_projection(false);
+        let (fragments, diagnostics) =
+            resolve_viewer_text_fragments(&projection).expect("fallback flow should resolve");
+
+        assert!(fragments.is_empty());
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "shared_story_without_explicit_flow"
+        }));
+    }
+
+    #[test]
+    fn viewer_text_fragment_contract_is_source_neutral() {
+        let fragment = ViewerTextFragment {
+            story_id: StoryId::from_canonical(id(50)),
+            frame_id: NodeId::from_canonical(id(51)),
+            scalar_start: 2,
+            scalar_end: 5,
+            text: "abc".to_owned(),
+            line_count: 1,
+        };
+        let json = serde_json::to_string(&fragment).expect("serialize Viewer text fragment");
+
+        assert!(json.contains("story_id"));
+        assert!(json.contains("frame_id"));
+        assert!(json.contains("scalar_start"));
+        for forbidden in ["Quill", "FDPC", "BTEC", "Contents", "Escher", "offset"] {
+            assert!(
+                !json.contains(forbidden),
+                "Viewer text fragment must not expose parser-private {forbidden}"
+            );
+        }
     }
 
     #[test]

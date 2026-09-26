@@ -17,6 +17,10 @@
       "type": "array",
       "items": {"$ref": "#/$defs/storyFrame"}
     },
+    "text_fragments": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/textFragment"}
+    },
     "images": {
       "type": "array",
       "items": {"$ref": "#/$defs/image"}
@@ -237,6 +241,19 @@
         "story_id": {"$ref": "#/$defs/uuid"},
         "frame_id": {"$ref": "#/$defs/uuid"},
         "ordinal": {"type": "integer", "minimum": 0}
+      }
+    },
+    "textFragment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["story_id", "frame_id", "scalar_start", "scalar_end", "text", "line_count"],
+      "properties": {
+        "story_id": {"$ref": "#/$defs/uuid"},
+        "frame_id": {"$ref": "#/$defs/uuid"},
+        "scalar_start": {"type": "integer", "minimum": 0},
+        "scalar_end": {"type": "integer", "minimum": 0},
+        "text": {"type": "string"},
+        "line_count": {"type": "integer", "minimum": 1}
       }
     },
     "image": {
