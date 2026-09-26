@@ -1,13 +1,22 @@
 mod build_identity;
+mod offline_borrow;
 mod trusted_time;
 #[cfg(target_os = "windows")]
 mod windows_platform;
 pub use build_identity::{
     BUILD_IDENTITY_CONTENT_TYPE, BuildIdentityPayloadV1, TrustedBuildIdentity,
 };
+pub use offline_borrow::{
+    BorrowAuthorityError, BorrowAuthorityOutcome, BorrowAuthorityTransition, BorrowSeatStatus,
+    EndOfflineModeCommand, ExtendBorrowCommand, IssueBorrowCommand, OfflineBorrowAuthorityState,
+    OfflineBorrowDecision, OfflineBorrowLeaseV1, OfflineBorrowVerifyError,
+    ParentEntitlementConstraint, VerifiedOfflineBorrowLease, end_offline_mode,
+    evaluate_offline_borrow, extend_borrow, issue_borrow, normalize_borrow_expiry,
+    verify_offline_borrow_lease, OFFLINE_BORROW_CONTENT_TYPE,
+};
 pub use trusted_time::{
     LEASE_COMMITMENT_LEN, LeaseTimeInputV1, TimeAcceptance, TimePolicy, TrustedTimeError,
-    TrustedTimeStateV1, evaluate_time_bound_right,
+    TrustedTimeStateV1, evaluate_time_bound_right, evaluate_time_bound_right_strict,
 };
 #[cfg(target_os = "windows")]
 pub use windows_platform::{
