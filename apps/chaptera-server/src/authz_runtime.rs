@@ -1296,6 +1296,54 @@ mod tests {
         (path, authority, publications)
     }
 
+    async fn revision_stores(
+        label: &str,
+    ) -> (PathBuf, SqliteAuthzAuthority, SqliteRevisionStore) {
+        let path = temp_db(label);
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+        let authority = SqliteAuthzAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let revisions = SqliteRevisionStore::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        (path, authority, revisions)
+    }
+
+    fn revision_edge(request_hash: &str) -> RevisionEdge {
+        RevisionEdge {
+            document_id: "document:revision".to_owned(),
+            parent_revision: "service-rev-0".to_owned(),
+            parent_cursor: 0,
+            operation_id: "operation:move-1".to_owned(),
+            request_hash: request_hash.to_owned(),
+            canonical_event: crate::sqlite_store::encode_canonical_event(
+                br#"{"kind":"move_node","node_id":"node-1"}"#,
+            )
+            .unwrap(),
+            child_revision: "service-rev-1".to_owned(),
+            child_cursor: 1,
+            resulting_state_hash: "c".repeat(64),
+            authoring_root_hash: Some("d".repeat(64)),
+            semantic_schema_version: 1,
+            committed_at_ms: 20,
+        }
+    }
+
+    fn revision_binding() -> RevisionIdentityBinding {
+        RevisionIdentityBinding {
+            document_id: "document:revision".to_owned(),
+            service_revision_id: "service-rev-1".to_owned(),
+            canonical_schema_version: crate::sqlite_store::AUTHORING_REVISION_SCHEMA_V1.to_owned(),
+            canonical_revision_id: "e".repeat(64),
+            bound_at_ms: 20,
+        }
+    }
+
     fn job(job_id: &str, tenant_id: &str) -> JobRecord {
         JobRecord {
             job_id: job_id.to_owned(),
@@ -1668,4 +1716,152 @@ mod tests {
         authority.close().await;
         cleanup(&path);
     }
+
+    #[tokio::test]
+    async fn revision_commit_barrier_preserves_idempotency_and_revoke_order() {
+        let (path, authority, revisions) = revision_stores("revision-barrier").await;
+        authority
+            .set_role(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                DocumentRole::Editor,
+                None,
+                "grant-revision-editor",
+                10,
+            )
+            .await
+            .unwrap();
+
+        let committer =
+            SqliteAuthorizedRevisionCommitter::new(authority.clone(), revisions.clone()).unwrap();
+        let request_hash = "a".repeat(64);
+        assert!(
+            committer
+                .reconcile_geometry_revision(
+                    "tenant:authz",
+                    "document:revision",
+                    "principal:editor",
+                    "operation:move-1",
+                    &request_hash,
+                    15,
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let edge = revision_edge(&request_hash);
+        let binding = revision_binding();
+        let accepted = committer
+            .commit_geometry_revision(
+                "tenant:authz",
+                "principal:editor",
+                edge.clone(),
+                binding.clone(),
+                20,
+            )
+            .await
+            .unwrap();
+        assert!(!accepted.replayed);
+        assert_eq!(accepted.edge, edge);
+        assert_eq!(accepted.binding, binding);
+        assert_eq!(accepted.authz_version, 1);
+
+        let retry = committer
+            .reconcile_geometry_revision(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                "operation:move-1",
+                &request_hash,
+                25,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(retry.replayed);
+        assert_eq!(retry.edge, accepted.edge);
+        assert_eq!(retry.binding, accepted.binding);
+        assert_eq!(retry.authz_version, 1);
+
+        let conflict = committer
+            .reconcile_geometry_revision(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                "operation:move-1",
+                &"b".repeat(64),
+                30,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(conflict.code, "idempotency_conflict");
+
+        authority
+            .revoke(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                "revoke-revision-editor",
+                35,
+            )
+            .await
+            .unwrap();
+
+        let denied_retry = committer
+            .reconcile_geometry_revision(
+                "tenant:authz",
+                "document:revision",
+                "principal:editor",
+                "operation:move-1",
+                &request_hash,
+                40,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied_retry.code, "grant_missing");
+
+        assert_eq!(
+            revisions
+                .load_document_edges("document:revision")
+                .await
+                .unwrap(),
+            vec![accepted.edge.clone()]
+        );
+        assert_eq!(
+            revisions
+                .require_revision_identity("document:revision", "service-rev-1")
+                .await
+                .unwrap(),
+            accepted.binding
+        );
+
+        let denied_audit: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT action, result, error_code
+            FROM authz_audit_events
+            WHERE operation_id=? AND action='revision.commit'
+            ORDER BY event_id
+            "#,
+        )
+        .bind(b"operation:move-1".as_slice())
+        .fetch_all(&authority.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            denied_audit.last(),
+            Some(&(
+                "revision.commit".to_owned(),
+                "denied".to_owned(),
+                Some("grant_missing".to_owned())
+            ))
+        );
+
+        drop(committer);
+        revisions.close().await;
+        authority.close().await;
+        cleanup(&path);
+    }
+
 }
