@@ -205,7 +205,29 @@ pub struct ViewerTypographyRun {
     pub scalar_end: u32,
     pub source_font_name: String,
     pub text_size_emu: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_story_text_sha256: Option<Sha256Digest>,
     pub render_disposition: ViewerTypographyRenderDisposition,
+}
+
+impl ViewerTypographyRun {
+    /// Source-owned typography is valid only while the current Story text is
+    /// exactly the source Story text from which this range was derived.
+    ///
+    /// Old serialized runs that predate the fingerprint fail closed. Keeping
+    /// the immutable source run instead of deleting it makes an exact Undo back
+    /// to source text automatically restore applicability.
+    pub fn applies_to_story_text(&self, text: &str) -> bool {
+        self.source_story_text_sha256
+            .is_some_and(|expected| expected == viewer_story_text_sha256(text))
+    }
+}
+
+pub fn viewer_story_text_sha256(text: &str) -> Sha256Digest {
+    let digest = Sha256::digest(text.as_bytes());
+    let mut bytes = [0_u8; 32];
+    bytes.copy_from_slice(&digest);
+    Sha256Digest::from_bytes(bytes)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,16 +397,30 @@ pub fn open_mature_0x2c_geometry(
         .source
         .explicit_typography
         .iter()
-        .map(|run| ViewerTypographyRun {
-            story_id: run.story_id,
-            scalar_start: run.story_scalar_start,
-            scalar_end: run.story_scalar_end,
-            source_font_name: run.source_font_name.clone(),
-            text_size_emu: run.text_size_emu,
-            render_disposition:
-                ViewerTypographyRenderDisposition::SourceIdentityKnownRenderFallback,
+        .map(|run| -> Result<ViewerTypographyRun> {
+            let story = pipeline
+                .resolved
+                .graph
+                .stories
+                .get(&run.story_id)
+                .with_context(|| {
+                    format!(
+                        "source typography references missing resolved Story {}",
+                        run.story_id.as_canonical()
+                    )
+                })?;
+            Ok(ViewerTypographyRun {
+                story_id: run.story_id,
+                scalar_start: run.story_scalar_start,
+                scalar_end: run.story_scalar_end,
+                source_font_name: run.source_font_name.clone(),
+                text_size_emu: run.text_size_emu,
+                source_story_text_sha256: Some(viewer_story_text_sha256(&story.text)),
+                render_disposition:
+                    ViewerTypographyRenderDisposition::SourceIdentityKnownRenderFallback,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
     if !typography_runs.is_empty() {
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.text.source_typography_partial".to_owned(),
@@ -1075,6 +1111,31 @@ mod tests {
             styles: BTreeMap::new(),
             extensions: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn source_typography_applicability_is_story_state_bound_and_undo_safe() {
+        let source_text = "source Story";
+        let run = ViewerTypographyRun {
+            story_id: StoryId::from_canonical(id(91)),
+            scalar_start: 0,
+            scalar_end: 6,
+            source_font_name: "Test Source Font".to_owned(),
+            text_size_emu: 304_800,
+            source_story_text_sha256: Some(viewer_story_text_sha256(source_text)),
+            render_disposition:
+                ViewerTypographyRenderDisposition::SourceIdentityKnownRenderFallback,
+        };
+
+        assert!(run.applies_to_story_text(source_text));
+        assert!(!run.applies_to_story_text("edited Story"));
+        assert!(run.applies_to_story_text(source_text));
+
+        let legacy = ViewerTypographyRun {
+            source_story_text_sha256: None,
+            ..run
+        };
+        assert!(!legacy.applies_to_story_text(source_text));
     }
 
     #[test]
