@@ -112,8 +112,25 @@ impl PreviewTextMetricDiagnostic {
         galley_size: egui::Vec2,
         line_count: Option<usize>,
     ) -> Self {
+        let wrap_width_px = clip_rect.width().max(1.0_f32);
+        let clip_width_px = clip_rect.width();
+        let clip_height_px = clip_rect.height();
+        let overflow_delta_px = (galley_size.y - clip_height_px).max(0.0_f32);
+        let signature = preview_text_metric_signature(
+            zoom,
+            font_family,
+            font_size_px,
+            wrap_width_px,
+            galley_size.x,
+            galley_size.y,
+            clip_width_px,
+            clip_height_px,
+            overflow_delta_px,
+            line_count,
+        );
+
         Self {
-            signature: preview_text_metric_signature(font_family, font_size_px),
+            signature,
             page_index,
             page_id,
             frame_id,
@@ -133,12 +150,12 @@ impl PreviewTextMetricDiagnostic {
             zoom,
             font_family,
             font_size_px,
-            wrap_width_px: clip_rect.width().max(1.0_f32),
+            wrap_width_px,
             galley_width_px: galley_size.x,
             galley_height_px: galley_size.y,
-            clip_width_px: clip_rect.width(),
-            clip_height_px: clip_rect.height(),
-            overflow_delta_px: (galley_size.y - clip_rect.height()).max(0.0_f32),
+            clip_width_px,
+            clip_height_px,
+            overflow_delta_px,
             line_count,
         }
     }
@@ -3103,8 +3120,24 @@ fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool 
     galley_height > clip_height + EPSILON_PX
 }
 
-fn preview_text_metric_signature(font_family: &str, font_size_px: f32) -> String {
-    format!("preview_fallback_overflow:{font_family}:{font_size_px:.1}px")
+fn preview_text_metric_signature(
+    zoom: f32,
+    font_family: &str,
+    font_size_px: f32,
+    wrap_width_px: f32,
+    galley_width_px: f32,
+    galley_height_px: f32,
+    clip_width_px: f32,
+    clip_height_px: f32,
+    overflow_delta_px: f32,
+    line_count: Option<usize>,
+) -> String {
+    format!(
+        "preview_fallback_overflow:{font_family}:{font_size_px:.1}px:zoom={zoom:.3}:wrap={wrap_width_px:.1}:galley={galley_width_px:.1}x{galley_height_px:.1}:clip={clip_width_px:.1}x{clip_height_px:.1}:overflow={overflow_delta_px:.1}:lines={}",
+        line_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "?".to_owned())
+    )
 }
 
 fn preview_overflow_marker_center(frame_rect: egui::Rect) -> egui::Pos2 {
@@ -3382,7 +3415,7 @@ mod tests {
         assert_eq!(diagnostic.line_count, Some(7));
         assert_eq!(
             diagnostic.signature,
-            "preview_fallback_overflow:egui-proportional-fallback:15.0px"
+            "preview_fallback_overflow:egui-proportional-fallback:15.0px:zoom=1.250:wrap=200.0:galley=180.0x145.0:clip=200.0x100.0:overflow=45.0:lines=7"
         );
     }
 
