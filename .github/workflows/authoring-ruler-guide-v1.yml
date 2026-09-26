@@ -1,0 +1,29 @@
+name: AUTHORING-RULER-GUIDE-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/ruler_guides_v1.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/*.rs"
+      - ".github/workflows/authoring-ruler-guide-v1.yml"
+  push:
+    branches:
+      - authoring-ruler-guide-01
+
+permissions:
+  contents: read
+
+jobs:
+  ruler-guide-authoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test ruler guide lifecycle
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --test ruler_guides_v1
+      - name: Test pub-editor regression suite
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
+      - name: Check pub-editor
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
