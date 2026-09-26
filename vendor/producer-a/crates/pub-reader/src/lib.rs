@@ -111,10 +111,10 @@ const OFFICEART_PROPERTY_ROTATION: u16 = 0x0004;
 const OFFICEART_FSP_FLIP_H: u32 = 1 << 6;
 const OFFICEART_FSP_FLIP_V: u32 = 1 << 7;
 
-const FIELD_STORY_ID: u8 = 0x27;
-const FIELD_FRAME_ORDINAL: u8 = 0x28;
-const FIELD_PREVIOUS_FRAME: u8 = 0x36;
-const FIELD_NEXT_FRAME: u8 = 0x37;
+const FIELD_STORY_ID: u16 = 0x27;
+const FIELD_FRAME_ORDINAL: u16 = 0x28;
+const FIELD_PREVIOUS_FRAME: u16 = 0x36;
+const FIELD_NEXT_FRAME: u16 = 0x37;
 
 const ROLE_DOCUMENT: &str = "cdm.document";
 const ROLE_PAGE: &str = "cdm.page";
@@ -347,7 +347,7 @@ pub enum PubBridgeDiagnostic {
     },
     TableMissingRequiredField {
         seq_num: u32,
-        field_id: u8,
+        field_id: u16,
     },
     TableMissingTcd {
         seq_num: u32,
@@ -536,7 +536,7 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
     let mut field_27_matched_syids_on_document_pages = BTreeSet::new();
     let mut field_27_matched_syids_outside_document_pages = BTreeSet::new();
     let mut shape_scalars_by_story =
-        BTreeMap::<u32, Vec<(u32, BTreeMap<(u8, u8), Vec<u32>>)>>::new();
+        BTreeMap::<u32, Vec<(u32, BTreeMap<(u16, u8), Vec<u32>>)>>::new();
 
     for reference in references.values() {
         if single_raw_type(reference) != Some(RAW_TYPE_SHAPE) {
@@ -574,7 +574,7 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
         });
         if let Some(story_id) = decoded_story_id.filter(|value| syids.contains(value)) {
             let seq_num = seq_u32(reference.seq_num)?;
-            let mut scalars = BTreeMap::<(u8, u8), Vec<u32>>::new();
+            let mut scalars = BTreeMap::<(u16, u8), Vec<u32>>::new();
             for field in &chunk.fields {
                 let value = match &field.body {
                     RawContentsBlockBody::U16 { value, .. } => Some(u32::from(*value)),
@@ -598,10 +598,10 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
             if field.id != FIELD_STORY_ID {
                 continue;
             }
-            if let RawContentsBlockBody::U32 { value, .. } = &field.body
-                && syids.contains(value)
-            {
-                result.decoded_field_27_syid_matches += 1;
+            if let RawContentsBlockBody::U32 { value, .. } = &field.body {
+                if syids.contains(value) {
+                    result.decoded_field_27_syid_matches += 1;
+                }
             }
         }
 
@@ -625,8 +625,8 @@ pub fn analyze_mature_0x2c_story_frame_candidates_from_streams(
         let mut field_27_matches_in_shape = 0_usize;
         if raw.len() >= 6 {
             for relative in 4..=raw.len() - 6 {
-                let id = raw[relative];
-                let wire = raw[relative + 1];
+                let raw_tag = [raw[relative], raw[relative + 1]];
+                let (id, wire) = pub_contents::decode_packed_field_tag(raw_tag);
                 if !matches!(
                     wire,
                     pub_contents::BLOCK_TYPE_U32
@@ -1971,7 +1971,7 @@ fn chunk_for_reference(
         .with_context(|| format!("parse Contents chunk seq {}", reference.seq_num))
 }
 
-fn unique_block(chunk: &Contents0x2cChunk, id: u8) -> Result<&RawContentsBlock> {
+fn unique_block(chunk: &Contents0x2cChunk, id: u16) -> Result<&RawContentsBlock> {
     let mut matches = chunk.fields.iter().filter(|field| field.id == id);
     let first = matches
         .next()
@@ -2574,7 +2574,7 @@ fn unique_story_id_scalar(chunk: &Contents0x2cChunk) -> Result<Option<u32>> {
     }
 }
 
-fn unique_u32_field(chunk: &Contents0x2cChunk, id: u8) -> Result<Option<(u32, RawSpan)>> {
+fn unique_u32_field(chunk: &Contents0x2cChunk, id: u16) -> Result<Option<(u32, RawSpan)>> {
     let mut matches = chunk.fields.iter().filter(|field| field.id == id);
     let Some(field) = matches.next() else {
         return Ok(None);

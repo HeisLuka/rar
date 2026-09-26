@@ -42,7 +42,7 @@ pub enum DirectoryReadError {
     Contents(ContentsReadError),
     Block(BlockReadError),
     SpanTooLarge { source: RawSpan },
-    UnexpectedSlotId { offset: u64, id: u8 },
+    UnexpectedSlotId { offset: u64, id: u16 },
     UnexpectedSlotType { offset: u64, block_type: u8 },
 }
 
