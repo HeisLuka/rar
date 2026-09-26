@@ -1,0 +1,113 @@
+name: CLOUD-LINK-BENCH-01 first-bind baseline
+
+on:
+  push:
+    branches:
+      - cloud-link-bench-01
+  pull_request:
+    paths:
+      - "apps/chaptera-server/tests/cloud_link_bench.rs"
+      - ".github/workflows/cloud-link-bench-01.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  first-bind-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Acquire immutable public PUB fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/cloud-link-fixtures"
+          mkdir -p "$root" out
+          base="https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher"
+          for name in Simple.pub SampleNewsletter.pub SampleBrochure.pub; do
+            curl -fsSL "$base/$name" -o "$root/$name"
+          done
+          newsletter_sha="$(sha256sum "$root/SampleNewsletter.pub" | awk '{print $1}')"
+          test "$newsletter_sha" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          newsletter_len="$(wc -c < "$root/SampleNewsletter.pub" | tr -d ' ')"
+          test "$newsletter_len" = "291840"
+          FIXTURE_ROOT="$root" python - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ["FIXTURE_ROOT"])
+          rows = []
+          for name in ("Simple.pub", "SampleNewsletter.pub", "SampleBrochure.pub"):
+              data = root.joinpath(name).read_bytes()
+              rows.append({
+                  "name": name,
+                  "bytes": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              })
+          pathlib.Path("out/cloud-link-fixtures.json").write_text(
+              json.dumps({
+                  "source_repository": "apache/poi",
+                  "source_commit": "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8",
+                  "fixtures": rows,
+              }, indent=2),
+              encoding="utf-8",
+          )
+          print(json.dumps(rows, indent=2))
+          PY
+          echo "CHAPTERA_CLOUD_LINK_BENCH_FIXTURES=$root" >> "$GITHUB_ENV"
+          echo "CHAPTERA_CLOUD_LINK_BENCH_RECEIPT=$GITHUB_WORKSPACE/out/cloud-link-bench-01.json" >> "$GITHUB_ENV"
+
+      - name: Run measurement-only first-bind harness
+        env:
+          RUST_BACKTRACE: "1"
+          PYTHON: python
+        run: cargo test -p chaptera-server --test cloud_link_bench -- --nocapture
+
+      - name: Validate receipt shape and publish summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          path = pathlib.Path("out/cloud-link-bench-01.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          assert payload["protocol_version"] == "chaptera.cloud-link-first-bind-bench.v0"
+          assert payload["fixture_source_commit"] == "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8"
+          assert len(payload["runs"]) == 3
+          lines = ["## CLOUD-LINK-BENCH-01 — hosted authority baseline", ""]
+          lines.append("HTTP/AuthN framing and external S3/ClamD are intentionally not measured in this hosted receipt.")
+          lines.append("")
+          lines.append("| fixture | bytes | wall ms | provider write bytes | provider read bytes | persisted bytes |")
+          lines.append("|---|---:|---:|---:|---:|---:|")
+          for run in payload["runs"]:
+              p = run["provider"]
+              lines.append(
+                  f"| {run['fixture_id']} | {run['fixture_bytes']} | {run['total_wall_ms']} | "
+                  f"{p['object_bytes_written']} | {p['object_bytes_read']} | {p['persisted_object_bytes']} |"
+              )
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          pathlib.Path("out/cloud-link-bench-summary.md").write_text(summary, encoding="utf-8")
+          with open(pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]), "a", encoding="utf-8") as fh:
+              fh.write(summary)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-link-bench-01-${{ github.sha }}
+          path: |
+            out/cloud-link-fixtures.json
+            out/cloud-link-bench-01.json
+            out/cloud-link-bench-summary.md
+          if-no-files-found: error
