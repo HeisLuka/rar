@@ -3288,6 +3288,60 @@ mod tests {
     }
 
     #[test]
+    fn preview_overflow_marker_stays_outside_text_frame() {
+        let frame = egui::Rect::from_min_max(
+            egui::pos2(10.0, 20.0),
+            egui::pos2(110.0, 70.0),
+        );
+        let marker = preview_overflow_marker_center(frame);
+        let marker_radius = 5.0_f32;
+
+        assert!(marker.x - marker_radius >= frame.right());
+        assert!(marker.y + marker_radius <= frame.top());
+    }
+
+    #[test]
+    fn preview_metric_diagnostic_records_actual_layout_inputs() {
+        let frame_bounds = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(100),
+            pub_editor::LengthEmu::new(200),
+            pub_editor::LengthEmu::new(300),
+            pub_editor::LengthEmu::new(400),
+        );
+        let clip_rect = egui::Rect::from_min_max(
+            egui::pos2(10.0, 20.0),
+            egui::pos2(210.0, 120.0),
+        );
+        let diagnostic = PreviewTextMetricDiagnostic::from_preview(
+            3,
+            "page-3".to_owned(),
+            "frame-9".to_owned(),
+            "story-7".to_owned(),
+            frame_bounds,
+            clip_rect,
+            1.25,
+            "egui-proportional-fallback",
+            15.0,
+            egui::vec2(180.0, 145.0),
+            Some(7),
+        );
+
+        assert_eq!(diagnostic.page_index, 3);
+        assert_eq!(diagnostic.frame_bounds_emu, [100, 200, 300, 400]);
+        assert_eq!(diagnostic.clip_rect_px, [10.0, 20.0, 210.0, 120.0]);
+        assert_eq!(diagnostic.wrap_width_px, 200.0);
+        assert_eq!(diagnostic.galley_width_px, 180.0);
+        assert_eq!(diagnostic.galley_height_px, 145.0);
+        assert_eq!(diagnostic.clip_height_px, 100.0);
+        assert_eq!(diagnostic.overflow_delta_px, 45.0);
+        assert_eq!(diagnostic.line_count, Some(7));
+        assert_eq!(
+            diagnostic.signature,
+            "preview_fallback_overflow:egui-proportional-fallback:15.0px"
+        );
+    }
+
+    #[test]
     fn fit_scale_keeps_page_inside_viewport() {
         let viewport = egui::vec2(1000.0, 800.0);
         let scale = fitted_scale(2_000_000, 1_000_000, viewport).expect("valid page");
