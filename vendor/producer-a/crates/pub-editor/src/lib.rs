@@ -1033,6 +1033,7 @@ pub enum EditorProjectError {
         index: usize,
     },
     LegacyProjectCarriesTableGrids,
+    LegacyProjectCarriesIdentity,
     MissingProjectIdentity,
     TableGridMismatch,
     MissingAssetBytes {
@@ -1114,6 +1115,9 @@ impl fmt::Display for EditorProjectError {
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
+            ),
+            Self::LegacyProjectCarriesIdentity => formatter.write_str(
+                "editor projects before pub-editor-v0.11 cannot carry durable project identity",
             ),
             Self::MissingProjectIdentity => formatter.write_str(
                 "pub-editor-v0.11 requires durable project identity",
@@ -1614,6 +1618,9 @@ impl EditorSession {
             {
                 return Err(EditorProjectError::LegacyProjectCarriesCreateShapeOperation { index });
             }
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_some() {
+            return Err(EditorProjectError::LegacyProjectCarriesIdentity);
         }
         if project.schema_version == EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_none() {
             return Err(EditorProjectError::MissingProjectIdentity);
