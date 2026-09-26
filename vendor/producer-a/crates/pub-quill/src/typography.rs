@@ -634,10 +634,7 @@ fn materialize_paragraph_ranges(
         }
 
         let (selected_style_index, selector_source) = match style.default_style_indices.as_slice() {
-            [] => (
-                Some(0),
-                Some(QuillParagraphSelectorSource::ImplicitStyleZeroFromBoundedEvidence),
-            ),
+            [] => (None, None),
             [value] => (
                 Some(*value),
                 Some(QuillParagraphSelectorSource::ExplicitFdpp0x19),
@@ -1563,7 +1560,7 @@ mod tests {
     }
 
     #[test]
-    fn paragraph_ranges_keep_explicit_and_implicit_selector_provenance_distinct() {
+    fn paragraph_ranges_promote_only_explicit_selector_until_style_zero_is_reproduced() {
         let stream = pub_core::StreamPath("/Quill/QuillSub/CONTENTS".into());
         let styles = vec![
             ParagraphStyleObservation {
@@ -1606,11 +1603,8 @@ mod tests {
             ranges[0].selector_source,
             Some(QuillParagraphSelectorSource::ExplicitFdpp0x19)
         );
-        assert_eq!(ranges[1].selected_style_index, Some(0));
-        assert_eq!(
-            ranges[1].selector_source,
-            Some(QuillParagraphSelectorSource::ImplicitStyleZeroFromBoundedEvidence)
-        );
+        assert_eq!(ranges[1].selected_style_index, None);
+        assert_eq!(ranges[1].selector_source, None);
     }
 
     #[test]
