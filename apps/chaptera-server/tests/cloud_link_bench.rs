@@ -925,13 +925,8 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     seed_principal(&db, &principal_id).await?;
 
     let runtime = BenchRuntime::open(&db, CountingProvider::default()).await?;
-    let result = run_fixture_with_runtime(
-        &runtime,
-        fixture_id,
-        fixture_path,
-        &case_root.join("work"),
-    )
-    .await;
+    let result =
+        run_fixture_with_runtime(&runtime, fixture_id, fixture_path, &case_root.join("work")).await;
     runtime.close().await;
     cleanup_case(&case_root);
     result
