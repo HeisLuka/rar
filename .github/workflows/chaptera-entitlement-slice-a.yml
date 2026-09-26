@@ -28,3 +28,17 @@ jobs:
         run: cargo test -p chaptera-entitlement --all-targets
       - name: Clippy chaptera-entitlement
         run: cargo clippy -p chaptera-entitlement --all-targets -- -D warnings
+
+  windows-platform:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          components: clippy
+      - name: Test chaptera-entitlement on Windows
+        run: cargo test -p chaptera-entitlement --all-targets
+      - name: Clippy chaptera-entitlement on Windows
+        run: cargo clippy -p chaptera-entitlement --all-targets -- -D warnings
