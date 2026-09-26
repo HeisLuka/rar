@@ -1,0 +1,16 @@
+[package]
+name = "chaptera-update-trust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+tough = { version = "=0.24.0", default-features = false }
+url = "2"
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { version = "1", features = ["macros", "rt", "fs"] }
