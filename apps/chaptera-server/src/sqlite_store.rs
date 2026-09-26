@@ -238,11 +238,7 @@ impl SqliteRevisionStore {
 
         let mut transaction = self.pool.begin().await.map_err(sqlite_read_error)?;
         let result = self
-            .append_edge_with_revision_identity_in_transaction(
-                &mut transaction,
-                &edge,
-                &binding,
-            )
+            .append_edge_with_revision_identity_in_transaction(&mut transaction, &edge, &binding)
             .await;
 
         match result {
@@ -317,7 +313,9 @@ impl SqliteRevisionStore {
         .bind(edge.committed_at_ms)
         .execute(&mut *conn)
         .await
-        .map_err(|error| SqliteStoreError::new("sqlite_append_failed", bounded_sqlx_message(&error)))?;
+        .map_err(|error| {
+            SqliteStoreError::new("sqlite_append_failed", bounded_sqlx_message(&error))
+        })?;
 
         if edge_result.rows_affected() != 1 {
             return Err(SqliteStoreError::new(
@@ -345,7 +343,10 @@ impl SqliteRevisionStore {
         .execute(&mut *conn)
         .await
         .map_err(|error| {
-            SqliteStoreError::new("revision_identity_bind_failed", bounded_sqlx_message(&error))
+            SqliteStoreError::new(
+                "revision_identity_bind_failed",
+                bounded_sqlx_message(&error),
+            )
         })?;
 
         if binding_result.rows_affected() != 1 {
@@ -1447,15 +1448,17 @@ mod tests {
         let binding = identity("doc-operation", "rev-1", b'e', 100);
 
         let mut transaction = store.pool.begin().await.unwrap();
-        assert!(store
-            .read_edge_by_operation_in_transaction(
-                &mut transaction,
-                "doc-operation",
-                "op-stable",
-            )
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .read_edge_by_operation_in_transaction(
+                    &mut transaction,
+                    "doc-operation",
+                    "op-stable",
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             store
                 .append_edge_with_revision_identity_in_transaction(
@@ -1487,11 +1490,13 @@ mod tests {
                 .unwrap(),
             Some(first)
         );
-        assert!(store
-            .read_edge_by_operation("other-document", "op-stable")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .read_edge_by_operation("other-document", "op-stable")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         store.close().await;
         cleanup(&path);
