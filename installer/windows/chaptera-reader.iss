@@ -64,6 +64,9 @@ Type: filesandordirs; Name: "{app}\current"
 Type: filesandordirs; Name: "{app}\.staging"
 Type: filesandordirs; Name: "{app}\.rollback"
 Type: files; Name: "{app}\update-journal.json"
+Type: files; Name: "{app}\update-journal.json.next"
+Type: files; Name: "{app}\update-journal.json.prev"
+Type: files; Name: "{app}\.chaptera-install.lock"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
