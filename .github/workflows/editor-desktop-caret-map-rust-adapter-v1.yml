@@ -54,6 +54,14 @@ jobs:
                       clusters=(ResolvedClusterV1(0,1,0,10,0,10),ResolvedClusterV1(1,2,10,20,10,20)),
                   ),
               )),
+              ("unicode_ids","story:é😀",1,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:é😀",page_id="page:é",frame_id="frame:😀",line_id="line:é😀",
+                      flow_ordinal=0,previous_line_id=None,next_line_id=None,
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,1,0,10,0,10),),
+                  ),
+              )),
               ("internal","story:2",2,(
                   ResolvedLineFragmentV1(
                       story_id="story:2",page_id="page:1",frame_id="frame:1",line_id="line:1",
