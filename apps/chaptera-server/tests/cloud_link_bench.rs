@@ -1044,7 +1044,6 @@ async fn cloud_link_shared_db_marginal_receipt() -> BenchResult<()> {
     Ok(())
 }
 
-
 #[derive(Debug, Serialize)]
 struct LatencyReceipt {
     protocol_version: &'static str,
@@ -1128,9 +1127,7 @@ async fn cloud_link_cold_warm_latency_receipt() -> BenchResult<()> {
         env::var("CHAPTERA_CLOUD_LINK_LATENCY_ORDER").unwrap_or_else(|_| "simple-first".to_owned());
     let output_path = env::var_os("CHAPTERA_CLOUD_LINK_LATENCY_RECEIPT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            repo_root().join(format!("out/cloud-link-bench-01c-{order_id}.json"))
-        });
+        .unwrap_or_else(|| repo_root().join(format!("out/cloud-link-bench-01c-{order_id}.json")));
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1140,10 +1137,7 @@ async fn cloud_link_cold_warm_latency_receipt() -> BenchResult<()> {
     let mut samples = Vec::new();
 
     for (position, (logical_fixture_id, filename)) in order.iter().enumerate() {
-        let run_id = format!(
-            "latency-{}-probe-{position}-{logical_fixture_id}",
-            order_id
-        );
+        let run_id = format!("latency-{}-probe-{position}-{logical_fixture_id}", order_id);
         let receipt = run_fixture(&run_id, &fixture_root.join(filename)).await?;
         samples.push(latency_sample(
             logical_fixture_id,
