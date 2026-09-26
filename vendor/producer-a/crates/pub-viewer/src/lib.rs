@@ -1531,11 +1531,11 @@ mod tests {
             .expect("fixture node")
             .header
             .bounds = RectEmu::new(
-            LengthEmu::ZERO,
-            LengthEmu::ZERO,
-            LengthEmu::new(1_000_000),
-            LengthEmu::new(1_000_000),
-        );
+                LengthEmu::ZERO,
+                LengthEmu::ZERO,
+                LengthEmu::new(1_000_000),
+                LengthEmu::new(1_000_000),
+            );
 
         let projection =
             project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
