@@ -809,10 +809,70 @@ pub fn caret_map_to_value_v1(map: &ResolvedTextCaretMapV1) -> Value {
     })
 }
 
+fn push_python_json_ascii_string(out: &mut String, value: &str) {
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            character if character <= '\u{001F}' => {
+                out.push_str(&format!("\\u{:04x}", character as u32));
+            }
+            character if character.is_ascii() => out.push(character),
+            character => {
+                let mut units = [0_u16; 2];
+                for unit in character.encode_utf16(&mut units).iter().copied() {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    out.push('"');
+}
+
+fn push_python_canonical_json(out: &mut String, value: &Value) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        Value::Number(value) => out.push_str(&value.to_string()),
+        Value::String(value) => push_python_json_ascii_string(out, value),
+        Value::Array(values) => {
+            out.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    out.push(',');
+                }
+                push_python_canonical_json(out, value);
+            }
+            out.push(']');
+        }
+        Value::Object(values) => {
+            out.push('{');
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (index, (key, value)) in entries.into_iter().enumerate() {
+                if index != 0 {
+                    out.push(',');
+                }
+                push_python_json_ascii_string(out, key);
+                out.push(':');
+                push_python_canonical_json(out, value);
+            }
+            out.push('}');
+        }
+    }
+}
+
 pub fn caret_map_hash_v1(map: &ResolvedTextCaretMapV1) -> String {
-    let bytes = serde_json::to_vec(&caret_map_to_value_v1(map)).expect("caret map JSON");
+    let mut canonical = String::new();
+    push_python_canonical_json(&mut canonical, &caret_map_to_value_v1(map));
     let mut hash = Sha256::new();
-    hash.update(bytes);
+    hash.update(canonical.as_bytes());
     format!("{:x}", hash.finalize())
 }
 
@@ -862,6 +922,16 @@ mod tests {
             lines,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn canonical_json_hash_uses_python_ascii_escaping_and_sorted_keys() {
+        let mut value = serde_json::Map::new();
+        value.insert("z".to_owned(), Value::String("é😀".to_owned()));
+        value.insert("a".to_owned(), Value::Bool(true));
+        let mut canonical = String::new();
+        push_python_canonical_json(&mut canonical, &Value::Object(value));
+        assert_eq!(canonical, r#"{"a":true,"z":"\u00e9\ud83d\ude00"}"#);
     }
 
     #[test]
