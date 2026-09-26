@@ -6,6 +6,13 @@
 //! testing. It does not own authoring truth and does not mutate PUB source
 //! state directly.
 
+mod snap;
+
+pub use snap::{
+    SnapAnchorKind, SnapAxis, SnapError, SnapFeedback, SnapIndex, SnapObject, SnapResult,
+    SnapTargetKind,
+};
+
 use pub_model::{LengthEmu, NodeId, RectEmu};
 use std::collections::BTreeSet;
 
@@ -337,6 +344,25 @@ impl MoveTransaction {
 
     pub fn has_moved(self) -> bool {
         self.preview != self.before
+    }
+
+    /// Replaces only the transient preview origin while preserving authored size.
+    ///
+    /// Snapping and other interaction-only adjustments may use this after
+    /// `update`; no authoring state is mutated until the caller commits through
+    /// its semantic editor boundary.
+    pub fn set_preview_origin(
+        &mut self,
+        x: LengthEmu,
+        y: LengthEmu,
+    ) -> Result<RectEmu, MoveTransactionError> {
+        let preview = RectEmu::new(x, y, self.before.width, self.before.height);
+        if preview.right().is_none() || preview.bottom().is_none() {
+            return Err(MoveTransactionError::BoundsOverflow);
+        }
+
+        self.preview = preview;
+        Ok(preview)
     }
 
     pub fn update(&mut self, pointer: DocumentPoint) -> Result<RectEmu, MoveTransactionError> {
