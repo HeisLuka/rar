@@ -24,6 +24,15 @@ pub enum UpdatePhase {
     RepairRequired,
 }
 
+impl UpdatePhase {
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::CandidateConfirmed | Self::RollbackConfirmed | Self::RepairRequired
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateJournal {
     pub schema_version: u32,
