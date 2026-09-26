@@ -822,6 +822,16 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             ViewerDiagnosticSeverity::FidelityWarning,
             "Exact table layout metrics are not available.",
         ),
+        TypographyProjectionUnavailable { .. } => (
+            "viewer.text.typography_projection_unavailable",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "Some explicit source typography could not be projected safely; deterministic fallback text rendering remains in use.",
+        ),
+        TypographyUnknownZeroLengthBlockTypes { .. } => (
+            "viewer.text.typography_unknown_block_type",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "The typography stream contains block types outside the bounded decoded subset; only explicitly grounded typography ranges are exposed.",
+        ),
     };
 
     ViewerDiagnostic {
