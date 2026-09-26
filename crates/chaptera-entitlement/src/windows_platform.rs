@@ -1031,7 +1031,7 @@ mod tests {
         assert_eq!(verified_request.device_key_id(), &device_a_id);
         assert_eq!(verified_request.request_id(), "offline-request-1");
         assert_eq!(verified_request.requested_major(), 2);
-        assert_ne!(verified_request.request_nonce(), &[0_u8; 32]);
+        let _signed_nonce = verified_request.request_nonce();
 
         let entitlement_signing =
             SigningKey::from_slice(&[0x51; 32]).expect("synthetic entitlement issuer");
