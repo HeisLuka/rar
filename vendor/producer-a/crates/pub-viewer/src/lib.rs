@@ -408,9 +408,13 @@ pub fn open_mature_0x2c_geometry(
         anyhow!("Viewer geometry resolution blocked by layout projection errors: {codes}")
     })?;
 
-    document
-        .diagnostics
-        .extend(scene.diagnostics.iter().map(map_scene_diagnostic));
+    document.diagnostics.extend(
+        scene
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != "story_text_layout_not_implemented")
+            .map(map_scene_diagnostic),
+    );
 
     if !scene.nodes.is_empty() {
         document.diagnostics.push(ViewerDiagnostic {
@@ -829,6 +833,30 @@ fn map_scene_diagnostic(diagnostic: &ResolveDiagnostic) -> ViewerDiagnostic {
         "story_text_layout_not_implemented" => (
             "viewer.layout.text_not_rendered",
             "Text is recovered for search and copy, but is not yet visually laid out in this Viewer slice.",
+        ),
+        "shared_story_without_explicit_flow" => (
+            "viewer.text.flow_not_explicit",
+            "Several frames share one recovered Story, but no explicit reciprocal flow chain is proven, so the Viewer does not invent one.",
+        ),
+        "ambiguous_story_flow"
+        | "cyclic_story_flow"
+        | "broken_story_flow"
+        | "non_reciprocal_story_flow"
+        | "disconnected_story_flow" => (
+            "viewer.text.flow_partial",
+            "A recovered multi-frame Story does not form one bounded explicit flow chain, so its preview text placement remains partial.",
+        ),
+        "story_overset" => (
+            "viewer.text.fallback_overset",
+            "The explicit frame chain cannot place all Story text under the Viewer fallback metrics. This is not Publisher-native overset evidence.",
+        ),
+        "text_frame_geometry_missing" | "text_frame_has_no_capacity" => (
+            "viewer.text.frame_capacity_partial",
+            "A recovered text frame cannot accept bounded fallback text placement with the current resolved geometry.",
+        ),
+        "text_metrics_missing" | "text_metrics_font_mismatch" | "invalid_text_metrics" => (
+            "viewer.text.fallback_metrics_unavailable",
+            "The Viewer fallback text environment is unavailable or inconsistent, so text flow is not materialized.",
         ),
         _ => (
             "viewer.layout.scene_partial",
