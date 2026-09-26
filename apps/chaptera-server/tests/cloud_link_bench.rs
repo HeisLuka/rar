@@ -861,9 +861,9 @@ async fn run_fixture_with_runtime(
         "project_genesis_commit",
     );
 
-    let durable_row_counts = durable_row_counts(&db).await?;
+    let durable_row_counts = durable_row_counts(db).await?;
     let provider_metrics = provider.metrics();
-    let sqlite_bytes_after = sqlite_storage_bytes(&db);
+    let sqlite_bytes_after = sqlite_storage_bytes(db);
 
     let cpu_end = proc_cpu_ticks();
     let rss_end = proc_rss_bytes("VmRSS:");
