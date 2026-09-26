@@ -308,8 +308,8 @@ jobs:
               }
               proc = subprocess.run(
                   [
-                      "cargo", "run", "--quiet", "-p",
-                      "chaptera-text-caret-map-adapter", "--example",
+                      "cargo", "run", "--quiet", "--manifest-path",
+                      "crates/chaptera-text-caret-map-adapter/Cargo.toml", "--example",
                       "conformance_query_probe",
                   ],
                   input=json.dumps(envelope), text=True, capture_output=True, check=True,
