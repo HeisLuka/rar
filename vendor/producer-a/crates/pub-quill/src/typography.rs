@@ -124,6 +124,10 @@ fn validate_monotone_fdpc_text_offsets(
     Ok(())
 }
 
+fn explicit_run_projection_allowed(unknown_block_types: &BTreeSet<u8>) -> bool {
+    unknown_block_types.is_empty()
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BlockObservation {
     id: u8,
@@ -245,39 +249,46 @@ pub fn parse_bounded_typography(
     }
 
     let mut explicit_runs = Vec::new();
-    for range in &ranges {
-        let mut font_pairs = range
-            .font_indices
-            .iter()
-            .copied()
-            .zip(range.font_names.iter().cloned())
-            .collect::<Vec<_>>();
-        font_pairs.sort();
-        font_pairs.dedup();
+    // parse_block can keep archaeology moving by assuming an unknown fixed
+    // block type has zero payload, but that assumption is not semantic
+    // authority. It may shift all later block boundaries. Keep the raw/range
+    // observations and diagnostic, but suppress product-facing explicit
+    // typography until every physical block width in this catalog is known.
+    if explicit_run_projection_allowed(&unknown_block_types) {
+        for range in &ranges {
+            let mut font_pairs = range
+                .font_indices
+                .iter()
+                .copied()
+                .zip(range.font_names.iter().cloned())
+                .collect::<Vec<_>>();
+            font_pairs.sort();
+            font_pairs.dedup();
 
-        let mut text_sizes = range.text_sizes_emu.clone();
-        text_sizes.sort_unstable();
-        text_sizes.dedup();
+            let mut text_sizes = range.text_sizes_emu.clone();
+            text_sizes.sort_unstable();
+            text_sizes.dedup();
 
-        let ([(font_index, font_name)], [text_size_emu]) =
-            (font_pairs.as_slice(), text_sizes.as_slice())
-        else {
-            continue;
-        };
+            let ([(font_index, font_name)], [text_size_emu]) =
+                (font_pairs.as_slice(), text_sizes.as_slice())
+            else {
+                continue;
+            };
 
-        for intersection in &range.story_intersections {
-            explicit_runs.push(QuillExplicitTypographyRun {
-                story_index: intersection.story_index,
-                story_syid: intersection.story_syid,
-                story_start_utf16: intersection.story_start_utf16,
-                story_end_utf16: intersection.story_end_utf16,
-                font_index: *font_index,
-                font_name: font_name.clone(),
-                text_size_emu: *text_size_emu,
-                fdpc_descriptor_ordinal: range.fdpc_descriptor_ordinal,
-                fdpc_style_ordinal: range.fdpc_style_ordinal,
-                fdpc_style_source: range.fdpc_style_source.clone(),
-            });
+            for intersection in &range.story_intersections {
+                explicit_runs.push(QuillExplicitTypographyRun {
+                    story_index: intersection.story_index,
+                    story_syid: intersection.story_syid,
+                    story_start_utf16: intersection.story_start_utf16,
+                    story_end_utf16: intersection.story_end_utf16,
+                    font_index: *font_index,
+                    font_name: font_name.clone(),
+                    text_size_emu: *text_size_emu,
+                    fdpc_descriptor_ordinal: range.fdpc_descriptor_ordinal,
+                    fdpc_style_ordinal: range.fdpc_style_ordinal,
+                    fdpc_style_source: range.fdpc_style_source.clone(),
+                });
+            }
         }
     }
 
@@ -712,6 +723,15 @@ mod tests {
         ];
         let error = validate_monotone_fdpc_text_offsets(&regressed).unwrap_err();
         assert!(error.to_string().contains("regress in stored order"));
+    }
+
+    #[test]
+    fn unknown_fixed_block_widths_suppress_explicit_run_projection() {
+        let mut unknown = BTreeSet::new();
+        assert!(explicit_run_projection_allowed(&unknown));
+
+        unknown.insert(0x33);
+        assert!(!explicit_run_projection_allowed(&unknown));
     }
 
     #[test]
