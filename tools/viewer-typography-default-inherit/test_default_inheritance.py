@@ -151,6 +151,19 @@ class DefaultInheritanceTests(unittest.TestCase):
         ):
             mod.parse_block_strict(bytes([0x19, 0x33]), 0, 2)
 
+    def test_nested_font_container_unknown_width_fails_closed(self) -> None:
+        data = bytes([0, 0, 0, 0, 0x01, 0x33])
+        outer = {
+            "type": 0x88,
+            "data_offset": 0,
+            "end": len(data),
+        }
+        with self.assertRaisesRegex(
+            mod.donor.DecodeError,
+            "unknown fixed block width",
+        ):
+            mod.extract_font_index_strict(data, outer)
+
     def test_fdpp_style_offset_cannot_point_into_descriptor_tables(self) -> None:
         data = bytearray(64)
         # one FDPP style; chunk offset 0 points at the chunk header/tables,
