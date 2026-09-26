@@ -17,7 +17,8 @@ use windows_sys::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
     MS_KEY_STORAGE_PROVIDER, MS_PLATFORM_CRYPTO_PROVIDER, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE,
     NCRYPT_SILENT_FLAG, NCryptCreatePersistedKey, NCryptExportKey,
-    NCryptFinalizeKey, NCryptFreeObject, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSignHash,
+    NCryptFinalizeKey, NCryptFreeObject, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty,
+    NCryptSignHash,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
@@ -91,7 +92,6 @@ impl WindowsDeviceKey {
             MS_PLATFORM_CRYPTO_PROVIDER,
             DeviceKeyBacking::HardwareTpm,
             &key_name,
-            true,
         )? {
             return Ok(existing);
         }
@@ -100,7 +100,6 @@ impl WindowsDeviceKey {
             MS_KEY_STORAGE_PROVIDER,
             DeviceKeyBacking::SoftwareKsp,
             &key_name,
-            false,
         )? {
             return Ok(existing);
         }
@@ -249,13 +248,9 @@ fn try_open_existing(
     provider_name: PCWSTR,
     backing: DeviceKeyBacking,
     key_name: &[u16],
-    provider_unavailable_is_absent: bool,
 ) -> Result<Option<WindowsDeviceKey>, WindowsPlatformError> {
-    let provider = match open_provider(provider_name) {
-        Ok(provider) => provider,
-        Err(_status) if provider_unavailable_is_absent => return Ok(None),
-        Err(status) => return Err(cng_error("NCryptOpenStorageProvider", status)),
-    };
+    let provider =
+        open_provider(provider_name).map_err(|status| cng_error("NCryptOpenStorageProvider", status))?;
 
     let mut key = 0;
     let status = unsafe {
@@ -307,7 +302,7 @@ fn create_with_provider(
         unsafe {
             let _ = NCryptFreeObject(provider);
         }
-        return try_open_existing(provider_name, backing, key_name, false)?
+        return try_open_existing(provider_name, backing, key_name)?
             .ok_or_else(|| cng_error("NCryptCreatePersistedKey/race", status));
     }
 
@@ -316,6 +311,27 @@ fn create_with_provider(
             let _ = NCryptFreeObject(provider);
         }
         return Err(cng_error("NCryptCreatePersistedKey", status));
+    }
+
+    // CNG defines export policy value 0 as non-exportable. Set it explicitly
+    // before finalization rather than relying only on the provider default.
+    let export_policy = 0_u32;
+    let export_policy_name = wide("Export Policy");
+    let set_policy = unsafe {
+        NCryptSetProperty(
+            key,
+            export_policy_name.as_ptr(),
+            (&export_policy as *const u32).cast::<u8>(),
+            std::mem::size_of::<u32>() as u32,
+            0,
+        )
+    };
+    if set_policy != 0 {
+        unsafe {
+            let _ = NCryptFreeObject(key);
+            let _ = NCryptFreeObject(provider);
+        }
+        return Err(cng_error("NCryptSetProperty(Export Policy)", set_policy));
     }
 
     let finalize = unsafe { NCryptFinalizeKey(key, NCRYPT_SILENT_FLAG) };
