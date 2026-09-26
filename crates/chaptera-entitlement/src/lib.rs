@@ -11,8 +11,8 @@ pub use trusted_time::{
 };
 #[cfg(target_os = "windows")]
 pub use windows_platform::{
-    DeviceKeyBacking, WindowsDeviceKey, WindowsPlatformError, load_trusted_time_state,
-    save_trusted_time_state,
+    DeviceKeyBacking, WindowsDeviceKey, WindowsPlatformError, evaluate_trusted_time_transaction,
+    load_trusted_time_state, save_trusted_time_state,
 };
 
 use coset::{
