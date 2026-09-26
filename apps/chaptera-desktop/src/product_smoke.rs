@@ -28,6 +28,7 @@ fn bound_binary_identity() -> Result<(String, u64), String> {
 pub fn run() -> Result<Value, String> {
     let (binary_sha256, binary_byte_len) = bound_binary_identity()?;
     let reader_only = cfg!(feature = "reader-only");
+    let locale = crate::locale::resolve_product_locale();
 
     Ok(json!({
         "protocol_version": PROTOCOL_VERSION,
@@ -37,6 +38,16 @@ pub fn run() -> Result<Value, String> {
         "native_save_pub_claimed": false,
         "binary_sha256": binary_sha256,
         "binary_byte_len": binary_byte_len,
+        "locale": {
+            "source": locale.source.as_str(),
+            "raw": locale.raw,
+            "normalized": locale.normalized,
+            "market_profile": locale.market_profile.as_str(),
+            "network_lookup_used": false,
+            "ip_geolocation_used": false,
+            "timezone_inference_used": false,
+            "account_identity_used": false
+        },
         "runtime": {
             "checkout_required": false,
             "cargo_required": false,
