@@ -4500,7 +4500,9 @@ mod tests {
                 .with_max_steps(20)
                 .wgpu()
                 .build_eframe(move |cc| {
-                    ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+                    let mut app = ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                    app.selected_page = 1;
+                    app
                 });
             harness.step();
 
