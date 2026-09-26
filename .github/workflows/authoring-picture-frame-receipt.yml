@@ -3,6 +3,9 @@ name: Authoring picture frame receipt V1
 on:
   pull_request:
     paths:
+      - "vendor/producer-a/crates/pub-editor/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "apps/chaptera-desktop/src/agent.rs"
       - "packages/protocol/authoring-picture-frame/**"
       - "services/editor-api/test_revision_store.py"
       - "tools/validate_authoring_picture_frame_receipt.py"
@@ -18,9 +21,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check Producer A formatting
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml --all -- --check
+      - name: Run bounded pub-editor crop tests
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-editor
       - name: Install schema validator
         run: python -m pip install "jsonschema==4.23.0"
       - name: Run picture frame state-axis contract tests
