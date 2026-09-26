@@ -21,6 +21,13 @@ fn effective_counts(path: &Path) -> (usize, usize, usize, usize) {
     let typography =
         parse_bounded_typography(&quill, &stories).expect("parse bounded effective typography");
 
+    eprintln!(
+        "{} typography fences: fdpc_unknown={:?} inheritance_unknown={:?} inheritance_reason={:?}",
+        path.display(),
+        typography.unknown_block_types_assumed_zero_length,
+        typography.inheritance_unknown_block_types_assumed_zero_length,
+        typography.effective_inheritance_unavailable_reason,
+    );
     assert!(
         typography.effective_inheritance_unavailable_reason.is_none(),
         "effective inheritance must be available: {:?}",
@@ -30,7 +37,7 @@ fn effective_counts(path: &Path) -> (usize, usize, usize, usize) {
         typography
             .inheritance_unknown_block_types_assumed_zero_length
             .is_empty(),
-        "real acceptance must not promote through unknown block widths"
+        "real acceptance must not promote through unknown inheritance block widths"
     );
 
     let explicit_complete = typography
