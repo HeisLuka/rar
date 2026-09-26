@@ -2,7 +2,7 @@ name: Cancel obsolete PR head runs
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   actions: write
@@ -17,37 +17,63 @@ jobs:
   cancel-obsolete:
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel older workflow runs for this PR
+      - name: Cancel obsolete pull-request head runs globally
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
 
+          preserve_file="$(mktemp)"
           runs_file="$(mktemp)"
-          trap 'rm -f "$runs_file"' EXIT
-          : >"$runs_file"
+          trap 'rm -f "$preserve_file" "$runs_file"' EXIT
 
+          gh api --paginate --method GET "repos/$GH_REPO/pulls" \
+            -f state=open -f per_page=100 \
+            --jq '.[].head.sha' \
+            | sort -u >"$preserve_file"
+
+          # On opened/synchronize/reopened, preserve this event's head even if the
+          # open-PR listing is momentarily behind the webhook. A closed PR is
+          # deliberately not preserved so its other queued/running jobs can drain.
+          if [[ "$EVENT_ACTION" != "closed" && -n "$CURRENT_SHA" ]]; then
+            printf '%s\n' "$CURRENT_SHA" >>"$preserve_file"
+            sort -u -o "$preserve_file" "$preserve_file"
+          fi
+
+          echo "Preserving current heads of open PRs:"
+          cat "$preserve_file" || true
+
+          : >"$runs_file"
           for status in queued in_progress; do
             gh api --paginate --method GET "repos/$GH_REPO/actions/runs" \
               -f status="$status" -f event=pull_request -f per_page=100 \
-              --jq '.workflow_runs[] | [.id, .head_sha, .name, ([.pull_requests[]?.number | tostring] | join(","))] | @tsv' \
+              --jq '.workflow_runs[] | [.id, (.head_branch // ""), .head_sha, .name] | @tsv' \
               >>"$runs_file"
           done
 
           cancelled=0
-          while IFS=$'\t' read -r id head_sha name pr_numbers; do
+          preserved=0
+          while IFS=$'\t' read -r id head_branch head_sha name; do
             [[ -n "$id" ]] || continue
-            case ",$pr_numbers," in
-              *",$PR_NUMBER,"*) ;;
-              *) continue ;;
-            esac
-            [[ "$head_sha" != "$CURRENT_SHA" ]] || continue
 
-            echo "CANCEL $id  ${head_sha:0:12}  $name"
+            if [[ "$id" == "$CURRENT_RUN_ID" ]]; then
+              echo "KEEP-SELF $id  $head_branch  ${head_sha:0:12}  $name"
+              preserved=$((preserved + 1))
+              continue
+            fi
+
+            if grep -Fxq "$head_sha" "$preserve_file"; then
+              echo "KEEP      $id  $head_branch  ${head_sha:0:12}  $name"
+              preserved=$((preserved + 1))
+              continue
+            fi
+
+            echo "CANCEL    $id  $head_branch  ${head_sha:0:12}  $name"
             if gh api --method POST "repos/$GH_REPO/actions/runs/$id/cancel" >/dev/null; then
               cancelled=$((cancelled + 1))
             else
@@ -55,4 +81,5 @@ jobs:
             fi
           done <"$runs_file"
 
-          echo "Cancelled obsolete runs for PR #$PR_NUMBER: $cancelled"
+          echo "Cancelled obsolete PR-head runs: $cancelled"
+          echo "Preserved current-head/self runs: $preserved"
