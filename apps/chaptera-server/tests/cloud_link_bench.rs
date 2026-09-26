@@ -88,6 +88,33 @@ struct ProviderMetrics {
     persisted_object_count: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ProviderOperationDelta {
+    object_puts: u64,
+    object_gets: u64,
+    object_heads: u64,
+    object_deletes: u64,
+    object_bytes_written: u64,
+    object_bytes_read: u64,
+}
+
+impl ProviderOperationDelta {
+    fn between(before: &ProviderMetrics, after: &ProviderMetrics) -> Self {
+        Self {
+            object_puts: after.object_puts.saturating_sub(before.object_puts),
+            object_gets: after.object_gets.saturating_sub(before.object_gets),
+            object_heads: after.object_heads.saturating_sub(before.object_heads),
+            object_deletes: after.object_deletes.saturating_sub(before.object_deletes),
+            object_bytes_written: after
+                .object_bytes_written
+                .saturating_sub(before.object_bytes_written),
+            object_bytes_read: after
+                .object_bytes_read
+                .saturating_sub(before.object_bytes_read),
+        }
+    }
+}
+
 impl CountingProvider {
     fn metrics(&self) -> ProviderMetrics {
         let objects = self.inner.objects.lock().expect("provider object lock");
@@ -116,6 +143,20 @@ impl CountingProvider {
             persisted_object_count: u64::try_from(objects.len()).unwrap_or(u64::MAX),
         }
     }
+}
+
+fn record_provider_phase(
+    deltas: &mut BTreeMap<String, ProviderOperationDelta>,
+    checkpoint: &mut ProviderMetrics,
+    provider: &CountingProvider,
+    phase: &'static str,
+) {
+    let after = provider.metrics();
+    deltas.insert(
+        phase.to_owned(),
+        ProviderOperationDelta::between(checkpoint, &after),
+    );
+    *checkpoint = after;
 }
 
 #[async_trait]
@@ -325,6 +366,7 @@ struct FixtureReceipt {
     source_payload_client_bytes_sent: u64,
     measured_http_control_bytes: Option<u64>,
     provider: ProviderMetrics,
+    provider_phase_deltas: BTreeMap<String, ProviderOperationDelta>,
     durable_row_counts: BTreeMap<String, i64>,
     sqlite_bytes_before: u64,
     sqlite_bytes_after: u64,
@@ -532,6 +574,8 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     let projects = SqliteProjectPersistence::open(&db, 4, busy).await?;
 
     let mut phases = BTreeMap::new();
+    let mut provider_phase_deltas = BTreeMap::new();
+    let mut provider_checkpoint = provider.metrics();
     let now = unix_now_ms()?;
     let now_u64 = u64::try_from(now)?;
     let upload_id = format!("upload-{fixture_id}");
@@ -561,6 +605,12 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     admission.reserve(admission_request.clone(), now).await?;
     let issued = source_repo.issue_idempotent(candidate).await?;
     phases.insert("issue_and_admission".to_owned(), elapsed_ms(phase));
+    record_provider_phase(
+        &mut provider_phase_deltas,
+        &mut provider_checkpoint,
+        &provider,
+        "issue_and_admission",
+    );
 
     let phase = Instant::now();
     let mut fixture = tokio::fs::File::open(fixture_path).await?;
@@ -568,6 +618,12 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         .create_quarantine_streamed(&tenant_id, &upload_id, fixture_bytes, &mut fixture)
         .await?;
     phases.insert("streamed_upload".to_owned(), elapsed_ms(phase));
+    record_provider_phase(
+        &mut provider_phase_deltas,
+        &mut provider_checkpoint,
+        &provider,
+        "streamed_upload",
+    );
 
     let phase = Instant::now();
     let inspected = blob_store
@@ -602,6 +658,12 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     };
     let enqueued = validation_jobs.enqueue(payload, unix_now_ms()?).await?;
     phases.insert("complete_and_enqueue".to_owned(), elapsed_ms(phase));
+    record_provider_phase(
+        &mut provider_phase_deltas,
+        &mut provider_checkpoint,
+        &provider,
+        "complete_and_enqueue",
+    );
 
     let phase = Instant::now();
     let lease = job_queue
@@ -643,6 +705,12 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         return Err(format!("unexpected validated state: {:?}", validated.state).into());
     }
     phases.insert("validation_and_promotion".to_owned(), elapsed_ms(phase));
+    record_provider_phase(
+        &mut provider_phase_deltas,
+        &mut provider_checkpoint,
+        &provider,
+        "validation_and_promotion",
+    );
 
     let phase = Instant::now();
     let consume = ConsumeUploadRequest {
@@ -692,12 +760,24 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
     )
     .await?;
     phases.insert("baseline_materialization".to_owned(), elapsed_ms(phase));
+    record_provider_phase(
+        &mut provider_phase_deltas,
+        &mut provider_checkpoint,
+        &provider,
+        "baseline_materialization",
+    );
 
     let phase = Instant::now();
     let project = projects
         .create_project_from_upload(consume, baseline)
         .await?;
     phases.insert("project_genesis_commit".to_owned(), elapsed_ms(phase));
+    record_provider_phase(
+        &mut provider_phase_deltas,
+        &mut provider_checkpoint,
+        &provider,
+        "project_genesis_commit",
+    );
 
     let durable_row_counts = durable_row_counts(&db).await?;
     let provider_metrics = provider.metrics();
@@ -729,6 +809,7 @@ async fn run_fixture(fixture_id: &str, fixture_path: &Path) -> BenchResult<Fixtu
         source_payload_client_bytes_sent: fixture_bytes,
         measured_http_control_bytes: None,
         provider: provider_metrics,
+        provider_phase_deltas,
         durable_row_counts,
         sqlite_bytes_before,
         sqlite_bytes_after,
