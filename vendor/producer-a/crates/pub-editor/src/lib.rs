@@ -141,7 +141,7 @@ pub struct ResizeNodeBatchEntry {
     pub after: RectEmu,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorRulerGuide {
     pub guide_id: CanonicalId,
     pub page_id: PageId,
