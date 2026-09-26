@@ -104,11 +104,27 @@ jobs:
           Set-Item -Path $pubKey -Value "Chaptera.Acceptance.PreExistingHandler"
           $beforeDefault = (Get-Item $pubKey).GetValue("")
 
+          # Simulate an epoch-0 flat Reader tree from an earlier local build.
+          # The stable Inno AppId remains unchanged; the epoch-1 installer must
+          # migrate product bytes under current/ and remove obsolete root payload.
+          $installRoot = Join-Path $env:LOCALAPPDATA "Programs\Chaptera PUB Reader"
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+          Set-Content -Encoding ascii -Path (Join-Path $installRoot "chaptera-reader.exe") -Value "legacy-reader-placeholder"
+          Set-Content -Encoding utf8 -Path (Join-Path $installRoot "README.md") -Value "legacy flat layout"
+          $externalState = Join-Path $env:RUNNER_TEMP "chaptera-reader-user-state-sentinel.txt"
+          Set-Content -Encoding utf8 -Path $externalState -Value "must-survive-install-and-uninstall"
+          $externalStateBefore = (Get-FileHash $externalState -Algorithm SHA256).Hash.ToLowerInvariant()
+
           $install = Start-Process -FilePath $env:CHAPTERA_READER_SETUP -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-") -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)" }
 
-          $installed = Join-Path $env:LOCALAPPDATA "Programs\Chaptera PUB Reader\chaptera-reader.exe"
-          if (-not (Test-Path $installed)) { throw "Installed Reader binary not found" }
+          $installed = Join-Path $installRoot "current\chaptera-reader.exe"
+          if (-not (Test-Path $installed)) { throw "Installed Reader binary not found under current/" }
+          if (Test-Path (Join-Path $installRoot "chaptera-reader.exe")) { throw "legacy root-level Reader executable survived epoch-1 install" }
+          if (Test-Path (Join-Path $installRoot "README.md")) { throw "legacy root-level README survived epoch-1 install" }
+          foreach ($requiredDir in @("current",".staging",".rollback")) {
+            if (-not (Test-Path (Join-Path $installRoot $requiredDir))) { throw "required install-layout directory missing: $requiredDir" }
+          }
           foreach ($forbidden in @("chaptera-editor.exe","chaptera-rescue.exe","chaptera.exe")) {
             if (Test-Path (Join-Path (Split-Path $installed) $forbidden)) { throw "Reader installer shipped forbidden entry: $forbidden" }
           }
@@ -139,11 +155,19 @@ jobs:
           foreach ($commandPath in @("$progId\shell\open\command", "$appRegistration\shell\open\command")) {
             if (-not (Test-Path $commandPath)) { throw "open command missing: $commandPath" }
             $command = (Get-Item $commandPath).GetValue("")
-            if ($command -notlike '*chaptera-reader.exe*%1*') { throw "open command does not route %1 to chaptera-reader.exe: $command" }
+            if ($command -notlike '*current*chaptera-reader.exe*%1*') { throw "open command does not route %1 through current/chaptera-reader.exe: $command" }
             if ($command -notmatch '"%1"') { throw "open command does not quote %1: $command" }
           }
 
           if ((Get-Item $pubKey).GetValue("") -ne $beforeDefault) { throw "installer stole existing .pub default handler" }
+
+          # Seed files that a later updater generation would own. Inno did not
+          # install these bytes, so uninstall cleanup must be declared explicitly.
+          New-Item -ItemType Directory -Force -Path (Join-Path $installRoot ".staging\attempt-ci") | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $installRoot ".rollback\0.0.9-ci") | Out-Null
+          Set-Content -Encoding ascii -Path (Join-Path $installRoot ".staging\attempt-ci\candidate.bin") -Value "candidate"
+          Set-Content -Encoding ascii -Path (Join-Path $installRoot ".rollback\0.0.9-ci\reader.bin") -Value "previous"
+          Set-Content -Encoding utf8 -Path (Join-Path $installRoot "update-journal.json") -Value '{"schema_version":"chaptera.update-journal.v1","phase":"CandidateConfirmed"}'
 
           $uninstallRoots = @(Get-ChildItem "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
             Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq "Chaptera PUB Reader $env:CHAPTERA_VERSION" })
@@ -154,6 +178,12 @@ jobs:
           if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed: $($uninstall.ExitCode)" }
 
           if (Test-Path $installed) { throw "Reader binary remained after uninstall" }
+          if (Test-Path $installRoot) {
+            $remaining = @(Get-ChildItem -LiteralPath $installRoot -Force -Recurse -ErrorAction SilentlyContinue)
+            if ($remaining.Count -gt 0) { throw "Chaptera install root retained updater-owned content after uninstall: $($remaining.FullName -join ', ')" }
+          }
+          $externalStateAfter = (Get-FileHash $externalState -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($externalStateAfter -ne $externalStateBefore) { throw "uninstall changed external user-state sentinel" }
           if (Test-Path $progId) { throw "Chaptera ProgID remained after uninstall" }
           if (Test-Path $appRegistration) { throw "Chaptera application registration remained after uninstall" }
           if (Test-Path $openWithPath) {
@@ -169,12 +199,18 @@ jobs:
           $setupHash = (Get-FileHash $env:CHAPTERA_READER_SETUP -Algorithm SHA256).Hash.ToLowerInvariant()
           "$setupHash  $(Split-Path $env:CHAPTERA_READER_SETUP -Leaf)" | Set-Content -Encoding ascii "dist/chaptera-reader-installer.sha256"
           [ordered]@{
-            schema_version = "chaptera.reader-windows-installer.v1"
+            schema_version = "chaptera.reader-windows-installer.v2"
             product_id = "chaptera.reader"
             version = $env:CHAPTERA_VERSION
             platform = "windows-x86_64"
             commit_sha = "${{ github.sha }}"
-            canonical_executable = "chaptera-reader.exe"
+            canonical_executable = "current/chaptera-reader.exe"
+            install_layout_epoch = 1
+            stable_install_root = "localappdata/Programs/Chaptera PUB Reader"
+            active_tree = "current"
+            staging_tree = ".staging"
+            rollback_tree = ".rollback"
+            legacy_flat_layout_migration = "pass"
             installer_filename = "Chaptera-Reader-Setup-$env:CHAPTERA_VERSION.exe"
             installer_tool = "Inno Setup"
             installer_tool_version = $env:ISCC_PRODUCT_VERSION
@@ -185,6 +221,8 @@ jobs:
             association_policy = "open_with_only_no_default_steal"
             installed_real_pub_smoke = "pass"
             source_pub_unchanged = $true
+            updater_owned_uninstall_cleanup = "pass"
+            external_user_state_unchanged = $true
             uninstall_cleanup = "pass"
             authenticode_claimed = $false
           } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "dist/chaptera-reader-installer.receipt.json"
