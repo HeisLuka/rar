@@ -61,6 +61,19 @@ fn failure_mailto_recipient_configured() -> bool {
 }
 const SUPPORTER_STORAGE_KEY: &str = "chaptera.supporter.v1";
 const PAGE_MARGIN: f32 = 24.0;
+const EMU_PER_INCH: f32 = 914_400.0;
+const NUMERIC_ZOOM_POINTS_PER_INCH: f32 = 96.0;
+const MIN_NUMERIC_ZOOM: f32 = 0.10;
+const MAX_NUMERIC_ZOOM: f32 = 4.00;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanvasZoomMode {
+    Percent,
+    FitPage,
+    PageWidth,
+    FitSelection,
+}
+
 const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
@@ -435,6 +448,7 @@ struct ViewerApp {
     canvas_drag: Option<MoveTransaction>,
     canvas_resize: Option<ResizeTransaction>,
     zoom: f32,
+    zoom_mode: CanvasZoomMode,
     load_error: Option<ViewerLoadFailure>,
     search_query: String,
     search_results: Vec<ViewerTextMatch>,
@@ -482,6 +496,7 @@ impl ViewerApp {
             canvas_drag: None,
             canvas_resize: None,
             zoom: 1.0,
+            zoom_mode: CanvasZoomMode::FitPage,
             load_error: None,
             search_query: String::new(),
             search_results: Vec::new(),
@@ -777,6 +792,7 @@ impl ViewerApp {
         self.canvas_drag = None;
         self.canvas_resize = None;
         self.zoom = 1.0;
+        self.zoom_mode = CanvasZoomMode::FitPage;
         self.load_error = None;
         self.search_query.clear();
         self.search_results.clear();
@@ -2426,15 +2442,57 @@ impl ViewerApp {
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
 
-        ui.horizontal(|ui| {
+        let ctrl_held = ui.ctx().input(|input| input.modifiers.ctrl);
+
+        ui.horizontal_wrapped(|ui| {
             ui.label("Zoom");
-            ui.add(
-                egui::Slider::new(&mut self.zoom, 0.25..=4.0)
-                    .logarithmic(true)
-                    .show_value(true),
-            );
-            if ui.button("100% fit").clicked() {
+
+            if self.zoom_mode == CanvasZoomMode::Percent {
+                let mut zoom_percent = self.zoom * 100.0;
+                let slider = ui.add(
+                    egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
+                        .suffix("%")
+                        .show_value(true),
+                );
+                if slider.changed() {
+                    self.zoom =
+                        (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                }
+            } else {
+                ui.label("Fit mode");
+            }
+
+            if ui
+                .selectable_label(
+                    self.zoom_mode == CanvasZoomMode::Percent && (self.zoom - 1.0).abs() < 0.001,
+                    "100%",
+                )
+                .clicked()
+            {
                 self.zoom = 1.0;
+                self.zoom_mode = CanvasZoomMode::Percent;
+            }
+            if ui
+                .selectable_label(self.zoom_mode == CanvasZoomMode::FitPage, "Fit Page")
+                .clicked()
+            {
+                self.zoom_mode = CanvasZoomMode::FitPage;
+            }
+            if ui
+                .selectable_label(self.zoom_mode == CanvasZoomMode::PageWidth, "Page Width")
+                .clicked()
+            {
+                self.zoom_mode = CanvasZoomMode::PageWidth;
+            }
+            let fit_selection = ui.add_enabled(
+                self.canvas_selection.primary().is_some(),
+                egui::SelectableLabel::new(
+                    self.zoom_mode == CanvasZoomMode::FitSelection,
+                    "Fit Selection",
+                ),
+            );
+            if fit_selection.clicked() {
+                self.zoom_mode = CanvasZoomMode::FitSelection;
             }
         });
         ui.separator();
@@ -2487,12 +2545,45 @@ impl ViewerApp {
             return;
         };
 
+        let page_origin = page.id.into_canonical();
+        let page_id_text = page.id.as_canonical().to_string();
+        let page_nodes = visual
+            .scene
+            .nodes
+            .iter()
+            .filter(|node| node.parent_origin == page_origin)
+            .collect::<Vec<_>>();
+        let selected_bounds = self.canvas_selection.primary().and_then(|selected_instance| {
+            self.editor.as_ref().and_then(|editor| {
+                page_nodes.iter().find_map(|node| {
+                    let instance = direct_scene_instance(editor, &page_id_text, node.origin)?;
+                    (instance.instance_id == selected_instance).then_some(node.bounds)
+                })
+            })
+        });
+
         let viewport = ui.available_size();
-        let Some(fit_scale) = fitted_scale(
-            surface.size.width.get(),
-            surface.size.height.get(),
-            viewport,
-        ) else {
+        let scene_scale = match self.zoom_mode {
+            CanvasZoomMode::Percent => numeric_zoom_scene_scale(self.zoom),
+            CanvasZoomMode::FitPage => fitted_scale(
+                surface.size.width.get(),
+                surface.size.height.get(),
+                viewport,
+            ),
+            CanvasZoomMode::PageWidth => page_width_scale(surface.size.width.get(), viewport),
+            CanvasZoomMode::FitSelection => selected_bounds
+                .and_then(|bounds| {
+                    fitted_scale(bounds.width.get(), bounds.height.get(), viewport)
+                })
+                .or_else(|| {
+                    fitted_scale(
+                        surface.size.width.get(),
+                        surface.size.height.get(),
+                        viewport,
+                    )
+                }),
+        };
+        let Some(scene_scale) = scene_scale else {
             ui.colored_label(
                 ui.visuals().error_fg_color,
                 "Selected page has invalid physical dimensions.",
@@ -2500,8 +2591,8 @@ impl ViewerApp {
             return;
         };
 
-        let page_width = surface.size.width.get() as f32 * fit_scale * self.zoom;
-        let page_height = surface.size.height.get() as f32 * fit_scale * self.zoom;
+        let page_width = surface.size.width.get() as f32 * scene_scale;
+        let page_height = surface.size.height.get() as f32 * scene_scale;
         let content_width = (page_width + PAGE_MARGIN * 2.0).max(viewport.x);
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
@@ -2515,15 +2606,6 @@ impl ViewerApp {
         let mut drag_error = None;
         let mut resize_commit = None;
         let mut resize_error = None;
-        let page_origin = page.id.into_canonical();
-        let page_id_text = page.id.as_canonical().to_string();
-        let page_nodes = visual
-            .scene
-            .nodes
-            .iter()
-            .filter(|node| node.parent_origin == page_origin)
-            .collect::<Vec<_>>();
-
         let hit_index = SceneHitTestIndex::new(
             self.editor
                 .as_ref()
@@ -2604,6 +2686,7 @@ impl ViewerApp {
             .unwrap_or_default();
 
         egui::ScrollArea::both()
+            .enable_scrolling(!ctrl_held)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let canvas_sense = if reader_only_mode() {
@@ -2620,12 +2703,42 @@ impl ViewerApp {
                         "Document canvas",
                     )
                 });
+                if response.hovered() && ctrl_held {
+                    let ctrl_scroll_y = ui.ctx().input(|input| input.raw_scroll_delta.y);
+                    if ctrl_scroll_y.abs() > f32::EPSILON {
+                        self.zoom = ctrl_wheel_zoom(self.zoom, ctrl_scroll_y);
+                        self.zoom_mode = CanvasZoomMode::Percent;
+                    }
+                }
+
                 let canvas = response.rect;
-                let page_rect = egui::Rect::from_center_size(
-                    canvas.center(),
-                    egui::vec2(page_width, page_height),
-                );
-                let scene_scale = fit_scale * self.zoom;
+                let page_rect = if self.zoom_mode == CanvasZoomMode::FitSelection {
+                    selected_bounds
+                        .map(|bounds| {
+                            let selection_center_x =
+                                (bounds.x.get() as f32 + bounds.width.get() as f32 / 2.0)
+                                    * scene_scale;
+                            let selection_center_y =
+                                (bounds.y.get() as f32 + bounds.height.get() as f32 / 2.0)
+                                    * scene_scale;
+                            egui::Rect::from_min_size(
+                                canvas.center()
+                                    - egui::vec2(selection_center_x, selection_center_y),
+                                egui::vec2(page_width, page_height),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            egui::Rect::from_center_size(
+                                canvas.center(),
+                                egui::vec2(page_width, page_height),
+                            )
+                        })
+                } else {
+                    egui::Rect::from_center_size(
+                        canvas.center(),
+                        egui::vec2(page_width, page_height),
+                    )
+                };
 
                 let pointer_document = response
                     .interact_pointer_pos()
@@ -2905,7 +3018,11 @@ impl ViewerApp {
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
                         let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let font_size = (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
+                        let numeric_100_scale =
+                            numeric_zoom_scene_scale(1.0).unwrap_or(scene_scale);
+                        let visual_zoom = scene_scale / numeric_100_scale;
+                        let font_size =
+                            (12.0_f32 * visual_zoom).clamp(8.0_f32, 28.0_f32);
                         let galley = text_painter.layout(
                             fragment.text.clone(),
                             egui::FontId::proportional(font_size),
@@ -3372,6 +3489,33 @@ fn diagnostic_severity_label(severity: ViewerDiagnosticSeverity) -> &'static str
     }
 }
 
+fn numeric_zoom_scene_scale(zoom: f32) -> Option<f32> {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return None;
+    }
+    Some((NUMERIC_ZOOM_POINTS_PER_INCH / EMU_PER_INCH) * zoom)
+}
+
+fn page_width_scale(page_width_emu: i64, viewport: egui::Vec2) -> Option<f32> {
+    if page_width_emu <= 0 {
+        return None;
+    }
+
+    let usable_width = (viewport.x - PAGE_MARGIN * 2.0).max(1.0);
+    Some(usable_width / page_width_emu as f32)
+}
+
+fn ctrl_wheel_zoom(current: f32, scroll_y: f32) -> f32 {
+    let delta = if scroll_y > 0.0 {
+        0.10
+    } else if scroll_y < 0.0 {
+        -0.10
+    } else {
+        0.0
+    };
+    (current + delta).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM)
+}
+
 fn fitted_scale(page_width_emu: i64, page_height_emu: i64, viewport: egui::Vec2) -> Option<f32> {
     if page_width_emu <= 0 || page_height_emu <= 0 {
         return None;
@@ -3409,6 +3553,55 @@ mod tests {
         assert!(preview_text_height_is_clipped(100.6, 100.0));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("preview-only"));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("not Publisher-native"));
+    }
+
+    #[test]
+    fn numeric_100_percent_zoom_is_viewport_independent() {
+        let scale = numeric_zoom_scene_scale(1.0).expect("numeric 100%");
+        assert!((scale - (96.0 / 914_400.0)).abs() < f32::EPSILON);
+
+        let fit_small = fitted_scale(8_229_600, 10_668_000, egui::vec2(800.0, 600.0))
+            .expect("fit small");
+        let fit_large = fitted_scale(8_229_600, 10_668_000, egui::vec2(1600.0, 1200.0))
+            .expect("fit large");
+        assert_ne!(fit_small, fit_large);
+        assert_eq!(numeric_zoom_scene_scale(1.0), Some(scale));
+    }
+
+    #[test]
+    fn page_width_zoom_uses_width_without_forcing_page_height_to_fit() {
+        let viewport = egui::vec2(1000.0, 400.0);
+        let scale = page_width_scale(2_000_000, viewport).expect("page width scale");
+        assert!((2_000_000.0 * scale - (viewport.x - PAGE_MARGIN * 2.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn ctrl_wheel_zoom_is_bounded_and_switches_in_ten_point_steps() {
+        assert!((ctrl_wheel_zoom(1.0, 120.0) - 1.10).abs() < f32::EPSILON);
+        assert!((ctrl_wheel_zoom(1.0, -120.0) - 0.90).abs() < f32::EPSILON);
+        assert_eq!(ctrl_wheel_zoom(MAX_NUMERIC_ZOOM, 120.0), MAX_NUMERIC_ZOOM);
+        assert_eq!(ctrl_wheel_zoom(MIN_NUMERIC_ZOOM, -120.0), MIN_NUMERIC_ZOOM);
+    }
+
+    #[test]
+    fn desktop_zoom_surface_separates_numeric_and_fit_modes() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("\"100%\""));
+        assert!(source.contains("\"Fit Page\""));
+        assert!(source.contains("\"Page Width\""));
+        assert!(source.contains("\"Fit Selection\""));
+        assert!(!source.contains("\"100% fit\""));
+        assert!(source.contains("if self.zoom_mode == CanvasZoomMode::Percent"));
+        assert!(source.contains("ui.label(\"Fit mode\")"));
+    }
+
+    #[test]
+    fn ctrl_wheel_zoom_is_scoped_to_canvas_without_scroll_area_pan() {
+        let source = include_str!("main.rs");
+        assert!(source.contains(".enable_scrolling(!ctrl_held)"));
+        assert!(source.contains("response.hovered() && ctrl_held"));
+        let legacy_pointer_gate = ["pointer", "over", "canvas"].join("_");
+        assert!(!source.contains(&legacy_pointer_gate));
     }
 
     #[test]
@@ -3559,6 +3752,7 @@ mod tests {
             canvas_drag: None,
             canvas_resize: None,
             zoom: 1.0,
+            zoom_mode: CanvasZoomMode::FitPage,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::Unsupported,
                 message: "unsupported".to_owned(),
@@ -3609,6 +3803,7 @@ mod tests {
             canvas_drag: None,
             canvas_resize: None,
             zoom: 1.0,
+            zoom_mode: CanvasZoomMode::FitPage,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::FileAccess,
                 message: "permission denied".to_owned(),
@@ -3873,6 +4068,7 @@ mod tests {
             canvas_drag: None,
             canvas_resize: None,
             zoom: 1.0,
+            zoom_mode: CanvasZoomMode::FitPage,
             load_error: None,
             search_query: String::new(),
             search_results: Vec::new(),
