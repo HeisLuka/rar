@@ -1,0 +1,118 @@
+name: Editor Desktop Caret Map Rust Adapter V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "services/editor-api/resolved_text_caret_map_v1.py"
+      - ".github/workflows/editor-desktop-caret-map-rust-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check -p chaptera-text-caret-map-adapter --all-targets
+      - name: Clippy
+        run: cargo clippy -p chaptera-text-caret-map-adapter --all-targets -- -D warnings
+      - name: Rust contract tests
+        run: cargo test -p chaptera-text-caret-map-adapter
+      - name: Canonical Python caret-map tests
+        run: python services/editor-api/test_resolved_text_caret_map_v1.py
+      - name: Cross-language golden conformance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          sys.path.insert(0, "services/editor-api")
+          from resolved_text_caret_map_v1 import (
+              ResolvedClusterV1, ResolvedLineFragmentV1, InternalCaretStopV1,
+              build_resolved_text_caret_map_v1, caret_map_to_dict_v1,
+          )
+
+          fixtures = [
+              ("ascii","story:1",2,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:1",page_id="page:1",frame_id="frame:1",line_id="line:1",
+                      flow_ordinal=0,previous_line_id=None,next_line_id=None,
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,1,0,10,0,10),ResolvedClusterV1(1,2,10,20,10,20)),
+                  ),
+              )),
+              ("internal","story:2",2,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:2",page_id="page:1",frame_id="frame:1",line_id="line:1",
+                      flow_ordinal=0,previous_line_id=None,next_line_id=None,
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,2,0,20,0,20,True,(InternalCaretStopV1(1,7,7),)),),
+                  ),
+              )),
+              ("linked","story:3",2,(
+                  ResolvedLineFragmentV1(
+                      story_id="story:3",page_id="page:1",frame_id="frame:a",line_id="line:a",
+                      flow_ordinal=0,previous_line_id=None,next_line_id="line:b",
+                      page_y_top_emu=0,page_y_bottom_emu=20,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(0,1,0,10,0,10),),
+                  ),
+                  ResolvedLineFragmentV1(
+                      story_id="story:3",page_id="page:1",frame_id="frame:b",line_id="line:b",
+                      flow_ordinal=1,previous_line_id="line:a",next_line_id=None,
+                      page_y_top_emu=30,page_y_bottom_emu=50,frame_y_top_emu=0,frame_y_bottom_emu=20,
+                      clusters=(ResolvedClusterV1(1,2,100,110,0,10),),
+                  ),
+              )),
+          ]
+
+          def line_dict(line):
+              return {
+                  "story_id":line.story_id,"page_id":line.page_id,"frame_id":line.frame_id,
+                  "line_id":line.line_id,"flow_ordinal":line.flow_ordinal,
+                  "previous_line_id":line.previous_line_id,"next_line_id":line.next_line_id,
+                  "page_y_top_emu":line.page_y_top_emu,"page_y_bottom_emu":line.page_y_bottom_emu,
+                  "frame_y_top_emu":line.frame_y_top_emu,"frame_y_bottom_emu":line.frame_y_bottom_emu,
+                  "clusters":[{
+                      "start_scalar":c.start_scalar,"end_scalar":c.end_scalar,
+                      "page_x_start_emu":c.page_x_start_emu,"page_x_end_emu":c.page_x_end_emu,
+                      "frame_x_start_emu":c.frame_x_start_emu,"frame_x_end_emu":c.frame_x_end_emu,
+                      "painted":c.painted,
+                      "internal_caret_stops":[{
+                          "scalar_boundary":s.scalar_boundary,"page_x_emu":s.page_x_emu,"frame_x_emu":s.frame_x_emu
+                      } for s in c.internal_caret_stops],
+                  } for c in line.clusters],
+              }
+
+          for name, story_id, story_len, lines in fixtures:
+              canonical=build_resolved_text_caret_map_v1(
+                  layout_revision_id="layout:golden",story_id=story_id,story_scalar_len=story_len,lines=lines
+              )
+              payload={
+                  "layout_revision_id":"layout:golden","story_id":story_id,
+                  "story_scalar_len":story_len,"lines":[line_dict(line) for line in lines],
+              }
+              proc=subprocess.run(
+                  ["cargo","run","--quiet","-p","chaptera-text-caret-map-adapter","--example","conformance_probe"],
+                  input=json.dumps(payload),text=True,capture_output=True,check=True,
+              )
+              rust=json.loads(proc.stdout)
+              python=caret_map_to_dict_v1(canonical)
+              if rust != python:
+                  print(name, "mismatch", file=sys.stderr)
+                  print(json.dumps({"python":python,"rust":rust},indent=2),file=sys.stderr)
+                  raise SystemExit(1)
+              print(name, "PASS")
+          PY
