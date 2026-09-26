@@ -710,6 +710,28 @@ pub enum EditorError {
     StaleNodeResize {
         node_id: NodeId,
     },
+    RulerGuideInvalidId {
+        guide_id: CanonicalId,
+    },
+    RulerGuidePageMissing {
+        page_id: PageId,
+    },
+    RulerGuideOutOfRange {
+        guide_id: CanonicalId,
+    },
+    RulerGuideIdCollision {
+        guide_id: CanonicalId,
+    },
+    RulerGuideMissing {
+        guide_id: CanonicalId,
+    },
+    RulerGuideNoChange {
+        guide_id: CanonicalId,
+    },
+    StaleRulerGuide {
+        guide_id: CanonicalId,
+    },
+    RulerGuideOverlayRoutingRequired,
     NoChange {
         story_id: StoryId,
     },
@@ -939,6 +961,38 @@ impl fmt::Display for EditorError {
                 "node {} no longer matches the resize operation precondition",
                 node_id.as_canonical()
             ),
+            Self::RulerGuideInvalidId { guide_id } => write!(
+                formatter,
+                "ruler guide {guide_id} is not an editor-created UUIDv7"
+            ),
+            Self::RulerGuidePageMissing { page_id } => write!(
+                formatter,
+                "ruler guide page {} is not present in the opened document",
+                page_id.as_canonical()
+            ),
+            Self::RulerGuideOutOfRange { guide_id } => write!(
+                formatter,
+                "ruler guide {guide_id} is outside the bounded page-local axis range"
+            ),
+            Self::RulerGuideIdCollision { guide_id } => write!(
+                formatter,
+                "ruler guide {guide_id} collides with an existing authored guide"
+            ),
+            Self::RulerGuideMissing { guide_id } => write!(
+                formatter,
+                "ruler guide {guide_id} is not present in authored guide state"
+            ),
+            Self::RulerGuideNoChange { guide_id } => write!(
+                formatter,
+                "ruler guide {guide_id} already has the requested position"
+            ),
+            Self::StaleRulerGuide { guide_id } => write!(
+                formatter,
+                "ruler guide {guide_id} no longer matches the persisted operation precondition"
+            ),
+            Self::RulerGuideOverlayRoutingRequired => formatter.write_str(
+                "ruler guide operations must be applied through the authored guide overlay",
+            ),
             Self::NoChange { story_id } => write!(
                 formatter,
                 "replacement text for story {} is identical to the current text",
@@ -1002,6 +1056,14 @@ impl EditorError {
             Self::NodeResizeNonPositive { .. } => "node_resize_non_positive",
             Self::NodeResizeOverflow { .. } => "node_resize_overflow",
             Self::StaleNodeResize { .. } => "stale_node_resize",
+            Self::RulerGuideInvalidId { .. } => "ruler_guide_invalid_id",
+            Self::RulerGuidePageMissing { .. } => "ruler_guide_page_missing",
+            Self::RulerGuideOutOfRange { .. } => "ruler_guide_out_of_range",
+            Self::RulerGuideIdCollision { .. } => "ruler_guide_id_collision",
+            Self::RulerGuideMissing { .. } => "ruler_guide_missing",
+            Self::RulerGuideNoChange { .. } => "ruler_guide_no_change",
+            Self::StaleRulerGuide { .. } => "stale_ruler_guide",
+            Self::RulerGuideOverlayRoutingRequired => "ruler_guide_overlay_routing_required",
             Self::NoChange { .. } => "no_change",
             Self::StaleOperation { .. } => "stale_operation",
             Self::NothingToUndo => "nothing_to_undo",
@@ -1067,6 +1129,9 @@ pub enum EditorProjectError {
         index: usize,
     },
     LegacyProjectCarriesCreateShapeOperation {
+        index: usize,
+    },
+    LegacyProjectCarriesRulerGuideOperation {
         index: usize,
     },
     LegacyProjectCarriesTableGrids,
@@ -2375,6 +2440,117 @@ impl EditorSession {
                 node_id: shape.node_id,
             }),
         }
+    }
+
+    pub fn add_ruler_guide(
+        &mut self,
+        page_id: PageId,
+        axis: RulerGuideAxis,
+        position: LengthEmu,
+    ) -> Result<EditOperation, EditorError> {
+        let guide = EditorRulerGuide {
+            guide_id: new_editor_canonical_id(),
+            page_id,
+            axis,
+            position,
+        };
+        self.consume_canonical_add_ruler_guide(guide)
+    }
+
+    fn consume_canonical_add_ruler_guide(
+        &mut self,
+        guide: EditorRulerGuide,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+        self.validate_ruler_guide_candidate(&guide)?;
+        if self.authored_ruler_guides.contains_key(&guide.guide_id) {
+            return Err(EditorError::RulerGuideIdCollision {
+                guide_id: guide.guide_id,
+            });
+        }
+        let operation = EditOperation::AddRulerGuide { guide };
+        apply_ruler_guide_forward(&mut self.authored_ruler_guides, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
+    pub fn move_ruler_guide(
+        &mut self,
+        guide_id: CanonicalId,
+        after_position: LengthEmu,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+        let before = *self
+            .authored_ruler_guides
+            .get(&guide_id)
+            .ok_or(EditorError::RulerGuideMissing { guide_id })?;
+        if before.position == after_position {
+            return Err(EditorError::RulerGuideNoChange { guide_id });
+        }
+        let candidate = EditorRulerGuide {
+            position: after_position,
+            ..before
+        };
+        self.validate_ruler_guide_candidate(&candidate)?;
+        let operation = EditOperation::MoveRulerGuide {
+            guide_id,
+            page_id: before.page_id,
+            axis: before.axis,
+            before_position: before.position,
+            after_position,
+        };
+        apply_ruler_guide_forward(&mut self.authored_ruler_guides, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
+    pub fn delete_ruler_guide(
+        &mut self,
+        guide_id: CanonicalId,
+    ) -> Result<EditOperation, EditorError> {
+        self.validate_source_identity()?;
+        let guide = *self
+            .authored_ruler_guides
+            .get(&guide_id)
+            .ok_or(EditorError::RulerGuideMissing { guide_id })?;
+        let operation = EditOperation::DeleteRulerGuide { guide };
+        apply_ruler_guide_forward(&mut self.authored_ruler_guides, &operation)?;
+        self.undo.push(operation.clone());
+        self.redo.clear();
+        self.validate_source_identity()?;
+        Ok(operation)
+    }
+
+    fn validate_ruler_guide_candidate(
+        &self,
+        guide: &EditorRulerGuide,
+    ) -> Result<(), EditorError> {
+        if !is_editor_created_uuid_v7_canonical_id(guide.guide_id) {
+            return Err(EditorError::RulerGuideInvalidId {
+                guide_id: guide.guide_id,
+            });
+        }
+        let page = self
+            .graph
+            .pages
+            .get(&guide.page_id)
+            .ok_or(EditorError::RulerGuidePageMissing {
+                page_id: guide.page_id,
+            })?;
+        let limit = match guide.axis {
+            RulerGuideAxis::Horizontal => page.size.height,
+            RulerGuideAxis::Vertical => page.size.width,
+        };
+        if guide.position.get() < 0 || guide.position > limit {
+            return Err(EditorError::RulerGuideOutOfRange {
+                guide_id: guide.guide_id,
+            });
+        }
+        Ok(())
     }
 
     pub fn can_move_node_to(
