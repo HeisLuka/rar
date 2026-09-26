@@ -65,8 +65,8 @@ jobs:
       - name: Test effective typography unit laws
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill typography::tests -- --nocapture
 
-      - name: Reproduce hosted discriminator in Rust
-        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill real_pub_effective_typography_reproduces_hosted_discriminator -- --ignored --nocapture
+      - name: Prove product-safe inheritance and Brochure block fence
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill real_pub_effective_typography_matches_product_authority_and_brochure_fence -- --ignored --nocapture
 
       - name: Prove fixture bytes are not retained
         shell: bash
