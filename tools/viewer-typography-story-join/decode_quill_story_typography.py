@@ -195,7 +195,12 @@ def parse_block(data: bytes, cursor: int, limit: int) -> tuple[dict[str, Any], i
         block_end = data_offset + data_length
         value = None
     else:
-        data_length = FIXED_BLOCK_LENGTHS.get(block_type, 0)
+        if block_type not in FIXED_BLOCK_LENGTHS:
+            raise DecodeError(
+                f"unknown fixed Quill style block type 0x{block_type:02x} at 0x{start:x}; "
+                "physical width is not proven"
+            )
+        data_length = FIXED_BLOCK_LENGTHS[block_type]
         block_end = data_offset + data_length
         if data_length == 2:
             value = u16(data, data_offset)
