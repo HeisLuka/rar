@@ -26,6 +26,7 @@ use thiserror::Error;
 pub const ENTITLEMENT_CONTENT_TYPE: &str = "application/vnd.chaptera.entitlement+cbor";
 pub const MAX_ARTIFACT_SIZE: usize = 16 * 1024;
 pub const MAX_KID_LEN: usize = 64;
+pub const TEST_KID_PREFIX: &[u8] = b"test:";
 pub const DEVICE_KEY_ID_LEN: usize = 32;
 pub const MAX_ID_LEN: usize = 128;
 pub const MAX_PRODUCT_ID_LEN: usize = 64;
@@ -75,18 +76,90 @@ pub struct VerifyContext<'a> {
     pub expected_device_key_id: &'a [u8],
 }
 
-#[derive(Debug, Clone)]
-pub struct TrustedSigner {
-    pub kid: Vec<u8>,
-    pub public_key_sec1: Vec<u8>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustPlane {
+    Entitlement,
+    BuildIdentity,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+pub struct TrustedSigner {
+    kid: Vec<u8>,
+    public_key_sec1: Vec<u8>,
+}
+
+impl TrustedSigner {
+    pub fn new(kid: Vec<u8>, public_key_sec1: Vec<u8>) -> Self {
+        Self {
+            kid,
+            public_key_sec1,
+        }
+    }
+
+    pub fn kid(&self) -> &[u8] {
+        &self.kid
+    }
+
+    pub fn public_key_sec1(&self) -> &[u8] {
+        &self.public_key_sec1
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TrustBundle {
-    pub keys: Vec<TrustedSigner>,
+    plane: TrustPlane,
+    keys: Vec<TrustedSigner>,
 }
 
 impl TrustBundle {
+    pub fn production_entitlement(
+        keys: Vec<TrustedSigner>,
+    ) -> Result<Self, EntitlementError> {
+        Self::validated(TrustPlane::Entitlement, keys, false)
+    }
+
+    pub fn production_build_identity(
+        keys: Vec<TrustedSigner>,
+    ) -> Result<Self, EntitlementError> {
+        Self::validated(TrustPlane::BuildIdentity, keys, false)
+    }
+
+    pub fn plane(&self) -> TrustPlane {
+        self.plane
+    }
+
+    fn validated(
+        plane: TrustPlane,
+        keys: Vec<TrustedSigner>,
+        allow_test_namespace: bool,
+    ) -> Result<Self, EntitlementError> {
+        if keys.is_empty() {
+            return Err(EntitlementError::InvalidTrustBundle);
+        }
+
+        for (index, signer) in keys.iter().enumerate() {
+            if signer.kid.is_empty()
+                || signer.kid.len() > MAX_KID_LEN
+                || (!allow_test_namespace && signer.kid.starts_with(TEST_KID_PREFIX))
+                || signer.public_key_sec1.len() != 65
+                || signer.public_key_sec1.first() != Some(&0x04)
+                || VerifyingKey::from_sec1_bytes(&signer.public_key_sec1).is_err()
+                || keys[..index]
+                    .iter()
+                    .any(|seen| seen.kid.as_slice() == signer.kid.as_slice())
+            {
+                return Err(EntitlementError::InvalidTrustBundle);
+            }
+        }
+
+        Ok(Self { plane, keys })
+    }
+
+    #[cfg(test)]
+    fn testing(plane: TrustPlane, keys: Vec<TrustedSigner>) -> Self {
+        Self::validated(plane, keys, true).expect("valid test trust bundle")
+    }
+
     pub(crate) fn resolve(&self, kid: &[u8]) -> Result<&TrustedSigner, EntitlementError> {
         let mut matches = self.keys.iter().filter(|k| k.kid.as_slice() == kid);
         let first = matches.next().ok_or(EntitlementError::UnknownSigner)?;
@@ -185,8 +258,16 @@ fn validate_payload_shape(payload: &ActivationPayloadV1) -> Result<(), Entitleme
 }
 
 impl EntitlementVerifier {
-    pub fn new(trust: TrustBundle, build_trust: TrustBundle) -> Self {
-        Self { trust, build_trust }
+    pub fn new(
+        trust: TrustBundle,
+        build_trust: TrustBundle,
+    ) -> Result<Self, EntitlementError> {
+        if trust.plane() != TrustPlane::Entitlement
+            || build_trust.plane() != TrustPlane::BuildIdentity
+        {
+            return Err(EntitlementError::InvalidTrustBundle);
+        }
+        Ok(Self { trust, build_trust })
     }
 
     pub fn verify(
@@ -315,8 +396,8 @@ mod tests {
     use coset::{CoseSign1Builder, HeaderBuilder};
     use p256::ecdsa::{SigningKey, signature::Signer};
 
-    const TEST_KID: &[u8] = b"test-k1";
-    const BUILD_TEST_KID: &[u8] = b"build-test-k1";
+    const TEST_KID: &[u8] = b"test:entitlement:k1";
+    const BUILD_TEST_KID: &[u8] = b"test:build:k1";
     static DEVICE_ID: [u8; DEVICE_KEY_ID_LEN] = [0xA5; DEVICE_KEY_ID_LEN];
 
     fn signing_key() -> SigningKey {
@@ -330,31 +411,35 @@ mod tests {
     fn trust_bundle() -> TrustBundle {
         let signing = signing_key();
         let verifying = signing.verifying_key();
-        TrustBundle {
-            keys: vec![TrustedSigner {
-                kid: TEST_KID.to_vec(),
-                public_key_sec1: verifying.to_sec1_point(false).as_bytes().to_vec(),
-            }],
-        }
+        TrustBundle::testing(
+            TrustPlane::Entitlement,
+            vec![TrustedSigner::new(
+                TEST_KID.to_vec(),
+                verifying.to_sec1_point(false).as_bytes().to_vec(),
+            )],
+        )
     }
 
     fn build_trust_bundle() -> TrustBundle {
         let signing = build_signing_key();
         let verifying = signing.verifying_key();
-        TrustBundle {
-            keys: vec![TrustedSigner {
-                kid: BUILD_TEST_KID.to_vec(),
-                public_key_sec1: verifying.to_sec1_point(false).as_bytes().to_vec(),
-            }],
-        }
+        TrustBundle::testing(
+            TrustPlane::BuildIdentity,
+            vec![TrustedSigner::new(
+                BUILD_TEST_KID.to_vec(),
+                verifying.to_sec1_point(false).as_bytes().to_vec(),
+            )],
+        )
     }
 
     fn verifier() -> EntitlementVerifier {
         EntitlementVerifier::new(trust_bundle(), build_trust_bundle())
+            .expect("test trust planes")
     }
 
     fn verifier_with_entitlement_trust(trust: TrustBundle) -> EntitlementVerifier {
         EntitlementVerifier::new(trust, build_trust_bundle())
+            .expect("test trust planes")
     }
 
     fn payload() -> ActivationPayloadV1 {
@@ -380,8 +465,11 @@ mod tests {
         out
     }
 
-    fn sign_payload_bytes(payload_bytes: Vec<u8>, kid: &[u8]) -> Vec<u8> {
-        let signing = signing_key();
+    fn sign_payload_bytes_with(
+        payload_bytes: Vec<u8>,
+        signing: &SigningKey,
+        kid: &[u8],
+    ) -> Vec<u8> {
         let protected = HeaderBuilder::new()
             .algorithm(iana::Algorithm::ESP256)
             .key_id(kid.to_vec())
@@ -398,6 +486,10 @@ mod tests {
             .build()
             .to_tagged_vec()
             .expect("COSE")
+    }
+
+    fn sign_payload_bytes(payload_bytes: Vec<u8>, kid: &[u8]) -> Vec<u8> {
+        sign_payload_bytes_with(payload_bytes, &signing_key(), kid)
     }
 
     fn sign_artifact(payload: &ActivationPayloadV1, kid: &[u8]) -> Vec<u8> {
@@ -557,15 +649,10 @@ mod tests {
             .as_bytes()
             .to_vec();
         let verifier = verifier_with_entitlement_trust(TrustBundle {
+            plane: TrustPlane::Entitlement,
             keys: vec![
-                TrustedSigner {
-                    kid: TEST_KID.to_vec(),
-                    public_key_sec1: public.clone(),
-                },
-                TrustedSigner {
-                    kid: TEST_KID.to_vec(),
-                    public_key_sec1: public,
-                },
+                TrustedSigner::new(TEST_KID.to_vec(), public.clone()),
+                TrustedSigner::new(TEST_KID.to_vec(), public),
             ],
         });
 
@@ -882,16 +969,135 @@ mod tests {
             .as_bytes()
             .to_vec();
         let verifier = verifier_with_entitlement_trust(TrustBundle {
-            keys: vec![TrustedSigner {
-                kid: TEST_KID.to_vec(),
-                public_key_sec1: compressed,
-            }],
+            plane: TrustPlane::Entitlement,
+            keys: vec![TrustedSigner::new(TEST_KID.to_vec(), compressed)],
         });
 
         let err = verifier
             .verify(&sign_artifact(&payload(), TEST_KID), &ctx())
             .unwrap_err();
         assert_eq!(err, EntitlementError::InvalidTrustBundle);
+    }
+
+    #[test]
+    fn production_bundle_rejects_reserved_test_namespace_and_malformed_anchors() {
+        let signing = signing_key();
+        let public = signing
+            .verifying_key()
+            .to_sec1_point(false)
+            .as_bytes()
+            .to_vec();
+
+        let reserved = TrustBundle::production_entitlement(vec![TrustedSigner::new(
+            b"test:fixture".to_vec(),
+            public.clone(),
+        )]);
+        assert!(matches!(reserved, Err(EntitlementError::InvalidTrustBundle)));
+
+        let empty_kid = TrustBundle::production_entitlement(vec![TrustedSigner::new(
+            Vec::new(),
+            public.clone(),
+        )]);
+        assert!(matches!(empty_kid, Err(EntitlementError::InvalidTrustBundle)));
+
+        let overlong_kid = TrustBundle::production_entitlement(vec![TrustedSigner::new(
+            vec![b'k'; MAX_KID_LEN + 1],
+            public.clone(),
+        )]);
+        assert!(matches!(overlong_kid, Err(EntitlementError::InvalidTrustBundle)));
+
+        let compressed = signing
+            .verifying_key()
+            .to_sec1_point(true)
+            .as_bytes()
+            .to_vec();
+        let malformed_key = TrustBundle::production_entitlement(vec![TrustedSigner::new(
+            b"prod:entitlement:bad".to_vec(),
+            compressed,
+        )]);
+        assert!(matches!(
+            malformed_key,
+            Err(EntitlementError::InvalidTrustBundle)
+        ));
+
+        let duplicate = TrustBundle::production_entitlement(vec![
+            TrustedSigner::new(b"prod:entitlement:current".to_vec(), public.clone()),
+            TrustedSigner::new(b"prod:entitlement:current".to_vec(), public),
+        ]);
+        assert!(matches!(
+            duplicate,
+            Err(EntitlementError::InvalidTrustBundle)
+        ));
+    }
+
+    #[test]
+    fn trust_planes_cannot_be_swapped_at_verifier_construction() {
+        let result = EntitlementVerifier::new(build_trust_bundle(), trust_bundle());
+        assert!(matches!(result, Err(EntitlementError::InvalidTrustBundle)));
+    }
+
+    #[test]
+    fn signer_rotation_retains_old_until_anchor_is_removed() {
+        let old_signing = SigningKey::from_slice(&[11u8; 32]).expect("old signer");
+        let current_signing = SigningKey::from_slice(&[12u8; 32]).expect("current signer");
+        let future_signing = SigningKey::from_slice(&[13u8; 32]).expect("future signer");
+
+        let old_kid = b"prod:entitlement:2025";
+        let current_kid = b"prod:entitlement:2026";
+        let future_kid = b"prod:entitlement:2027";
+
+        let bundle = TrustBundle::production_entitlement(vec![
+            TrustedSigner::new(
+                old_kid.to_vec(),
+                old_signing
+                    .verifying_key()
+                    .to_sec1_point(false)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            TrustedSigner::new(
+                current_kid.to_vec(),
+                current_signing
+                    .verifying_key()
+                    .to_sec1_point(false)
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ])
+        .expect("production rotation bundle");
+        let verifier =
+            EntitlementVerifier::new(bundle, build_trust_bundle()).expect("trust planes");
+
+        let old_artifact =
+            sign_payload_bytes_with(encode_payload(&payload()), &old_signing, old_kid);
+        let current_artifact =
+            sign_payload_bytes_with(encode_payload(&payload()), &current_signing, current_kid);
+        let future_artifact =
+            sign_payload_bytes_with(encode_payload(&payload()), &future_signing, future_kid);
+
+        assert!(verifier.verify(&old_artifact, &ctx()).is_ok());
+        assert!(verifier.verify(&current_artifact, &ctx()).is_ok());
+        assert_eq!(
+            verifier.verify(&future_artifact, &ctx()).unwrap_err(),
+            EntitlementError::UnknownSigner
+        );
+
+        let current_only = TrustBundle::production_entitlement(vec![TrustedSigner::new(
+            current_kid.to_vec(),
+            current_signing
+                .verifying_key()
+                .to_sec1_point(false)
+                .as_bytes()
+                .to_vec(),
+        )])
+        .expect("current-only production bundle");
+        let verifier = EntitlementVerifier::new(current_only, build_trust_bundle())
+            .expect("trust planes");
+        assert_eq!(
+            verifier.verify(&old_artifact, &ctx()).unwrap_err(),
+            EntitlementError::UnknownSigner
+        );
+        assert!(verifier.verify(&current_artifact, &ctx()).is_ok());
     }
 
     #[test]
