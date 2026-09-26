@@ -147,11 +147,8 @@ impl FailureGroupBuilder {
 }
 
 pub fn open_for_product(bytes: &[u8]) -> Result<ViewerGeometryDocument, String> {
-    pub_viewer::open_mature_0x2c_geometry(
-        bytes,
-        pub_viewer::viewer_geometry_environment_v0_1(),
-    )
-    .map_err(|error| format!("{error:#}"))
+    pub_viewer::open_mature_0x2c_geometry(bytes, pub_viewer::viewer_geometry_environment_v0_1())
+        .map_err(|error| format!("{error:#}"))
 }
 
 pub fn start_folder_sweep(root: PathBuf) -> FolderSweepHandle {
@@ -182,8 +179,8 @@ fn run_folder_sweep(
     cancel: &AtomicBool,
     mut emit: impl FnMut(FolderSweepEvent),
 ) -> Result<(), String> {
-    let metadata =
-        fs::metadata(root).map_err(|error| format!("read scan root {}: {error}", root.display()))?;
+    let metadata = fs::metadata(root)
+        .map_err(|error| format!("read scan root {}: {error}", root.display()))?;
     if !metadata.is_dir() {
         return Err(format!("scan root is not a directory: {}", root.display()));
     }
@@ -311,7 +308,9 @@ fn scan_pub_candidate(
             return FolderSweepFileResult {
                 relative_path: candidate.relative_path.clone(),
                 depth: candidate.depth,
-                byte_len: fs::metadata(&candidate.path).ok().map(|metadata| metadata.len()),
+                byte_len: fs::metadata(&candidate.path)
+                    .ok()
+                    .map(|metadata| metadata.len()),
                 sha256: None,
                 opened: false,
                 format: None,
@@ -473,16 +472,18 @@ fn record_failure(
     key_material.push_str(&normalized_message);
     let id = format!("F-{}", &sha256_hex(key_material.as_bytes())[..16]);
 
-    let group = groups.entry(id.clone()).or_insert_with(|| FailureGroupBuilder {
-        id: id.clone(),
-        stage: stage.to_owned(),
-        intake_class: intake_class.map(str::to_owned),
-        normalized_message,
-        count: 0,
-        representative_paths: Vec::new(),
-        affected_paths: Vec::new(),
-        sample_full_diagnostic: full_diagnostic.to_owned(),
-    });
+    let group = groups
+        .entry(id.clone())
+        .or_insert_with(|| FailureGroupBuilder {
+            id: id.clone(),
+            stage: stage.to_owned(),
+            intake_class: intake_class.map(str::to_owned),
+            normalized_message,
+            count: 0,
+            representative_paths: Vec::new(),
+            affected_paths: Vec::new(),
+            sample_full_diagnostic: full_diagnostic.to_owned(),
+        });
     group.count += 1;
     if group.representative_paths.len() < REPRESENTATIVE_PATH_LIMIT {
         group.representative_paths.push(relative_path.to_owned());
@@ -501,7 +502,10 @@ fn normalize_failure_message(message: &str) -> String {
 
 fn normalize_failure_token(token: &str) -> String {
     let trimmed = token.trim_matches(|ch: char| {
-        matches!(ch, ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'')
+        matches!(
+            ch,
+            ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\''
+        )
     });
     if trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return token.replace(trimmed, "<sha256>");

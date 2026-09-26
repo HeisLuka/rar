@@ -36,10 +36,9 @@ pub fn install(ctx: &egui::Context) -> Result<(), String> {
 
     let mut fonts = egui::FontDefinitions::default();
     let key = RESOURCE_ID.to_owned();
-    fonts.font_data.insert(
-        key.clone(),
-        Arc::new(egui::FontData::from_static(bytes())),
-    );
+    fonts
+        .font_data
+        .insert(key.clone(), Arc::new(egui::FontData::from_static(bytes())));
     fonts
         .families
         .entry(egui::FontFamily::Proportional)
