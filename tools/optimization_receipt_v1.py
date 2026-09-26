@@ -223,7 +223,10 @@ def render_bench_measurement(receipt: dict[str, Any], build_identity: dict[str, 
         "evidence_authority": {
             "real_product_corpus": real_pub,
             "synthetic_or_product_grounded_public": not real_pub,
-            "technology_decision_allowed": real_pub,
+            # A real PUB-derived workload upgrades corpus authority, but this CPU/Python
+            # reference benchmark still does not measure the GPU/backend/cost vector
+            # required for an automatic product-technology choice.
+            "technology_decision_allowed": False,
             "blocker": receipt.get("closure_blocker"),
         },
         "metrics": metrics,
