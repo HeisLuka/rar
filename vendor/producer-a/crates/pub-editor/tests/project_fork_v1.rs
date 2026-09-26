@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorEditableTarget, EditorProject,
-    EditorProjectAsset, EditorProjectError, EditorProjectForkProvenance, EditorProjectIdentity,
-    EditorSession, LengthEmu, RectEmu, Sha256Digest,
+    EDITOR_PROJECT_VERSION_V0_11, EDITOR_PROJECT_VERSION_V0_12, EditOperation, EditorEditableTarget,
+    EditorProject, EditorProjectAsset, EditorProjectError, EditorProjectForkProvenance,
+    EditorProjectIdentity, EditorSession, ImageCropStateV1, LengthEmu, RectEmu, Sha256Digest,
 };
 use pub_model::{
     Affine2D, Document, DocumentId, Node, NodeHeader, NodeId, NodeKind, Page, PageId,
@@ -258,7 +258,6 @@ fn parent_and_next_issue_reopen_diverge_and_export_independently() {
     assert!(!next_export.bytes.is_empty());
     assert_eq!(reopened_parent.source_hash(), reopened_next.source_hash());
 }
-
 
 #[test]
 fn crop_bearing_next_issue_preserves_v0_12_and_initial_state() {
