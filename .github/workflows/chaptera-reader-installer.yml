@@ -168,6 +168,9 @@ jobs:
           Set-Content -Encoding ascii -Path (Join-Path $installRoot ".staging\attempt-ci\candidate.bin") -Value "candidate"
           Set-Content -Encoding ascii -Path (Join-Path $installRoot ".rollback\0.0.9-ci\reader.bin") -Value "previous"
           Set-Content -Encoding utf8 -Path (Join-Path $installRoot "update-journal.json") -Value '{"schema_version":"chaptera.update-journal.v1","phase":"CandidateConfirmed"}'
+          Set-Content -Encoding utf8 -Path (Join-Path $installRoot "update-journal.json.next") -Value '{"torn":"synthetic"}'
+          Set-Content -Encoding utf8 -Path (Join-Path $installRoot "update-journal.json.prev") -Value '{"schema_version":"chaptera.update-journal.v1","phase":"PreviousRetained"}'
+          Set-Content -Encoding ascii -Path (Join-Path $installRoot ".chaptera-install.lock") -Value "synthetic-lock-file"
 
           $uninstallRoots = @(Get-ChildItem "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
             Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq "Chaptera PUB Reader $env:CHAPTERA_VERSION" })
