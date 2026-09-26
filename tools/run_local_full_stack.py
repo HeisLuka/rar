@@ -192,9 +192,9 @@ def main() -> int:
             ready = None
             while time.monotonic() < deadline:
                 if server.poll() is not None:
-                    raise RuntimeError(f"server exited during startup with code {server.returncode}")
+                    raise RuntimeError(\n                        f"server exited during startup with code {server.returncode}\\n"\n                        f"--- server.log ---\\n{tail(SERVER_LOG)}"\n                    )
                 if worker.poll() is not None:
-                    raise RuntimeError(f"worker exited during startup with code {worker.returncode}")
+                    raise RuntimeError(\n                        f"worker exited during startup with code {worker.returncode}\\n"\n                        f"--- worker.log ---\\n{tail(WORKER_LOG)}"\n                    )
                 ready = http_code(URL + "/ready")
                 if ready == 200:
                     break
