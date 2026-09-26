@@ -3857,6 +3857,76 @@ mod tests {
 
     #[cfg(feature = "embedded-fixture-tests")]
     #[test]
+    fn sample_newsletter_preview_applies_source_owned_sizes_with_explicit_fallback_gaps() {
+        let pub_bytes = sample_newsletter_fixture();
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &pub_bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("SampleNewsletter should expose bounded typography");
+
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "pinned SampleNewsletter must expose at least one source-owned typography range"
+        );
+
+        let scene_scale = 1.0_f32 / 12_700.0_f32;
+        let fallback_font_size = 9.0_f32;
+        let mut source_sections = 0_usize;
+        let mut fallback_sections = 0_usize;
+        let mut saw_visible_rockwell_24pt = false;
+
+        for fragment in visual
+            .text_fragments
+            .iter()
+            .filter(|fragment| !fragment.text.is_empty())
+        {
+            let (job, usage) = preview_typography::layout_fragment(
+                &visual.typography_runs,
+                fragment,
+                scene_scale,
+                fallback_font_size,
+                500.0,
+            );
+            source_sections += usage.source_sections;
+            fallback_sections += usage.fallback_sections;
+
+            let has_rockwell_24pt_intersection = visual.typography_runs.iter().any(|run| {
+                run.story_id == fragment.story_id
+                    && run.scalar_start < fragment.scalar_end
+                    && run.scalar_end > fragment.scalar_start
+                    && run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700
+            });
+            if has_rockwell_24pt_intersection
+                && job
+                    .sections
+                    .iter()
+                    .any(|section| (section.format.font_id.size - 24.0).abs() < 0.001)
+            {
+                saw_visible_rockwell_24pt = true;
+            }
+        }
+
+        eprintln!(
+            "SampleNewsletter preview typography: source_sections={source_sections} fallback_sections={fallback_sections}"
+        );
+        assert!(
+            source_sections > 0,
+            "at least one visible fragment must consume grounded source typography"
+        );
+        assert!(
+            fallback_sections > 0,
+            "unowned/default typography must remain explicit fallback"
+        );
+        assert!(
+            saw_visible_rockwell_24pt,
+            "a visible Rockwell Condensed 24pt source range must affect preview size"
+        );
+    }
+
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
     fn real_pub_exposes_decodable_exact_image_bound_to_scene_node() {
         let pub_bytes = sample_newsletter_fixture();
         let visual = pub_viewer::open_mature_0x2c_geometry(
