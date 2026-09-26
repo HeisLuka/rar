@@ -1033,6 +1033,7 @@ impl ViewerApp {
                             ui.painter(),
                             rect,
                             visual,
+                            self.editor.as_ref(),
                             &self.image_textures,
                             index,
                             selected,
@@ -3326,6 +3327,7 @@ fn paint_page_thumbnail(
     painter: &egui::Painter,
     rect: egui::Rect,
     visual: &ViewerGeometryDocument,
+    editor: Option<&pub_editor::EditorSession>,
     image_textures: &BTreeMap<String, egui::TextureHandle>,
     page_index: usize,
     selected: bool,
@@ -3398,7 +3400,13 @@ fn paint_page_thumbnail(
             );
         }
 
-        let texture = visual
+        let replacement_key = editor
+            .and_then(|editor| editor.image_replacement_for(node.origin))
+            .map(|sha256| format!("replacement:{:?}", sha256));
+        let replacement_texture = replacement_key
+            .as_ref()
+            .and_then(|key| image_textures.get(key));
+        let source_texture = visual
             .images
             .iter()
             .find(|embedded| embedded.node_ids.contains(&node.origin))
@@ -3406,7 +3414,7 @@ fn paint_page_thumbnail(
                 let key = format!("{:?}", embedded.resource_id);
                 image_textures.get(&key)
             });
-        if let Some(texture) = texture {
+        if let Some(texture) = replacement_texture.or(source_texture) {
             painter.image(
                 texture.id(),
                 node_rect,
@@ -3418,17 +3426,36 @@ fn paint_page_thumbnail(
             );
         }
 
-        let has_story = visual
+        if let Some(frame) = visual
             .story_frames
             .iter()
-            .any(|frame| frame.frame_id == node.origin);
-        if has_story {
+            .find(|frame| frame.frame_id == node.origin)
+        {
             painter.rect_stroke(
                 node_rect,
                 0.0,
                 egui::Stroke::new(0.6, egui::Color32::LIGHT_GRAY),
                 egui::StrokeKind::Inside,
             );
+            if let Some(story) = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| story.id == frame.story_id)
+                && !story.text.is_empty()
+                && node_rect.width() >= 4.0
+                && node_rect.height() >= 4.0
+            {
+                let text_painter = painter.with_clip_rect(node_rect.shrink(1.0));
+                let preview = story.text.replace(['\r', '\n'], " ");
+                text_painter.text(
+                    node_rect.left_top() + egui::vec2(1.0, 1.0),
+                    egui::Align2::LEFT_TOP,
+                    preview,
+                    egui::FontId::proportional(4.5),
+                    egui::Color32::DARK_GRAY,
+                );
+            }
         }
 
         if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
