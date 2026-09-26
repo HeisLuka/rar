@@ -1175,7 +1175,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, {EDITOR_PROJECT_VERSION_V0_10:?}, or {EDITOR_PROJECT_VERSION_V0_11:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, {EDITOR_PROJECT_VERSION_V0_10:?}, {EDITOR_PROJECT_VERSION_V0_11:?}, or {EDITOR_PROJECT_VERSION_V0_12:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -1215,6 +1215,10 @@ impl fmt::Display for EditorProjectError {
                 formatter,
                 "editor project operation {index} uses CreateShape but the project schema predates pub-editor-v0.10"
             ),
+            Self::LegacyProjectCarriesRulerGuideOperation { index } => write!(
+                formatter,
+                "editor project operation {index} uses ruler-guide authoring but the project schema predates pub-editor-v0.12"
+            ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
             ),
@@ -1222,7 +1226,7 @@ impl fmt::Display for EditorProjectError {
                 "editor projects before pub-editor-v0.11 cannot carry durable project identity",
             ),
             Self::MissingProjectIdentity => formatter.write_str(
-                "pub-editor-v0.11 requires durable project identity",
+                "pub-editor-v0.11+ requires durable project identity",
             ),
             Self::TableGridMismatch => formatter.write_str(
                 "editor project EffectiveTableGridV1 state does not match deterministic replay",
@@ -1623,6 +1627,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1650,6 +1655,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1666,6 +1672,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1681,6 +1688,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
             && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
@@ -1690,6 +1698,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project.operations.iter().position(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
@@ -1701,6 +1710,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1713,6 +1723,7 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1724,6 +1735,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1733,11 +1745,29 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesCreateShapeOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_some() {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
+            && project.identity.is_some()
+        {
             return Err(EditorProjectError::LegacyProjectCarriesIdentity);
         }
-        if project.schema_version == EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_none() {
+        if (project.schema_version == EDITOR_PROJECT_VERSION_V0_11
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_12)
+            && project.identity.is_none()
+        {
             return Err(EditorProjectError::MissingProjectIdentity);
+        }
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_12 {
+            if let Some(index) = project.operations.iter().position(|operation| {
+                matches!(
+                    operation,
+                    EditOperation::AddRulerGuide { .. }
+                        | EditOperation::MoveRulerGuide { .. }
+                        | EditOperation::DeleteRulerGuide { .. }
+                )
+            }) {
+                return Err(EditorProjectError::LegacyProjectCarriesRulerGuideOperation { index });
+            }
         }
         if project.source_hash != self.source_hash {
             return Err(EditorProjectError::SourceHashMismatch {
@@ -1750,6 +1780,7 @@ impl EditorSession {
             || !self.replacement_assets.is_empty()
             || !self.image_replacements.is_empty()
             || !self.authored_shapes.is_empty()
+            || !self.authored_ruler_guides.is_empty()
         {
             return Err(EditorProjectError::SessionNotEmpty);
         }
@@ -1803,6 +1834,7 @@ impl EditorSession {
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_9
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_10
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_11
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_12
         {
             let actual_grids = effective_table_grids(&candidate.graph);
             if actual_grids != project.table_grids {
@@ -2977,6 +3009,8 @@ impl EditorSession {
             apply_image_inverse(&mut self.image_replacements, &operation)?;
         } else if matches!(operation, EditOperation::CreateShape { .. }) {
             apply_authored_shape_inverse(&mut self.authored_shapes, &operation)?;
+        } else if is_ruler_guide_operation(&operation) {
+            apply_ruler_guide_inverse(&mut self.authored_ruler_guides, &operation)?;
         } else {
             apply_inverse(&mut self.graph, &operation)?;
         }
@@ -2994,6 +3028,29 @@ impl EditorSession {
                 .expect("CreateShape operation reconstructs authored shape");
             self.validate_create_shape_candidate(&shape)?;
             self.authored_shapes.insert(shape.node_id, shape);
+        } else if is_ruler_guide_operation(&operation) {
+            match &operation {
+                EditOperation::AddRulerGuide { guide } => {
+                    self.validate_ruler_guide_candidate(guide)?;
+                }
+                EditOperation::MoveRulerGuide {
+                    guide_id,
+                    page_id,
+                    axis,
+                    after_position,
+                    ..
+                } => {
+                    self.validate_ruler_guide_candidate(&EditorRulerGuide {
+                        guide_id: *guide_id,
+                        page_id: *page_id,
+                        axis: *axis,
+                        position: *after_position,
+                    })?;
+                }
+                EditOperation::DeleteRulerGuide { .. } => {}
+                _ => unreachable!(),
+            }
+            apply_ruler_guide_forward(&mut self.authored_ruler_guides, &operation)?;
         } else {
             apply_forward(&mut self.graph, &operation)?;
         }
@@ -3154,12 +3211,145 @@ fn replay_canonical_operation(
         EditOperation::CreateShape { .. } => session
             .consume_canonical_create_shape(expected.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::AddRulerGuide { guide } => session
+            .consume_canonical_add_ruler_guide(*guide)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::MoveRulerGuide {
+            guide_id,
+            after_position,
+            ..
+        } => session
+            .move_ruler_guide(*guide_id, *after_position)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
+        EditOperation::DeleteRulerGuide { guide } => session
+            .delete_ruler_guide(guide.guide_id)
+            .map_err(|error| EditorProjectError::Operation { index, error }),
     }
 }
 
 fn is_editor_created_uuid_v7_story_id(story_id: StoryId) -> bool {
     let bytes = story_id.as_canonical().as_bytes();
     (bytes[6] & 0xf0) == 0x70 && (bytes[8] & 0xc0) == 0x80
+}
+
+fn is_editor_created_uuid_v7_canonical_id(id: CanonicalId) -> bool {
+    let bytes = id.as_bytes();
+    (bytes[6] & 0xf0) == 0x70 && (bytes[8] & 0xc0) == 0x80
+}
+
+fn is_ruler_guide_operation(operation: &EditOperation) -> bool {
+    matches!(
+        operation,
+        EditOperation::AddRulerGuide { .. }
+            | EditOperation::MoveRulerGuide { .. }
+            | EditOperation::DeleteRulerGuide { .. }
+    )
+}
+
+fn apply_ruler_guide_forward(
+    guides: &mut BTreeMap<CanonicalId, EditorRulerGuide>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    match operation {
+        EditOperation::AddRulerGuide { guide } => {
+            if guides.contains_key(&guide.guide_id) {
+                return Err(EditorError::RulerGuideIdCollision {
+                    guide_id: guide.guide_id,
+                });
+            }
+            guides.insert(guide.guide_id, *guide);
+        }
+        EditOperation::MoveRulerGuide {
+            guide_id,
+            page_id,
+            axis,
+            before_position,
+            after_position,
+        } => {
+            let current = guides
+                .get_mut(guide_id)
+                .ok_or(EditorError::RulerGuideMissing {
+                    guide_id: *guide_id,
+                })?;
+            if current.page_id != *page_id
+                || current.axis != *axis
+                || current.position != *before_position
+            {
+                return Err(EditorError::StaleRulerGuide {
+                    guide_id: *guide_id,
+                });
+            }
+            current.position = *after_position;
+        }
+        EditOperation::DeleteRulerGuide { guide } => {
+            let current = guides
+                .get(&guide.guide_id)
+                .ok_or(EditorError::RulerGuideMissing {
+                    guide_id: guide.guide_id,
+                })?;
+            if current != guide {
+                return Err(EditorError::StaleRulerGuide {
+                    guide_id: guide.guide_id,
+                });
+            }
+            guides.remove(&guide.guide_id);
+        }
+        _ => return Err(EditorError::RulerGuideOverlayRoutingRequired),
+    }
+    Ok(())
+}
+
+fn apply_ruler_guide_inverse(
+    guides: &mut BTreeMap<CanonicalId, EditorRulerGuide>,
+    operation: &EditOperation,
+) -> Result<(), EditorError> {
+    match operation {
+        EditOperation::AddRulerGuide { guide } => {
+            let current = guides
+                .get(&guide.guide_id)
+                .ok_or(EditorError::RulerGuideMissing {
+                    guide_id: guide.guide_id,
+                })?;
+            if current != guide {
+                return Err(EditorError::StaleRulerGuide {
+                    guide_id: guide.guide_id,
+                });
+            }
+            guides.remove(&guide.guide_id);
+        }
+        EditOperation::MoveRulerGuide {
+            guide_id,
+            page_id,
+            axis,
+            before_position,
+            after_position,
+        } => {
+            let current = guides
+                .get_mut(guide_id)
+                .ok_or(EditorError::RulerGuideMissing {
+                    guide_id: *guide_id,
+                })?;
+            if current.page_id != *page_id
+                || current.axis != *axis
+                || current.position != *after_position
+            {
+                return Err(EditorError::StaleRulerGuide {
+                    guide_id: *guide_id,
+                });
+            }
+            current.position = *before_position;
+        }
+        EditOperation::DeleteRulerGuide { guide } => {
+            if guides.contains_key(&guide.guide_id) {
+                return Err(EditorError::RulerGuideIdCollision {
+                    guide_id: guide.guide_id,
+                });
+            }
+            guides.insert(guide.guide_id, *guide);
+        }
+        _ => return Err(EditorError::RulerGuideOverlayRoutingRequired),
+    }
+    Ok(())
 }
 
 fn frame_snapshot(
