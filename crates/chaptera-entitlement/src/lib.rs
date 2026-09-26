@@ -794,6 +794,30 @@ mod tests {
     }
 
     #[test]
+    fn local_artifact_rejects_subject_and_edition_authority_fields() {
+        let verifier = verifier();
+        let mut value = Value::serialized(&payload()).expect("payload value");
+        let Value::Map(entries) = &mut value else {
+            panic!("payload must serialize as a CBOR map");
+        };
+        entries.push((
+            Value::Text("subject_id".to_owned()),
+            Value::Text("global-user-123".to_owned()),
+        ));
+        entries.push((
+            Value::Text("edition".to_owned()),
+            Value::Text("enterprise".to_owned()),
+        ));
+
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&value, &mut bytes).expect("CBOR value");
+        let err = verifier
+            .verify(&sign_payload_bytes(bytes, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::MalformedArtifact);
+    }
+
+    #[test]
     fn signed_payload_with_duplicate_cbor_key_is_rejected() {
         let verifier = verifier();
         let mut value = Value::serialized(&payload()).expect("payload value");
