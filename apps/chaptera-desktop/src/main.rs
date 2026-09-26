@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod diagnostic_sweep;
+mod preview_typography;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
@@ -24,7 +25,7 @@ use pub_interaction::{
 use pub_viewer::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, ViewerDiagnosticSeverity, ViewerFidelityStatus,
-    ViewerGeometryDocument, ViewerTextFragment, ViewerTextMatch, classify_failure_candidate,
+    ViewerGeometryDocument, ViewerTextMatch, classify_failure_candidate,
     exact_file_intake_eligible,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,7 +62,7 @@ fn failure_mailto_recipient_configured() -> bool {
 }
 const SUPPORTER_STORAGE_KEY: &str = "chaptera.supporter.v1";
 const PAGE_MARGIN: f32 = 24.0;
-const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Explicit source-owned font-size ranges can affect preview sizing, but the current renderer still uses a deterministic fallback font face; unresolved/default-inherited typography remains fallback. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2950,18 +2951,15 @@ impl ViewerApp {
                         let text_painter = painter.with_clip_rect(text_clip_rect);
                         let fallback_font_size =
                             (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
-                        let font_size = exact_fragment_source_font_size_px(
-                            visual,
-                            fragment,
-                            scene_scale,
-                        )
-                        .unwrap_or(fallback_font_size);
-                        let galley = text_painter.layout(
-                            fragment.text.clone(),
-                            egui::FontId::proportional(font_size),
-                            egui::Color32::BLACK,
-                            text_clip_rect.width().max(1.0_f32),
-                        );
+                        let (layout_job, _typography_usage) =
+                            preview_typography::layout_fragment(
+                                &visual.typography_runs,
+                                fragment,
+                                scene_scale,
+                                fallback_font_size,
+                                text_clip_rect.width().max(1.0_f32),
+                            );
+                        let galley = text_painter.layout_job(layout_job);
                         if preview_text_height_is_clipped(
                             galley.size().y,
                             text_clip_rect.height(),
@@ -3247,31 +3245,6 @@ fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool 
     galley_height > clip_height + EPSILON_PX
 }
 
-fn exact_fragment_source_font_size_px(
-    visual: &ViewerGeometryDocument,
-    fragment: &ViewerTextFragment,
-    scene_scale: f32,
-) -> Option<f32> {
-    let mut matches = visual.typography_runs.iter().filter(|run| {
-        run.story_id == fragment.story_id
-            && run.scalar_start <= fragment.scalar_start
-            && run.scalar_end >= fragment.scalar_end
-    });
-    let run = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    source_text_size_px(run.text_size_emu, scene_scale)
-}
-
-fn source_text_size_px(text_size_emu: u32, scene_scale: f32) -> Option<f32> {
-    if text_size_emu == 0 || !scene_scale.is_finite() || scene_scale <= 0.0 {
-        return None;
-    }
-    let px = text_size_emu as f32 * scene_scale;
-    px.is_finite().then(|| px.clamp(4.0, 96.0))
-}
-
 fn editable_export_path(
     source_path: &Path,
     target: pub_editor::EditorEditableTarget,
@@ -3496,11 +3469,11 @@ mod tests {
     #[test]
     fn grounded_source_text_size_maps_through_scene_scale() {
         let one_point_in_pixels = 1.0_f32 / 12_700.0_f32;
-        let size = source_text_size_px(24 * 12_700, one_point_in_pixels)
+        let size = preview_typography::source_text_size_px(24 * 12_700, one_point_in_pixels)
             .expect("positive grounded text size");
         assert!((size - 24.0).abs() < 0.001);
-        assert!(source_text_size_px(0, one_point_in_pixels).is_none());
-        assert!(source_text_size_px(24 * 12_700, 0.0).is_none());
+        assert!(preview_typography::source_text_size_px(0, one_point_in_pixels).is_none());
+        assert!(preview_typography::source_text_size_px(24 * 12_700, 0.0).is_none());
     }
 
     #[test]
