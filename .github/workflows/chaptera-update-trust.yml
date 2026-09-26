@@ -1,0 +1,40 @@
+name: Chaptera update metadata trust
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/chaptera-update-trust/**"
+      - ".github/workflows/chaptera-update-trust.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaptera-update-trust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update-trust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+      - name: Test Chaptera update trust boundary
+        run: cargo test -p chaptera-update-trust
+
+      - name: Install pinned tuftool fixture producer
+        run: cargo install --locked --version 0.17.0 tuftool
+
+      - name: Run generated signed-repository attack matrix
+        run: cargo test -p chaptera-update-trust --test generated_repository_matrix -- --ignored --nocapture
+
+      - name: Prove pinned TUF dependency
+        run: |
+          cargo tree -p chaptera-update-trust | grep 'tough v0.24.0'
+          tuftool --version | grep '0.17.0'
