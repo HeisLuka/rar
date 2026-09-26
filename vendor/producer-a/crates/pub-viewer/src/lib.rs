@@ -1103,6 +1103,67 @@ mod tests {
         }
     }
 
+    fn linked_resolved_graph_fixture(text: &str) -> PubResolvedGraph {
+        let mut graph = resolved_graph_fixture();
+        let page_id = graph.document.pages[0];
+        let first_frame = *graph.nodes.keys().next().expect("fixture frame");
+        let second_frame = NodeId::from_canonical(id(5));
+        let story_id = *graph.stories.keys().next().expect("fixture story");
+        let scalar_advance = VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1;
+        let line_height = VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1;
+
+        {
+            let page = graph.pages.get_mut(&page_id).expect("fixture page");
+            page.size = Size2D::new(
+                LengthEmu::new(scalar_advance * 12),
+                LengthEmu::new(line_height * 4),
+            );
+            page.children = vec![first_frame, second_frame];
+        }
+
+        let mut second_node = graph
+            .nodes
+            .get(&first_frame)
+            .expect("first frame")
+            .clone();
+        second_node.header.id = second_frame;
+        second_node.header.bounds = RectEmu::new(
+            LengthEmu::ZERO,
+            LengthEmu::new(line_height * 2),
+            LengthEmu::new(scalar_advance * 4),
+            LengthEmu::new(line_height),
+        );
+        second_node.payload.story_frame = Some(PubResolvedStoryFrame {
+            story_id: Some(story_id),
+            ordinal: 1,
+            previous_frame: Some(first_frame),
+            next_frame: None,
+        });
+
+        {
+            let first = graph.nodes.get_mut(&first_frame).expect("first frame");
+            first.header.bounds = RectEmu::new(
+                LengthEmu::ZERO,
+                LengthEmu::ZERO,
+                LengthEmu::new(scalar_advance * 4),
+                LengthEmu::new(line_height),
+            );
+            first.payload.story_frame = Some(PubResolvedStoryFrame {
+                story_id: Some(story_id),
+                ordinal: 0,
+                previous_frame: None,
+                next_frame: Some(second_frame),
+            });
+        }
+        graph.nodes.insert(second_frame, second_node);
+        graph
+            .stories
+            .get_mut(&story_id)
+            .expect("fixture story")
+            .text = text.to_owned();
+        graph
+    }
+
     #[test]
     fn source_hash_matches_sha256_known_answer() {
         let expected: Sha256Digest =
@@ -1538,6 +1599,99 @@ mod tests {
                 .filter(|diagnostic| diagnostic.code == "viewer.text.fallback_flow_metrics")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn viewer_text_projection_refresh_reflows_same_explicit_linked_chain() {
+        let mut graph = linked_resolved_graph_fixture("ABCDEFGHI");
+        let story_id = *graph.stories.keys().next().expect("fixture story");
+        let projection =
+            project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
+        let scene =
+            resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
+                .expect("scene");
+        let (initial_fragments, initial_flow_diagnostics) =
+            resolve_viewer_text_fragments(&projection).expect("initial linked flow");
+        assert_eq!(
+            initial_fragments
+                .iter()
+                .map(|fragment| fragment.text.as_str())
+                .collect::<String>(),
+            "ABCDEFGH"
+        );
+        assert!(
+            initial_flow_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "story_overset")
+        );
+
+        let initial_frames = projection
+            .story_frames
+            .iter()
+            .map(|frame| ViewerStoryFrame {
+                story_id: frame.story_origin,
+                frame_id: frame.frame_origin,
+                ordinal: frame.ordinal,
+            })
+            .collect::<Vec<_>>();
+        let mut diagnostics = initial_flow_diagnostics
+            .iter()
+            .map(map_scene_diagnostic)
+            .collect::<Vec<_>>();
+        diagnostics.push(viewer_fallback_flow_metrics_diagnostic());
+        normalize_diagnostics(&mut diagnostics);
+
+        let source_hash = graph.source.source_hash;
+        let mut visual = ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document: ViewerDocument {
+                schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
+                source: ViewerSource {
+                    format: "pub".to_owned(),
+                    format_version: Some("0x2c".to_owned()),
+                    source_hash,
+                    byte_len: 1,
+                },
+                pages: Vec::new(),
+                stories: vec![ViewerStory {
+                    id: story_id,
+                    text: "ABCDEFGHI".to_owned(),
+                }],
+                diagnostics,
+            },
+            scene,
+            paints: Vec::new(),
+            story_frames: initial_frames.clone(),
+            text_fragments: initial_fragments,
+            images: Vec::new(),
+        };
+
+        graph
+            .stories
+            .get_mut(&story_id)
+            .expect("fixture story")
+            .text = "XYZ1234".to_owned();
+
+        visual
+            .refresh_text_projection_from_resolved(&graph)
+            .expect("refresh linked Story");
+
+        assert_eq!(
+            visual
+                .text_fragments
+                .iter()
+                .map(|fragment| fragment.text.as_str())
+                .collect::<String>(),
+            "XYZ1234"
+        );
+        assert_eq!(visual.story_frames, initial_frames);
+        assert!(
+            !visual
+                .document
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "viewer.text.fallback_overset")
         );
     }
 
