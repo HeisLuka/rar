@@ -16,7 +16,7 @@ use windows_sys::Win32::Security::Cryptography::{
     BCRYPT_ECCPUBLIC_BLOB, BCRYPT_ECDSA_P256_ALGORITHM, BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
     CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
     MS_KEY_STORAGE_PROVIDER, MS_PLATFORM_CRYPTO_PROVIDER, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE,
-    NCRYPT_SILENT_FLAG, NCryptCreatePersistedKey, NCryptDeleteKey, NCryptExportKey,
+    NCRYPT_SILENT_FLAG, NCryptCreatePersistedKey, NCryptExportKey,
     NCryptFinalizeKey, NCryptFreeObject, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSignHash,
 };
 use windows_sys::Win32::Storage::FileSystem::{
@@ -238,7 +238,7 @@ impl WindowsDeviceKey {
 
     #[cfg(test)]
     fn delete_for_test(mut self) -> Result<(), WindowsPlatformError> {
-        let status = unsafe { NCryptDeleteKey(self.handles.key, NCRYPT_SILENT_FLAG) };
+        let status = unsafe {\n            windows_sys::Win32::Security::Cryptography::NCryptDeleteKey(\n                self.handles.key,\n                NCRYPT_SILENT_FLAG,\n            )\n        };
         cng_ok("NCryptDeleteKey", status)?;
         self.handles.key = 0;
         Ok(())
@@ -253,7 +253,7 @@ fn try_open_existing(
 ) -> Result<Option<WindowsDeviceKey>, WindowsPlatformError> {
     let provider = match open_provider(provider_name) {
         Ok(provider) => provider,
-        Err(status) if provider_unavailable_is_absent => return Ok(None),
+        Err(_status) if provider_unavailable_is_absent => return Ok(None),
         Err(status) => return Err(cng_error("NCryptOpenStorageProvider", status)),
     };
 
