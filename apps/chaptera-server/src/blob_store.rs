@@ -616,8 +616,14 @@ impl BlobStoreService {
             expected_byte_len,
             Box::new(upload_reader),
         );
-        let pump = async {
-            tokio::io::copy(&mut bounded, &mut upload_writer)
+        // Move the duplex writer into the pump future. If bounded input fails
+        // before the normal shutdown path (for example, one byte over the
+        // declared length), dropping the completed pump future must close the
+        // writer so the provider reader observes EOF instead of deadlocking
+        // inside read_to_end while join! waits for both sides.
+        let bounded_ref = &mut bounded;
+        let pump = async move {
+            tokio::io::copy(bounded_ref, &mut upload_writer)
                 .await
                 .map_err(|error| BlobStoreError::new("blob_input_failed", error.to_string()))?;
             upload_writer
@@ -630,10 +636,12 @@ impl BlobStoreService {
         let metadata = match create_result {
             Ok(metadata) => {
                 pump_result?;
+                bounded.require_exact_eof(expected_byte_len)?;
                 metadata
             }
             Err(error) if error.kind == ProviderErrorKind::UnknownOutcome => {
                 pump_result?;
+                bounded.require_exact_eof(expected_byte_len)?;
                 self.provider
                     .head_exact(&object_locator)
                     .await
@@ -651,10 +659,16 @@ impl BlobStoreService {
                     "create-only quarantine object already exists",
                 ));
             }
-            Err(error) => return Err(provider_error(error)),
+            Err(error) => {
+                // Prefer the authoritative input-side failure when the
+                // provider error is merely a consequence of a truncated
+                // duplex stream. For a cleanly exhausted short input, the
+                // bounded reader reports the more precise length mismatch.
+                pump_result?;
+                bounded.require_exact_eof(expected_byte_len)?;
+                return Err(provider_error(error));
+            }
         };
-
-        bounded.require_exact_eof(expected_byte_len)?;
         validate_provider_metadata(&metadata, expected_byte_len)?;
         require_ident(&metadata.generation, "storage_generation")?;
         require_ident(&metadata.etag, "object_etag")?;
