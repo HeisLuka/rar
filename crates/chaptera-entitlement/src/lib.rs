@@ -1,3 +1,8 @@
+mod build_identity;
+pub use build_identity::{
+    BUILD_IDENTITY_CONTENT_TYPE, BuildIdentityPayloadV1, TrustedBuildIdentity,
+};
+
 use coset::{
     iana, ContentType, CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable,
 };
@@ -56,15 +61,8 @@ pub enum RightV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuildIdentity<'a> {
-    pub product_id: &'a str,
-    pub major: u32,
-    pub released_at: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyContext<'a> {
-    pub build: BuildIdentity<'a>,
+    pub build_identity_artifact: Vec<u8>,
     pub expected_subject: Option<&'a str>,
     pub expected_device_key_id: &'a [u8],
 }
@@ -81,7 +79,7 @@ pub struct TrustBundle {
 }
 
 impl TrustBundle {
-    fn resolve(&self, kid: &[u8]) -> Result<&TrustedSigner, EntitlementError> {
+    pub(crate) fn resolve(&self, kid: &[u8]) -> Result<&TrustedSigner, EntitlementError> {
         let mut matches = self.keys.iter().filter(|k| k.kid.as_slice() == kid);
         let first = matches.next().ok_or(EntitlementError::UnknownSigner)?;
         if matches.next().is_some() {
@@ -124,6 +122,8 @@ pub enum EntitlementError {
     InvalidTrustBundle,
     #[error("signed payload violates Chaptera V1 policy")]
     PayloadPolicyViolation,
+    #[error("signed build identity violates Chaptera V1 policy")]
+    BuildIdentityPolicyViolation,
     #[error("product mismatch")]
     ProductMismatch,
     #[error("subject mismatch")]
@@ -138,9 +138,10 @@ pub enum EntitlementError {
 
 pub struct EntitlementVerifier {
     trust: TrustBundle,
+    build_trust: TrustBundle,
 }
 
-fn bounded_nonempty(value: &str, max_len: usize) -> bool {
+pub(crate) fn bounded_nonempty(value: &str, max_len: usize) -> bool {
     !value.is_empty() && value.len() <= max_len
 }
 
@@ -181,8 +182,8 @@ fn validate_payload_shape(payload: &ActivationPayloadV1) -> Result<(), Entitleme
 }
 
 impl EntitlementVerifier {
-    pub fn new(trust: TrustBundle) -> Self {
-        Self { trust }
+    pub fn new(trust: TrustBundle, build_trust: TrustBundle) -> Self {
+        Self { trust, build_trust }
     }
 
     pub fn verify(
@@ -264,7 +265,10 @@ impl EntitlementVerifier {
             return Err(EntitlementError::PayloadPolicyViolation);
         }
 
-        if payload.product_id != ctx.build.product_id {
+        let build =
+            build_identity::verify_build_identity(&ctx.build_identity_artifact, &self.build_trust)?;
+
+        if payload.product_id != build.product_id() {
             return Err(EntitlementError::ProductMismatch);
         }
 
@@ -284,11 +288,11 @@ impl EntitlementVerifier {
                 max_major,
                 updates_until,
             } => {
-                if ctx.build.major < min_major || ctx.build.major > max_major {
+                if build.major() < min_major || build.major() > max_major {
                     return Err(EntitlementError::VersionNotCovered);
                 }
                 if let Some(until) = updates_until
-                    && ctx.build.released_at > until
+                    && build.released_at() > until
                 {
                     return Err(EntitlementError::VersionNotCovered);
                 }
