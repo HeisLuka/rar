@@ -414,6 +414,8 @@ fn canonical_metadata(
     Ok(metadata)
 }
 
+// Mirrors the canonical V1 contract shape; keep authority parameters explicit.
+#[allow(clippy::too_many_arguments)]
 fn build_session(
     session_id: &str,
     incarnation: u32,
@@ -446,6 +448,8 @@ fn build_session(
     })
 }
 
+// Mirrors the canonical V1 contract shape; keep authority parameters explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn enter_text_edit_session_v1(
     session_id: &str,
     incarnation: u32,
@@ -619,6 +623,8 @@ pub fn handoff_same_story_frame_v1(
     })
 }
 
+// Mirrors the canonical V1 contract shape; keep authority parameters explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn switch_text_edit_session_v1(
     session: &TextEditSessionV1,
     candidate: &TextEntryCandidateV1,
@@ -873,6 +879,8 @@ fn activation_from_transition(
     })
 }
 
+// Mirrors the canonical V1 contract shape; keep authority parameters explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn activate_explicit_edit_text_v1(
     session_id: &str,
     document_id: &str,
@@ -924,6 +932,8 @@ pub fn activate_explicit_edit_text_v1(
     activation_from_transition(transition)
 }
 
+// Mirrors the canonical V1 contract shape; keep authority parameters explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn activate_pointer_text_v1(
     candidate: &TextEntryCandidateV1,
     revision_id: &str,
@@ -1148,6 +1158,8 @@ mod tests {
         }
     }
 
+    // Mirrors the canonical conformance fixture shape; keep arguments explicit.
+    #[allow(clippy::too_many_arguments)]
     fn line(
         story: &str,
         id: &str,
