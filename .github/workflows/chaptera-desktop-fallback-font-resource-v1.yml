@@ -1,0 +1,41 @@
+name: Chaptera Desktop Fallback Font Resource V1
+
+on:
+  push:
+    branches:
+      - chaptera-desktop-fallback-font-resource-01
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/**"
+      - "packages/product/editor-live-trial/**"
+      - "tools/package_editor_live_trial.py"
+      - "tools/test_package_editor_live_trial.py"
+      - ".github/workflows/chaptera-desktop-fallback-font-resource-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path apps/chaptera-desktop/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path apps/chaptera-desktop/Cargo.toml --all-targets -- -D warnings
+      - name: Font resource tests
+        run: cargo test --manifest-path apps/chaptera-desktop/Cargo.toml fallback_font::tests -- --nocapture
+      - name: Portable package carries font licence notice
+        run: python -m unittest tools.test_package_editor_live_trial -v
