@@ -11,8 +11,7 @@ pub mod keyboard;
 use chaptera_text_caret_map_adapter::ResolvedTextCaretMapV1;
 use chaptera_text_interaction_adapter::TextSelectionStateV1;
 use domain::{
-    StoryEditDomainV1, StoryEditDomainError, edit_domain_id_v1,
-    validate_ordinary_story_range_v1,
+    StoryEditDomainError, StoryEditDomainV1, edit_domain_id_v1, validate_ordinary_story_range_v1,
 };
 use ingress::{TextIngressError, normalize_external_text_v1};
 use keyboard::{
@@ -114,7 +113,9 @@ fn current_story_text(
         .stories
         .get(&story_id)
         .map(|story| story.text.clone())
-        .ok_or_else(|| TextInputAdapterError::new("missing_story", "Story is absent from EditorSession"))
+        .ok_or_else(|| {
+            TextInputAdapterError::new("missing_story", "Story is absent from EditorSession")
+        })
 }
 
 fn validate_selection_authority(
@@ -163,8 +164,9 @@ pub fn replace_selection_with_external_text_v1(
 ) -> Result<TextInputCommitV1, TextInputAdapterError> {
     validate_selection_authority(story_id, domain, selection, expected_revision_id)?;
     let before = current_story_text(session, story_id)?;
-    let current_len = u32::try_from(before.chars().count())
-        .map_err(|_| TextInputAdapterError::new("stale_story", "Story scalar length overflows u32"))?;
+    let current_len = u32::try_from(before.chars().count()).map_err(|_| {
+        TextInputAdapterError::new("stale_story", "Story scalar length overflows u32")
+    })?;
     if current_len != domain.raw_scalar_len {
         return Err(TextInputAdapterError::new(
             "stale_story",
@@ -176,20 +178,17 @@ pub fn replace_selection_with_external_text_v1(
     let end = selection.anchor_scalar.max(selection.focus_scalar);
     validate_ordinary_story_range_v1(domain, start, end)?;
     let expected_before = scalar_slice(&before, start, end)
-        .ok_or_else(|| TextInputAdapterError::new("invalid_range", "selection is not a valid scalar range"))?
+        .ok_or_else(|| {
+            TextInputAdapterError::new("invalid_range", "selection is not a valid scalar range")
+        })?
         .to_owned();
     let replacement = normalize_external_text_v1(external_text)?;
     let post = start.checked_add(replacement.scalar_len).ok_or_else(|| {
         TextInputAdapterError::new("scalar_overflow", "post-edit caret boundary overflows u32")
     })?;
 
-    let operation = session.replace_story_range(
-        story_id,
-        start,
-        end,
-        expected_before,
-        replacement.text,
-    )?;
+    let operation =
+        session.replace_story_range(story_id, start, end, expected_before, replacement.text)?;
 
     Ok(TextInputCommitV1 {
         operation,
@@ -238,7 +237,9 @@ pub fn apply_keyboard_command_and_lower_v1(
     }
     validate_ordinary_story_range_v1(domain, intent.start_scalar, intent.end_scalar)?;
     let expected_before = scalar_slice(&before, intent.start_scalar, intent.end_scalar)
-        .ok_or_else(|| TextInputAdapterError::new("invalid_range", "delete intent is not a valid scalar range"))?
+        .ok_or_else(|| {
+            TextInputAdapterError::new("invalid_range", "delete intent is not a valid scalar range")
+        })?
         .to_owned();
 
     let operation = session.replace_story_range(
@@ -297,15 +298,15 @@ mod tests {
 
     #[test]
     fn real_sample_newsletter_commit_is_one_replace_range_and_undo_exact() {
-        use crate::domain::{
-            StoryProvenanceHintV1, derive_editor_story_edit_domain_v1,
-        };
+        use crate::domain::{StoryProvenanceHintV1, derive_editor_story_edit_domain_v1};
         use pub_editor::{Sha256Digest, open_mature_0x2c_editor};
         use sha2::{Digest, Sha256};
         use std::{env, fs};
 
         let Some(path) = env::var_os("CHAPTERA_SAMPLE_NEWSLETTER") else {
-            eprintln!("CHAPTERA_SAMPLE_NEWSLETTER not set; dedicated real-fixture gate owns this test");
+            eprintln!(
+                "CHAPTERA_SAMPLE_NEWSLETTER not set; dedicated real-fixture gate owns this test"
+            );
             return;
         };
         let bytes = fs::read(path).expect("read pinned SampleNewsletter");
@@ -313,8 +314,8 @@ mod tests {
         let mut digest_bytes = [0_u8; 32];
         digest_bytes.copy_from_slice(&digest);
         let source_hash = Sha256Digest::from_bytes(digest_bytes);
-        let mut editor =
-            open_mature_0x2c_editor(&bytes, source_hash).expect("open real SampleNewsletter editor");
+        let mut editor = open_mature_0x2c_editor(&bytes, source_hash)
+            .expect("open real SampleNewsletter editor");
 
         let story_id = editor
             .graph()
@@ -362,7 +363,10 @@ mod tests {
             "X",
         )
         .expect("one bounded real Story insertion");
-        assert!(matches!(commit.operation, EditOperation::ReplaceStoryRange { .. }));
+        assert!(matches!(
+            commit.operation,
+            EditOperation::ReplaceStoryRange { .. }
+        ));
         assert_eq!(editor.operations().len(), 1);
         assert_eq!(editor.source_hash(), source_hash);
         assert_ne!(editor.graph().stories[&story_id].text, before);
