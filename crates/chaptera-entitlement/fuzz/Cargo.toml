@@ -1,0 +1,32 @@
+[package]
+name = "chaptera-entitlement-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.94.1"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+chaptera-entitlement = { path = ".." }
+coset = "0.4.2"
+libfuzzer-sys = "=0.4.13"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+
+[[bin]]
+name = "verify_raw"
+path = "fuzz_targets/verify_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_signed_payload"
+path = "fuzz_targets/verify_signed_payload.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
