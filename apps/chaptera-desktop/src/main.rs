@@ -4378,6 +4378,8 @@ mod tests {
                 .with_max_steps(20)
                 .wgpu()
                 .build_eframe(move |cc| {
+                    fallback_font::install(&cc.egui_ctx)
+                        .expect("pinned Chaptera fallback font resource must validate");
                     ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
                 });
             harness.step();
@@ -4425,7 +4427,11 @@ mod tests {
             .with_size(egui::vec2(1280.0, 820.0))
             .with_pixels_per_point(1.0)
             .with_max_steps(20)
-            .build_eframe(|cc| ViewerApp::new_with_storage(None, cc.storage));
+            .build_eframe(|cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                ViewerApp::new_with_storage(None, cc.storage)
+            });
 
         {
             let open = harness.get_by_label("Open PUB…");
@@ -4827,7 +4833,11 @@ mod tests {
             .with_size(egui::vec2(1280.0, 820.0))
             .with_pixels_per_point(1.0)
             .with_max_steps(24)
-            .build_eframe(move |cc| ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage));
+            .build_eframe(move |cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+            });
         harness.step();
 
         let (page_label, target_document_point) = {
