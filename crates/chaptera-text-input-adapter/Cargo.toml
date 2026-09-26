@@ -1,0 +1,20 @@
+[package]
+name = "chaptera-text-input-adapter"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+chaptera-text-caret-map-adapter = { path = "../chaptera-text-caret-map-adapter" }
+chaptera-text-interaction-adapter = { path = "../chaptera-text-interaction-adapter" }
+pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
+pub-reader = { path = "../../vendor/producer-a/crates/pub-reader" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+unicode-segmentation = "=1.10.1"
+
+[workspace]
+resolver = "2"
