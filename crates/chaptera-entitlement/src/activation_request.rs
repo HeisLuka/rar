@@ -16,6 +16,8 @@ pub struct ActivationRequestFactsV1 {
     pub schema_version: u16,
     pub request_id: String,
     pub product_id: String,
+    pub requested_major: u32,
+    pub request_nonce: [u8; 32],
     pub device_key_id: [u8; DEVICE_KEY_ID_LEN],
     pub device_public_key_sec1: Vec<u8>,
 }
@@ -31,6 +33,8 @@ struct ActivationRequestEnvelopeV1 {
 pub struct VerifiedActivationRequest {
     request_id: String,
     product_id: String,
+    requested_major: u32,
+    request_nonce: [u8; 32],
     device_key_id: [u8; DEVICE_KEY_ID_LEN],
     device_public_key_sec1: [u8; 65],
 }
@@ -42,6 +46,14 @@ impl VerifiedActivationRequest {
 
     pub fn product_id(&self) -> &str {
         &self.product_id
+    }
+
+    pub fn requested_major(&self) -> u32 {
+        self.requested_major
+    }
+
+    pub fn request_nonce(&self) -> &[u8; 32] {
+        &self.request_nonce
     }
 
     pub fn device_key_id(&self) -> &[u8; DEVICE_KEY_ID_LEN] {
@@ -184,6 +196,8 @@ pub fn verify_activation_request(
     Ok(VerifiedActivationRequest {
         request_id: facts.request_id,
         product_id: facts.product_id,
+        requested_major: facts.requested_major,
+        request_nonce: facts.request_nonce,
         device_key_id: facts.device_key_id,
         device_public_key_sec1: public,
     })
@@ -206,6 +220,8 @@ mod tests {
             schema_version: 1,
             request_id: "req-1".into(),
             product_id: "chaptera.editor".into(),
+            requested_major: 2,
+            request_nonce: [0x91; 32],
             device_key_id,
             device_public_key_sec1: public,
         };
@@ -229,6 +245,8 @@ mod tests {
             verify_activation_request(&signed_request(), "chaptera.editor").expect("valid request");
         assert_eq!(request.request_id(), "req-1");
         assert_eq!(request.product_id(), "chaptera.editor");
+        assert_eq!(request.requested_major(), 2);
+        assert_eq!(request.request_nonce(), &[0x91; 32]);
     }
 
     #[test]
