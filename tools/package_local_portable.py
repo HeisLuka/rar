@@ -161,7 +161,22 @@ def stage_package(
     copy_file(producer_exe, stage / "bin/chaptera-producer-a.exe")
 
     copy_tree(python_runtime, stage / "runtime/python")
-    copy_tree(python_packages, stage / "runtime/python-packages")
+
+    def python_package_predicate(path: pathlib.Path, relative: pathlib.Path) -> bool:
+        # Wheels may ship their own test suites. They are not runtime dependencies,
+        # and the portable contract intentionally excludes test code while retaining
+        # package metadata/license material for provenance.
+        if any(part.lower() in {"test", "tests"} for part in relative.parts):
+            return False
+        if path.name.startswith("test_"):
+            return False
+        return True
+
+    copy_tree(
+        python_packages,
+        stage / "runtime/python-packages",
+        predicate=python_package_predicate,
+    )
     patch_embedded_python(stage / "runtime/python")
     write_third_party_notices(stage)
 
