@@ -15,7 +15,8 @@ use chaptera_server::{
         AuthorizedDocumentSource, DocumentSourceAuthority, EDITOR_REVISION_EVENT_SCHEMA_V1,
         EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorReplayEngine, EditorRevisionEventV1,
         ExactRevisionMaterializer, ExactSourceLoader, PubEditorReplayEngine,
-        RevisionMaterializerError, encode_editor_revision_event_v1, project_sha256,
+        RevisionMaterializerError, cloud_revision_project, encode_editor_revision_event_v1,
+        project_sha256,
     },
     schema_migration::SqliteMigrationRuntime,
     sqlite_store::{
@@ -24,8 +25,8 @@ use chaptera_server::{
     },
 };
 use pub_editor::{
-    EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_4, EditOperation, EditorProject,
-    LengthEmu, RectEmu, Sha256Digest,
+    EDITOR_PROJECT_VERSION_V0_2, EDITOR_PROJECT_VERSION_V0_4, EDITOR_PROJECT_VERSION_V0_11,
+    EditOperation, EditorProject, EditorProjectIdentity, LengthEmu, RectEmu, Sha256Digest,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
@@ -729,6 +730,32 @@ async fn requested_revision_missing_and_prefix_gap_fail_closed() {
     cleanup_store(&store, &path).await;
 }
 
+#[test]
+fn cloud_revision_projection_strips_local_lineage_and_keeps_replayable_schema() {
+    let before = rect(10, 20, 30, 40);
+    let after = rect(50, 60, 30, 40);
+    let project = EditorProject {
+        schema_version: EDITOR_PROJECT_VERSION_V0_11.to_owned(),
+        source_hash: Sha256Digest::from_str(SAMPLE_SOURCE_SHA256).unwrap(),
+        identity: Some(EditorProjectIdentity {
+            project_id: "project-local-lineage".to_owned(),
+            document_id: "document-local-lineage".to_owned(),
+            history_id: "history-local-lineage".to_owned(),
+            genesis_revision_id: "genesis-local-lineage".to_owned(),
+            forked_from: None,
+        }),
+        assets: Vec::new(),
+        table_grids: Vec::new(),
+        operations: vec![move_operation(before, after)],
+    };
+
+    let projected = cloud_revision_project(&project);
+    assert_eq!(projected.schema_version, EDITOR_PROJECT_VERSION_V0_4);
+    assert!(projected.identity.is_none());
+    assert_eq!(projected.source_hash, project.source_hash);
+    assert_eq!(projected.operations, project.operations);
+}
+
 #[tokio::test]
 #[ignore = "requires hash-pinned Apache POI SampleNewsletter.pub"]
 async fn real_sample_newsletter_materializes_exact_historical_revision() {
@@ -742,6 +769,12 @@ async fn real_sample_newsletter_materializes_exact_historical_revision() {
     let baseline = editor
         .baseline_project(&bytes, SAMPLE_SOURCE_SHA256)
         .unwrap();
+    let independently_reopened = editor
+        .baseline_project(&bytes, SAMPLE_SOURCE_SHA256)
+        .unwrap();
+    assert_eq!(baseline, independently_reopened);
+    assert_eq!(baseline.schema_version, EDITOR_PROJECT_VERSION_V0_2);
+    assert!(baseline.identity.is_none());
     assert_eq!(
         project_sha256(&baseline).unwrap(),
         "575fbcb664f2a6b672a05861a4d2aff6aca339204a50e3401d04e1920d946348"
