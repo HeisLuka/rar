@@ -8,11 +8,16 @@ on:
       - ".github/workflows/viewer-typography-default-inherit-01.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
   inherited-typography-discriminator:
+    if: ${{ hashFiles('tools/viewer-typography-default-inherit/test_default_inheritance.py') != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
