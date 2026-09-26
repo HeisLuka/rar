@@ -25,13 +25,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Format
-        run: cargo fmt -p chaptera-text-caret-map-adapter -- --check
+        run: cargo fmt --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml -- --check
       - name: Check
-        run: cargo check -p chaptera-text-caret-map-adapter --all-targets
+        run: cargo check --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml --all-targets
       - name: Clippy
-        run: cargo clippy -p chaptera-text-caret-map-adapter --all-targets -- -D warnings
+        run: cargo clippy --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml --all-targets -- -D warnings
       - name: Rust contract tests
-        run: cargo test -p chaptera-text-caret-map-adapter
+        run: cargo test --manifest-path crates/chaptera-text-caret-map-adapter/Cargo.toml
       - name: Canonical Python caret-map tests
         run: python services/editor-api/test_resolved_text_caret_map_v1.py
       - name: Cross-language golden conformance
@@ -105,7 +105,7 @@ jobs:
                   "story_scalar_len":story_len,"lines":[line_dict(line) for line in lines],
               }
               proc=subprocess.run(
-                  ["cargo","run","--quiet","-p","chaptera-text-caret-map-adapter","--example","conformance_probe"],
+                  ["cargo","run","--quiet","--manifest-path","crates/chaptera-text-caret-map-adapter/Cargo.toml","--example","conformance_probe"],
                   input=json.dumps(payload),text=True,capture_output=True,check=True,
               )
               rust=json.loads(proc.stdout)
