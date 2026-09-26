@@ -17,6 +17,9 @@ import zipfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_README = ROOT / "packages" / "product" / "editor-live-trial" / "v1" / "TRIAL-README.md"
 DEFAULT_AGENT_CATALOG = ROOT / "packages" / "protocol" / "editor-agent-control" / "v1.catalog.json"
+DEFAULT_THIRD_PARTY_NOTICES = (
+    ROOT / "packages" / "product" / "editor-live-trial" / "v1" / "THIRD-PARTY-NOTICES.txt"
+)
 README_CONTRACT = "chaptera.editor-live-trial-readme.v1"
 AGENT_CATALOG_SCHEMA = "chaptera.agent-control.catalog.v1"
 AGENT_PROTOCOL_VERSION = "chaptera.agent-control.v1"
@@ -49,6 +52,8 @@ def package_editor(
     readme_entry: str = "TRIAL-README.md",
     agent_catalog: pathlib.Path = DEFAULT_AGENT_CATALOG,
     agent_catalog_entry: str = "agent-control-v1.catalog.json",
+    third_party_notices: pathlib.Path = DEFAULT_THIRD_PARTY_NOTICES,
+    third_party_notices_entry: str = "THIRD-PARTY-NOTICES.txt",
 ) -> dict[str, str | int]:
     if not editor_exe.is_file():
         raise RuntimeError(f"Editor executable does not exist: {editor_exe}")
@@ -92,10 +97,27 @@ def package_editor(
     if laws.get("source_pub_immutable") is not True:
         raise RuntimeError("Agent V1 catalog must require immutable source PUB")
 
+    if not third_party_notices.is_file():
+        raise RuntimeError(f"third-party notices do not exist: {third_party_notices}")
+    third_party_notices_bytes = third_party_notices.read_bytes()
+    try:
+        third_party_notices_text = third_party_notices_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("third-party notices must be UTF-8") from exc
+    for required in (
+        "Copyright 2011 Canonical Ltd.",
+        "UBUNTU FONT LICENCE Version 1.0",
+        "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70",
+        "fallback_not_source_font",
+    ):
+        if required not in third_party_notices_text:
+            raise RuntimeError(f"third-party notices missing required Ubuntu fallback marker: {required}")
+
     for label, value in (
         ("binary_entry", binary_entry),
         ("readme_entry", readme_entry),
         ("agent_catalog_entry", agent_catalog_entry),
+        ("third_party_notices_entry", third_party_notices_entry),
     ):
         pure = pathlib.PurePosixPath(value.replace("\\", "/"))
         if pure.is_absolute() or ".." in pure.parts or len(pure.parts) != 1:
@@ -104,10 +126,17 @@ def package_editor(
         raise RuntimeError("binary_entry must end with .exe")
     if any(
         entry.lower().endswith(".pub")
-        for entry in (binary_entry, readme_entry, agent_catalog_entry)
+        for entry in (binary_entry, readme_entry, agent_catalog_entry, third_party_notices_entry)
     ):
         raise RuntimeError("portable package must not contain a PUB entry")
-    if len({binary_entry.casefold(), readme_entry.casefold(), agent_catalog_entry.casefold()}) != 3:
+    if len(
+        {
+            binary_entry.casefold(),
+            readme_entry.casefold(),
+            agent_catalog_entry.casefold(),
+            third_party_notices_entry.casefold(),
+        }
+    ) != 4:
         raise RuntimeError("portable package entry names must be distinct")
 
     output_zip.parent.mkdir(parents=True, exist_ok=True)
@@ -118,9 +147,11 @@ def package_editor(
         archive.writestr(_zip_entry(binary_entry, executable=True), binary)
         archive.writestr(_zip_entry(readme_entry), readme_bytes)
         archive.writestr(_zip_entry(agent_catalog_entry), agent_catalog_bytes)
+        archive.writestr(_zip_entry(third_party_notices_entry), third_party_notices_bytes)
 
     binary_sha = hashlib.sha256(binary).hexdigest()
     agent_catalog_sha = hashlib.sha256(agent_catalog_bytes).hexdigest()
+    third_party_notices_sha = hashlib.sha256(third_party_notices_bytes).hexdigest()
     zip_sha = sha256_file(output_zip)
     if binary_sha == zip_sha:
         raise RuntimeError("binary and ZIP identities must be distinct")
@@ -132,6 +163,9 @@ def package_editor(
         "agent_catalog_entry": agent_catalog_entry,
         "agent_catalog_sha256": agent_catalog_sha,
         "agent_catalog_size": len(agent_catalog_bytes),
+        "third_party_notices_entry": third_party_notices_entry,
+        "third_party_notices_sha256": third_party_notices_sha,
+        "third_party_notices_size": len(third_party_notices_bytes),
         "binary_sha256": binary_sha,
         "zip_sha256": zip_sha,
         "binary_size": len(binary),
@@ -148,6 +182,8 @@ def main() -> int:
     parser.add_argument("--readme-entry", default="TRIAL-README.md")
     parser.add_argument("--agent-catalog", type=pathlib.Path, default=DEFAULT_AGENT_CATALOG)
     parser.add_argument("--agent-catalog-entry", default="agent-control-v1.catalog.json")
+    parser.add_argument("--third-party-notices", type=pathlib.Path, default=DEFAULT_THIRD_PARTY_NOTICES)
+    parser.add_argument("--third-party-notices-entry", default="THIRD-PARTY-NOTICES.txt")
     parser.add_argument("--manifest", type=pathlib.Path)
     args = parser.parse_args()
 
@@ -159,6 +195,8 @@ def main() -> int:
         readme_entry=args.readme_entry,
         agent_catalog=args.agent_catalog,
         agent_catalog_entry=args.agent_catalog_entry,
+        third_party_notices=args.third_party_notices,
+        third_party_notices_entry=args.third_party_notices_entry,
     )
     if args.manifest is not None:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
