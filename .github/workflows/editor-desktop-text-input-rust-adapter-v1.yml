@@ -1,0 +1,90 @@
+name: Editor Desktop Text Input Rust Adapter V1
+
+on:
+  push:
+    branches:
+      - editor-desktop-text-input-rust-adapter-01-v2
+  pull_request:
+    paths:
+      - "crates/chaptera-text-input-adapter/**"
+      - "crates/chaptera-text-interaction-adapter/**"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "services/editor-api/story_edit_domain_v1.py"
+      - "services/editor-api/text_ingress_v1.py"
+      - "services/editor-api/text_keyboard_policy_v1.py"
+      - "services/editor-api/test_story_edit_domain_v1.py"
+      - "services/editor-api/test_text_ingress_v1.py"
+      - "services/editor-api/test_text_keyboard_policy_v1.py"
+      - ".github/workflows/editor-desktop-text-input-rust-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Format task-owned Rust
+        run: cargo fmt --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
+
+      - name: Commit rustfmt-only task files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- crates/chaptera-text-input-adapter/src; then
+            echo "already formatted"
+          else
+            git config user.name "chaptera-ci"
+            git config user.email "actions@users.noreply.github.com"
+            git add crates/chaptera-text-input-adapter/src
+            git commit -m "EDITOR-DESKTOP-TEXT-INPUT-RUST-ADAPTER-01: rustfmt"
+            git push origin HEAD:editor-desktop-text-input-rust-adapter-01-v2
+          fi
+
+      - name: Check
+        run: cargo check --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets
+
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust adapter tests
+        run: cargo test --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
+
+      - name: Canonical Python domain ingress keyboard tests
+        run: |
+          python services/editor-api/test_story_edit_domain_v1.py
+          python services/editor-api/test_text_ingress_v1.py
+          python services/editor-api/test_text_keyboard_policy_v1.py
+
+      - name: Cross-language Python Rust golden conformance
+        run: python crates/chaptera-text-input-adapter/cross_language_conformance.py
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl -fsSL "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -o "$fixture"
+          actual_sha="$(sha256sum "$fixture" | awk '{print $1}')"
+          test "$actual_sha" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          actual_len="$(wc -c < "$fixture" | tr -d ' ')"
+          test "$actual_len" = "291840"
+          echo "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" >> "$GITHUB_ENV"
+
+      - name: Real pub-editor ReplaceStoryRange integration
+        run: |
+          cargo test --manifest-path crates/chaptera-text-input-adapter/Cargo.toml \
+            real_sample_newsletter_commit_is_one_replace_range_and_undo_exact -- --nocapture
