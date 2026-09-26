@@ -3591,6 +3591,16 @@ mod tests {
         assert!(source.contains("\"Page Width\""));
         assert!(source.contains("\"Fit Selection\""));
         assert!(!source.contains("\"100% fit\""));
+        assert!(source.contains("if self.zoom_mode == CanvasZoomMode::Percent"));
+        assert!(source.contains("ui.label(\"Fit mode\")"));
+    }
+
+    #[test]
+    fn ctrl_wheel_zoom_is_scoped_to_canvas_without_scroll_area_pan() {
+        let source = include_str!("main.rs");
+        assert!(source.contains(".enable_scrolling(!ctrl_held)"));
+        assert!(source.contains("response.hovered() && ctrl_held"));
+        assert!(!source.contains("pointer_over_canvas"));
     }
 
     #[test]
