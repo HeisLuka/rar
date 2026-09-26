@@ -130,6 +130,10 @@ jobs:
           }
           if ($smoke.binary_sha256 -ne $hash) { throw "Reader product smoke executable hash mismatch" }
           if ([int64]$smoke.binary_byte_len -ne $bytes) { throw "Reader product smoke executable size mismatch" }
+          if (-not $smoke.locale.raw) { throw "Reader product smoke did not resolve a locale source" }
+          if ($smoke.locale.source -notin @("override", "windows_user_locale", "lang")) { throw "Reader product smoke locale source is invalid" }
+          if ($smoke.locale.market_profile -notin @("US", "UK", "Russia", "NeutralEnglish")) { throw "Reader product smoke market profile is invalid" }
+          if ($smoke.locale.network_lookup_used -ne $false -or $smoke.locale.ip_geolocation_used -ne $false -or $smoke.locale.account_state_used -ne $false) { throw "Reader locale contract crossed the privacy boundary" }
 
       - name: Build portable Chaptera Reader ZIP
         run: |
@@ -191,6 +195,12 @@ jobs:
           $smoke = Get-Content -Raw $receipt | ConvertFrom-Json
           if ($smoke.product -ne "Chaptera PUB Reader" -or $smoke.reader_only -ne $true -or $smoke.editor_controls_enabled -ne $false) {
             throw "clean portable binary is not the compile-time Reader product"
+          }
+          if (-not $smoke.locale.raw -or $smoke.locale.market_profile -notin @("US", "UK", "Russia", "NeutralEnglish")) {
+            throw "clean portable Reader did not execute the locale contract"
+          }
+          if ($smoke.locale.network_lookup_used -ne $false -or $smoke.locale.ip_geolocation_used -ne $false -or $smoke.locale.account_state_used -ne $false) {
+            throw "clean portable Reader locale contract crossed the privacy boundary"
           }
 
           $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json

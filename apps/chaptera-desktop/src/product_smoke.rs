@@ -1,3 +1,4 @@
+use crate::{locale, supporter};
 use serde_json::{Value, json};
 use std::env;
 
@@ -28,6 +29,10 @@ fn bound_binary_identity() -> Result<(String, u64), String> {
 pub fn run() -> Result<Value, String> {
     let (binary_sha256, binary_byte_len) = bound_binary_identity()?;
     let reader_only = cfg!(feature = "reader-only");
+    let detected_locale = locale::detect_user_locale();
+    let market_profile = supporter::MarketProfile::from_locale(
+        detected_locale.as_ref().map(locale::DetectedLocale::raw),
+    );
 
     Ok(json!({
         "protocol_version": PROTOCOL_VERSION,
@@ -37,6 +42,14 @@ pub fn run() -> Result<Value, String> {
         "native_save_pub_claimed": false,
         "binary_sha256": binary_sha256,
         "binary_byte_len": binary_byte_len,
+        "locale": {
+            "raw": detected_locale.as_ref().map(locale::DetectedLocale::raw),
+            "source": detected_locale.as_ref().map(|value| value.source().as_str()),
+            "market_profile": market_profile.as_str(),
+            "network_lookup_used": false,
+            "ip_geolocation_used": false,
+            "account_state_used": false
+        },
         "runtime": {
             "checkout_required": false,
             "cargo_required": false,
