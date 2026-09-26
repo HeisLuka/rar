@@ -650,10 +650,10 @@ fn viewer_document_from_pipeline(
 
 /// Creates only the grounded semantic subset already accepted by pub-layout.
 ///
-/// This bridge intentionally lives in the Viewer orchestration layer for now:
-/// there is only one concrete consumer. It should be factored into a reusable
-/// engine adapter only after a second real consumer requires the same mapping.
-fn bounded_authoring_slice_from_resolved(
+/// Viewer remains the semantic owner of this resolved-graph -> bounded-authoring
+/// bridge. Desktop shaped-flow is the second concrete consumer, so the mapping
+/// is public instead of being copied into another engine adapter.
+pub fn bounded_authoring_slice_from_resolved(
     graph: &PubResolvedGraph,
 ) -> Result<BoundedAuthoringSlice> {
     let pages = graph
