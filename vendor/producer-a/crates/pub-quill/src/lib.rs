@@ -35,7 +35,8 @@ pub use tokn::{
     TOKN_PROPERTY_KIND, TOKN_PROPERTY_STATE, TOKN_PROPERTY_TEXT_LENGTH,
 };
 pub use typography::{
-    QUILL_TEXT_SIZE_EMU_PER_POINT, QuillExplicitTypographyRun, QuillTypographyCatalog,
-    QuillTypographyRange, QuillTypographyReadError, QuillTypographyStoryIntersection,
+    QUILL_TEXT_SIZE_EMU_PER_POINT, QuillEffectiveTypographyRun, QuillExplicitTypographyRun,
+    QuillParagraphSelectorSource, QuillTypographyCatalog, QuillTypographyRange,
+    QuillTypographyReadError, QuillTypographyStoryIntersection, QuillTypographyValueSource,
     parse_bounded_typography,
 };
