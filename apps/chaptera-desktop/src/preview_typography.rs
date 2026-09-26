@@ -273,9 +273,13 @@ mod tests {
     #[test]
     fn preview_typography_never_resolves_source_family_through_host_fonts() {
         let source = include_str!("preview_typography.rs");
-        assert!(!source.contains("source_font_name"));
-        assert!(!source.contains("FontFamily::Name"));
-        assert!(!source.contains("FontDefinitions"));
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production prefix");
+        assert!(!production.contains("source_font_name"));
+        assert!(!production.contains("FontFamily::Name"));
+        assert!(!production.contains("FontDefinitions"));
     }
 
     #[test]
@@ -285,5 +289,77 @@ mod tests {
         assert!((size - 48.0).abs() < 0.001);
         assert!(source_text_size_px(0, 1.0).is_none());
         assert!(source_text_size_px(24 * 12_700, 0.0).is_none());
+    }
+
+    #[test]
+    fn ci_sample_newsletter_applies_grounded_source_size_when_fixture_is_available() {
+        let Some(path) = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER") else {
+            eprintln!("CHAPTERA_SAMPLE_NEWSLETTER not configured; real typography check skipped");
+            return;
+        };
+        let bytes = std::fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "read CHAPTERA_SAMPLE_NEWSLETTER {}: {error}",
+                std::path::PathBuf::from(&path).display()
+            )
+        });
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("configured SampleNewsletter should expose bounded typography");
+
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "configured SampleNewsletter must expose at least one promoted typography run"
+        );
+
+        let mut source_sections = 0_usize;
+        let mut fallback_sections = 0_usize;
+        let mut saw_visible_rockwell_24pt = false;
+        for fragment in visual
+            .text_fragments
+            .iter()
+            .filter(|fragment| !fragment.text.is_empty())
+        {
+            let (job, usage) = layout_fragment(
+                &visual.typography_runs,
+                fragment,
+                1.0 / 12_700.0,
+                9.0,
+                500.0,
+            );
+            source_sections += usage.source_sections;
+            fallback_sections += usage.fallback_sections;
+
+            let has_anchor = visual.typography_runs.iter().any(|run| {
+                run.story_id == fragment.story_id
+                    && run.scalar_start < fragment.scalar_end
+                    && run.scalar_end > fragment.scalar_start
+                    && run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700
+            });
+            if has_anchor
+                && job
+                    .sections
+                    .iter()
+                    .any(|section| (section.format.font_id.size - 24.0).abs() < 0.001)
+            {
+                saw_visible_rockwell_24pt = true;
+            }
+        }
+
+        eprintln!(
+            "real SampleNewsletter typography: source_sections={source_sections} fallback_sections={fallback_sections} rockwell24={saw_visible_rockwell_24pt}"
+        );
+        assert!(source_sections > 0, "no grounded source-size section reached preview");
+        assert!(
+            fallback_sections > 0,
+            "unowned/default typography must remain deterministic fallback"
+        );
+        assert!(
+            saw_visible_rockwell_24pt,
+            "visible Rockwell Condensed 24pt anchor did not affect preview size"
+        );
     }
 }
