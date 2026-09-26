@@ -3420,6 +3420,49 @@ mod tests {
     }
 
     #[test]
+    fn preview_metric_signature_distinguishes_non_identical_layout_failures() {
+        let base = preview_text_metric_signature(
+            1.0,
+            "egui-proportional-fallback",
+            12.0,
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+        let narrower = preview_text_metric_signature(
+            1.0,
+            "egui-proportional-fallback",
+            12.0,
+            160.0,
+            150.0,
+            145.0,
+            160.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+        let zoomed = preview_text_metric_signature(
+            1.25,
+            "egui-proportional-fallback",
+            12.0,
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+
+        assert_ne!(base, narrower);
+        assert_ne!(base, zoomed);
+    }
+
+    #[test]
     fn fit_scale_keeps_page_inside_viewport() {
         let viewport = egui::vec2(1000.0, 800.0);
         let scale = fitted_scale(2_000_000, 1_000_000, viewport).expect("valid page");
