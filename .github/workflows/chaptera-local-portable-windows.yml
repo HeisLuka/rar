@@ -119,12 +119,125 @@ jobs:
           name: chaptera-local-windows-x86_64-build
           path: ${{ runner.temp }}/chaptera-local-artifact
 
-      - name: Extract package and snapshot immutable tree
+      - name: Extract package, verify manifest hashes and snapshot immutable tree
         shell: pwsh
         run: |
           $artifact = Join-Path $env:RUNNER_TEMP "chaptera-local-artifact"
+          $zip = Join-Path $artifact "Chaptera-Local-Windows-x86_64.zip"
+          $manifestPath = Join-Path $artifact "Chaptera-Local.package.json"
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $zipSha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($zipSha -ne $manifest.zip_sha256) {
+            throw "portable ZIP SHA-256 does not match package manifest: $zipSha != $($manifest.zip_sha256)"
+          }
+          if ((Get-Item $zip).Length -ne [int64]$manifest.zip_size) {
+            throw "portable ZIP byte length does not match package manifest"
+          }
+
           $clean = Join-Path $env:RUNNER_TEMP "chaptera-local-clean"
-          Expand-Archive -Path (Join-Path $artifact "Chaptera-Local-Windows-x86_64.zip") -DestinationPath $clean
+          Expand-Archive -Path $zip -DestinationPath $clean
+
+          $sumPath = Join-Path $clean "SHA256SUMS"
+          if (-not (Test-Path $sumPath)) { throw "packaged SHA256SUMS missing" }
+          $expected = @{}
+          foreach ($line in Get-Content $sumPath) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)
+      - name: Prove no-checkout zero-install startup
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = $env:CHAPTERA_TEST_STATE
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          if (Get-Command python -ErrorAction SilentlyContinue) { throw "system python unexpectedly visible" }
+          if (Get-Command py -ErrorAction SilentlyContinue) { throw "py launcher unexpectedly visible" }
+          if (Get-Command cargo -ErrorAction SilentlyContinue) { throw "cargo unexpectedly visible" }
+          if (Get-Command rustc -ErrorAction SilentlyContinue) { throw "rustc unexpectedly visible" }
+          $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
+          $launcher = Join-Path $env:CHAPTERA_CLEAN_ROOT "Start-Chaptera-Local.cmd"
+          $quoted = [char]34 + $launcher + [char]34
+          $arguments = "/d /c call $quoted --no-browser --smoke"
+          $process = Start-Process -FilePath $cmd -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "portable full-stack smoke failed: $($process.ExitCode)" }
+
+      - name: Prove packaged MoveNode Scene Undo path
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = $env:CHAPTERA_TEST_STATE
+          $env:CHAPTERA_LOCAL_RUNTIME_ROOT = $env:CHAPTERA_CLEAN_ROOT
+          $env:CHAPTERA_LOCAL_STATE_ROOT = Join-Path $env:CHAPTERA_TEST_STATE "Chaptera\Local"
+          $env:CHAPTERA_LOCAL_PACKAGED = "1"
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          $python = Join-Path $env:CHAPTERA_CLEAN_ROOT "runtime\python\python.exe"
+          $script = Join-Path $env:CHAPTERA_CLEAN_ROOT "launcher\run_local_real_editor.py"
+          $process = Start-Process -FilePath $python -ArgumentList @($script,"--smoke") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "packaged interactive editor smoke failed: $($process.ExitCode)" }
+
+      - name: Verify state isolation and package immutability
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:RUNNER_TEMP "chaptera-local-artifact"
+          $clean = $env:CHAPTERA_CLEAN_ROOT
+          $after = Get-ChildItem -File -Recurse $clean | ForEach-Object {
+            $relative = $_.FullName.Substring($clean.Length + 1).Replace("\","/")
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $relative"
+          }
+          $after = $after | Sort-Object
+          $before = Get-Content (Join-Path $artifact "before.sha256")
+          if (Compare-Object $before $after) { throw "portable install tree changed during smoke" }
+          $state = Join-Path $env:CHAPTERA_TEST_STATE "Chaptera\Local"
+          foreach ($required in @("chaptera.sqlite","logs\server.log","logs\worker.log","logs\editor-service.log")) {
+            if (-not (Test-Path (Join-Path $state $required))) { throw "expected runtime state missing: $required" }
+          }
+          if (Test-Path (Join-Path $clean ".chaptera-local")) { throw "runtime state leaked into portable install tree" }
+          @{
+            schema_version = "chaptera.local-portable-clean-smoke.v1"
+            no_checkout = $true
+            system_python_hidden = $true
+            cargo_hidden = $true
+            package_manifest_zip_verified = $true
+            internal_sha256sums_verified = $true
+            package_tree_unchanged = $true
+            external_state_root = $true
+            full_stack_ready = $true
+            interactive_move_scene_undo = $true
+            hosted_windows_is_virgin_os_proof = $false
+            pe_dll_closure_checked_separately = $true
+            pe_dll_receipts = @("chaptera.dependents.txt","producer-a.dependents.txt")
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $artifact "clean-smoke.json")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-local-windows-x86_64-portable
+          path: |
+            ${{ runner.temp }}/chaptera-local-artifact/Chaptera-Local-Windows-x86_64.zip
+            ${{ runner.temp }}/chaptera-local-artifact/Chaptera-Local.package.json
+            ${{ runner.temp }}/chaptera-local-artifact/chaptera.dependents.txt
+            ${{ runner.temp }}/chaptera-local-artifact/producer-a.dependents.txt
+            ${{ runner.temp }}/chaptera-local-artifact/clean-smoke.json
+          if-no-files-found: error
+) { throw "invalid SHA256SUMS row: $line" }
+            if ($expected.ContainsKey($Matches[2])) { throw "duplicate SHA256SUMS entry: $($Matches[2])" }
+            $expected[$Matches[2]] = $Matches[1]
+          }
+
+          $actualFiles = Get-ChildItem -File -Recurse $clean | Where-Object {
+            $_.FullName -ne $sumPath
+          }
+          if ($actualFiles.Count -ne $expected.Count) {
+            throw "SHA256SUMS entry count mismatch: $($expected.Count) expected vs $($actualFiles.Count) actual"
+          }
+          foreach ($file in $actualFiles) {
+            $relative = $file.FullName.Substring($clean.Length + 1).Replace("\","/")
+            if (-not $expected.ContainsKey($relative)) { throw "file missing from SHA256SUMS: $relative" }
+            $actualSha = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualSha -ne $expected[$relative]) {
+              throw "SHA256SUMS mismatch for $relative"
+            }
+          }
+          if ((Get-ChildItem -File -Recurse $clean).Count -ne [int]$manifest.entry_count) {
+            throw "package entry count does not match package manifest"
+          }
+
           $hashes = Get-ChildItem -File -Recurse $clean | ForEach-Object {
             $relative = $_.FullName.Substring($clean.Length + 1).Replace("\","/")
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $relative"
