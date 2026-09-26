@@ -20,6 +20,69 @@ SCHEMA = "chaptera.viewer-typography-default-inherit.v1"
 PARAGRAPH_DEFAULT_CHAR_STYLE_ID = 0x19
 
 
+def parse_block_strict(
+    data: bytes,
+    cursor: int,
+    limit: int,
+) -> tuple[dict[str, Any], int]:
+    if cursor + 2 > limit:
+        raise donor.DecodeError(f"block header exceeds limit at 0x{cursor:x}")
+    start = cursor
+    block_id = data[cursor]
+    block_type = data[cursor + 1]
+    cursor += 2
+    data_offset = cursor
+    if block_type in donor.VARIABLE_BLOCK_TYPES:
+        if cursor + 4 > limit:
+            raise donor.DecodeError("variable block length missing")
+        data_length = donor.u32(data, cursor)
+        if data_length < 4:
+            raise donor.DecodeError("invalid variable block length")
+        block_end = data_offset + data_length
+        value = None
+    else:
+        if block_type not in donor.FIXED_BLOCK_LENGTHS:
+            raise donor.DecodeError(
+                f"unknown fixed block width type 0x{block_type:02x} at 0x{start:x}"
+            )
+        data_length = donor.FIXED_BLOCK_LENGTHS[block_type]
+        block_end = data_offset + data_length
+        if data_length == 2:
+            value = donor.u16(data, data_offset)
+        elif data_length == 4:
+            value = donor.u32(data, data_offset)
+        else:
+            value = None
+    if block_end > limit:
+        raise donor.DecodeError(f"block at 0x{start:x} exceeds style")
+    return {
+        "start": start,
+        "id": block_id,
+        "type": block_type,
+        "data_offset": data_offset,
+        "data_length": data_length,
+        "end": block_end,
+        "data": value,
+    }, block_end
+
+
+def extract_font_index_strict(data: bytes, block: dict[str, Any]) -> int | None:
+    if int(block["type"]) not in donor.VARIABLE_BLOCK_TYPES:
+        return None
+    cursor = int(block["data_offset"]) + 4
+    end = int(block["end"])
+    while cursor < end:
+        child, cursor = parse_block_strict(data, cursor, end)
+        if int(child["type"]) == donor.GENERAL_CONTAINER:
+            inner = int(child["data_offset"]) + 4
+            if inner >= int(child["end"]):
+                return None
+            value_block, _ = parse_block_strict(data, inner, int(child["end"]))
+            value = value_block.get("data")
+            return value if isinstance(value, int) else None
+    return None
+
+
 def _unique_ints(values: list[int]) -> list[int]:
     return sorted(set(int(value) for value in values))
 
@@ -51,8 +114,8 @@ def parse_stsh1_character_defaults(
     rows: list[dict[str, Any]] = []
     for ordinal in range(0, count, 2):
         record_start = start + 20 + offsets[ordinal]
-        if record_start + 6 > end:
-            raise donor.DecodeError("STSH1 character record header exceeds chunk")
+        if record_start < offsets_end or record_start + 6 > end:
+            raise donor.DecodeError("STSH1 character record offset points outside body")
         prefix = donor.u16(data, record_start)
         style_start = record_start + 2
         style_length = donor.u32(data, style_start)
@@ -66,10 +129,10 @@ def parse_stsh1_character_defaults(
         font_indices: list[int] = []
         text_sizes_emu: list[int] = []
         while cursor < style_end:
-            block, cursor = donor.parse_block(data, cursor, style_end)
+            block, cursor = parse_block_strict(data, cursor, style_end)
             block_id = int(block["id"])
             if block_id == donor.FONT_INDEX_CONTAINER_ID:
-                index = donor.extract_font_index(data, block)
+                index = extract_font_index_strict(data, block)
                 if index is not None:
                     font_indices.append(index)
             if block_id == donor.TEXT_SIZE_ID and isinstance(block.get("data"), int):
@@ -131,6 +194,8 @@ def parse_fdpp_styles(
             zip(text_offsets, chunk_offsets)
         ):
             style_start = start + chunk_offset
+            if style_start < body_start or style_start + 4 > end:
+                raise donor.DecodeError("FDPP style offset points outside body")
             style_length = donor.u32(data, style_start)
             style_end = style_start + style_length
             if style_length < 4 or style_end > end:
@@ -139,7 +204,7 @@ def parse_fdpp_styles(
             cursor = style_start + 4
             selectors: list[int] = []
             while cursor < style_end:
-                block, cursor = donor.parse_block(data, cursor, style_end)
+                block, cursor = parse_block_strict(data, cursor, style_end)
                 if (
                     int(block["id"]) == PARAGRAPH_DEFAULT_CHAR_STYLE_ID
                     and isinstance(block.get("data"), int)
