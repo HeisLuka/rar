@@ -1,0 +1,16 @@
+[package]
+name = "chaptera-entitlement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ciborium = "0.2.2"
+coset = "0.4.2"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+serde.workspace = true
+thiserror = "2"
+
+[dev-dependencies]
+sha2.workspace = true
