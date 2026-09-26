@@ -228,7 +228,7 @@ fn validate_sha256(value: &str) -> Result<()> {
 }
 
 fn validate_windows_safe_zip_name(raw: &str) -> Result<()> {
-    if raw.contains('\') {
+    if raw.contains('\\') {
         bail!("ZIP entry must use forward slashes only: {raw:?}");
     }
     let normalized = raw.trim_end_matches('/');
@@ -242,7 +242,7 @@ fn validate_windows_safe_relative_path(path: &str) -> Result<()> {
     if path.is_empty() || path.starts_with('/') || path.ends_with('/') {
         bail!("unsafe relative path: {path:?}");
     }
-    if path.contains('\') || path.contains(':') {
+    if path.contains('\\') || path.contains(':') {
         bail!("unsafe Windows path syntax: {path:?}");
     }
 
