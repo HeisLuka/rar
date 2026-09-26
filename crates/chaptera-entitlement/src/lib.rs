@@ -206,10 +206,10 @@ impl EntitlementVerifier {
             return Err(EntitlementError::ProductMismatch);
         }
 
-        if let Some(expected_subject) = ctx.expected_subject {
-            if payload.subject_id != expected_subject {
-                return Err(EntitlementError::SubjectMismatch);
-            }
+        if let Some(expected_subject) = ctx.expected_subject
+            && payload.subject_id != expected_subject
+        {
+            return Err(EntitlementError::SubjectMismatch);
         }
 
         if payload.device_key_id.as_slice() != ctx.expected_device_key_id {
@@ -225,10 +225,10 @@ impl EntitlementVerifier {
                 if ctx.build.major < min_major || ctx.build.major > max_major {
                     return Err(EntitlementError::VersionNotCovered);
                 }
-                if let Some(until) = updates_until {
-                    if ctx.build.released_at > until {
-                        return Err(EntitlementError::VersionNotCovered);
-                    }
+                if let Some(until) = updates_until
+                    && ctx.build.released_at > until
+                {
+                    return Err(EntitlementError::VersionNotCovered);
                 }
             }
             RightV1::Subscription { .. } | RightV1::Trial { .. } => {
