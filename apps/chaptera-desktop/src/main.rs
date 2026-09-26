@@ -1493,6 +1493,49 @@ impl ViewerApp {
                         "Preview text clipping: {preview_clipped_frames} frame(s)"
                     ));
                     ui.small(PREVIEW_TEXT_CLIP_WARNING);
+                    if !self.preview_clipped_story_keys.is_empty() {
+                        ui.collapsing(
+                            format!(
+                                "Affected Story identities ({})",
+                                self.preview_clipped_story_keys.len()
+                            ),
+                            |ui| {
+                                for story in &self.preview_clipped_story_keys {
+                                    ui.monospace(story);
+                                }
+                            },
+                        );
+                    }
+                }
+
+                if !visual.typography_runs.is_empty() {
+                    ui.add_space(8.0);
+                    ui.strong(format!(
+                        "Grounded source typography: {} range(s)",
+                        visual.typography_runs.len()
+                    ));
+                    ui.small(
+                        "Font identity and size come from explicit PUB character-format ranges. The font face is still rendered through Chaptera's deterministic fallback; this is not a host-font substitution.",
+                    );
+                    ui.collapsing("Typography ranges", |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(180.0)
+                            .show(ui, |ui| {
+                                for run in &visual.typography_runs {
+                                    let points =
+                                        run.text_size_emu as f64 / 12_700.0_f64;
+                                    ui.monospace(format!(
+                                        "{:?} [{}..{}) · {} · {:.2} pt · {:?}",
+                                        run.story_id,
+                                        run.scalar_start,
+                                        run.scalar_end,
+                                        run.source_font_name,
+                                        points,
+                                        run.render_disposition
+                                    ));
+                                }
+                            });
+                    });
                 }
 
                 ui.add_space(12.0);
@@ -2932,12 +2975,19 @@ impl ViewerApp {
                                 egui::Stroke::new(2.0_f32, egui::Color32::RED),
                                 egui::StrokeKind::Inside,
                             );
-                            painter.text(
-                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                egui::Align2::RIGHT_TOP,
-                                "preview overflow",
-                                egui::FontId::proportional(10.0_f32),
+                            let badge_center =
+                                node_rect.right_top() + egui::vec2(-7.0_f32, 7.0_f32);
+                            painter.circle_filled(
+                                badge_center,
+                                6.0_f32,
                                 egui::Color32::RED,
+                            );
+                            painter.text(
+                                badge_center,
+                                egui::Align2::CENTER_CENTER,
+                                "!",
+                                egui::FontId::proportional(9.0_f32),
+                                egui::Color32::WHITE,
                             );
                         }
                         text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
