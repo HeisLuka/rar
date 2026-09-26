@@ -1,0 +1,49 @@
+name: DIAG 787 full-suite hang
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/diag-787-full-suite-hang.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: blob-store
+            args: "blob_store::tests::"
+          - label: project-persistence
+            args: "project_persistence_sqlite::tests::"
+          - label: source-http
+            args: "source_ingress_http::tests::"
+          - label: source-domain
+            args: "source_ingress::tests::"
+          - label: source-sqlite
+            args: "source_ingress_sqlite::tests::"
+          - label: upload-admission
+            args: "upload_admission::tests::"
+          - label: auth-http
+            args: "auth_http::tests::"
+          - label: config
+            args: "config::tests::"
+          - label: sqlite-control
+            args: "sqlite_store::tests::"
+          - label: runtime-shell
+            args: "--test runtime_shell"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - name: Run isolated test slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "slice=${{ matrix.label }}"
+          timeout 180 cargo test -p chaptera-server ${{ matrix.args }} -- --nocapture --test-threads=1
