@@ -320,10 +320,15 @@ mod tests {
     use p256::ecdsa::{SigningKey, signature::Signer};
 
     const TEST_KID: &[u8] = b"test-k1";
+    const BUILD_TEST_KID: &[u8] = b"build-test-k1";
     static DEVICE_ID: [u8; DEVICE_KEY_ID_LEN] = [0xA5; DEVICE_KEY_ID_LEN];
 
     fn signing_key() -> SigningKey {
         SigningKey::from_slice(&[7u8; 32]).expect("fixed test key")
+    }
+
+    fn build_signing_key() -> SigningKey {
+        SigningKey::from_slice(&[8u8; 32]).expect("fixed build test key")
     }
 
     fn trust_bundle() -> TrustBundle {
@@ -335,6 +340,25 @@ mod tests {
                 public_key_sec1: verifying.to_sec1_point(false).as_bytes().to_vec(),
             }],
         }
+    }
+
+    fn build_trust_bundle() -> TrustBundle {
+        let signing = build_signing_key();
+        let verifying = signing.verifying_key();
+        TrustBundle {
+            keys: vec![TrustedSigner {
+                kid: BUILD_TEST_KID.to_vec(),
+                public_key_sec1: verifying.to_sec1_point(false).as_bytes().to_vec(),
+            }],
+        }
+    }
+
+    fn verifier() -> EntitlementVerifier {
+        EntitlementVerifier::new(trust_bundle(), build_trust_bundle())
+    }
+
+    fn verifier_with_entitlement_trust(trust: TrustBundle) -> EntitlementVerifier {
+        EntitlementVerifier::new(trust, build_trust_bundle())
     }
 
     fn payload() -> ActivationPayloadV1 {
@@ -386,13 +410,54 @@ mod tests {
         sign_payload_bytes(encode_payload(payload), kid)
     }
 
+    fn build_payload() -> BuildIdentityPayloadV1 {
+        BuildIdentityPayloadV1 {
+            schema_version: 1,
+            product_id: "chaptera.editor".into(),
+            major: 2,
+            minor: 4,
+            patch: 1,
+            released_at: 1_850_000_000,
+            release_sequence: 42,
+        }
+    }
+
+    fn encode_build_payload(payload: &BuildIdentityPayloadV1) -> Vec<u8> {
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(payload, &mut out).expect("build CBOR payload");
+        out
+    }
+
+    fn sign_build_payload_with(
+        payload: &BuildIdentityPayloadV1,
+        signing: &SigningKey,
+        kid: &[u8],
+    ) -> Vec<u8> {
+        let protected = HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ESP256)
+            .key_id(kid.to_vec())
+            .content_type(BUILD_IDENTITY_CONTENT_TYPE.to_owned())
+            .build();
+
+        CoseSign1Builder::new()
+            .protected(protected)
+            .payload(encode_build_payload(payload))
+            .create_signature(&[], |tbs| {
+                let sig: Signature = signing.sign(tbs);
+                sig.to_bytes().to_vec()
+            })
+            .build()
+            .to_tagged_vec()
+            .expect("build COSE")
+    }
+
+    fn sign_build_identity(payload: &BuildIdentityPayloadV1) -> Vec<u8> {
+        sign_build_payload_with(payload, &build_signing_key(), BUILD_TEST_KID)
+    }
+
     fn ctx() -> VerifyContext<'static> {
         VerifyContext {
-            build: BuildIdentity {
-                product_id: "chaptera.editor",
-                major: 2,
-                released_at: 1_850_000_000,
-            },
+            build_identity_artifact: sign_build_identity(&build_payload()),
             expected_subject: Some("user-1"),
             expected_device_key_id: &DEVICE_ID,
         }
@@ -400,7 +465,7 @@ mod tests {
 
     #[test]
     fn valid_perpetual_entitlement_verifies() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let result = verifier.verify(&sign_artifact(&payload(), TEST_KID), &ctx());
         assert!(result.is_ok());
     }
@@ -413,7 +478,7 @@ mod tests {
             .to_sec1_point(false)
             .as_bytes()
             .to_vec();
-        let verifier = EntitlementVerifier::new(TrustBundle {
+        let verifier = verifier_with_entitlement_trust(TrustBundle {
             keys: vec![
                 TrustedSigner {
                     kid: TEST_KID.to_vec(),
@@ -434,7 +499,7 @@ mod tests {
 
     #[test]
     fn unprotected_headers_are_rejected_even_if_signature_would_still_verify() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.unprotected.content_type =
@@ -447,7 +512,7 @@ mod tests {
 
     #[test]
     fn unknown_signer_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let err = verifier
             .verify(&sign_artifact(&payload(), b"unknown"), &ctx())
             .unwrap_err();
@@ -456,7 +521,7 @@ mod tests {
 
     #[test]
     fn modified_payload_breaks_signature() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         let mut changed = payload();
@@ -470,7 +535,7 @@ mod tests {
 
     #[test]
     fn wrong_product_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut c = ctx();
         c.build.product_id = "chaptera.reader";
         let err = verifier
@@ -481,7 +546,7 @@ mod tests {
 
     #[test]
     fn wrong_device_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let c = VerifyContext {
             expected_device_key_id: &[0x5A; DEVICE_KEY_ID_LEN],
             ..ctx()
@@ -494,7 +559,7 @@ mod tests {
 
     #[test]
     fn unsupported_schema_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.schema_version = 2;
         let err = verifier
@@ -505,7 +570,7 @@ mod tests {
 
     #[test]
     fn uncovered_major_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut c = ctx();
         c.build.major = 3;
         let err = verifier
@@ -516,7 +581,7 @@ mod tests {
 
     #[test]
     fn build_after_updates_until_is_rejected_without_using_current_time() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut c = ctx();
         c.build.released_at = 1_950_000_000;
         let err = verifier
@@ -527,7 +592,7 @@ mod tests {
 
     #[test]
     fn time_bound_rights_are_explicitly_not_implemented_in_slice_a() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.right = RightV1::Subscription {
             lease_id: "lease-1".into(),
@@ -545,7 +610,7 @@ mod tests {
 
     #[test]
     fn wrong_algorithm_is_rejected_before_signature_verification() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.protected.header.alg =
@@ -559,7 +624,7 @@ mod tests {
 
     #[test]
     fn wrong_content_type_is_rejected_before_signature_verification() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.protected.header.content_type =
@@ -573,7 +638,7 @@ mod tests {
 
     #[test]
     fn overlong_kid_is_rejected_before_trust_lookup() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.protected.header.key_id = vec![b'k'; MAX_KID_LEN + 1];
@@ -586,7 +651,7 @@ mod tests {
 
     #[test]
     fn wrong_device_key_id_width_is_rejected_as_payload_policy() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.device_key_id = vec![0xA5; DEVICE_KEY_ID_LEN - 1];
 
@@ -598,7 +663,7 @@ mod tests {
 
     #[test]
     fn duplicate_grants_are_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.grants = vec!["edit".into(), "edit".into()];
 
@@ -610,7 +675,7 @@ mod tests {
 
     #[test]
     fn excessive_grant_count_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.grants = (0..=MAX_GRANTS).map(|i| format!("g{i}")).collect();
 
@@ -622,7 +687,7 @@ mod tests {
 
     #[test]
     fn inverted_perpetual_major_range_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.right = RightV1::Perpetual {
             min_major: 3,
@@ -638,7 +703,7 @@ mod tests {
 
     #[test]
     fn signed_payload_with_unknown_field_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut value = Value::serialized(&payload()).expect("payload value");
         let Value::Map(entries) = &mut value else {
             panic!("payload must serialize as a CBOR map");
@@ -658,7 +723,7 @@ mod tests {
 
     #[test]
     fn signed_payload_with_duplicate_cbor_key_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut value = Value::serialized(&payload()).expect("payload value");
         let Value::Map(entries) = &mut value else {
             panic!("payload must serialize as a CBOR map");
@@ -678,7 +743,7 @@ mod tests {
 
     #[test]
     fn non_64_byte_signature_is_rejected_before_crypto_verification() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.signature.truncate(63);
@@ -690,7 +755,7 @@ mod tests {
 
     #[test]
     fn oversized_grant_string_is_rejected() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut p = payload();
         p.grants = vec!["g".repeat(MAX_GRANT_LEN + 1)];
 
@@ -708,7 +773,7 @@ mod tests {
             .to_sec1_point(true)
             .as_bytes()
             .to_vec();
-        let verifier = EntitlementVerifier::new(TrustBundle {
+        let verifier = verifier_with_entitlement_trust(TrustBundle {
             keys: vec![TrustedSigner {
                 kid: TEST_KID.to_vec(),
                 public_key_sec1: compressed,
@@ -723,7 +788,7 @@ mod tests {
 
     #[test]
     fn all_single_byte_mutations_of_valid_artifact_fail_closed_without_panicking() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
 
         for index in 0..artifact.len() {
@@ -738,7 +803,7 @@ mod tests {
 
     #[test]
     fn every_truncation_of_valid_artifact_fails_closed() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let artifact = sign_artifact(&payload(), TEST_KID);
 
         for len in 0..artifact.len() {
@@ -751,7 +816,7 @@ mod tests {
 
     #[test]
     fn deterministic_garbage_corpus_never_panics_or_verifies() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let mut state = 0xD1CE_BA5E_F00D_CAFEu64;
 
         for len in 0..=1024usize {
@@ -768,7 +833,7 @@ mod tests {
 
     #[test]
     fn oversized_artifact_is_rejected_before_parsing() {
-        let verifier = EntitlementVerifier::new(trust_bundle());
+        let verifier = verifier();
         let err = verifier
             .verify(&vec![0u8; MAX_ARTIFACT_SIZE + 1], &ctx())
             .unwrap_err();
