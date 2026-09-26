@@ -92,6 +92,7 @@ impl EditorReplayEngine for FakeEditor {
         Ok(EditorProject {
             schema_version: EDITOR_PROJECT_VERSION_V0_2.to_owned(),
             source_hash: Self::digest(source_sha256)?,
+            identity: None,
             assets: Vec::new(),
             table_grids: Vec::new(),
             operations: Vec::new(),
@@ -314,6 +315,7 @@ fn project_hash_matches_existing_rar_revision_kernel_law() {
     let project = EditorProject {
         schema_version: EDITOR_PROJECT_VERSION_V0_2.into(),
         source_hash: Sha256Digest::from_str(SAMPLE_SOURCE_SHA256).unwrap(),
+        identity: None,
         assets: Vec::new(),
         table_grids: Vec::new(),
         operations: Vec::new(),

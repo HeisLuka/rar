@@ -5210,7 +5210,7 @@ mod tests {
         assert!(redo_restores_replacement_asset);
 
         let project = app.editor.as_ref().expect("editor").project();
-        assert_eq!(project.schema_version, "pub-editor-v0.3");
+        assert_eq!(project.schema_version, pub_editor::EDITOR_PROJECT_VERSION_V0_11);
         assert_eq!(project.assets.len(), 1);
         let asset_bytes = app
             .editor

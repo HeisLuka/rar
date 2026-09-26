@@ -121,7 +121,7 @@
       ],
       "properties": {
         "schema_version": {
-          "enum": ["pub-editor-v0.2", "pub-editor-v0.3", "pub-editor-v0.4"]
+          "enum": ["pub-editor-v0.2", "pub-editor-v0.3", "pub-editor-v0.4", "pub-editor-v0.5", "pub-editor-v0.6", "pub-editor-v0.7", "pub-editor-v0.8", "pub-editor-v0.9", "pub-editor-v0.10", "pub-editor-v0.11"]
         },
         "sha256": {"$ref": "#/$defs/sha256"},
         "byte_len": {"type": "integer", "minimum": 1},

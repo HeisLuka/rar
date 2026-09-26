@@ -14,6 +14,7 @@ on:
       - "tools/validate_editor_live_trial_package_receipt.py"
       - "tools/run_editor_live_trial_package_smoke.py"
       - "tools/validate_editor_desktop_ux_snapshots.py"
+      - "tools/run_local_editor_desktop_vertical.py"
       - ".github/workflows/chaptera-desktop-windows.yml"
       - "packages/product/desktop-suite/**"
       - "tools/validate_chaptera_desktop_suite_manifest.py"

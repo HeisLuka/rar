@@ -1,7 +1,8 @@
 use pub_editor::{
     EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_5, EDITOR_PROJECT_VERSION_V0_6,
     EDITOR_PROJECT_VERSION_V0_7, EDITOR_PROJECT_VERSION_V0_8, EDITOR_PROJECT_VERSION_V0_9,
-    EDITOR_PROJECT_VERSION_V0_10, EditOperation, EditorError, LengthEmu, NodeId, RectEmu,
+    EDITOR_PROJECT_VERSION_V0_10, EDITOR_PROJECT_VERSION_V0_11, EditOperation, EditorError,
+    LengthEmu, NodeId, RectEmu,
 };
 
 fn node_id() -> NodeId {
@@ -18,8 +19,9 @@ fn rect(x: i64, y: i64, width: i64, height: i64) -> RectEmu {
 }
 
 #[test]
-fn current_project_schema_advances_to_v0_10_without_erasing_prior_versions() {
-    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_10);
+fn current_project_schema_advances_to_v0_11_without_erasing_prior_versions() {
+    assert_eq!(EDITOR_PROJECT_VERSION_CURRENT, EDITOR_PROJECT_VERSION_V0_11);
+    assert_eq!(EDITOR_PROJECT_VERSION_V0_11, "pub-editor-v0.11");
     assert_eq!(EDITOR_PROJECT_VERSION_V0_10, "pub-editor-v0.10");
     assert_eq!(EDITOR_PROJECT_VERSION_V0_9, "pub-editor-v0.9");
     assert_eq!(EDITOR_PROJECT_VERSION_V0_8, "pub-editor-v0.8");

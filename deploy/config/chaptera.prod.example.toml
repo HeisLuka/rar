@@ -63,6 +63,25 @@ max_cfb_entries = 8192
 max_declared_stream_bytes = 536870912
 temp_root = "/var/lib/chaptera/source-scan-tmp"
 
+[source_ingress]
+# HTTP-owned upload lifecycle only. Validation/scanner policy above belongs to
+# the durable Parse worker and is intentionally not duplicated here.
+upload_ttl_seconds = 1800
+direct_grant_ttl_seconds = 300
+
+[source_ingress.baseline]
+# Project creation derives the canonical baseline from the validated immutable
+# source in a bounded isolated child.
+isolation_python = "/usr/bin/python3"
+isolation_harness = "/opt/chaptera/current/tools/migration_pdf_worker_isolation.py"
+worker_binary = "/opt/chaptera/current/chaptera"
+worker_wall_timeout_ms = 30000
+worker_address_space_mb = 1024
+worker_cpu_seconds = 20
+worker_open_files = 64
+worker_output_file_mb = 32
+temp_root = "/var/lib/chaptera/source-baseline-tmp"
+
 [edge]
 # Only these immediate peers may assert X-Forwarded-* authority to Chaptera.
 trusted_proxy_ips = ["127.0.0.1", "::1"]

@@ -132,6 +132,12 @@ def main() -> int:
         "config",
     )
     require(config, "max_file_bytes = 268435456", "config")
+    require(config, "[source_ingress]", "config")
+    require(config, "upload_ttl_seconds = 1800", "config")
+    require(config, "direct_grant_ttl_seconds = 300", "config")
+    require(config, "[source_ingress.baseline]", "config")
+    require(config, 'worker_binary = "/opt/chaptera/current/chaptera"', "config")
+    require(config, 'temp_root = "/var/lib/chaptera/source-baseline-tmp"', "config")
     if "0.0.0.0:8080" in config or "[::]:8080" in config:
         raise AssertionError("example config exposes the app listener publicly")
 
