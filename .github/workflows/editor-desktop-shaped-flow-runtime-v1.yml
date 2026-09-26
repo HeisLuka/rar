@@ -1,0 +1,56 @@
+name: Editor Desktop Shaped Flow Runtime V1
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-desktop-shaped-flow-runtime/**"
+      - "crates/chaptera-caret-layout-feed/**"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "vendor/producer-a/crates/pub-layout/**"
+      - ".github/workflows/editor-desktop-shaped-flow-runtime-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --manifest-path crates/chaptera-desktop-shaped-flow-runtime/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path crates/chaptera-desktop-shaped-flow-runtime/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/chaptera-desktop-shaped-flow-runtime/Cargo.toml --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --manifest-path crates/chaptera-desktop-shaped-flow-runtime/Cargo.toml
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl -fsSL "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -o "$fixture"
+          actual_sha="$(sha256sum "$fixture" | awk '{print $1}')"
+          test "$actual_sha" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          actual_len="$(wc -c < "$fixture" | tr -d ' ')"
+          test "$actual_len" = "291840"
+          echo "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" >> "$GITHUB_ENV"
+
+      - name: Real current-Story shaped-flow edit rebuild
+        run: |
+          cargo test --manifest-path crates/chaptera-desktop-shaped-flow-runtime/Cargo.toml \
+            real_sample_newsletter_current_story_builds_deterministically_and_rebinds_after_edit -- --nocapture
