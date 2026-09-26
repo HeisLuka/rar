@@ -90,7 +90,6 @@ pub struct VerifiedGrant {
     pub activation_id: String,
     pub entitlement_id: String,
     pub product_id: String,
-    pub edition: String,
     pub grants: Vec<String>,
 }
 
