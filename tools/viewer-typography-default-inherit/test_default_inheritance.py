@@ -141,6 +141,30 @@ class DefaultInheritanceTests(unittest.TestCase):
             "implicit_zero_from_prior_evidence",
         )
 
+    def test_unknown_fixed_block_width_fails_closed(self) -> None:
+        # id=0x19, unregistered fixed type=0x33. The old donor parser treated
+        # unknown fixed widths as zero-length, which can shift all following
+        # property interpretation. Inheritance promotion must refuse it.
+        with self.assertRaisesRegex(
+            mod.donor.DecodeError,
+            "unknown fixed block width",
+        ):
+            mod.parse_block_strict(bytes([0x19, 0x33]), 0, 2)
+
+    def test_fdpp_style_offset_cannot_point_into_descriptor_tables(self) -> None:
+        data = bytearray(64)
+        # one FDPP style; chunk offset 0 points at the chunk header/tables,
+        # not the style body.
+        data[0:2] = (1).to_bytes(2, "little")
+        data[8:12] = (120).to_bytes(4, "little")
+        data[12:14] = (0).to_bytes(2, "little")
+        desc = [{"name": "FDPP", "offset": 0, "end": 64, "ordinal": 0}]
+        with self.assertRaisesRegex(
+            mod.donor.DecodeError,
+            "style offset points outside body",
+        ):
+            mod.parse_fdpp_styles(bytes(data), desc)
+
     def test_fdpp_stored_order_regression_fails_closed(self) -> None:
         styles = [
             {
