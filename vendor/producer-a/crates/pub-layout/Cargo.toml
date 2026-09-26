@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 harfrust.workspace = true
 pub-model = { path = "../pub-model" }
+read-fonts.workspace = true
 serde.workspace = true
 sha2.workspace = true
 uax14-linebreak.workspace = true
