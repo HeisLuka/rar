@@ -66,7 +66,8 @@ pub const EDITOR_PROJECT_VERSION_V0_8: &str = "pub-editor-v0.8";
 pub const EDITOR_PROJECT_VERSION_V0_9: &str = "pub-editor-v0.9";
 pub const EDITOR_PROJECT_VERSION_V0_10: &str = "pub-editor-v0.10";
 pub const EDITOR_PROJECT_VERSION_V0_11: &str = "pub-editor-v0.11";
-pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_11;
+pub const EDITOR_PROJECT_VERSION_V0_12: &str = "pub-editor-v0.12";
+pub const EDITOR_PROJECT_VERSION_CURRENT: &str = EDITOR_PROJECT_VERSION_V0_12;
 pub const MAX_MOVE_NODES_V1: usize = 1024;
 pub const MAX_RESIZE_NODES_V1: usize = 1024;
 pub const PUB_MATURE_0X2C_PERSISTENCE_PROFILE: &str = "mature-0x2c";
@@ -421,8 +422,18 @@ impl EditorProject {
             state_id,
         });
 
+        let schema_version = if self
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, EditOperation::SetImageCrop { .. }))
+        {
+            EDITOR_PROJECT_VERSION_V0_12
+        } else {
+            EDITOR_PROJECT_VERSION_V0_11
+        };
+
         Ok(Self {
-            schema_version: EDITOR_PROJECT_VERSION_V0_11.into(),
+            schema_version: schema_version.into(),
             source_hash: self.source_hash,
             identity: Some(identity),
             assets: self.assets.clone(),
@@ -1078,6 +1089,9 @@ pub enum EditorProjectError {
     LegacyProjectCarriesCreateShapeOperation {
         index: usize,
     },
+    LegacyProjectCarriesImageCropOperation {
+        index: usize,
+    },
     LegacyProjectCarriesTableGrids,
     LegacyProjectCarriesIdentity,
     MissingProjectIdentity,
@@ -1119,7 +1133,7 @@ impl fmt::Display for EditorProjectError {
         match self {
             Self::UnsupportedSchema { found } => write!(
                 formatter,
-                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, {EDITOR_PROJECT_VERSION_V0_10:?}, or {EDITOR_PROJECT_VERSION_V0_11:?}"
+                "editor project schema {found:?} is unsupported; expected {EDITOR_PROJECT_VERSION_V0_1:?}, {EDITOR_PROJECT_VERSION_V0_2:?}, {EDITOR_PROJECT_VERSION_V0_3:?}, {EDITOR_PROJECT_VERSION_V0_4:?}, {EDITOR_PROJECT_VERSION_V0_5:?}, {EDITOR_PROJECT_VERSION_V0_6:?}, {EDITOR_PROJECT_VERSION_V0_7:?}, {EDITOR_PROJECT_VERSION_V0_8:?}, {EDITOR_PROJECT_VERSION_V0_9:?}, {EDITOR_PROJECT_VERSION_V0_10:?}, {EDITOR_PROJECT_VERSION_V0_11:?}, or {EDITOR_PROJECT_VERSION_V0_12:?}"
             ),
             Self::SourceHashMismatch { expected, found } => write!(
                 formatter,
@@ -1161,7 +1175,7 @@ impl fmt::Display for EditorProjectError {
             ),
             Self::LegacyProjectCarriesImageCropOperation { index } => write!(
                 formatter,
-                "editor project operation {index} uses SetImageCrop but the project schema predates pub-editor-v0.11"
+                "editor project operation {index} uses SetImageCrop but the project schema is not pub-editor-v0.12"
             ),
             Self::LegacyProjectCarriesTableGrids => formatter.write_str(
                 "editor projects before pub-editor-v0.6 cannot carry EffectiveTableGridV1 state",
@@ -1170,7 +1184,7 @@ impl fmt::Display for EditorProjectError {
                 "editor projects before pub-editor-v0.11 cannot carry durable project identity",
             ),
             Self::MissingProjectIdentity => formatter.write_str(
-                "pub-editor-v0.11 requires durable project identity",
+                "pub-editor-v0.11 and later require durable project identity",
             ),
             Self::TableGridMismatch => formatter.write_str(
                 "editor project EffectiveTableGridV1 state does not match deterministic replay",
@@ -1372,6 +1386,8 @@ pub struct EditorSession {
     source_hash: Sha256Digest,
     graph: PubResolvedGraph,
     project_identity: Option<EditorProjectIdentity>,
+    source_image_authority: BTreeMap<NodeId, SourceImageAuthorityV1>,
+    image_crop_overrides: BTreeMap<NodeId, ImageCropStateV1>,
     replacement_assets: BTreeMap<Sha256Digest, EditorReplacementAsset>,
     image_replacements: BTreeMap<NodeId, Sha256Digest>,
     authored_shapes: BTreeMap<NodeId, AuthoredShapeRuntimeV1>,
@@ -1390,6 +1406,8 @@ impl EditorSession {
             source_hash,
             graph,
             project_identity: Some(new_project_identity()),
+            source_image_authority: BTreeMap::new(),
+            image_crop_overrides: BTreeMap::new(),
             replacement_assets: BTreeMap::new(),
             image_replacements: BTreeMap::new(),
             authored_shapes: BTreeMap::new(),
@@ -1491,7 +1509,16 @@ impl EditorSession {
     pub fn project(&self) -> EditorProject {
         let table_grids = effective_table_grids(&self.graph);
         let (schema_version, identity) = if let Some(identity) = &self.project_identity {
-            (EDITOR_PROJECT_VERSION_V0_11, Some(identity.clone()))
+            let schema_version = if self
+                .undo
+                .iter()
+                .any(|operation| matches!(operation, EditOperation::SetImageCrop { .. }))
+            {
+                EDITOR_PROJECT_VERSION_V0_12
+            } else {
+                EDITOR_PROJECT_VERSION_V0_11
+            };
+            (schema_version, Some(identity.clone()))
         } else {
             let legacy_schema = if self
                 .undo
@@ -1607,6 +1634,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             return Err(EditorProjectError::UnsupportedSchema {
                 found: project.schema_version.clone(),
@@ -1634,6 +1662,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1650,6 +1679,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1665,6 +1695,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
             && !project.table_grids.is_empty()
         {
             return Err(EditorProjectError::LegacyProjectCarriesTableGrids);
@@ -1674,6 +1705,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project.operations.iter().position(|operation| {
                 matches!(operation, EditOperation::BreakTextFrameForwardLink { .. })
@@ -1685,6 +1717,7 @@ impl EditorSession {
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1697,6 +1730,7 @@ impl EditorSession {
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_9
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1708,6 +1742,7 @@ impl EditorSession {
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_10
             && project.schema_version != EDITOR_PROJECT_VERSION_V0_11
+            && project.schema_version != EDITOR_PROJECT_VERSION_V0_12
         {
             if let Some(index) = project
                 .operations
@@ -1717,10 +1752,21 @@ impl EditorSession {
                 return Err(EditorProjectError::LegacyProjectCarriesCreateShapeOperation { index });
             }
         }
-        if project.schema_version != EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_some() {
+        if project.schema_version != EDITOR_PROJECT_VERSION_V0_12 {
+            if let Some(index) = project
+                .operations
+                .iter()
+                .position(|operation| matches!(operation, EditOperation::SetImageCrop { .. }))
+            {
+                return Err(EditorProjectError::LegacyProjectCarriesImageCropOperation { index });
+            }
+        }
+        let identity_schema = project.schema_version == EDITOR_PROJECT_VERSION_V0_11
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_12;
+        if !identity_schema && project.identity.is_some() {
             return Err(EditorProjectError::LegacyProjectCarriesIdentity);
         }
-        if project.schema_version == EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_none() {
+        if identity_schema && project.identity.is_none() {
             return Err(EditorProjectError::MissingProjectIdentity);
         }
         if project.source_hash != self.source_hash {
@@ -1788,6 +1834,7 @@ impl EditorSession {
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_9
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_10
             || project.schema_version == EDITOR_PROJECT_VERSION_V0_11
+            || project.schema_version == EDITOR_PROJECT_VERSION_V0_12
         {
             let actual_grids = effective_table_grids(&candidate.graph);
             if actual_grids != project.table_grids {
@@ -2347,7 +2394,8 @@ impl EditorSession {
             .source_image_authority_for(node_id)
             .ok_or(EditorError::ImageCropUnsupported { node_id })?;
 
-        if node.payload.image_slot.is_none()
+        if self.project_identity.is_none()
+            || node.payload.image_slot.is_none()
             || crop.ambiguous
             || !matches!(authority.mime.as_str(), "image/png" | "image/jpeg")
             || node.header.transform != pub_model::Affine2D::identity()
@@ -4517,7 +4565,7 @@ mod image_crop_runtime_tests {
         assert_eq!(session.graph.nodes[&node_id].header.bounds, source_bounds);
         assert_eq!(
             session.project().schema_version,
-            EDITOR_PROJECT_VERSION_V0_11
+            EDITOR_PROJECT_VERSION_V0_12
         );
 
         assert!(matches!(
@@ -4539,7 +4587,7 @@ mod image_crop_runtime_tests {
         assert_eq!(replay_node_id, node_id);
         let mut replay = EditorSession::new(replay_graph).expect("replay session");
         install_png_authority(&mut replay, node_id);
-        replay.apply_project(&project).expect("v0.11 crop replay");
+        replay.apply_project(&project).expect("v0.12 crop replay");
         assert_eq!(replay.image_crop_for(node_id), Some(after));
         assert_eq!(replay.project(), project);
 
