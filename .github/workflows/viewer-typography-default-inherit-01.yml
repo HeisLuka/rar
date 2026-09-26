@@ -27,17 +27,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect inheritance producer surface
+        id: surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f tools/viewer-typography-default-inherit/test_default_inheritance.py && -f tools/viewer-typography-default-inherit/decode_default_inheritance.py ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "inheritance producer surface is absent on this ref" >&2
+            exit 1
+          fi
+          echo "bootstrap PR: producer surface absent, receipt execution intentionally skipped"
+
       - uses: actions/setup-python@v5
+        if: steps.surface.outputs.present == 'true'
         with:
           python-version: "3.12"
 
       - name: Install bounded read-only dependency
+        if: steps.surface.outputs.present == 'true'
         run: python -m pip install "olefile==0.47"
 
       - name: Test inheritance precedence and fail-closed range laws
+        if: steps.surface.outputs.present == 'true'
         run: python tools/viewer-typography-default-inherit/test_default_inheritance.py -v
 
       - name: Fetch pinned Apache POI PUB fixtures by Git blob
+        if: steps.surface.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -73,11 +93,13 @@ jobs:
           PY
 
       - name: Decode bounded FDPP to STSH1 inheritance
+        if: steps.surface.outputs.present == 'true'
         run: |
           python tools/viewer-typography-default-inherit/decode_default_inheritance.py             .inputs/SampleNewsletter.pub             --source-label "apache/poi SampleNewsletter.pub pinned Git blob"             --output out/sample-newsletter.json
           python tools/viewer-typography-default-inherit/decode_default_inheritance.py             .inputs/SampleBrochure.pub             --source-label "apache/poi SampleBrochure.pub pinned Git blob"             --output out/sample-brochure.json
 
       - name: Assert bounded inheritance discriminator
+        if: steps.surface.outputs.present == 'true'
         run: |
           python - <<'PY'
           import json
@@ -119,6 +141,7 @@ jobs:
           PY
 
       - name: Publish coverage summary
+        if: steps.surface.outputs.present == 'true'
         run: |
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
@@ -145,6 +168,7 @@ jobs:
           PY
 
       - name: Prove raw PUB inputs are not retained
+        if: steps.surface.outputs.present == 'true'
         run: |
           if find out -type f \( -iname '*.pub' -o -iname '*.ole' \) | grep -q .; then
             echo "raw PUB/CFB leaked into retained output" >&2
@@ -153,6 +177,7 @@ jobs:
           sha256sum out/*.json | tee out/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
+        if: steps.surface.outputs.present == 'true'
         with:
           name: viewer-typography-default-inherit-${{ github.run_id }}
           path: out/**
