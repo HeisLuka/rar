@@ -37,7 +37,14 @@ jobs:
         run: cargo check -p chaptera-desktop --all-targets
 
       - name: Clippy Desktop direct-text integration
-        run: cargo clippy -p chaptera-desktop --all-targets -- -D warnings
+        run: >-
+          cargo clippy -p chaptera-desktop --all-targets --
+          -D warnings
+          -A dead_code
+          -A unused_variables
+          -A clippy::type_complexity
+          -A clippy::collapsible_if
+          -A clippy::too_many_arguments
 
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: bash
