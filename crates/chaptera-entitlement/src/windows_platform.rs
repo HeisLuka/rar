@@ -4,6 +4,10 @@ use crate::{
     DEVICE_KEY_ID_LEN, LeaseTimeInputV1, TimeAcceptance, TimePolicy, TrustedTimeError,
     TrustedTimeStateV1, evaluate_time_bound_right,
 };
+use crate::activation_request::{
+    ACTIVATION_REQUEST_SIGNATURE_DOMAIN, ActivationRequestFactsV1, assemble_activation_request,
+    encode_activation_request_facts,
+};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use sha2::{Digest, Sha256};
 use std::ffi::{OsStr, c_void};
@@ -75,6 +79,8 @@ pub enum WindowsPlatformError {
     StateLockTimeout,
     #[error("TrustedTime policy rejected the candidate: {0}")]
     TrustedTime(#[from] TrustedTimeError),
+    #[error("activation request creation failed: {0}")]
+    ActivationRequest(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -226,10 +232,14 @@ impl WindowsDeviceKey {
         Ok(Sha256::digest(public).into())
     }
 
-    pub fn assert_possession(&self, challenge: &[u8]) -> Result<(), WindowsPlatformError> {
-        let mut message = Vec::with_capacity(POSSESSION_DOMAIN.len() + challenge.len());
-        message.extend_from_slice(POSSESSION_DOMAIN);
-        message.extend_from_slice(challenge);
+    fn sign_domain_message(
+        &self,
+        domain: &[u8],
+        payload: &[u8],
+    ) -> Result<[u8; 64], WindowsPlatformError> {
+        let mut message = Vec::with_capacity(domain.len() + payload.len());
+        message.extend_from_slice(domain);
+        message.extend_from_slice(payload);
         let digest = Sha256::digest(&message);
 
         let mut required = 0_u32;
@@ -250,7 +260,7 @@ impl WindowsDeviceKey {
             return Err(WindowsPlatformError::InvalidSignature);
         }
 
-        let mut signature = vec![0_u8; required as usize];
+        let mut signature = [0_u8; 64];
         let mut written = 0_u32;
         let status = unsafe {
             NCryptSignHash(
@@ -265,9 +275,17 @@ impl WindowsDeviceKey {
             )
         };
         cng_ok("NCryptSignHash", status)?;
-        if written != 64 {
+        if written != signature.len() as u32 {
             return Err(WindowsPlatformError::InvalidSignature);
         }
+        Ok(signature)
+    }
+
+    pub fn assert_possession(&self, challenge: &[u8]) -> Result<(), WindowsPlatformError> {
+        let signature = self.sign_domain_message(POSSESSION_DOMAIN, challenge)?;
+        let mut message = Vec::with_capacity(POSSESSION_DOMAIN.len() + challenge.len());
+        message.extend_from_slice(POSSESSION_DOMAIN);
+        message.extend_from_slice(challenge);
 
         let public = self.public_key_sec1()?;
         let verifying_key = VerifyingKey::from_sec1_bytes(&public)
@@ -277,6 +295,28 @@ impl WindowsDeviceKey {
         verifying_key
             .verify(&message, &signature)
             .map_err(|_| WindowsPlatformError::PossessionProofFailed)
+    }
+
+    pub fn create_activation_request(
+        &self,
+        request_id: &str,
+        product_id: &str,
+    ) -> Result<Vec<u8>, WindowsPlatformError> {
+        let public = self.public_key_sec1()?;
+        let device_key_id = self.device_key_id()?;
+        let facts = ActivationRequestFactsV1 {
+            schema_version: 1,
+            request_id: request_id.to_owned(),
+            product_id: product_id.to_owned(),
+            device_key_id,
+            device_public_key_sec1: public.to_vec(),
+        };
+        let signed_facts = encode_activation_request_facts(&facts)
+            .map_err(|error| WindowsPlatformError::ActivationRequest(error.to_string()))?;
+        let signature =
+            self.sign_domain_message(ACTIVATION_REQUEST_SIGNATURE_DOMAIN, &signed_facts)?;
+        assemble_activation_request(signed_facts, signature)
+            .map_err(|error| WindowsPlatformError::ActivationRequest(error.to_string()))
     }
 
     #[cfg(test)]
