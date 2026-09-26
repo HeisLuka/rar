@@ -79,6 +79,100 @@ struct ViewerLoadFailure {
     diagnostic_json: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct PreviewTextMetricDiagnostic {
+    signature: String,
+    page_index: u32,
+    page_id: String,
+    frame_id: String,
+    story_id: String,
+    frame_bounds_emu: [i64; 4],
+    clip_rect_px: [f32; 4],
+    zoom: f32,
+    font_face_disposition: &'static str,
+    layout_section_count: usize,
+    source_typography_sections: usize,
+    fallback_sections: usize,
+    executed_font_sizes_px: Vec<f32>,
+    wrap_width_px: f32,
+    galley_width_px: f32,
+    galley_height_px: f32,
+    clip_width_px: f32,
+    clip_height_px: f32,
+    overflow_delta_px: f32,
+    line_count: Option<usize>,
+}
+
+impl PreviewTextMetricDiagnostic {
+    fn from_preview(
+        page_index: u32,
+        page_id: String,
+        frame_id: String,
+        story_id: String,
+        frame_bounds: pub_editor::RectEmu,
+        clip_rect: egui::Rect,
+        zoom: f32,
+        typography_usage: preview_typography::PreviewTypographyUsage,
+        executed_font_sizes_px: Vec<f32>,
+        galley_size: egui::Vec2,
+        line_count: Option<usize>,
+    ) -> Self {
+        let font_face_disposition = "deterministic_proportional_fallback";
+        let wrap_width_px = clip_rect.width().max(1.0_f32);
+        let clip_width_px = clip_rect.width();
+        let clip_height_px = clip_rect.height();
+        let overflow_delta_px = (galley_size.y - clip_height_px).max(0.0_f32);
+        let layout_section_count = executed_font_sizes_px.len();
+        let signature = preview_text_metric_signature(
+            zoom,
+            font_face_disposition,
+            typography_usage.source_sections,
+            typography_usage.fallback_sections,
+            &executed_font_sizes_px,
+            wrap_width_px,
+            galley_size.x,
+            galley_size.y,
+            clip_width_px,
+            clip_height_px,
+            overflow_delta_px,
+            line_count,
+        );
+
+        Self {
+            signature,
+            page_index,
+            page_id,
+            frame_id,
+            story_id,
+            frame_bounds_emu: [
+                frame_bounds.x.get(),
+                frame_bounds.y.get(),
+                frame_bounds.width.get(),
+                frame_bounds.height.get(),
+            ],
+            clip_rect_px: [
+                clip_rect.left(),
+                clip_rect.top(),
+                clip_rect.right(),
+                clip_rect.bottom(),
+            ],
+            zoom,
+            font_face_disposition,
+            layout_section_count,
+            source_typography_sections: typography_usage.source_sections,
+            fallback_sections: typography_usage.fallback_sections,
+            executed_font_sizes_px,
+            wrap_width_px,
+            galley_width_px: galley_size.x,
+            galley_height_px: galley_size.y,
+            clip_width_px,
+            clip_height_px,
+            overflow_delta_px,
+            line_count,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
@@ -451,6 +545,7 @@ struct ViewerApp {
     project_status: Option<String>,
     preview_clipped_frames: usize,
     preview_clipped_story_keys: BTreeSet<String>,
+    preview_text_diagnostics: Vec<PreviewTextMetricDiagnostic>,
     diagnostic_save_path: String,
     diagnostic_status: Option<String>,
     diagnostic_sweep: Option<diagnostic_sweep::FolderSweepHandle>,
@@ -498,6 +593,7 @@ impl ViewerApp {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -793,6 +889,7 @@ impl ViewerApp {
         self.project_status = None;
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
         self.diagnostic_save_path.clear();
         self.diagnostic_status = None;
         self.exact_file_consent_open = false;
@@ -1494,6 +1591,57 @@ impl ViewerApp {
                         "Preview text clipping: {preview_clipped_frames} frame(s)"
                     ));
                     ui.small(PREVIEW_TEXT_CLIP_WARNING);
+
+                    if !self.preview_text_diagnostics.is_empty() {
+                        let mut grouped: BTreeMap<&str, Vec<&PreviewTextMetricDiagnostic>> =
+                            BTreeMap::new();
+                        for diagnostic in &self.preview_text_diagnostics {
+                            grouped
+                                .entry(diagnostic.signature.as_str())
+                                .or_default()
+                                .push(diagnostic);
+                        }
+
+                        ui.collapsing(
+                            format!("Preview text metrics · {} group(s)", grouped.len()),
+                            |ui| {
+                                if ui.button("Copy metrics JSON").clicked()
+                                    && let Ok(json) =
+                                        serde_json::to_string_pretty(&self.preview_text_diagnostics)
+                                {
+                                    ui.ctx().copy_text(json);
+                                }
+
+                                for (signature, rows) in grouped {
+                                    ui.add_space(4.0);
+                                    ui.strong(format!("{} × {}", rows.len(), signature));
+                                    for row in rows.iter().take(3) {
+                                        ui.monospace(format!(
+                                            "p{} frame={} story={} sections={} source={} fallback={} sizes={:?}px clip={:.1}×{:.1}px galley={:.1}×{:.1}px overflow={:.1}px lines={}",
+                                            row.page_index,
+                                            row.frame_id,
+                                            row.story_id,
+                                            row.layout_section_count,
+                                            row.source_typography_sections,
+                                            row.fallback_sections,
+                                            row.executed_font_sizes_px,
+                                            row.clip_width_px,
+                                            row.clip_height_px,
+                                            row.galley_width_px,
+                                            row.galley_height_px,
+                                            row.overflow_delta_px,
+                                            row.line_count
+                                                .map(|value| value.to_string())
+                                                .unwrap_or_else(|| "?".to_owned()),
+                                        ));
+                                    }
+                                    if rows.len() > 3 {
+                                        ui.small(format!("… and {} more frame(s)", rows.len() - 3));
+                                    }
+                                }
+                            },
+                        );
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -2426,6 +2574,7 @@ impl ViewerApp {
         self.ensure_image_textures(ui.ctx());
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
 
         ui.horizontal(|ui| {
             ui.label("Zoom");
@@ -2507,6 +2656,7 @@ impl ViewerApp {
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
         let mut preview_clipped_story_keys = BTreeSet::new();
+        let mut preview_text_diagnostics = Vec::new();
         let selected_canvas_instance = self.canvas_selection.primary().map(str::to_owned);
         let mut canvas_clicked = false;
         let mut canvas_hit: Option<String> = None;
@@ -2914,7 +3064,7 @@ impl ViewerApp {
                             .iter()
                             .find(|story| story.id == fragment.story_id)
                             .map(|story| story.text.as_str());
-                        let (layout_job, _typography_usage) =
+                        let (layout_job, typography_usage) =
                             preview_typography::layout_fragment(
                                 &visual.typography_runs,
                                 current_story_text,
@@ -2923,6 +3073,11 @@ impl ViewerApp {
                                 fallback_font_size,
                                 text_clip_rect.width().max(1.0_f32),
                             );
+                        let executed_font_sizes_px = layout_job
+                            .sections
+                            .iter()
+                            .map(|section| section.format.font_id.size)
+                            .collect::<Vec<_>>();
                         let galley = text_painter.layout_job(layout_job);
                         if preview_text_height_is_clipped(
                             galley.size().y,
@@ -2931,18 +3086,36 @@ impl ViewerApp {
                             preview_clipped_frames += 1;
                             preview_clipped_story_keys
                                 .insert(format!("{:?}", fragment.story_id));
+                            let marker_center = preview_overflow_marker_center(node_rect);
                             painter.rect_stroke(
                                 node_rect,
                                 0,
                                 egui::Stroke::new(2.0_f32, egui::Color32::RED),
                                 egui::StrokeKind::Inside,
                             );
+                            painter.circle_filled(marker_center, 5.0_f32, egui::Color32::RED);
                             painter.text(
-                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                egui::Align2::RIGHT_TOP,
-                                "preview overflow",
-                                egui::FontId::proportional(10.0_f32),
-                                egui::Color32::RED,
+                                marker_center,
+                                egui::Align2::CENTER_CENTER,
+                                "!",
+                                egui::FontId::proportional(9.0_f32),
+                                egui::Color32::WHITE,
+                            );
+
+                            preview_text_diagnostics.push(
+                                PreviewTextMetricDiagnostic::from_preview(
+                                    page.index,
+                                    page.id.as_canonical().to_string(),
+                                    node.origin.as_canonical().to_string(),
+                                    fragment.story_id.as_canonical().to_string(),
+                                    node_bounds,
+                                    text_clip_rect,
+                                    self.zoom,
+                                    typography_usage,
+                                    executed_font_sizes_px,
+                                    galley.size(),
+                                    Some(galley.rows.len()),
+                                ),
                             );
                         }
                         text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
@@ -3072,6 +3245,7 @@ impl ViewerApp {
 
         self.preview_clipped_frames = preview_clipped_frames;
         self.preview_clipped_story_keys = preview_clipped_story_keys;
+        self.preview_text_diagnostics = preview_text_diagnostics;
     }
 }
 
@@ -3200,6 +3374,38 @@ fn resize_handle_label(handle: ResizeHandle) -> &'static str {
 fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool {
     const EPSILON_PX: f32 = 0.5;
     galley_height > clip_height + EPSILON_PX
+}
+
+fn preview_text_metric_signature(
+    zoom: f32,
+    font_face_disposition: &str,
+    source_typography_sections: usize,
+    fallback_sections: usize,
+    executed_font_sizes_px: &[f32],
+    wrap_width_px: f32,
+    galley_width_px: f32,
+    galley_height_px: f32,
+    clip_width_px: f32,
+    clip_height_px: f32,
+    overflow_delta_px: f32,
+    line_count: Option<usize>,
+) -> String {
+    let sizes = executed_font_sizes_px
+        .iter()
+        .map(|size| format!("{size:.1}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "preview_overflow:{font_face_disposition}:sections={}:source={source_typography_sections}:fallback={fallback_sections}:sizes=[{sizes}]px:zoom={zoom:.3}:wrap={wrap_width_px:.1}:galley={galley_width_px:.1}x{galley_height_px:.1}:clip={clip_width_px:.1}x{clip_height_px:.1}:overflow={overflow_delta_px:.1}:lines={}",
+        executed_font_sizes_px.len(),
+        line_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "?".to_owned())
+    )
+}
+
+fn preview_overflow_marker_center(frame_rect: egui::Rect) -> egui::Pos2 {
+    frame_rect.right_top() + egui::vec2(7.0, -7.0)
 }
 
 fn editable_export_path(
@@ -3424,6 +3630,116 @@ mod tests {
     }
 
     #[test]
+    fn preview_overflow_marker_stays_outside_text_frame() {
+        let frame = egui::Rect::from_min_max(
+            egui::pos2(10.0, 20.0),
+            egui::pos2(110.0, 70.0),
+        );
+        let marker = preview_overflow_marker_center(frame);
+        let marker_radius = 5.0_f32;
+
+        assert!(marker.x - marker_radius >= frame.right());
+        assert!(marker.y + marker_radius <= frame.top());
+    }
+
+    #[test]
+    fn preview_metric_diagnostic_records_section_aware_layout_inputs() {
+        let frame_bounds = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(100),
+            pub_editor::LengthEmu::new(200),
+            pub_editor::LengthEmu::new(300),
+            pub_editor::LengthEmu::new(400),
+        );
+        let clip_rect = egui::Rect::from_min_max(
+            egui::pos2(10.0, 20.0),
+            egui::pos2(210.0, 120.0),
+        );
+        let diagnostic = PreviewTextMetricDiagnostic::from_preview(
+            3,
+            "page-3".to_owned(),
+            "frame-9".to_owned(),
+            "story-7".to_owned(),
+            frame_bounds,
+            clip_rect,
+            1.25,
+            preview_typography::PreviewTypographyUsage {
+                source_sections: 2,
+                fallback_sections: 1,
+            },
+            vec![24.0, 9.0, 14.0],
+            egui::vec2(180.0, 145.0),
+            Some(7),
+        );
+
+        assert_eq!(diagnostic.page_index, 3);
+        assert_eq!(diagnostic.frame_bounds_emu, [100, 200, 300, 400]);
+        assert_eq!(diagnostic.clip_rect_px, [10.0, 20.0, 210.0, 120.0]);
+        assert_eq!(diagnostic.layout_section_count, 3);
+        assert_eq!(diagnostic.source_typography_sections, 2);
+        assert_eq!(diagnostic.fallback_sections, 1);
+        assert_eq!(diagnostic.executed_font_sizes_px, vec![24.0, 9.0, 14.0]);
+        assert_eq!(diagnostic.wrap_width_px, 200.0);
+        assert_eq!(diagnostic.galley_width_px, 180.0);
+        assert_eq!(diagnostic.galley_height_px, 145.0);
+        assert_eq!(diagnostic.clip_height_px, 100.0);
+        assert_eq!(diagnostic.overflow_delta_px, 45.0);
+        assert_eq!(diagnostic.line_count, Some(7));
+        assert_eq!(
+            diagnostic.signature,
+            "preview_overflow:deterministic_proportional_fallback:sections=3:source=2:fallback=1:sizes=[24.0,9.0,14.0]px:zoom=1.250:wrap=200.0:galley=180.0x145.0:clip=200.0x100.0:overflow=45.0:lines=7"
+        );
+    }
+
+    #[test]
+    fn preview_metric_signature_distinguishes_typography_section_failures() {
+        let base = preview_text_metric_signature(
+            1.0,
+            "deterministic_proportional_fallback",
+            2,
+            1,
+            &[24.0, 9.0, 14.0],
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+        let different_sizes = preview_text_metric_signature(
+            1.0,
+            "deterministic_proportional_fallback",
+            2,
+            1,
+            &[24.0, 9.0, 12.0],
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+        let different_ownership = preview_text_metric_signature(
+            1.0,
+            "deterministic_proportional_fallback",
+            1,
+            2,
+            &[24.0, 9.0, 14.0],
+            200.0,
+            180.0,
+            145.0,
+            200.0,
+            100.0,
+            45.0,
+            Some(7),
+        );
+
+        assert_ne!(base, different_sizes);
+        assert_ne!(base, different_ownership);
+    }
+
+    #[test]
     fn fit_scale_keeps_page_inside_viewport() {
         let viewport = egui::vec2(1000.0, 800.0);
         let scale = fitted_scale(2_000_000, 1_000_000, viewport).expect("valid page");
@@ -3591,6 +3907,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -3641,6 +3958,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -4008,6 +4326,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
