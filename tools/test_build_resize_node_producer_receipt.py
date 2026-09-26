@@ -144,6 +144,7 @@ class ResizeNodeProducerBuilderTests(unittest.TestCase):
             )
 
         summary = validate_receipt(receipt)
+        self.assertEqual("local_private", receipt["producer"]["integration"])
         self.assertTrue(summary["one_durable_operation"])
         self.assertTrue(summary["undo_redo_exact"])
         self.assertTrue(summary["transactional_replay"])
@@ -180,6 +181,40 @@ class ResizeNodeProducerBuilderTests(unittest.TestCase):
                 projection_instance_admitted=True,
             )
         self.assertEqual("real_pub_sanitized", receipt["fixture_kind"])
+
+    def test_hosted_native_receipt_uses_same_real_pub_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            producer = self.make_producer(tmp)
+            receipt = build_receipt(
+                [sys.executable, str(producer)],
+                source_hash=SOURCE_HASH,
+                document_id=DOCUMENT_ID,
+                chaptera_version="0.1.0-ci",
+                platform="windows",
+                binary_sha256=BINARY_SHA,
+                fixture_kind="real_pub_sanitized",
+                projection_instance_admitted=True,
+                integration="hosted_native",
+            )
+        summary = validate_receipt(receipt)
+        self.assertEqual("hosted_native", receipt["producer"]["integration"])
+        self.assertTrue(summary["one_durable_operation"])
+        self.assertTrue(summary["transactional_replay"])
+
+    def test_unknown_integration_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            producer = self.make_producer(tmp)
+            with self.assertRaisesRegex(RuntimeError, "unsupported producer integration"):
+                build_receipt(
+                    [sys.executable, str(producer)],
+                    source_hash=SOURCE_HASH,
+                    document_id=DOCUMENT_ID,
+                    chaptera_version="0.1.0-test",
+                    platform="windows",
+                    binary_sha256=BINARY_SHA,
+                    fixture_kind="synthetic_geometry",
+                    integration="browser",
+                )
 
     def test_builder_fails_closed_if_producer_changes_source_identity(self):
         broken = FAKE_PRODUCER.replace(

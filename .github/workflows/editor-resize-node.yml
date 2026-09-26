@@ -75,6 +75,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install hosted receipt validator
+        run: python -m pip install jsonschema
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: pwsh
         run: |
@@ -93,3 +98,37 @@ jobs:
       - name: Smoke current-Rar ResizeNode producer on Windows
         shell: pwsh
         run: cargo test --manifest-path tools/chaptera-resize-producer/Cargo.toml --target-dir target real_sample_contract -- --ignored --nocapture
+
+      - name: Build hosted-native real ResizeNode receipt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixture = $env:CHAPTERA_SAMPLE_NEWSLETTER
+          $sourceHash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          cargo build --manifest-path tools/chaptera-resize-producer/Cargo.toml --target-dir target --release
+          if ($LASTEXITCODE -ne 0) { throw "chaptera-resize-producer release build failed" }
+          $producer = (Resolve-Path "target/release/chaptera-resize-producer.exe").Path
+          $binaryHash = (Get-FileHash $producer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $documentId = [guid]::NewGuid().ToString()
+          $receipt = Join-Path $env:RUNNER_TEMP "resize-node.hosted-native.json"
+          python tools/build_resize_node_producer_receipt.py `
+            --source-hash $sourceHash `
+            --document-id $documentId `
+            --chaptera-version "0.1.0-ci${{ github.run_number }}" `
+            --platform windows `
+            --binary-sha256 $binaryHash `
+            --fixture-kind real_pub_sanitized `
+            --projection-instance-admitted `
+            --integration hosted_native `
+            --output $receipt `
+            -- $producer --fixture $fixture
+          if ($LASTEXITCODE -ne 0) { throw "hosted-native ResizeNode receipt build failed" }
+          python tools/validate_resize_node_producer_receipt.py $receipt
+          if ($LASTEXITCODE -ne 0) { throw "hosted-native ResizeNode receipt validation failed" }
+          Copy-Item $receipt "resize-node.hosted-native.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resize-node-hosted-native
+          path: resize-node.hosted-native.json
+          if-no-files-found: error

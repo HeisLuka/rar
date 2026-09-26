@@ -81,6 +81,7 @@ def validate_semantics(receipt):
         "receipt_version": receipt["receipt_version"],
         "operation_contract": receipt["operation_contract"],
         "platform": receipt["build"]["platform"],
+        "integration": receipt["producer"]["integration"],
         "fixture_kind": receipt["fixture_kind"],
         "one_durable_operation": True,
         "size_change_required": True,

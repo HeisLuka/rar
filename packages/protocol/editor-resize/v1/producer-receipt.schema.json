@@ -32,7 +32,7 @@
       "required": ["kind", "integration"],
       "properties": {
         "kind": { "const": "chaptera_desktop_editor" },
-        "integration": { "const": "local_private" }
+        "integration": { "enum": ["local_private", "hosted_native"] }
       }
     },
     "build": {
