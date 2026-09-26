@@ -22,6 +22,7 @@ members = [
 exclude = [
   "vendor/producer-a",
   "crates/chaptera-suite-handoff",
+  "crates/chaptera-viewer-render-plan",
   "crates/chaptera-text-caret-map-adapter",
   "crates/chaptera-caret-layout-feed",
   "crates/chaptera-text-interaction-adapter",
