@@ -394,6 +394,81 @@ impl SqliteRevisionStore {
         row.map(decode_edge_row).transpose()
     }
 
+    pub async fn read_edge_by_operation(
+        &self,
+        document_id: &str,
+        operation_id: &str,
+    ) -> Result<Option<RevisionEdge>, SqliteStoreError> {
+        require_ident(document_id, "document_id")?;
+        require_ident(operation_id, "operation_id")?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT
+                document_id,
+                parent_revision,
+                parent_cursor,
+                operation_id,
+                request_hash,
+                canonical_event,
+                child_revision,
+                child_cursor,
+                resulting_state_hash,
+                authoring_root_hash,
+                semantic_schema_version,
+                committed_at_ms
+            FROM revision_edges
+            WHERE document_id = ? AND operation_id = ?
+            LIMIT 2
+            "#,
+        )
+        .bind(document_id.as_bytes())
+        .bind(operation_id.as_bytes())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlite_read_error)?;
+
+        decode_single_operation_row(row)
+    }
+
+    pub(crate) async fn read_edge_by_operation_in_transaction(
+        &self,
+        conn: &mut SqliteConnection,
+        document_id: &str,
+        operation_id: &str,
+    ) -> Result<Option<RevisionEdge>, SqliteStoreError> {
+        require_ident(document_id, "document_id")?;
+        require_ident(operation_id, "operation_id")?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                document_id,
+                parent_revision,
+                parent_cursor,
+                operation_id,
+                request_hash,
+                canonical_event,
+                child_revision,
+                child_cursor,
+                resulting_state_hash,
+                authoring_root_hash,
+                semantic_schema_version,
+                committed_at_ms
+            FROM revision_edges
+            WHERE document_id = ? AND operation_id = ?
+            LIMIT 2
+            "#,
+        )
+        .bind(document_id.as_bytes())
+        .bind(operation_id.as_bytes())
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(sqlite_read_error)?;
+
+        decode_single_operation_row(rows)
+    }
+
     pub async fn load_document_edges(
         &self,
         document_id: &str,
@@ -1083,6 +1158,18 @@ fn verify_replay_chain(edges: &[RevisionEdge]) -> Result<(), SqliteStoreError> {
     Ok(())
 }
 
+fn decode_single_operation_row(
+    rows: Vec<sqlx::sqlite::SqliteRow>,
+) -> Result<Option<RevisionEdge>, SqliteStoreError> {
+    if rows.len() > 1 {
+        return Err(SqliteStoreError::new(
+            "revision_operation_ambiguous",
+            "document operation identity resolved to multiple RevisionStream edges",
+        ));
+    }
+    rows.into_iter().next().map(decode_edge_row).transpose()
+}
+
 fn decode_edge_row(row: sqlx::sqlite::SqliteRow) -> Result<RevisionEdge, SqliteStoreError> {
     let edge = RevisionEdge {
         document_id: blob_text(&row, "document_id")?,
@@ -1309,6 +1396,72 @@ mod tests {
             store.append_edge(changed).await.unwrap(),
             AppendOutcome::Conflict(first)
         );
+
+        store.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn operation_lookup_is_document_scoped_and_works_inside_caller_transaction() {
+        let path = temp_db("operation-lookup");
+        let store = store(&path).await;
+        let first = edge(
+            "doc-operation",
+            "rev-0",
+            "rev-1",
+            "op-stable",
+            &hash(b'a'),
+            b"operation-lookup",
+            0,
+        );
+        let binding = identity("doc-operation", "rev-1", b'e', 100);
+
+        let mut transaction = store.pool.begin().await.unwrap();
+        assert!(store
+            .read_edge_by_operation_in_transaction(
+                &mut transaction,
+                "doc-operation",
+                "op-stable",
+            )
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .append_edge_with_revision_identity_in_transaction(
+                    &mut transaction,
+                    &first,
+                    &binding,
+                )
+                .await
+                .unwrap(),
+            AppendOutcome::Committed(first.clone())
+        );
+        assert_eq!(
+            store
+                .read_edge_by_operation_in_transaction(
+                    &mut transaction,
+                    "doc-operation",
+                    "op-stable",
+                )
+                .await
+                .unwrap(),
+            Some(first.clone())
+        );
+        transaction.commit().await.unwrap();
+
+        assert_eq!(
+            store
+                .read_edge_by_operation("doc-operation", "op-stable")
+                .await
+                .unwrap(),
+            Some(first)
+        );
+        assert!(store
+            .read_edge_by_operation("other-document", "op-stable")
+            .await
+            .unwrap()
+            .is_none());
 
         store.close().await;
         cleanup(&path);
