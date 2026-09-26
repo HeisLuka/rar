@@ -112,7 +112,7 @@ pub fn derive_story_edit_domain_v1(
             protected_ranges: Vec::new(),
         }),
         StoryProvenanceV1::ImportedMatureQuillTerminalCr => {
-            if raw_scalar_len == 0 || !story_text.ends_with('') {
+            if raw_scalar_len == 0 || !story_text.ends_with('\r') {
                 return Err(StoryEditDomainError::new(
                     "invalid_provenance",
                     "proven terminal-CR provenance requires final U+000D scalar",
@@ -311,7 +311,7 @@ pub fn derive_editor_story_provenance_v1(
 
     if profile_is_mature_0x2c
         && confirmed_persisted_quill_story
-        && story.text.ends_with('')
+        && story.text.ends_with('\r')
     {
         Ok(StoryProvenanceV1::ImportedMatureQuillTerminalCr)
     } else {
@@ -343,7 +343,7 @@ mod tests {
     fn chaptera_final_cr_is_not_auto_protected() {
         let domain = derive_story_edit_domain_v1(
             "story:a",
-            "A",
+            "A\r",
             StoryProvenanceV1::ChapteraCreated,
         )
         .unwrap();
@@ -355,7 +355,7 @@ mod tests {
     fn mature_terminal_cr_protects_only_final_scalar() {
         let domain = derive_story_edit_domain_v1(
             "story:q",
-            "AB",
+            "A\rB\r",
             StoryProvenanceV1::ImportedMatureQuillTerminalCr,
         )
         .unwrap();
@@ -374,7 +374,7 @@ mod tests {
     fn unknown_import_fails_closed_even_with_trailing_cr() {
         let domain = derive_story_edit_domain_v1(
             "story:u",
-            "ABC",
+            "ABC\r",
             StoryProvenanceV1::ImportedUnknown,
         )
         .unwrap();
