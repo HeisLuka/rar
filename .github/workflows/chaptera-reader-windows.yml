@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-desktop/**"
+      - "crates/chaptera-viewer-render-plan/**"
       - "vendor/producer-a/**"
       - "packages/product/reader-portable/**"
       - "packages/product/desktop-suite/**"
@@ -36,6 +37,9 @@ jobs:
 
       - name: Test Reader portable packager
         run: python -m unittest tools/test_package_reader_portable.py -v
+
+      - name: Test shared Viewer render-plan contract
+        run: cargo test --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml
 
       - name: Check compile-time Reader surface
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
