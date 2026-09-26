@@ -19,6 +19,7 @@ struct SourceSection {
 
 pub(crate) fn layout_fragment(
     typography_runs: &[ViewerTypographyRun],
+    current_story_text: Option<&str>,
     fragment: &ViewerTextFragment,
     scene_scale: f32,
     fallback_font_size_px: f32,
@@ -30,10 +31,14 @@ pub(crate) fn layout_fragment(
     if usize::try_from(fragment_scalar_len).ok() != Some(fragment.text.chars().count()) {
         return fallback_layout(fragment, fallback_font_size_px, wrap_width_px);
     }
+    let Some(current_story_text) = current_story_text else {
+        return fallback_layout(fragment, fallback_font_size_px, wrap_width_px);
+    };
 
     let mut source_sections = typography_runs
         .iter()
         .filter(|run| run.story_id == fragment.story_id)
+        .filter(|run| run.applies_to_story_text(current_story_text))
         .filter_map(|run| {
             let start = run.scalar_start.max(fragment.scalar_start);
             let end = run.scalar_end.min(fragment.scalar_end);
@@ -184,6 +189,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const SOURCE_STORY_TEXT: &str = "0123456789ABCDEF";
+
     fn fragment() -> ViewerTextFragment {
         serde_json::from_value(json!({
             "story_id": "00000000-0000-0000-0000-000000000001",
@@ -197,7 +204,7 @@ mod tests {
     }
 
     fn run(start: u32, end: u32, points: u32) -> ViewerTypographyRun {
-        serde_json::from_value(json!({
+        let mut run: ViewerTypographyRun = serde_json::from_value(json!({
             "story_id": "00000000-0000-0000-0000-000000000001",
             "scalar_start": start,
             "scalar_end": end,
@@ -205,7 +212,10 @@ mod tests {
             "text_size_emu": points * 12_700,
             "render_disposition": "source_identity_known_render_fallback"
         }))
-        .expect("ViewerTypographyRun JSON")
+        .expect("ViewerTypographyRun JSON");
+        run.source_story_text_sha256 =
+            Some(pub_viewer::viewer_story_text_sha256(SOURCE_STORY_TEXT));
+        run
     }
 
     #[test]
@@ -214,6 +224,7 @@ mod tests {
         let runs = [run(10, 12, 24), run(14, 16, 14)];
         let (job, usage) = layout_fragment(
             &runs,
+            Some(SOURCE_STORY_TEXT),
             &fragment,
             1.0 / 12_700.0,
             9.0,
@@ -241,6 +252,7 @@ mod tests {
         let runs = [run(10, 14, 24), run(12, 16, 14)];
         let (job, usage) = layout_fragment(
             &runs,
+            Some(SOURCE_STORY_TEXT),
             &fragment,
             1.0 / 12_700.0,
             9.0,
@@ -259,6 +271,7 @@ mod tests {
         fragment.scalar_end = 20;
         let (job, usage) = layout_fragment(
             &[run(10, 20, 24)],
+            Some(SOURCE_STORY_TEXT),
             &fragment,
             1.0 / 12_700.0,
             9.0,
@@ -268,6 +281,43 @@ mod tests {
         assert_eq!(job.sections.len(), 1);
         assert_eq!(job.sections[0].format.font_id.size, 9.0);
         assert_eq!(usage.source_sections, 0);
+    }
+
+    #[test]
+    fn source_typography_fails_closed_after_story_edit_and_recovers_on_undo() {
+        let fragment = fragment();
+        let runs = [run(10, 16, 24)];
+
+        let (_, source_usage) = layout_fragment(
+            &runs,
+            Some(SOURCE_STORY_TEXT),
+            &fragment,
+            1.0 / 12_700.0,
+            9.0,
+            200.0,
+        );
+        assert_eq!(source_usage.source_sections, 1);
+
+        let (_, edited_usage) = layout_fragment(
+            &runs,
+            Some("0123456789ABXDEF"),
+            &fragment,
+            1.0 / 12_700.0,
+            9.0,
+            200.0,
+        );
+        assert_eq!(edited_usage.source_sections, 0);
+        assert_eq!(edited_usage.fallback_sections, 1);
+
+        let (_, undo_usage) = layout_fragment(
+            &runs,
+            Some(SOURCE_STORY_TEXT),
+            &fragment,
+            1.0 / 12_700.0,
+            9.0,
+            200.0,
+        );
+        assert_eq!(undo_usage.source_sections, 1);
     }
 
     #[test]
@@ -322,8 +372,15 @@ mod tests {
             .iter()
             .filter(|fragment| !fragment.text.is_empty())
         {
+            let story_text = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| story.id == fragment.story_id)
+                .map(|story| story.text.as_str());
             let (job, usage) = layout_fragment(
                 &visual.typography_runs,
+                story_text,
                 fragment,
                 1.0 / 12_700.0,
                 9.0,
