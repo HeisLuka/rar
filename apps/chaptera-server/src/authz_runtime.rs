@@ -19,6 +19,7 @@ use crate::{
         ExportPublicationInputV1, ExportPublicationPrepareOutcomeV1, SqliteExportPublicationStore,
     },
     job_queue::{JobKind, JobRecord},
+    sqlite_store::{AppendOutcome, RevisionEdge, RevisionIdentityBinding, SqliteRevisionStore},
 };
 
 pub const CAP_VIEW: &str = "document.view";
@@ -406,6 +407,322 @@ impl SqliteAuthzAuthority {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedRevisionCommitReceipt {
+    pub edge: RevisionEdge,
+    pub binding: RevisionIdentityBinding,
+    pub authz_version: i64,
+    pub replayed: bool,
+}
+
+#[derive(Clone)]
+pub struct SqliteAuthorizedRevisionCommitter {
+    authority: SqliteAuthzAuthority,
+    revisions: SqliteRevisionStore,
+}
+
+impl SqliteAuthorizedRevisionCommitter {
+    pub fn new(
+        authority: SqliteAuthzAuthority,
+        revisions: SqliteRevisionStore,
+    ) -> Result<Self, AuthzError> {
+        if authority.path() != revisions.path() {
+            return Err(AuthzError::new(
+                "authz_revision_database_mismatch",
+                "AuthZ authority and RevisionStream store must share one SQLite database",
+            ));
+        }
+        Ok(Self {
+            authority,
+            revisions,
+        })
+    }
+
+    pub async fn reconcile_geometry_revision(
+        &self,
+        tenant_id: &str,
+        document_id: &str,
+        principal_id: &str,
+        operation_id: &str,
+        request_hash: &str,
+        now_ms: i64,
+    ) -> Result<Option<AuthorizedRevisionCommitReceipt>, AuthzError> {
+        validate_identity_set(tenant_id, document_id, principal_id, operation_id)?;
+        validate_revision_request_hash(request_hash)?;
+        validate_now(now_ms)?;
+
+        let mut conn = begin_immediate(&self.authority.pool).await?;
+        let decision = match check_authorization(
+            &mut conn,
+            tenant_id,
+            document_id,
+            principal_id,
+            CAP_EDIT_GEOMETRY,
+            now_ms,
+        )
+        .await
+        {
+            Ok(decision) => decision,
+            Err(AuthorizationCheckError::Denied(denied)) => {
+                insert_audit(
+                    &mut conn,
+                    tenant_id,
+                    document_id,
+                    principal_id,
+                    operation_id,
+                    "revision.commit",
+                    "denied",
+                    CAP_EDIT_GEOMETRY,
+                    denied.authz_version,
+                    Some(denied.code),
+                    now_ms,
+                )
+                .await?;
+                commit(&mut conn).await?;
+                return Err(AuthzError::new(denied.code, denied.message));
+            }
+            Err(AuthorizationCheckError::Internal(error)) => {
+                rollback(&mut conn).await?;
+                return Err(error);
+            }
+        };
+
+        let existing = self
+            .revisions
+            .read_edge_by_operation_in_transaction(&mut conn, document_id, operation_id)
+            .await
+            .map_err(revision_store_error)?;
+
+        let Some(edge) = existing else {
+            rollback(&mut conn).await?;
+            return Ok(None);
+        };
+        if edge.request_hash != request_hash {
+            rollback(&mut conn).await?;
+            return Err(AuthzError::new(
+                "idempotency_conflict",
+                "client operation id was reused with a different canonical request",
+            ));
+        }
+
+        let binding = self
+            .revisions
+            .read_revision_identity_in_transaction(&mut conn, document_id, &edge.child_revision)
+            .await
+            .map_err(revision_store_error)?
+            .ok_or_else(|| {
+                AuthzError::new(
+                    "revision_identity_partial_commit",
+                    "accepted revision edge is missing its canonical revision identity binding",
+                )
+            })?;
+
+        insert_audit(
+            &mut conn,
+            tenant_id,
+            document_id,
+            principal_id,
+            operation_id,
+            "revision.commit",
+            "allowed",
+            CAP_EDIT_GEOMETRY,
+            decision.authz_version,
+            None,
+            now_ms,
+        )
+        .await?;
+        commit(&mut conn).await?;
+
+        Ok(Some(AuthorizedRevisionCommitReceipt {
+            edge,
+            binding,
+            authz_version: decision.authz_version,
+            replayed: true,
+        }))
+    }
+
+    pub async fn commit_geometry_revision(
+        &self,
+        tenant_id: &str,
+        principal_id: &str,
+        edge: RevisionEdge,
+        binding: RevisionIdentityBinding,
+        now_ms: i64,
+    ) -> Result<AuthorizedRevisionCommitReceipt, AuthzError> {
+        validate_identity_set(
+            tenant_id,
+            &edge.document_id,
+            principal_id,
+            &edge.operation_id,
+        )?;
+        validate_revision_request_hash(&edge.request_hash)?;
+        validate_now(now_ms)?;
+
+        let mut conn = begin_immediate(&self.authority.pool).await?;
+        let decision = match check_authorization(
+            &mut conn,
+            tenant_id,
+            &edge.document_id,
+            principal_id,
+            CAP_EDIT_GEOMETRY,
+            now_ms,
+        )
+        .await
+        {
+            Ok(decision) => decision,
+            Err(AuthorizationCheckError::Denied(denied)) => {
+                insert_audit(
+                    &mut conn,
+                    tenant_id,
+                    &edge.document_id,
+                    principal_id,
+                    &edge.operation_id,
+                    "revision.commit",
+                    "denied",
+                    CAP_EDIT_GEOMETRY,
+                    denied.authz_version,
+                    Some(denied.code),
+                    now_ms,
+                )
+                .await?;
+                commit(&mut conn).await?;
+                return Err(AuthzError::new(denied.code, denied.message));
+            }
+            Err(AuthorizationCheckError::Internal(error)) => {
+                rollback(&mut conn).await?;
+                return Err(error);
+            }
+        };
+
+        let result = async {
+            if let Some(existing) = self
+                .revisions
+                .read_edge_by_operation_in_transaction(
+                    &mut conn,
+                    &edge.document_id,
+                    &edge.operation_id,
+                )
+                .await
+                .map_err(revision_store_error)?
+            {
+                if existing.request_hash != edge.request_hash {
+                    return Err(AuthzError::new(
+                        "idempotency_conflict",
+                        "client operation id was reused with a different canonical request",
+                    ));
+                }
+                let existing_binding = self
+                    .revisions
+                    .read_revision_identity_in_transaction(
+                        &mut conn,
+                        &edge.document_id,
+                        &existing.child_revision,
+                    )
+                    .await
+                    .map_err(revision_store_error)?
+                    .ok_or_else(|| {
+                        AuthzError::new(
+                            "revision_identity_partial_commit",
+                            "accepted revision edge is missing its canonical revision identity binding",
+                        )
+                    })?;
+                insert_audit(
+                    &mut conn,
+                    tenant_id,
+                    &edge.document_id,
+                    principal_id,
+                    &edge.operation_id,
+                    "revision.commit",
+                    "allowed",
+                    CAP_EDIT_GEOMETRY,
+                    decision.authz_version,
+                    None,
+                    now_ms,
+                )
+                .await?;
+                return Ok(AuthorizedRevisionCommitReceipt {
+                    edge: existing,
+                    binding: existing_binding,
+                    authz_version: decision.authz_version,
+                    replayed: true,
+                });
+            }
+
+            insert_audit(
+                &mut conn,
+                tenant_id,
+                &edge.document_id,
+                principal_id,
+                &edge.operation_id,
+                "revision.commit",
+                "allowed",
+                CAP_EDIT_GEOMETRY,
+                decision.authz_version,
+                None,
+                now_ms,
+            )
+            .await?;
+
+            match self
+                .revisions
+                .append_edge_with_revision_identity_in_transaction(
+                    &mut conn,
+                    &edge,
+                    &binding,
+                )
+                .await
+                .map_err(revision_store_error)?
+            {
+                AppendOutcome::Committed(committed) => Ok(AuthorizedRevisionCommitReceipt {
+                    edge: committed,
+                    binding,
+                    authz_version: decision.authz_version,
+                    replayed: false,
+                }),
+                AppendOutcome::AlreadyCommitted(committed) => {
+                    let committed_binding = self
+                        .revisions
+                        .read_revision_identity_in_transaction(
+                            &mut conn,
+                            &committed.document_id,
+                            &committed.child_revision,
+                        )
+                        .await
+                        .map_err(revision_store_error)?
+                        .ok_or_else(|| {
+                            AuthzError::new(
+                                "revision_identity_partial_commit",
+                                "accepted revision edge is missing its canonical revision identity binding",
+                            )
+                        })?;
+                    Ok(AuthorizedRevisionCommitReceipt {
+                        edge: committed,
+                        binding: committed_binding,
+                        authz_version: decision.authz_version,
+                        replayed: true,
+                    })
+                }
+                AppendOutcome::Conflict(_) => Err(AuthzError::new(
+                    "stale_revision",
+                    "base revision is no longer the current RevisionStream head",
+                )),
+            }
+        }
+        .await;
+
+        match result {
+            Ok(receipt) => {
+                commit(&mut conn).await?;
+                Ok(receipt)
+            }
+            Err(error) => {
+                rollback(&mut conn).await?;
+                Err(error)
+            }
+        }
     }
 }
 
@@ -904,6 +1221,26 @@ fn sqlite_error(error: impl fmt::Display) -> AuthzError {
         "sqlite_authz_error",
         error.to_string().chars().take(512).collect::<String>(),
     )
+}
+
+fn validate_revision_request_hash(value: &str) -> Result<(), AuthzError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(AuthzError::new(
+            "invalid_request_hash",
+            "revision request hash must be 64 lowercase SHA-256 hex characters",
+        ));
+    }
+    Ok(())
+}
+
+fn revision_store_error(
+    error: crate::sqlite_store::SqliteStoreError,
+) -> AuthzError {
+    AuthzError::new(error.code, error.message)
 }
 
 fn export_error(error: AuthzError) -> ExportExecutorError {
