@@ -17,6 +17,7 @@ embedded-fixture-tests = []
 [dependencies]
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
 chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
+chaptera-viewer-render-plan = { path = "../../crates/chaptera-viewer-render-plan" }
 chaptera-desktop-fallback-font-resource = { path = "../../crates/chaptera-desktop-fallback-font-resource" }
 chaptera-text-caret-map-adapter = { path = "../../crates/chaptera-text-caret-map-adapter" }
 chaptera-text-interaction-adapter = { path = "../../crates/chaptera-text-interaction-adapter" }
