@@ -88,12 +88,19 @@ jobs:
           PY
           echo "CHAPTERA_CLOUD_LINK_BENCH_FIXTURES=$root" >> "$GITHUB_ENV"
           echo "CHAPTERA_CLOUD_LINK_BENCH_RECEIPT=$GITHUB_WORKSPACE/out/cloud-link-bench-01.json" >> "$GITHUB_ENV"
+          echo "CHAPTERA_CLOUD_LINK_BENCH_SHARED_DB_RECEIPT=$GITHUB_WORKSPACE/out/cloud-link-bench-01b.json" >> "$GITHUB_ENV"
 
       - name: Run measurement-only first-bind harness
         env:
           RUST_BACKTRACE: "1"
           PYTHON: python
-        run: cargo test -p chaptera-server --test cloud_link_bench -- --nocapture
+        run: cargo test -p chaptera-server --test cloud_link_bench cloud_link_first_bind_measurement_receipt -- --nocapture
+
+      - name: Run shared-SQLite marginal harness
+        env:
+          RUST_BACKTRACE: "1"
+          PYTHON: python
+        run: cargo test -p chaptera-server --test cloud_link_bench cloud_link_shared_db_marginal_receipt -- --nocapture
 
       - name: Validate receipt shape and publish summary
         shell: bash
@@ -149,6 +156,66 @@ jobs:
               fh.write(summary)
           PY
 
+      - name: Validate shared-SQLite receipt and publish summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib
+
+          path = pathlib.Path("out/cloud-link-bench-01b.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          assert payload["protocol_version"] == "chaptera.cloud-link-shared-sqlite-bench.v0"
+          assert payload["fixture_source_commit"] == "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8"
+          assert payload["fixture_file"] == "Simple.pub"
+          assert payload["fixture_sha256"] == "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d"
+
+          checkpoints = {row["after_projects"]: row for row in payload["checkpoints"]}
+          assert set(checkpoints) == {0, 1, 10, 100}
+          base = checkpoints[0]
+
+          lines = ["## CLOUD-LINK-BENCH-01B — shared SQLite marginal metadata", ""]
+          lines.append("100 principals are pre-seeded before the baseline snapshot; identity/account creation is not charged to project metadata.")
+          lines.append("")
+          lines.append("| projects | main B | WAL B | SHM B | total B | delta from baseline B | durable rows delta |")
+          lines.append("|---:|---:|---:|---:|---:|---:|---:|")
+
+          base_rows = base["durable_row_counts"]
+          for count in (0, 1, 10, 100):
+              row = checkpoints[count]
+              row_delta = sum(
+                  row["durable_row_counts"].get(key, 0) - base_rows.get(key, 0)
+                  for key in set(base_rows) | set(row["durable_row_counts"])
+              )
+              total_delta = row["sqlite_total_bytes"] - base["sqlite_total_bytes"]
+              lines.append(
+                  f"| {count} | {row['sqlite_main_bytes']} | {row['sqlite_wal_bytes']} | "
+                  f"{row['sqlite_shm_bytes']} | {row['sqlite_total_bytes']} | {total_delta} | {row_delta} |"
+              )
+
+          lines.append("")
+          lines.append("| interval | total-file delta B | B/project | durable-row delta | rows/project |")
+          lines.append("|---|---:|---:|---:|---:|")
+          for left, right in ((0, 1), (1, 10), (10, 100)):
+              a, b = checkpoints[left], checkpoints[right]
+              width = right - left
+              bytes_delta = b["sqlite_total_bytes"] - a["sqlite_total_bytes"]
+              rows_delta = sum(
+                  b["durable_row_counts"].get(key, 0) - a["durable_row_counts"].get(key, 0)
+                  for key in set(a["durable_row_counts"]) | set(b["durable_row_counts"])
+              )
+              lines.append(
+                  f"| {left}->{right} | {bytes_delta} | {bytes_delta / width:.1f} | "
+                  f"{rows_delta} | {rows_delta / width:.2f} |"
+              )
+
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          pathlib.Path("out/cloud-link-bench-01b-summary.md").write_text(summary, encoding="utf-8")
+          with open(pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]), "a", encoding="utf-8") as fh:
+              fh.write("\n" + summary)
+          PY
+
       - uses: actions/upload-artifact@v4
         with:
           name: cloud-link-bench-01-${{ github.sha }}
@@ -156,4 +223,6 @@ jobs:
             out/cloud-link-fixtures.json
             out/cloud-link-bench-01.json
             out/cloud-link-bench-summary.md
+            out/cloud-link-bench-01b.json
+            out/cloud-link-bench-01b-summary.md
           if-no-files-found: error
