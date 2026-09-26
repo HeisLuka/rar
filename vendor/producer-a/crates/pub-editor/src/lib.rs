@@ -2500,6 +2500,9 @@ impl EditorSession {
                 guide_id: guide.guide_id,
             });
         }
+        if self.project_identity.is_none() {
+            self.project_identity = Some(new_project_identity());
+        }
         let operation = EditOperation::AddRulerGuide { guide };
         apply_ruler_guide_forward(&mut self.authored_ruler_guides, &operation)?;
         self.undo.push(operation.clone());
