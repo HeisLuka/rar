@@ -309,7 +309,7 @@ impl WindowsDeviceKey {
         let mut request_nonce = [0_u8; 32];
         let status = unsafe {
             BCryptGenRandom(
-                0,
+                null_mut(),
                 request_nonce.as_mut_ptr(),
                 request_nonce.len() as u32,
                 BCRYPT_USE_SYSTEM_PREFERRED_RNG,
