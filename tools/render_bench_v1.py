@@ -9,8 +9,13 @@ import sys
 import time
 import tracemalloc
 
+from adapt_viewer_scene_v1 import adapt_viewer_geometry
 from render_scene_v1 import compile_render_scene
 from scene_patch_v1 import diff_render_scenes, apply_patch
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+REAL_VIEWER_RECEIPT = ROOT / "apps" / "web" / "acceptance" / "receipts" / "viewer-geometry.real.json"
+REAL_DOCUMENT_ID = "00000000-0000-4000-8000-000000000001"
 
 IDENTITY = {"a":"1","b":"0","c":"0","d":"1","tx":0,"ty":0}
 
@@ -39,6 +44,48 @@ def add_pages(src, count):
             "width_emu": 9144000,
             "height_emu": 6858000,
         })
+
+def real_pub_workload():
+    viewer = json.loads(REAL_VIEWER_RECEIPT.read_text(encoding="utf-8"))
+    source_hash = viewer["document"]["source"]["source_hash"]
+    snapshot = adapt_viewer_geometry(
+        viewer,
+        REAL_DOCUMENT_ID,
+        "sha256:" + source_hash,
+    )
+
+    src = base_source("real-pub-sample-newsletter")
+    src["scene_revision"] = snapshot["snapshot_id"]
+    src["order_authority"] = snapshot["stacking_fidelity"]
+    src["pages"] = copy.deepcopy(snapshot["pages"])
+    src["paints"] = copy.deepcopy(snapshot["paints"])
+    src["resources"] = copy.deepcopy(snapshot["resources"])
+    src["diagnostics"] = copy.deepcopy(snapshot["diagnostics"])
+    src["nodes"] = [
+        {
+            "node_id": node["node_id"],
+            "page_id": node["page_id"],
+            "kind": node["kind"],
+            "bounds": copy.deepcopy(node["bounds"]),
+            "transform": copy.deepcopy(node["transform"]),
+            "paint_id": node.get("paint_id"),
+            "resource_id": node.get("resource_id"),
+            "paint_order": node.get("paint_order"),
+        }
+        for node in snapshot["nodes"]
+    ]
+    return src, {
+        "source_sha256": source_hash,
+        "viewer_snapshot_id": snapshot["snapshot_id"],
+        "page_count": len(snapshot["pages"]),
+        "node_count": len(snapshot["nodes"]),
+        "story_count": len(snapshot["stories"]),
+        "story_frame_count": len(snapshot["story_frames"]),
+        "resource_count": len(snapshot["resources"]),
+        "fidelity_state": snapshot["fidelity"]["state"],
+        "fidelity_reasons": snapshot["fidelity"]["reasons"],
+    }
+
 
 def shape_workload(count, pages=1, *, overlap=False, off_page=False, label="shapes"):
     src=base_source(label)
@@ -170,6 +217,10 @@ def benchmark_compile(name, src, repeats=3):
     }
 
 def run():
+    real_src, real_provenance = real_pub_workload()
+    real_scene, real_measurement = benchmark_compile("real-pub-sample-newsletter", real_src, repeats=5)
+    real_measurement["provenance"] = real_provenance
+
     workloads=[
         ("image-heavy",image_heavy()),
         ("text-heavy-overset",text_heavy()),
@@ -231,9 +282,10 @@ def run():
 
     return {
         "receipt_version":"chaptera.render-bench.v1",
-        "measurement_class":"public_hosted_mixed_synthetic_product_grounded",
-        "real_pub_scene_present":False,
-        "closure_blocker":"missing_real_pub_derived_scene_receipt",
+        "measurement_class":"public_hosted_real_pub_plus_product_grounded_and_synthetic",
+        "real_pub_scene_present":True,
+        "closure_blocker":None,
+        "real_pub_scene":real_measurement,
         "runtime":{
             "python":sys.version.split()[0],
             "platform":platform.platform(),
@@ -266,7 +318,7 @@ def run():
             "instances":output_sheet_instances,
         },
         "limitations":[
-            "No genuine PUB-derived Scene receipt is currently present in public Rar; this receipt cannot close the real-scene benchmark arm.",
+            "The real PUB arm preserves the current source-free Viewer geometry/image/paint projection; text shaping remains represented by the separate text-heavy product-grounded workload until a canonical glyph-run projection is available.",
             "CPU Python timings are CI-host characteristics, not GPU/backend performance.",
             "GPU draw time, upload bandwidth and GPU resident memory remain backend-phase metrics.",
         ],
