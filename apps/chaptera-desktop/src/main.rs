@@ -8,9 +8,13 @@ mod acceptance;
 mod agent;
 mod diagnostic_sweep;
 mod fallback_font;
+#[allow(dead_code)]
+mod locale;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
+#[allow(dead_code)]
+mod supporter_attribution;
 
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
@@ -59,6 +63,11 @@ fn failure_mailto_recipient_configured() -> bool {
     // CHAPTERA-FAILURE-MAILTO-01 owns replacing this with validated packaged
     // configuration. Missing verified recipient must fail closed.
     false
+}
+
+fn resolve_supporter_market() -> supporter::MarketProfile {
+    let locale = locale::detect_user_locale();
+    supporter::MarketProfile::from_locale(locale.as_ref().map(locale::DetectedLocale::raw))
 }
 const SUPPORTER_STORAGE_KEY: &str = "chaptera.supporter.v1";
 const PAGE_MARGIN: f32 = 24.0;
