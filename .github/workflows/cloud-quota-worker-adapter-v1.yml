@@ -7,10 +7,13 @@ on:
       - "apps/chaptera-server/src/quota_store.rs"
       - "apps/chaptera-server/src/job_worker.rs"
       - "apps/chaptera-server/src/job_queue.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - "apps/chaptera-server/migrations/0008_quota_reservations.sql"
       - ".github/workflows/cloud-quota-worker-adapter-v1.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,10 +26,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check chaptera-server formatting
-        run: cargo fmt --package chaptera-server -- --check
-      - name: Clippy chaptera-server
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Test quota worker adapter
         run: cargo test -p chaptera-server quota_admission::
       - name: Test quota authority

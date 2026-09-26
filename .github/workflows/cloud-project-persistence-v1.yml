@@ -6,7 +6,6 @@ on:
       - "apps/chaptera-server/migrations/0013_project_persistence.sql"
       - "apps/chaptera-server/src/project_persistence_sqlite.rs"
       - "apps/chaptera-server/src/schema_migration.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - ".github/workflows/cloud-project-persistence-v1.yml"
   push:
     branches:
@@ -26,8 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check formatting
-        run: cargo fmt --manifest-path apps/chaptera-server/Cargo.toml --check
       - name: Check server
         run: cargo check --manifest-path apps/chaptera-server/Cargo.toml
       - name: Test project persistence

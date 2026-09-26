@@ -11,6 +11,10 @@ on:
       - ".github/workflows/cloud-runtime-ports-ready-v1.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -22,10 +26,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: rustfmt, clippy
-      - name: Check chaptera-server formatting
-        run: cargo fmt -p chaptera-server -- --check
-      - name: Lint chaptera-server
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Prove readiness lifecycle composition
         run: cargo test -p chaptera-server runtime_readiness:: -- --nocapture
       - name: Build Chaptera

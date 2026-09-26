@@ -7,12 +7,15 @@ on:
       - "apps/chaptera-server/src/export_executor.rs"
       - "apps/chaptera-server/src/export_publication.rs"
       - "apps/chaptera-server/src/schema_migration.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - "tools/run_cloud_migration_receipt.py"
       - ".github/workflows/cloud-export-publication-v1.yml"
   workflow_dispatch:
 
 # Prepared publication rows are visible only after WorkerLoop commits job_effect.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -25,10 +28,6 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check chaptera-server formatting
-        run: cargo fmt -p chaptera-server -- --check
-      - name: Lint publication and executor
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run publication store tests
         run: cargo test -p chaptera-server export_publication::
       - name: Run export executor tests

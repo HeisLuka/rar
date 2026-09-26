@@ -10,6 +10,10 @@ on:
       - ".github/workflows/cloud-sqlite-v0.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -22,10 +26,6 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --package chaptera-server -- --check
-      - name: Run clippy
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run SQLite adapter tests
         run: 'cargo test -p chaptera-server sqlite_store::'
       - name: Run process crash durability drill

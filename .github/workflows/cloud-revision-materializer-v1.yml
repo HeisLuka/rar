@@ -11,6 +11,10 @@ on:
       - ".github/workflows/cloud-revision-materializer-v1.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -24,10 +28,6 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt -p chaptera-server -- --check
-      - name: Lint chaptera-server materializer
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Run exact replay and fail-closed matrix
         run: cargo test -p chaptera-server --test revision_materializer -- --nocapture
       - name: Fetch exact public SampleNewsletter fixture

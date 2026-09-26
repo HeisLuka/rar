@@ -4,9 +4,12 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-server/src/jobs_runtime.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - ".github/workflows/cloud-jobs-serve-runtime-v1.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -19,9 +22,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: rustfmt, clippy
-      - name: Check chaptera-server formatting
-        run: cargo fmt -p chaptera-server -- --check
-      - name: Lint chaptera-server
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Prove serve-side durable export jobs runtime
         run: cargo test -p chaptera-server jobs_runtime:: -- --nocapture

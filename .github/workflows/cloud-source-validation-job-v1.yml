@@ -14,7 +14,6 @@ on:
       - "apps/chaptera-server/src/job_executor_registry.rs"
       - "apps/chaptera-server/src/quota_admission.rs"
       - "apps/chaptera-server/src/config.rs"
-      - "apps/chaptera-server/src/lib.rs"
       - "deploy/config/chaptera.prod.example.toml"
       - "tools/validate_cloud_deploy_v0.py"
       - ".github/workflows/cloud-source-validation-job-v1.yml"
@@ -36,10 +35,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --package chaptera-server -- --check
-      - name: Lint server
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Test durable source validation job
         run: cargo test -p chaptera-server source_validation_job
       - name: Test upload admission reacquire

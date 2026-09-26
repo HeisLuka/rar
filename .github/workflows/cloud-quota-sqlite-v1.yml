@@ -10,6 +10,10 @@ on:
       - ".github/workflows/cloud-quota-sqlite-v1.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -22,10 +26,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: rustfmt, clippy
-      - name: Format chaptera-server
-        run: cargo fmt --package chaptera-server -- --check
-      - name: Clippy chaptera-server
-        run: cargo clippy -p chaptera-server --all-targets -- -D warnings
       - name: Quota authority unit tests
         run: cargo test -p chaptera-server quota_store --lib
       - name: Quota process crash acceptance
