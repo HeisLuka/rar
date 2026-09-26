@@ -1,0 +1,42 @@
+name: chaptera-entitlement-audit
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-entitlement/**"
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - name: Install pinned cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Build isolated entitlement dependency lock
+        shell: bash
+        run: |
+          mkdir -p .chaptera-entitlement-audit/src
+          cat > .chaptera-entitlement-audit/Cargo.toml <<'EOF'
+          [package]
+          name = "chaptera-entitlement-audit-wrapper"
+          version = "0.0.0"
+          edition = "2024"
+          publish = false
+
+          [dependencies]
+          chaptera-entitlement = { path = "../crates/chaptera-entitlement" }
+
+          [workspace]
+          members = ["."]
+          EOF
+          printf 'fn main() {}\n' > .chaptera-entitlement-audit/src/main.rs
+          cargo generate-lockfile --manifest-path .chaptera-entitlement-audit/Cargo.toml
+      - name: Audit entitlement dependency closure
+        run: cargo audit --file .chaptera-entitlement-audit/Cargo.lock
