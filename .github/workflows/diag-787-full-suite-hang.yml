@@ -12,31 +12,45 @@ permissions:
 jobs:
   isolate:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - test: create_and_verified_read_start_from_tenant_binding_not_hash
-          - test: tenant_local_dedupe_reuses_physical_blob_but_not_binding_identity
-          - test: cross_tenant_content_does_not_reuse_physical_blob
-          - test: unknown_create_outcome_reconciles_by_exact_head_and_read
-          - test: streamed_quarantine_fallback_is_exact_create_once_and_reopenable
-          - test: streamed_quarantine_fallback_rejects_length_mismatch
-          - test: quarantine_inspect_and_exact_read_preserve_object_identity
-          - test: quarantine_exact_read_fails_closed_on_identity_drift
-          - test: direct_upload_requires_provider_hard_size_and_create_only_capabilities
-          - test: signed_grant_is_exactly_scoped_and_expires
-          - test: async_hashing_bounded_reader_rejects_one_byte_over_and_under
-          - test: async_hashing_owned_reader_rejects_one_byte_over_and_under
-          - test: provider_create_only_rejects_same_key_overwrite
-
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.1
-      - name: Run isolated BlobStore test
+      - name: Compile Chaptera server test binary once
+        run: cargo test -p chaptera-server --no-run
+      - name: Run isolated BlobStore tests with per-test timeout
         shell: bash
         run: |
-          set -euo pipefail
-          echo "test=${{ matrix.test }}"
-          timeout 180 cargo test -p chaptera-server "blob_store::tests::${{ matrix.test }}" -- --exact --nocapture --test-threads=1
+          set -uo pipefail
+          tests=(
+            create_and_verified_read_start_from_tenant_binding_not_hash
+            tenant_local_dedupe_reuses_physical_blob_but_not_binding_identity
+            cross_tenant_content_does_not_reuse_physical_blob
+            unknown_create_outcome_reconciles_by_exact_head_and_read
+            streamed_quarantine_fallback_is_exact_create_once_and_reopenable
+            streamed_quarantine_fallback_rejects_length_mismatch
+            quarantine_inspect_and_exact_read_preserve_object_identity
+            quarantine_exact_read_fails_closed_on_identity_drift
+            direct_upload_requires_provider_hard_size_and_create_only_capabilities
+            signed_grant_is_exactly_scoped_and_expires
+            async_hashing_bounded_reader_rejects_one_byte_over_and_under
+            async_hashing_owned_reader_rejects_one_byte_over_and_under
+            provider_create_only_rejects_same_key_overwrite
+          )
+          failed=0
+          for test_name in "${tests[@]}"; do
+            echo "::group::${test_name}"
+            timeout 90 cargo test -p chaptera-server "blob_store::tests::${test_name}" -- --exact --nocapture --test-threads=1
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "DIAG_RESULT PASS ${test_name}"
+            elif [ "$rc" -eq 124 ]; then
+              echo "DIAG_RESULT TIMEOUT ${test_name}"
+              failed=1
+            else
+              echo "DIAG_RESULT FAIL rc=${rc} ${test_name}"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
