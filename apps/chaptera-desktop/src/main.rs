@@ -7,6 +7,7 @@
 mod acceptance;
 mod agent;
 mod diagnostic_sweep;
+mod preview_typography;
 mod product_smoke;
 #[allow(dead_code)]
 mod supporter;
@@ -61,7 +62,7 @@ fn failure_mailto_recipient_configured() -> bool {
 }
 const SUPPORTER_STORAGE_KEY: &str = "chaptera.supporter.v1";
 const PAGE_MARGIN: f32 = 24.0;
-const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Explicit source-owned font-size ranges can affect preview sizing, but the current renderer still uses a deterministic fallback font face; unresolved/default-inherited typography remains fallback. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2905,13 +2906,17 @@ impl ViewerApp {
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
                         let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let font_size = (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
-                        let galley = text_painter.layout(
-                            fragment.text.clone(),
-                            egui::FontId::proportional(font_size),
-                            egui::Color32::BLACK,
-                            text_clip_rect.width().max(1.0_f32),
-                        );
+                        let fallback_font_size =
+                            (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
+                        let (layout_job, _typography_usage) =
+                            preview_typography::layout_fragment(
+                                &visual.typography_runs,
+                                fragment,
+                                scene_scale,
+                                fallback_font_size,
+                                text_clip_rect.width().max(1.0_f32),
+                            );
+                        let galley = text_painter.layout_job(layout_job);
                         if preview_text_height_is_clipped(
                             galley.size().y,
                             text_clip_rect.height(),
@@ -3788,6 +3793,107 @@ mod tests {
                 path.display()
             )
         })
+    }
+
+    #[cfg(feature = "embedded-fixture-tests")]
+    #[test]
+    fn sample_newsletter_preview_applies_source_owned_sizes_with_explicit_fallback_gaps() {
+        let pub_bytes = sample_newsletter_fixture();
+        let visual = pub_viewer::open_mature_0x2c_geometry(
+            &pub_bytes,
+            pub_viewer::viewer_geometry_environment_v0_1(),
+        )
+        .expect("SampleNewsletter should expose bounded typography");
+
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "pinned SampleNewsletter must expose at least one source-owned typography range"
+        );
+
+        let scene_scale = 1.0_f32 / 12_700.0_f32;
+        let fallback_font_size = 9.0_f32;
+        let mut source_sections = 0_usize;
+        let mut fallback_sections = 0_usize;
+        let mut saw_visible_rockwell_24pt = false;
+
+        for fragment in visual
+            .text_fragments
+            .iter()
+            .filter(|fragment| !fragment.text.is_empty())
+        {
+            let (job, usage) = preview_typography::layout_fragment(
+                &visual.typography_runs,
+                fragment,
+                scene_scale,
+                fallback_font_size,
+                500.0,
+            );
+            source_sections += usage.source_sections;
+            fallback_sections += usage.fallback_sections;
+
+            let has_rockwell_24pt_intersection = visual.typography_runs.iter().any(|run| {
+                run.story_id == fragment.story_id
+                    && run.scalar_start < fragment.scalar_end
+                    && run.scalar_end > fragment.scalar_start
+                    && run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700
+            });
+            if has_rockwell_24pt_intersection
+                && job
+                    .sections
+                    .iter()
+                    .any(|section| (section.format.font_id.size - 24.0).abs() < 0.001)
+            {
+                saw_visible_rockwell_24pt = true;
+            }
+        }
+
+        eprintln!(
+            "SampleNewsletter preview typography: source_sections={source_sections} fallback_sections={fallback_sections}"
+        );
+        if let Some(path) = std::env::var_os("CHAPTERA_TYPOGRAPHY_PAINT_RECEIPT") {
+            let receipt = serde_json::json!({
+                "schema": "chaptera.viewer-typography-paint-receipt.v1",
+                "result": "pass",
+                "fixture": {
+                    "name": "SampleNewsletter.pub",
+                    "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+                },
+                "viewer": {
+                    "text_fragment_count": visual.text_fragments.len(),
+                    "typography_run_count": visual.typography_runs.len()
+                },
+                "preview": {
+                    "source_typography_sections": source_sections,
+                    "fallback_sections": fallback_sections,
+                    "visible_rockwell_condensed_24pt_applied": saw_visible_rockwell_24pt,
+                    "font_face_disposition": "deterministic_proportional_fallback"
+                },
+                "claims": {
+                    "host_font_lookup_used": false,
+                    "source_font_size_applied_when_owned": source_sections > 0,
+                    "unowned_typography_remains_fallback": fallback_sections > 0,
+                    "publisher_exact_reflow_claimed": false
+                }
+            });
+            fs::write(
+                PathBuf::from(path),
+                serde_json::to_vec_pretty(&receipt).expect("serialize typography paint receipt"),
+            )
+            .expect("write typography paint receipt");
+        }
+        assert!(
+            source_sections > 0,
+            "at least one visible fragment must consume grounded source typography"
+        );
+        assert!(
+            fallback_sections > 0,
+            "unowned/default typography must remain explicit fallback"
+        );
+        assert!(
+            saw_visible_rockwell_24pt,
+            "a visible Rockwell Condensed 24pt source range must affect preview size"
+        );
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
