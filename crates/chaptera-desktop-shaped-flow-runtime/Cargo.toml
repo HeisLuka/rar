@@ -1,0 +1,21 @@
+[package]
+name = "chaptera-desktop-shaped-flow-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+chaptera-caret-layout-feed = { path = "../chaptera-caret-layout-feed" }
+chaptera-text-caret-map-adapter = { path = "../chaptera-text-caret-map-adapter" }
+pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
+pub-layout = { path = "../../vendor/producer-a/crates/pub-layout" }
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+
+[dev-dependencies]
+font-test-data = "=0.8.0"
+sha2 = "0.10"
+
+[workspace]
+resolver = "2"
