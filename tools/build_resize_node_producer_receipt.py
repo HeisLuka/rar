@@ -101,9 +101,12 @@ def build_receipt(
     binary_sha256: str,
     fixture_kind: str,
     projection_instance_admitted: bool = False,
+    integration: str = "local_private",
 ) -> dict[str, Any]:
     if fixture_kind not in {"synthetic_geometry", "real_pub_sanitized"}:
         raise RuntimeError("unsupported fixture_kind")
+    if integration not in {"local_private", "hosted_native"}:
+        raise RuntimeError("unsupported producer integration")
     if fixture_kind == "real_pub_sanitized" and not projection_instance_admitted:
         raise RuntimeError("projection_instance_gate_unresolved")
 
@@ -336,7 +339,7 @@ def build_receipt(
         "operation_contract": "chaptera.resize-node.v1",
         "producer": {
             "kind": "chaptera_desktop_editor",
-            "integration": "local_private",
+            "integration": integration,
         },
         "build": {
             "chaptera_version": chaptera_version,
@@ -425,6 +428,11 @@ def main() -> int:
         required=True,
     )
     parser.add_argument("--projection-instance-admitted", action="store_true")
+    parser.add_argument(
+        "--integration",
+        choices=["local_private", "hosted_native"],
+        default="local_private",
+    )
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("producer_command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -444,6 +452,7 @@ def main() -> int:
         binary_sha256=args.binary_sha256,
         fixture_kind=args.fixture_kind,
         projection_instance_admitted=args.projection_instance_admitted,
+        integration=args.integration,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

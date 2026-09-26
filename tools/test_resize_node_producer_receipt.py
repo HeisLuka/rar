@@ -58,6 +58,12 @@ class ResizeNodeProducerReceiptTests(unittest.TestCase):
             with self.assertRaises(AssertionError, msg=key):
                 validate_receipt(receipt)
 
+    def test_unknown_producer_integration_is_rejected_by_schema(self):
+        receipt = copy.deepcopy(self.receipt)
+        receipt["producer"]["integration"] = "browser"
+        with self.assertRaises(AssertionError):
+            validate_receipt(receipt)
+
     def test_extra_document_identity_fields_are_rejected_by_schema(self):
         for key, value in [
             ("node_id", "node:123"),
