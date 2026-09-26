@@ -10,6 +10,7 @@ members = [
   "crates/chaptera-glyph-runtime",
   "crates/chaptera-untrusted-pub-scan",
   "crates/chaptera-update-trust",
+  "crates/chaptera-update-engine",
   "crates/pub-master-projection",
   "crates/pub-fixed-flow-adapter",
   "crates/pub-line-placement",
