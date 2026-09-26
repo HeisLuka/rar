@@ -2908,9 +2908,16 @@ impl ViewerApp {
                         let text_painter = painter.with_clip_rect(text_clip_rect);
                         let fallback_font_size =
                             (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
+                        let current_story_text = visual
+                            .document
+                            .stories
+                            .iter()
+                            .find(|story| story.id == fragment.story_id)
+                            .map(|story| story.text.as_str());
                         let (layout_job, _typography_usage) =
                             preview_typography::layout_fragment(
                                 &visual.typography_runs,
+                                current_story_text,
                                 fragment,
                                 scene_scale,
                                 fallback_font_size,
@@ -3821,8 +3828,15 @@ mod tests {
             .iter()
             .filter(|fragment| !fragment.text.is_empty())
         {
+            let story_text = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| story.id == fragment.story_id)
+                .map(|story| story.text.as_str());
             let (job, usage) = preview_typography::layout_fragment(
                 &visual.typography_runs,
+                story_text,
                 fragment,
                 scene_scale,
                 fallback_font_size,
