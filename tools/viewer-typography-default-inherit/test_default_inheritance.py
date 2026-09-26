@@ -177,7 +177,7 @@ class DefaultInheritanceTests(unittest.TestCase):
         ):
             mod.parse_stsh1_character_defaults(bytes(data), descriptors, [])
 
-        def test_fdpp_style_offset_cannot_point_into_descriptor_tables(self) -> None:
+    def test_fdpp_style_offset_cannot_point_into_descriptor_tables(self) -> None:
         data = bytearray(64)
         # one FDPP style; chunk offset 0 points at the chunk header/tables,
         # not the style body.
