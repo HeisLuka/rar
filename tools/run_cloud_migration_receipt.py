@@ -49,13 +49,13 @@ def main() -> int:
 
         assert before["state"] == "pending"
         assert before["current_version"] == 0
-        expected_versions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-        assert before["target_version"] == 15
+        expected_versions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        assert before["target_version"] == 16
         assert before["pending_versions"] == expected_versions
 
         assert up["state"] == "current"
-        assert up["target_version"] == 15
-        assert up["current_version"] == 15
+        assert up["target_version"] == 16
+        assert up["current_version"] == 16
         assert up["applied_versions"] == expected_versions
         assert current == up
 
@@ -80,6 +80,9 @@ def main() -> int:
                 "workspaces",
                 "workspace_memberships",
                 "upload_admission_reservations",
+                "activation_issuer_authorities",
+                "activation_slots",
+                "activation_request_receipts",
             }:
                 if required not in tables:
                     raise SystemExit(f"migration chain did not materialize {required}")
