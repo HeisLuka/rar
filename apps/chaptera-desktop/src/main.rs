@@ -24,7 +24,7 @@ use pub_interaction::{
 use pub_viewer::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, ViewerDiagnosticSeverity, ViewerFidelityStatus,
-    ViewerGeometryDocument, ViewerTextMatch, classify_failure_candidate,
+    ViewerGeometryDocument, ViewerTextFragment, ViewerTextMatch, classify_failure_candidate,
     exact_file_intake_eligible,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -2905,7 +2905,14 @@ impl ViewerApp {
                     {
                         let text_clip_rect = node_rect.shrink(2.0);
                         let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let font_size = (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
+                        let fallback_font_size =
+                            (12.0_f32 * self.zoom).clamp(8.0_f32, 28.0_f32);
+                        let font_size = exact_fragment_source_font_size_px(
+                            visual,
+                            fragment,
+                            scene_scale,
+                        )
+                        .unwrap_or(fallback_font_size);
                         let galley = text_painter.layout(
                             fragment.text.clone(),
                             egui::FontId::proportional(font_size),
@@ -3190,6 +3197,31 @@ fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool 
     galley_height > clip_height + EPSILON_PX
 }
 
+fn exact_fragment_source_font_size_px(
+    visual: &ViewerGeometryDocument,
+    fragment: &ViewerTextFragment,
+    scene_scale: f32,
+) -> Option<f32> {
+    let mut matches = visual.typography_runs.iter().filter(|run| {
+        run.story_id == fragment.story_id
+            && run.scalar_start <= fragment.scalar_start
+            && run.scalar_end >= fragment.scalar_end
+    });
+    let run = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    source_text_size_px(run.text_size_emu, scene_scale)
+}
+
+fn source_text_size_px(text_size_emu: u32, scene_scale: f32) -> Option<f32> {
+    if text_size_emu == 0 || !scene_scale.is_finite() || scene_scale <= 0.0 {
+        return None;
+    }
+    let px = text_size_emu as f32 * scene_scale;
+    px.is_finite().then(|| px.clamp(4.0, 96.0))
+}
+
 fn editable_export_path(
     source_path: &Path,
     target: pub_editor::EditorEditableTarget,
@@ -3409,6 +3441,16 @@ mod tests {
         assert!(preview_text_height_is_clipped(100.6, 100.0));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("preview-only"));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("not Publisher-native"));
+    }
+
+    #[test]
+    fn grounded_source_text_size_maps_through_scene_scale() {
+        let one_point_in_pixels = 1.0_f32 / 12_700.0_f32;
+        let size = source_text_size_px(24 * 12_700, one_point_in_pixels)
+            .expect("positive grounded text size");
+        assert!((size - 24.0).abs() < 0.001);
+        assert!(source_text_size_px(0, one_point_in_pixels).is_none());
+        assert!(source_text_size_px(24 * 12_700, 0.0).is_none());
     }
 
     #[test]
