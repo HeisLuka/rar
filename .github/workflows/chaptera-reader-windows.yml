@@ -117,6 +117,7 @@ jobs:
           $bytes = (Get-Item $exe).Length
           $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $hash
           $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$bytes
+          Remove-Item Env:CHAPTERA_LOCALE -ErrorAction SilentlyContinue
           $receipt = "target/release/chaptera-reader.product-smoke.json"
           $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1", $receipt) -Wait -PassThru
           if ($process.ExitCode -ne 0) {
