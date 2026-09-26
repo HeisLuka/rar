@@ -1,0 +1,16 @@
+[package]
+name = "pguides-write-probe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+sha2 = "0.11"
+pub-cfb = { path = "../../../vendor/producer-a/crates/pub-cfb" }
+pub-core = { path = "../../../vendor/producer-a/crates/pub-core" }
+pub-escher = { path = "../../../vendor/producer-a/crates/pub-escher" }
