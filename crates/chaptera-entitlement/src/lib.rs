@@ -1,11 +1,18 @@
 mod build_identity;
 mod trusted_time;
+#[cfg(target_os = "windows")]
+mod windows_platform;
 pub use build_identity::{
     BUILD_IDENTITY_CONTENT_TYPE, BuildIdentityPayloadV1, TrustedBuildIdentity,
 };
 pub use trusted_time::{
     LEASE_COMMITMENT_LEN, LeaseTimeInputV1, TimeAcceptance, TimePolicy, TrustedTimeError,
     TrustedTimeStateV1, evaluate_time_bound_right,
+};
+#[cfg(target_os = "windows")]
+pub use windows_platform::{
+    DeviceKeyBacking, WindowsDeviceKey, WindowsPlatformError, load_trusted_time_state,
+    save_trusted_time_state,
 };
 
 use coset::{
