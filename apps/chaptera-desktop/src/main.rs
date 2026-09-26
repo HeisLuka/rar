@@ -3581,6 +3581,7 @@ fn paint_page_thumbnail(
         egui::StrokeKind::Inside,
     );
 
+    let content_painter = painter.with_clip_rect(page_rect);
     let scale_x = page_rect.width() / surface.size.width.get() as f32;
     let scale_y = page_rect.height() / surface.size.height.get() as f32;
     let page_origin = page.id.into_canonical();
@@ -3611,7 +3612,7 @@ fn paint_page_thumbnail(
             .iter()
             .find(|paint| paint.node_id == node.origin);
         if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
-            painter.rect_filled(
+            content_painter.rect_filled(
                 node_rect,
                 0.0,
                 egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
@@ -3633,7 +3634,7 @@ fn paint_page_thumbnail(
                 image_textures.get(&key)
             });
         if let Some(texture) = replacement_texture.or(source_texture) {
-            painter.image(
+            content_painter.image(
                 texture.id(),
                 node_rect,
                 egui::Rect::from_min_max(
@@ -3652,7 +3653,7 @@ fn paint_page_thumbnail(
             && node_rect.width() >= 4.0
             && node_rect.height() >= 4.0
         {
-            let text_painter = painter.with_clip_rect(node_rect.shrink(1.0));
+            let text_painter = content_painter.with_clip_rect(node_rect.shrink(1.0));
             let preview = fragment.text.replace(['\r', '\n'], " ");
             text_painter.text(
                 node_rect.left_top() + egui::vec2(1.0, 1.0),
@@ -3664,7 +3665,7 @@ fn paint_page_thumbnail(
         }
 
         if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
-            painter.rect_stroke(
+            content_painter.rect_stroke(
                 node_rect,
                 0.0,
                 egui::Stroke::new(
@@ -3761,6 +3762,7 @@ mod tests {
         let source = include_str!("main.rs");
         assert!(source.contains("Page {} thumbnail"));
         assert!(source.contains("paint_page_thumbnail"));
+        assert!(source.contains("with_clip_rect(page_rect)"));
         assert!(source.contains("text_fragments"));
         assert!(source.contains("PageNavigated"));
     }
