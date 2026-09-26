@@ -311,6 +311,7 @@ impl EntitlementVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ciborium::value::Value;
     use coset::{CoseSign1Builder, HeaderBuilder};
     use p256::ecdsa::{SigningKey, signature::Signer};
 
@@ -357,7 +358,7 @@ mod tests {
         out
     }
 
-    fn sign_artifact(payload: &ActivationPayloadV1, kid: &[u8]) -> Vec<u8> {
+    fn sign_payload_bytes(payload_bytes: Vec<u8>, kid: &[u8]) -> Vec<u8> {
         let signing = signing_key();
         let protected = HeaderBuilder::new()
             .algorithm(iana::Algorithm::ESP256)
@@ -367,7 +368,7 @@ mod tests {
 
         CoseSign1Builder::new()
             .protected(protected)
-            .payload(encode_payload(payload))
+            .payload(payload_bytes)
             .create_signature(&[], |tbs| {
                 let sig: Signature = signing.sign(tbs);
                 sig.to_bytes().to_vec()
@@ -375,6 +376,10 @@ mod tests {
             .build()
             .to_tagged_vec()
             .expect("COSE")
+    }
+
+    fn sign_artifact(payload: &ActivationPayloadV1, kid: &[u8]) -> Vec<u8> {
+        sign_payload_bytes(encode_payload(payload), kid)
     }
 
     fn ctx() -> VerifyContext<'static> {
@@ -625,6 +630,91 @@ mod tests {
             .verify(&sign_artifact(&p, TEST_KID), &ctx())
             .unwrap_err();
         assert_eq!(err, EntitlementError::PayloadPolicyViolation);
+    }
+
+    #[test]
+    fn signed_payload_with_unknown_field_is_rejected() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut value = Value::serialized(&payload()).expect("payload value");
+        let Value::Map(entries) = &mut value else {
+            panic!("payload must serialize as a CBOR map");
+        };
+        entries.push((
+            Value::Text("unexpected_authority".to_owned()),
+            Value::Text("must-not-be-ignored".to_owned()),
+        ));
+
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&value, &mut bytes).expect("CBOR value");
+        let err = verifier
+            .verify(&sign_payload_bytes(bytes, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::MalformedArtifact);
+    }
+
+    #[test]
+    fn signed_payload_with_duplicate_cbor_key_is_rejected() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut value = Value::serialized(&payload()).expect("payload value");
+        let Value::Map(entries) = &mut value else {
+            panic!("payload must serialize as a CBOR map");
+        };
+        entries.push((
+            Value::Text("product_id".to_owned()),
+            Value::Text("chaptera.editor".to_owned()),
+        ));
+
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&value, &mut bytes).expect("CBOR value");
+        let err = verifier
+            .verify(&sign_payload_bytes(bytes, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::MalformedArtifact);
+    }
+
+    #[test]
+    fn non_64_byte_signature_is_rejected_before_crypto_verification() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let artifact = sign_artifact(&payload(), TEST_KID);
+        let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
+        sign1.signature.truncate(63);
+        let changed = sign1.to_tagged_vec().unwrap();
+
+        let err = verifier.verify(&changed, &ctx()).unwrap_err();
+        assert_eq!(err, EntitlementError::SignatureInvalid);
+    }
+
+    #[test]
+    fn oversized_grant_string_is_rejected() {
+        let verifier = EntitlementVerifier::new(trust_bundle());
+        let mut p = payload();
+        p.grants = vec!["g".repeat(MAX_GRANT_LEN + 1)];
+
+        let err = verifier
+            .verify(&sign_artifact(&p, TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::PayloadPolicyViolation);
+    }
+
+    #[test]
+    fn compressed_or_noncanonical_local_trust_key_is_rejected() {
+        let signing = signing_key();
+        let compressed = signing
+            .verifying_key()
+            .to_sec1_point(true)
+            .as_bytes()
+            .to_vec();
+        let verifier = EntitlementVerifier::new(TrustBundle {
+            keys: vec![TrustedSigner {
+                kid: TEST_KID.to_vec(),
+                public_key_sec1: compressed,
+            }],
+        });
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &ctx())
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::InvalidTrustBundle);
     }
 
     #[test]
