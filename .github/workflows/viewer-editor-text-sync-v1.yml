@@ -9,6 +9,10 @@ on:
     branches:
       - viewer-editor-text-projection-sync-01
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
