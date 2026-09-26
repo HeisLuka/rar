@@ -68,20 +68,30 @@ def parse_descriptors(data: bytes) -> list[dict[str, Any]]:
         if current in seen:
             raise DecodeError(f"cycle in Quill descriptor list at 0x{current:x}")
         seen.add(current)
-        marker = u16(data, current)
+        # The descriptor-list node header is service:u16, count:u16,
+        # next:u32. 0x0018 is the presence marker of each 24-byte descriptor,
+        # not the list-node service word. The real Apache POI fixtures use
+        # non-0x18 service values (for example 0x01f8 at the root).
+        service = u16(data, current)
         count = u16(data, current + 2)
         next_offset = u32(data, current + 4)
-        if marker != 0x18:
-            raise DecodeError(f"unexpected descriptor marker 0x{marker:04x} at 0x{current:x}")
         cursor = current + 8
         for _ in range(count):
             if cursor + 24 > len(data):
                 raise DecodeError("descriptor out of bounds")
+            presence_marker = u16(data, cursor)
+            if presence_marker != 0x18:
+                raise DecodeError(
+                    f"unexpected descriptor presence marker 0x{presence_marker:04x} "
+                    f"at 0x{cursor:x}"
+                )
             name = data[cursor + 2:cursor + 6].decode("ascii", errors="replace")
             descriptors.append(
                 {
                     "ordinal": len(descriptors),
                     "descriptor_offset": cursor,
+                    "descriptor_list_service": service,
+                    "presence_marker": presence_marker,
                     "name": name,
                     "option_a": u16(data, cursor + 6),
                     "option_b": u16(data, cursor + 8),
