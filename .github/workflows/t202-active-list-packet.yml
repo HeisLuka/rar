@@ -1,0 +1,66 @@
+name: T202 ACTIVE-LIST packet self-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/t202-active-list-packet.yml'
+      - 'tools/research-runner/experiments/active-list-01.packet.json'
+      - 'tools/research-runner/operations/active_list_01.ps1'
+      - 'tools/windows/pub-runtime/ACTIVE-LIST-01.md'
+  push:
+    branches:
+      - research/t202-active-list-01
+    paths:
+      - '.github/workflows/t202-active-list-packet.yml'
+      - 'tools/research-runner/experiments/active-list-01.packet.json'
+      - 'tools/research-runner/operations/active_list_01.ps1'
+      - 'tools/windows/pub-runtime/ACTIVE-LIST-01.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate experiment packet
+        run: |
+          python3 tools/research-runner/validate_packet.py \
+            --packet tools/research-runner/experiments/active-list-01.packet.json \
+            --expected-environment publisher-2019
+      - name: Parse native PowerShell without executing Publisher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/research-runner/operations/active_list_01.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            throw 'PowerShell parse failed: active_list_01.ps1'
+          }
+      - name: Enforce bounded list matrix and evidence boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arm in             'id = "C0"'             'id = "T0"'             'id = "T22"'             'id = "BT_STAR"'             'id = "SEP0"'             'id = "SEP3"'             'id = "SEP8"'             'id = "N1"'             'id = "N4"'             'id = "N37"'             'id = "FN_ARIAL"'             'id = "FN_VERDANA"'             'id = "FS12"'             'id = "FS24"'; do
+            grep -F "$arm" tools/research-runner/operations/active_list_01.ps1
+          done
+          grep -F 'ParagraphFormat.ListType' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'ParagraphFormat.ListNumberSeparator' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'ParagraphFormat.ListNumberStart' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'ParagraphFormat.ListBulletText' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'ParagraphFormat.ListBulletFontName' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'ParagraphFormat.ListBulletFontSize' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'native_pub_outputs_private = $true' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'raw_opl_field_mapping_claimed = $false' tools/research-runner/operations/active_list_01.ps1
+          grep -F 'preset_bank_0x4a_immutability_claimed = $false' tools/research-runner/operations/active_list_01.ps1
