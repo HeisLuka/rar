@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "tools/render_bench_v1.py"
+      - "tools/adapt_viewer_scene_v1.py"
+      - "apps/web/acceptance/receipts/viewer-geometry.real.json"
       - "tools/run_render_bench_contract.py"
       - "tools/render_scene_v1.py"
       - "tools/scene_patch_v1.py"
@@ -28,6 +30,10 @@ on:
       - "docs/optimization-regression-spine-v1.md"
       - ".github/workflows/render-bench-v1.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
