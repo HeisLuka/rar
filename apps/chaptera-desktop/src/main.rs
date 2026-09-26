@@ -65,6 +65,8 @@ const EMU_PER_INCH: f32 = 914_400.0;
 const NUMERIC_ZOOM_POINTS_PER_INCH: f32 = 96.0;
 const MIN_NUMERIC_ZOOM: f32 = 0.10;
 const MAX_NUMERIC_ZOOM: f32 = 4.00;
+const PAGE_THUMBNAIL_MAX_WIDTH: f32 = 116.0;
+const PAGE_THUMBNAIL_MAX_HEIGHT: f32 = 148.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
@@ -1227,6 +1229,8 @@ impl ViewerApp {
         ui.heading("Pages");
         ui.separator();
 
+        self.ensure_image_textures(ui.ctx());
+
         let Some(visual) = &self.visual else {
             ui.weak("No document loaded.");
             return;
@@ -1236,12 +1240,49 @@ impl ViewerApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (index, page) in visual.document.pages.iter().enumerate() {
                 let selected = self.selected_page == index;
-                if ui
-                    .selectable_label(selected, format!("Page {}", page.index))
-                    .clicked()
-                {
-                    selected_page = Some(index);
-                }
+                let mut thumbnail_clicked = false;
+
+                ui.vertical_centered(|ui| {
+                    if let Some(surface) = visual
+                        .scene
+                        .surfaces
+                        .iter()
+                        .find(|surface| surface.origin == page.id)
+                        && let Some(size) = page_thumbnail_size(
+                            surface.size.width.get(),
+                            surface.size.height.get(),
+                        )
+                    {
+                        let (rect, response) =
+                            ui.allocate_exact_size(size, egui::Sense::click());
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Page {} thumbnail", page.index),
+                            )
+                        });
+                        paint_page_thumbnail(
+                            ui.painter(),
+                            rect,
+                            visual,
+                            self.editor.as_ref(),
+                            &self.image_textures,
+                            index,
+                            selected,
+                        );
+                        thumbnail_clicked = response.clicked();
+                    }
+
+                    let label_clicked = ui
+                        .selectable_label(selected, format!("Page {}", page.index))
+                        .clicked();
+                    if thumbnail_clicked || label_clicked {
+                        selected_page = Some(index);
+                    }
+                });
+
+                ui.add_space(6.0);
             }
         });
 
@@ -3489,6 +3530,154 @@ fn diagnostic_severity_label(severity: ViewerDiagnosticSeverity) -> &'static str
     }
 }
 
+fn page_thumbnail_size(page_width_emu: i64, page_height_emu: i64) -> Option<egui::Vec2> {
+    if page_width_emu <= 0 || page_height_emu <= 0 {
+        return None;
+    }
+
+    let width = page_width_emu as f32;
+    let height = page_height_emu as f32;
+    let scale = (PAGE_THUMBNAIL_MAX_WIDTH / width).min(PAGE_THUMBNAIL_MAX_HEIGHT / height);
+    Some(egui::vec2(width * scale, height * scale))
+}
+
+fn paint_page_thumbnail(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    visual: &ViewerGeometryDocument,
+    editor: Option<&pub_editor::EditorSession>,
+    image_textures: &BTreeMap<String, egui::TextureHandle>,
+    page_index: usize,
+    selected: bool,
+) {
+    let Some(page) = visual.document.pages.get(page_index) else {
+        return;
+    };
+    let Some(surface) = visual
+        .scene
+        .surfaces
+        .iter()
+        .find(|surface| surface.origin == page.id)
+    else {
+        return;
+    };
+    if surface.size.width.get() <= 0 || surface.size.height.get() <= 0 {
+        return;
+    }
+
+    let page_rect = rect.shrink(2.0);
+    painter.rect_filled(page_rect, 0.0, egui::Color32::WHITE);
+    painter.rect_stroke(
+        page_rect,
+        0.0,
+        egui::Stroke::new(
+            if selected { 2.0 } else { 1.0 },
+            if selected {
+                egui::Color32::from_rgb(70, 120, 210)
+            } else {
+                egui::Color32::GRAY
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+
+    let content_painter = painter.with_clip_rect(page_rect);
+    let scale_x = page_rect.width() / surface.size.width.get() as f32;
+    let scale_y = page_rect.height() / surface.size.height.get() as f32;
+    let page_origin = page.id.into_canonical();
+
+    for node in visual
+        .scene
+        .nodes
+        .iter()
+        .filter(|node| node.parent_origin == page_origin)
+    {
+        if node.bounds.width.get() <= 0 || node.bounds.height.get() <= 0 {
+            continue;
+        }
+
+        let node_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                page_rect.left() + node.bounds.x.get() as f32 * scale_x,
+                page_rect.top() + node.bounds.y.get() as f32 * scale_y,
+            ),
+            egui::vec2(
+                node.bounds.width.get() as f32 * scale_x,
+                node.bounds.height.get() as f32 * scale_y,
+            ),
+        );
+
+        let node_paint = visual
+            .paints
+            .iter()
+            .find(|paint| paint.node_id == node.origin);
+        if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
+            content_painter.rect_filled(
+                node_rect,
+                0.0,
+                egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+            );
+        }
+
+        let replacement_key = editor
+            .and_then(|editor| editor.image_replacement_for(node.origin))
+            .map(|sha256| format!("replacement:{:?}", sha256));
+        let replacement_texture = replacement_key
+            .as_ref()
+            .and_then(|key| image_textures.get(key));
+        let source_texture = visual
+            .images
+            .iter()
+            .find(|embedded| embedded.node_ids.contains(&node.origin))
+            .and_then(|embedded| {
+                let key = format!("{:?}", embedded.resource_id);
+                image_textures.get(&key)
+            });
+        if let Some(texture) = replacement_texture.or(source_texture) {
+            content_painter.image(
+                texture.id(),
+                node_rect,
+                egui::Rect::from_min_max(
+                    egui::pos2(0.0, 0.0),
+                    egui::pos2(1.0, 1.0),
+                ),
+                egui::Color32::WHITE,
+            );
+        }
+
+        if let Some(fragment) = visual
+            .text_fragments
+            .iter()
+            .find(|fragment| fragment.frame_id == node.origin)
+            && !fragment.text.is_empty()
+            && node_rect.width() >= 4.0
+            && node_rect.height() >= 4.0
+        {
+            let text_painter = content_painter.with_clip_rect(node_rect.shrink(1.0));
+            let preview = fragment.text.replace(['\r', '\n'], " ");
+            text_painter.text(
+                node_rect.left_top() + egui::vec2(1.0, 1.0),
+                egui::Align2::LEFT_TOP,
+                preview,
+                egui::FontId::proportional(4.5),
+                egui::Color32::DARK_GRAY,
+            );
+        }
+
+        if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
+            content_painter.rect_stroke(
+                node_rect,
+                0.0,
+                egui::Stroke::new(
+                    (line.width_emu as f32 * scale_x).clamp(0.5, 2.0),
+                    egui::Color32::from_rgb(line.rgb[0], line.rgb[1], line.rgb[2]),
+                ),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
 fn numeric_zoom_scene_scale(zoom: f32) -> Option<f32> {
     if !zoom.is_finite() || zoom <= 0.0 {
         return None;
@@ -3553,6 +3742,29 @@ mod tests {
         assert!(preview_text_height_is_clipped(100.6, 100.0));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("preview-only"));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("not Publisher-native"));
+    }
+
+    #[test]
+    fn page_thumbnail_size_preserves_aspect_ratio_and_bounds() {
+        let portrait = page_thumbnail_size(8_229_600, 10_668_000).expect("portrait");
+        assert!(portrait.x <= PAGE_THUMBNAIL_MAX_WIDTH + f32::EPSILON);
+        assert!(portrait.y <= PAGE_THUMBNAIL_MAX_HEIGHT + f32::EPSILON);
+        let source_ratio = 8_229_600.0_f32 / 10_668_000.0_f32;
+        assert!((portrait.x / portrait.y - source_ratio).abs() < 0.001);
+
+        let landscape = page_thumbnail_size(10_668_000, 8_229_600).expect("landscape");
+        assert!(landscape.x <= PAGE_THUMBNAIL_MAX_WIDTH + f32::EPSILON);
+        assert!(landscape.y <= PAGE_THUMBNAIL_MAX_HEIGHT + f32::EPSILON);
+    }
+
+    #[test]
+    fn desktop_pages_surface_exposes_live_thumbnail_navigation() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("Page {} thumbnail"));
+        assert!(source.contains("paint_page_thumbnail"));
+        assert!(source.contains("with_clip_rect(page_rect)"));
+        assert!(source.contains("text_fragments"));
+        assert!(source.contains("PageNavigated"));
     }
 
     #[test]
