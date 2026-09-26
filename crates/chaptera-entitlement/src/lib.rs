@@ -541,6 +541,7 @@ mod tests {
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.protected.header.alg =
             Some(RegisteredLabelWithPrivate::Assigned(iana::Algorithm::EdDSA));
+        sign1.protected.original_data = None;
         let changed = sign1.to_tagged_vec().unwrap();
 
         let err = verifier.verify(&changed, &ctx()).unwrap_err();
@@ -554,6 +555,7 @@ mod tests {
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.protected.header.content_type =
             Some(ContentType::Text("application/octet-stream".to_owned()));
+        sign1.protected.original_data = None;
         let changed = sign1.to_tagged_vec().unwrap();
 
         let err = verifier.verify(&changed, &ctx()).unwrap_err();
@@ -566,6 +568,7 @@ mod tests {
         let artifact = sign_artifact(&payload(), TEST_KID);
         let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
         sign1.protected.header.key_id = vec![b'k'; MAX_KID_LEN + 1];
+        sign1.protected.original_data = None;
         let changed = sign1.to_tagged_vec().unwrap();
 
         let err = verifier.verify(&changed, &ctx()).unwrap_err();
