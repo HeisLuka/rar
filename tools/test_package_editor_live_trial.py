@@ -77,6 +77,7 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
                 sorted(archive.namelist()),
                 [
                     "Chaptera-Editor.exe",
+                    "THIRD-PARTY-NOTICES.txt",
                     "TRIAL-README.md",
                     "agent-control-v1.catalog.json",
                 ],
@@ -86,6 +87,14 @@ class EditorLiveTrialPackagerTests(unittest.TestCase):
                 archive.read("agent-control-v1.catalog.json"),
                 self.catalog.read_bytes(),
             )
+            notices = archive.read("THIRD-PARTY-NOTICES.txt").decode("utf-8")
+            self.assertIn("UBUNTU FONT LICENCE Version 1.0", notices)
+            self.assertIn(
+                "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70",
+                notices,
+            )
+            self.assertEqual(result["third_party_notices_entry"], "THIRD-PARTY-NOTICES.txt")
+            self.assertEqual(len(result["third_party_notices_sha256"]), 64)
 
     def test_package_is_deterministic(self):
         first = self.root / "first.zip"
