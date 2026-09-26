@@ -1237,9 +1237,7 @@ fn validate_revision_request_hash(value: &str) -> Result<(), AuthzError> {
     Ok(())
 }
 
-fn revision_store_error(
-    error: crate::sqlite_store::SqliteStoreError,
-) -> AuthzError {
+fn revision_store_error(error: crate::sqlite_store::SqliteStoreError) -> AuthzError {
     AuthzError::new(error.code, error.message)
 }
 
@@ -1296,9 +1294,7 @@ mod tests {
         (path, authority, publications)
     }
 
-    async fn revision_stores(
-        label: &str,
-    ) -> (PathBuf, SqliteAuthzAuthority, SqliteRevisionStore) {
+    async fn revision_stores(label: &str) -> (PathBuf, SqliteAuthzAuthority, SqliteRevisionStore) {
         let path = temp_db(label);
         SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
             .unwrap()
@@ -1863,5 +1859,4 @@ mod tests {
         authority.close().await;
         cleanup(&path);
     }
-
 }
