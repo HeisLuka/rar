@@ -464,6 +464,96 @@ mod tests {
     }
 
     #[test]
+    fn build_release_timestamp_is_signed_authority_not_caller_input() {
+        let verifier = verifier();
+        let mut build = build_payload();
+        build.released_at = 1_950_000_000;
+        let context = VerifyContext {
+            build_identity_artifact: sign_build_identity(&build),
+            expected_subject: Some("user-1"),
+            expected_device_key_id: &DEVICE_ID,
+        };
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &context)
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::VersionNotCovered);
+    }
+
+    #[test]
+    fn entitlement_issuer_key_cannot_sign_build_identity() {
+        let verifier = verifier();
+        let context = VerifyContext {
+            build_identity_artifact: sign_build_payload_with(
+                &build_payload(),
+                &signing_key(),
+                TEST_KID,
+            ),
+            expected_subject: Some("user-1"),
+            expected_device_key_id: &DEVICE_ID,
+        };
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &context)
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::UnknownSigner);
+    }
+
+    #[test]
+    fn tampered_build_identity_signature_is_rejected() {
+        let verifier = verifier();
+        let artifact = sign_build_identity(&build_payload());
+        let mut sign1 = CoseSign1::from_tagged_slice(&artifact).unwrap();
+        let mut changed = build_payload();
+        changed.released_at += 1;
+        sign1.payload = Some(encode_build_payload(&changed));
+        let context = VerifyContext {
+            build_identity_artifact: sign1.to_tagged_vec().unwrap(),
+            expected_subject: Some("user-1"),
+            expected_device_key_id: &DEVICE_ID,
+        };
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &context)
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::SignatureInvalid);
+    }
+
+    #[test]
+    fn malformed_build_identity_policy_is_rejected() {
+        let verifier = verifier();
+        let mut build = build_payload();
+        build.release_sequence = 0;
+        let context = VerifyContext {
+            build_identity_artifact: sign_build_identity(&build),
+            expected_subject: Some("user-1"),
+            expected_device_key_id: &DEVICE_ID,
+        };
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &context)
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::BuildIdentityPolicyViolation);
+    }
+
+    #[test]
+    fn build_identity_product_must_match_entitlement_product() {
+        let verifier = verifier();
+        let mut build = build_payload();
+        build.product_id = "chaptera.reader".into();
+        let context = VerifyContext {
+            build_identity_artifact: sign_build_identity(&build),
+            expected_subject: Some("user-1"),
+            expected_device_key_id: &DEVICE_ID,
+        };
+
+        let err = verifier
+            .verify(&sign_artifact(&payload(), TEST_KID), &context)
+            .unwrap_err();
+        assert_eq!(err, EntitlementError::ProductMismatch);
+    }
+
+    #[test]
     fn valid_perpetual_entitlement_verifies() {
         let verifier = verifier();
         let result = verifier.verify(&sign_artifact(&payload(), TEST_KID), &ctx());
