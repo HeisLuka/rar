@@ -30,10 +30,15 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: One-shot format task-owned crate
-        if: ${{ github.event_name == 'push' && !contains(github.event.head_commit.message, 'style: rustfmt caret layout feed') }}
         shell: bash
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" != "push" ]] || [[ "${COMMIT_MESSAGE}" == *"style: rustfmt caret layout feed"* ]]; then
+            echo "One-shot formatter skipped."
+            exit 0
+          fi
           cargo fmt --manifest-path crates/chaptera-caret-layout-feed/Cargo.toml
           if git diff --quiet -- crates/chaptera-caret-layout-feed; then
             echo "No rustfmt changes needed."
