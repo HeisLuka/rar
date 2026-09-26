@@ -473,13 +473,11 @@ pub fn build_mature_0x2c_image_resource_catalog<R: Read + Seek>(
     let mut pub_bytes = Vec::new();
     reader.read_to_end(&mut pub_bytes)?;
 
-    let escher = match pub_cfb::read_stream_reader(
-        Cursor::new(pub_bytes.as_slice()),
-        ESCHER_STREAM_PATH,
-    ) {
-        Ok(stream) => stream,
-        Err(_) => return Ok(None),
-    };
+    let escher =
+        match pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), ESCHER_STREAM_PATH) {
+            Ok(stream) => stream,
+            Err(_) => return Ok(None),
+        };
     let delayed = match pub_cfb::read_stream_reader(
         Cursor::new(pub_bytes.as_slice()),
         ESCHER_DELAY_STREAM_PATH,
