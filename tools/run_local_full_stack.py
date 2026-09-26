@@ -14,6 +14,7 @@ import html
 import os
 import pathlib
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -59,6 +60,17 @@ def http_code(url: str) -> int | None:
         return error.code
     except OSError:
         return None
+
+
+def require_loopback_ports_available(ports: tuple[int, ...]) -> None:
+    for port in ports:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError as error:
+                raise RuntimeError(
+                    f"required local port 127.0.0.1:{port} is unavailable: {error}"
+                ) from error
 
 
 def tail(path: pathlib.Path, count: int = 80) -> str:
@@ -140,6 +152,8 @@ def main() -> int:
     editor_handle = None
 
     try:
+        if PACKAGED:
+            require_loopback_ports_available((18082, 18765, 18083))
         if not args.skip_build and not PACKAGED:
             run_checked(["cargo", "build", "-p", "chaptera-server"], env)
         if PACKAGED:

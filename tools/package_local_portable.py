@@ -90,6 +90,54 @@ def patch_embedded_python(root: pathlib.Path) -> None:
     )
 
 
+def write_third_party_notices(stage: pathlib.Path) -> None:
+    python_root = stage / "runtime/python"
+    python_licenses = sorted(
+        path.relative_to(stage).as_posix()
+        for path in python_root.glob("LICENSE*")
+        if path.is_file()
+    )
+    if not python_licenses:
+        raise RuntimeError("embedded Python license text is missing from staged runtime")
+
+    frozen = stage / "runtime/python-packages/FROZEN.txt"
+    if not frozen.is_file():
+        raise RuntimeError("vendored Python dependency inventory is missing")
+    packages = [
+        line.strip()
+        for line in frozen.read_text(encoding="ascii").splitlines()
+        if line.strip()
+    ]
+    if not packages:
+        raise RuntimeError("vendored Python dependency inventory is empty")
+
+    lines = [
+        "Chaptera Local Portable V0 — Third-party notices",
+        "",
+        "This inventory points to the upstream license/provenance material shipped",
+        "inside the package; it does not replace those upstream license texts.",
+        "",
+        "CPython embeddable runtime:",
+    ]
+    lines.extend(f"- license text: {path}" for path in python_licenses)
+    lines.extend(
+        [
+            "",
+            "Vendored Python dependency closure:",
+            *[f"- {package}" for package in packages],
+            "",
+            "Wheel metadata and any license files supplied by those wheels are retained",
+            "under runtime/python-packages/*.dist-info/.",
+            "Exact bytes for every shipped file are covered by SHA256SUMS.",
+            "",
+        ]
+    )
+    (stage / "THIRD_PARTY_NOTICES.txt").write_text(
+        "\n".join(lines),
+        encoding="utf-8",
+    )
+
+
 def zip_entry(name: str, executable: bool = False) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name.replace("\\", "/"), FIXED_TIME)
     info.compress_type = zipfile.ZIP_DEFLATED
@@ -115,6 +163,7 @@ def stage_package(
     copy_tree(python_runtime, stage / "runtime/python")
     copy_tree(python_packages, stage / "runtime/python-packages")
     patch_embedded_python(stage / "runtime/python")
+    write_third_party_notices(stage)
 
     for name in ("run_local_full_stack.py", "run_local_real_editor.py", "run_cloud_config_receipt.py"):
         copy_file(ROOT / "tools" / name, stage / "launcher" / name)
