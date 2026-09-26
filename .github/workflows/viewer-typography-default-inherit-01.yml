@@ -1,0 +1,150 @@
+name: VIEWER-TYPOGRAPHY-DEFAULT-INHERIT-01
+
+on:
+  push:
+    branches:
+      - viewer-typography-default-inherit-01
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inherited-typography-discriminator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEWSLETTER_BLOB: "94900925af5832c493784f3cb51563f838a64df8"
+      BROCHURE_BLOB: "00deec14dc6cff6d8a47b120d6d84e7e20c72166"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded read-only dependency
+        run: python -m pip install "olefile==0.47"
+
+      - name: Fetch pinned Apache POI PUB fixtures by Git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .inputs out
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import pathlib
+          import urllib.request
+
+          fixtures = [
+              ("SampleNewsletter.pub", os.environ["NEWSLETTER_BLOB"]),
+              ("SampleBrochure.pub", os.environ["BROCHURE_BLOB"]),
+          ]
+          for name, blob in fixtures:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/apache/poi/git/blobs/{blob}",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = json.load(response)
+              if payload.get("sha") != blob or payload.get("encoding") != "base64":
+                  raise SystemExit(f"unexpected Git blob response for {name}")
+              raw = base64.b64decode(payload["content"])
+              if not raw.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+                  raise SystemExit(f"{name}: not OLE/CFB")
+              pathlib.Path(".inputs", name).write_bytes(raw)
+          PY
+
+      - name: Decode bounded FDPP to STSH1 inheritance
+        run: |
+          python tools/viewer-typography-default-inherit/decode_default_inheritance.py             .inputs/SampleNewsletter.pub             --source-label "apache/poi SampleNewsletter.pub pinned Git blob"             --output out/sample-newsletter.json
+          python tools/viewer-typography-default-inherit/decode_default_inheritance.py             .inputs/SampleBrochure.pub             --source-label "apache/poi SampleBrochure.pub pinned Git blob"             --output out/sample-brochure.json
+
+      - name: Assert bounded inheritance discriminator
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected_stories = {
+              "SampleNewsletter.pub": 44,
+              "SampleBrochure.pub": 20,
+          }
+          rows = []
+          for path in [Path("out/sample-newsletter.json"), Path("out/sample-brochure.json")]:
+              row = json.loads(path.read_text(encoding="utf-8"))
+              assert row["schema"] == "chaptera.viewer-typography-default-inherit.v1"
+              name = row["source"]["file_name"]
+              assert row["story_catalog"]["story_count"] == expected_stories[name]
+              assert row["fdpc"]["range_count"] > 0
+              assert row["fdpp"]["range_count"] > 0
+              assert row["fdpp"]["terminal_exact"] is True
+              assert row["stsh1_character_defaults"]
+              coverage = row["coverage"]
+              assert coverage["segment_count"] > 0
+              assert (
+                  coverage["complete_effective_font_and_size_after"]
+                  >= coverage["complete_explicit_font_and_size_before"]
+              )
+              assert row["privacy_boundary"]["host_font_lookup_used"] is False
+              assert row["privacy_boundary"]["publisher_exact_reflow_claimed"] is False
+              assert row["scope"]["bold_italic_underline_inheritance_evaluated"] is False
+              assert row["scope"]["stsh2_base_style_traversal_used"] is False
+              rows.append(row)
+
+          newsletter = next(row for row in rows if row["source"]["file_name"] == "SampleNewsletter.pub")
+          brochure = next(row for row in rows if row["source"]["file_name"] == "SampleBrochure.pub")
+          assert newsletter["coverage"]["inherited_any_segment_count"] > 0
+          assert brochure["coverage"]["inherited_any_segment_count"] > 0
+          assert newsletter["coverage"]["newly_complete_segment_count"] > 0
+          assert brochure["coverage"]["newly_complete_segment_count"] > 0
+          print("bounded default/inherited typography discriminator passed")
+          PY
+
+      - name: Publish coverage summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          print("# VIEWER-TYPOGRAPHY-DEFAULT-INHERIT-01")
+          print()
+          for path in [Path("out/sample-newsletter.json"), Path("out/sample-brochure.json")]:
+              row = json.loads(path.read_text(encoding="utf-8"))
+              c = row["coverage"]
+              print(f"## {row['source']['file_name']}")
+              print(f"- Stories: **{row['story_catalog']['story_count']}**")
+              print(f"- FDPP ranges: **{row['fdpp']['range_count']}**")
+              print(f"- explicit 0x19 selector ranges: **{row['fdpp']['explicit_selector_range_count']}**")
+              print(f"- implicit style-0 ranges: **{row['fdpp']['implicit_zero_range_count']}**")
+              print(f"- segmented ranges: **{c['segment_count']}**")
+              print(f"- complete font+size before inheritance: **{c['complete_explicit_font_and_size_before']}**")
+              print(f"- complete font+size after inheritance: **{c['complete_effective_font_and_size_after']}**")
+              print(f"- any inherited property: **{c['inherited_any_segment_count']}**")
+              print(f"- newly complete: **{c['newly_complete_segment_count']}**")
+              print(f"- newly complete via explicit 0x19: **{c['newly_complete_explicit_selector_segment_count']}**")
+              print(f"- newly complete via prior-evidence implicit style 0: **{c['newly_complete_implicit_zero_segment_count']}**")
+              print()
+          PY
+
+      - name: Prove raw PUB inputs are not retained
+        run: |
+          if find out -type f \( -iname '*.pub' -o -iname '*.ole' \) | grep -q .; then
+            echo "raw PUB/CFB leaked into retained output" >&2
+            exit 1
+          fi
+          sha256sum out/*.json | tee out/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer-typography-default-inherit-${{ github.run_id }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 90
