@@ -1,0 +1,26 @@
+name: EDITOR-SNAP-01 core
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-interaction/src/lib.rs"
+      - "vendor/producer-a/crates/pub-interaction/src/snap.rs"
+      - ".github/workflows/editor-snap-core-v1.yml"
+  push:
+    branches:
+      - editor-snap-core-rar-v1
+
+permissions:
+  contents: read
+
+jobs:
+  snap-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test pub-interaction snap core
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-interaction
+      - name: Check pub-interaction
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-interaction
