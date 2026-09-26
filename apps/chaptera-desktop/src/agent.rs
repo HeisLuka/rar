@@ -2123,6 +2123,20 @@ fn operation_summary(operation: &EditOperation) -> Value {
             "before_asset":before_asset.as_ref().map(|value| value.to_string()),
             "after_asset":after_asset.to_string()
         }),
+        EditOperation::SetImageCrop {
+            node_id,
+            before,
+            after,
+        } => json!({
+            "kind":"set_image_crop",
+            "node_id":node_id.as_canonical().to_string(),
+            "before_crop_state_sha256":sha256_hex(
+                &serde_json::to_vec(before).expect("ImageCropStateV1 JSON serialization is infallible")
+            ),
+            "after_crop_state_sha256":sha256_hex(
+                &serde_json::to_vec(after).expect("ImageCropStateV1 JSON serialization is infallible")
+            )
+        }),
         EditOperation::MoveNode {
             node_id,
             before,
