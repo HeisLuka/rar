@@ -2732,18 +2732,6 @@ impl ViewerApp {
             return;
         };
 
-        let Some(surface) = visual
-            .scene
-            .surfaces
-            .iter()
-            .find(|surface| surface.origin == page.id)
-        else {
-            ui.colored_label(
-                ui.visuals().error_fg_color,
-                "Selected page has no resolved scene surface.",
-            );
-            return;
-        };
         let render_plan = match build_page_render_plan_v1(visual, self.selected_page) {
             Ok(plan) => plan,
             Err(error) => {
@@ -2785,7 +2773,7 @@ impl ViewerApp {
             ),
             CanvasZoomMode::PageWidth => {
                 page_width_scale(render_plan.page_size.width.get(), viewport)
-            },
+            }
             CanvasZoomMode::FitSelection => selected_bounds
                 .and_then(|bounds| fitted_scale(bounds.width.get(), bounds.height.get(), viewport))
                 .or_else(|| {
