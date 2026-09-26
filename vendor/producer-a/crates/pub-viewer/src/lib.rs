@@ -9,11 +9,12 @@
 
 use anyhow::{Context, Result, anyhow};
 use pub_layout::{
-    BoundedAuthoringSlice, BoundedNodeGeometryInput, ProjectionDiagnostic, ResolveDiagnostic,
-    project_bounded, resolve_bounded_geometry,
+    BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
+    BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, project_bounded,
+    resolve_bounded_geometry, resolve_bounded_text_flow,
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
-use pub_model::{NodeId, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId};
+use pub_model::{LengthEmu, NodeId, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId};
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -34,6 +35,10 @@ pub const VIEWER_DOCUMENT_SCHEMA_V0_1: &str = "0.1";
 pub const VIEWER_GEOMETRY_SCHEMA_V0_1: &str = "0.1";
 
 pub const VIEWER_FAILURE_REPORT_SCHEMA_V0_1: &str = "chaptera-viewer-failure-report/v0.1";
+pub const VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1: &str =
+    "viewer-fallback-text-metrics-v0.1";
+const VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1: i64 = 57_150;
+const VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1: i64 = 142_875;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerFailureDiagnosticReport {
@@ -154,6 +159,8 @@ pub struct ViewerGeometryDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub story_frames: Vec<ViewerStoryFrame>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_fragments: Vec<ViewerTextFragment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
 
@@ -177,6 +184,16 @@ pub struct ViewerStoryFrame {
     pub story_id: StoryId,
     pub frame_id: NodeId,
     pub ordinal: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerTextFragment {
+    pub story_id: StoryId,
+    pub frame_id: NodeId,
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+    pub text: String,
+    pub line_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,6 +417,54 @@ pub fn open_mature_0x2c_geometry(
         story_frames,
         images,
     })
+}
+
+fn viewer_fallback_text_flow_environment_v0_1() -> BoundedTextFlowEnvironment {
+    BoundedTextFlowEnvironment {
+        layout: BoundedLayoutEnvironment {
+            engine_revision: VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1.to_owned(),
+            font_set_fingerprint: VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1.to_owned(),
+            resource_fingerprint: "resources:not-consumed:text-flow-v0.1".to_owned(),
+        },
+        text_metrics: Some(BoundedTextMetrics {
+            font_fingerprint: VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1.to_owned(),
+            scalar_advance: LengthEmu::new(VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1),
+            line_height: LengthEmu::new(VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1),
+        }),
+    }
+}
+
+fn resolve_viewer_text_fragments(
+    projection: &pub_layout::BoundedLayoutProjection,
+) -> Result<(Vec<ViewerTextFragment>, Vec<ResolveDiagnostic>)> {
+    let flow = resolve_bounded_text_flow(
+        projection,
+        viewer_fallback_text_flow_environment_v0_1(),
+    )
+    .map_err(|blocked| {
+        let codes = blocked
+            .projection_errors
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow!("Viewer text-flow resolution blocked by layout projection errors: {codes}")
+    })?;
+
+    let fragments = flow
+        .text_fragments
+        .into_iter()
+        .map(|fragment| ViewerTextFragment {
+            story_id: fragment.story_origin,
+            frame_id: fragment.frame_origin,
+            scalar_start: fragment.scalar_start,
+            scalar_end: fragment.scalar_end,
+            text: fragment.text,
+            line_count: fragment.line_count,
+        })
+        .collect::<Vec<_>>();
+
+    Ok((fragments, flow.diagnostics))
 }
 
 /// Explicit deterministic environment profile for the geometry-only Viewer
