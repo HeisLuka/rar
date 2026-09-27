@@ -1,0 +1,35 @@
+name: Autonomus identity domain collision guard
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-reader/tests/identity_domain_collision_guard.rs"
+      - "tools/pub-research/build_identity_domain_collision_guard_receipt.py"
+      - ".github/workflows/autonomus-identity-domain-collision-guard.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run source-free identity-domain collision guard
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader --test identity_domain_collision_guard
+      - name: Build receipt
+        run: |
+          python tools/pub-research/build_identity_domain_collision_guard_receipt.py \
+            --test-source vendor/producer-a/crates/pub-reader/tests/identity_domain_collision_guard.rs \
+            --commit-sha "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/autonomus-identity-domain-collision-guard.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autonomus-identity-domain-collision-guard
+          path: ${{ runner.temp }}/autonomus-identity-domain-collision-guard.json
+          if-no-files-found: error
