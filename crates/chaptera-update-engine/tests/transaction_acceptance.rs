@@ -293,3 +293,46 @@ fn corrupt_newest_journal_falls_back_to_valid_previous_generation() {
     assert_eq!(recovered.transaction_id, "tx-journal-prev");
     assert_eq!(recovered.phase, UpdatePhase::Preparing);
 }
+
+
+#[test]
+fn archived_terminal_journal_is_high_water_not_active_transaction() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    engine
+        .begin_verified_candidate(
+            "tx-terminal-high-water",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+    engine.retain_previous().unwrap();
+    engine.activate_candidate().unwrap();
+    engine.confirm_candidate().unwrap();
+
+    assert!(engine.journal_previous_path().is_file());
+    assert!(engine.read_journal().unwrap().is_none());
+
+    // The archived terminal envelope must still seed the next generation,
+    // while not blocking a new transaction as ActiveTransaction.
+    let next_candidate = temp.path().join("verified-candidate-2");
+    seed_candidate(&next_candidate);
+    engine
+        .begin_verified_candidate(
+            "tx-after-terminal-high-water",
+            "3.0.0",
+            &next_candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+    assert_eq!(
+        engine.read_journal().unwrap().unwrap().transaction_id,
+        "tx-after-terminal-high-water"
+    );
+}
