@@ -99,7 +99,10 @@ pub fn build_page_render_plan_v1(
         .iter()
         .filter(|node| node.parent_origin == parent_origin)
         .map(|node| {
-            let paint = visual.paints.iter().find(|paint| paint.node_id == node.origin);
+            let paint = visual
+                .paints
+                .iter()
+                .find(|paint| paint.node_id == node.origin);
             let image = visual
                 .images
                 .iter()
@@ -151,9 +154,7 @@ mod tests {
     use pub_layout::{
         BoundedLayoutEnvironment, BoundedResolvedScene, ResolvedPhysicalNode, ResolvedSurface,
     };
-    use pub_model::{
-        Affine2D, CanonicalId, LengthEmu, RectEmu, Sha256Digest, Size2D,
-    };
+    use pub_model::{Affine2D, CanonicalId, LengthEmu, RectEmu, Sha256Digest, Size2D};
     use pub_viewer::{
         ViewerDocument, ViewerEmbeddedImage, ViewerNodePaint, ViewerPage, ViewerSolidLine,
         ViewerSource, ViewerTextFragment,
@@ -250,9 +251,18 @@ mod tests {
         assert_eq!(plan.nodes.len(), 1);
         let node = &plan.nodes[0];
         assert_eq!(node.solid_fill_rgb, Some([1, 2, 3]));
-        assert_eq!(node.solid_line.as_ref().map(|line| line.rgb), Some([4, 5, 6]));
-        assert_eq!(node.image.as_ref().map(|image| image.mime.as_str()), Some("image/png"));
-        assert_eq!(node.text.as_ref().map(|text| text.text.as_str()), Some("hello"));
+        assert_eq!(
+            node.solid_line.as_ref().map(|line| line.rgb),
+            Some([4, 5, 6])
+        );
+        assert_eq!(
+            node.image.as_ref().map(|image| image.mime.as_str()),
+            Some("image/png")
+        );
+        assert_eq!(
+            node.text.as_ref().map(|text| text.text.as_str()),
+            Some("hello")
+        );
     }
 
     #[test]
@@ -260,7 +270,14 @@ mod tests {
         let plan = build_page_render_plan_v1(&fixture(), 0).expect("render plan");
         let json = serde_json::to_string(&plan).expect("serialize plan");
 
-        for forbidden in ["Escher", "Quill", "Contents", "byte_range", "offset", "89504e47"] {
+        for forbidden in [
+            "Escher",
+            "Quill",
+            "Contents",
+            "byte_range",
+            "offset",
+            "89504e47",
+        ] {
             assert!(!json.contains(forbidden), "render plan leaked {forbidden}");
         }
         assert!(json.contains("image/png"));
