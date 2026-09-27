@@ -1,0 +1,76 @@
+name: Chaptera visual PUB corpus
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "chaptera-visual-iteration-02-v1"
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/src/main.rs"
+      - "apps/chaptera-desktop/src/render_backend.rs"
+      - ".github/workflows/chaptera-visual-corpus.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  visual-corpus:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire pinned public PUB corpus
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-visual-corpus"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          $base = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher"
+          $files = @(
+            "SampleNewsletter.pub",
+            "Sample.pub",
+            "Sample2.pub",
+            "Sample3.pub",
+            "Sample2000.pub",
+            "51318.pub"
+          )
+
+          foreach ($name in $files) {
+            Invoke-WebRequest -Uri "$base/$name" -OutFile (Join-Path $root $name)
+          }
+
+          $out = Join-Path $env:RUNNER_TEMP "chaptera-visual-output"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          "CHAPTERA_VISUAL_CORPUS_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_VISUAL_CORPUS_OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Probe pages and render non-empty corpus pages
+        run: cargo test -p chaptera-desktop visual_corpus_semantic_probe_and_snapshots -- --ignored --nocapture
+
+      - name: Show visual receipt
+        if: always()
+        shell: pwsh
+        run: |
+          $receipt = Join-Path $env:CHAPTERA_VISUAL_CORPUS_OUT "visual-corpus-receipt.json"
+          if (Test-Path $receipt) {
+            Get-Content -Raw $receipt
+          } else {
+            Write-Host "visual-corpus-receipt.json was not produced"
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-visual-pub-corpus
+          path: ${{ env.CHAPTERA_VISUAL_CORPUS_OUT }}
+          if-no-files-found: error
