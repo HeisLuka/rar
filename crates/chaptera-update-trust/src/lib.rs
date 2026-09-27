@@ -133,6 +133,30 @@ pub async fn read_verified_release_payload(
     Ok((bytes, receipt))
 }
 
+pub fn verify_payload_against_receipt(
+    payload: &[u8],
+    receipt: &VerifiedPayloadReceipt,
+) -> Result<()> {
+    if receipt.schema_version != "chaptera.verified-payload.v1" {
+        bail!("unsupported verified payload receipt schema");
+    }
+    if payload.len() as u64 != receipt.payload_byte_len {
+        bail!(
+            "verified payload length mismatch: receipt {}, actual {}",
+            receipt.payload_byte_len,
+            payload.len()
+        );
+    }
+    let actual_sha256 = Sha256::digest(payload)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if actual_sha256 != receipt.payload_sha256 {
+        bail!("verified payload digest mismatch");
+    }
+    Ok(())
+}
+
 /// Loads and verifies a TUF repository from a filesystem-backed test/local origin.
 ///
 /// Expiration is explicitly enforced in Safe mode. The datastore must live outside
