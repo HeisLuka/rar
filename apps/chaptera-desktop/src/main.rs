@@ -456,7 +456,6 @@ fn smoke_check(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug)]
 struct CachedImageTexture {
     texture: egui::TextureHandle,
     _cache_identity_sha256: String,
