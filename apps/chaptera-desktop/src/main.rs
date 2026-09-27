@@ -216,6 +216,26 @@ fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
 
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new(chaptera_update_handoff::CONTROL_MODE_ARG)) {
+        if !reader_only_mode() {
+            eprintln!("update control mode is reserved for the Chaptera Reader product");
+            std::process::exit(2);
+        }
+        let Some(request_path) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --chaptera-update-control HANDOFF-REQUEST.json");
+            std::process::exit(2);
+        };
+        if args.next().is_some() {
+            eprintln!("Reader update control mode accepts exactly one handoff request");
+            std::process::exit(2);
+        }
+        if let Err(error) = run_reader_update_control(&request_path) {
+            eprintln!("Reader update control failed: {error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--agent-v1")) {
         if args.next().is_some() {
             eprintln!("chaptera --agent-v1 accepts no path arguments; use the open NDJSON command");
@@ -438,6 +458,72 @@ fn main() -> eframe::Result<()> {
             )))
         }),
     )
+}
+
+#[cfg(feature = "reader-only")]
+struct ReaderControlHooks;
+
+#[cfg(feature = "reader-only")]
+impl chaptera_update_orchestrator::UpdateHooks for ReaderControlHooks {
+    fn quiesce(&mut self, _control_updater: &Path) -> std::result::Result<(), String> {
+        // Ownership of the install lock proves the front-door U1 released its
+        // mutation authority before copied U1 reaches this point. Product-level
+        // process shutdown is deliberately a later slice.
+        Ok(())
+    }
+
+    fn health_check(&mut self, current_tree: &Path) -> std::result::Result<(), String> {
+        let candidate = current_tree.join(
+            std::env::current_exe()
+                .map_err(|error| format!("resolve control executable: {error}"))?
+                .file_name()
+                .ok_or_else(|| "control executable has no file name".to_owned())?,
+        );
+        if !candidate.is_file() {
+            return Err(format!("activated Reader executable missing: {}", candidate.display()));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "reader-only")]
+fn run_reader_update_control(request_path: &Path) -> Result<(), String> {
+    let request = chaptera_update_handoff::read_control_request(request_path)
+        .map_err(|error| error.to_string())?;
+    let orchestrator = chaptera_update_orchestrator::UpdateOrchestrator::new(&request.install_root);
+    chaptera_update_handoff::validate_request_against_engine(&request, orchestrator.engine())
+        .map_err(|error| error.to_string())?;
+
+    let _lock = chaptera_update_orchestrator::InstallLock::acquire(&request.install_root)
+        .map_err(|error| error.to_string())?;
+    // Revalidate after blocking lock acquisition: the request may have become
+    // stale while copied U1 waited for its parent/front-door process to exit.
+    chaptera_update_handoff::validate_request_against_engine(&request, orchestrator.engine())
+        .map_err(|error| error.to_string())?;
+
+    let receipt = chaptera_update_handoff::ControlReceipt {
+        schema_version: chaptera_update_handoff::CONTROL_RECEIPT_SCHEMA_VERSION.to_owned(),
+        transaction_id: request.transaction_id.clone(),
+        pid: std::process::id(),
+        executable: std::env::current_exe()
+            .map_err(|error| format!("resolve control executable: {error}"))?,
+    };
+    chaptera_update_handoff::write_control_receipt(
+        &chaptera_update_handoff::receipt_path(request_path),
+        &receipt,
+    )
+    .map_err(|error| error.to_string())?;
+
+    let mut hooks = ReaderControlHooks;
+    orchestrator
+        .continue_prepared_candidate(&mut hooks)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(feature = "reader-only"))]
+fn run_reader_update_control(_request_path: &Path) -> Result<(), String> {
+    Err("update control mode is unavailable outside the Reader build".to_owned())
 }
 
 fn smoke_check(path: &Path) -> Result<(), String> {
