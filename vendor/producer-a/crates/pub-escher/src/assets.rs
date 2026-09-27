@@ -602,6 +602,59 @@ mod tests {
     }
 
     #[test]
+    fn parses_uncompressed_wmf_metafile_header_and_exact_file_data() {
+        let file_data = [0xD7, 0xCD, 0xC6, 0x9A, 0x01, 0x00];
+        let mut payload = vec![0x11; 16]; // rgbUid1
+        payload.extend_from_slice(&(file_data.len() as u32).to_le_bytes()); // cbSize
+        payload.extend_from_slice(&[0; 16]); // rcBounds
+        payload.extend_from_slice(&[0; 8]); // ptSize
+        payload.extend_from_slice(&(file_data.len() as u32).to_le_bytes()); // cbSave
+        payload.push(0xFE); // no compression
+        payload.push(0xFE); // filter
+        payload.extend_from_slice(&file_data);
+
+        let wmf = record(0x2160, OFFICE_ART_BLIP_WMF, &payload);
+        let delayed = inspect_delayed_blips(stream("/Escher/EscherDelayStm"), &wmf)
+            .expect("WMF delay record should parse");
+        let blip = &delayed.records[0];
+        assert_eq!(blip.kind, BlipKind::Wmf);
+        let metafile = blip.metafile_payload.as_ref().expect("WMF metafile header");
+        assert_eq!(metafile.uncompressed_size, file_data.len() as u32);
+        assert_eq!(metafile.compressed_size, file_data.len() as u32);
+        assert_eq!(metafile.compression, MetafileCompression::None);
+        assert_eq!(metafile.filter, 0xFE);
+        assert_eq!(metafile.file_data_source.offset, 8 + 50);
+        assert_eq!(metafile.file_data_source.len, file_data.len() as u64);
+        assert_eq!(blip.image_payload_source, Some(metafile.file_data_source.clone()));
+    }
+
+    #[test]
+    fn compressed_wmf_retains_bounded_carrier_but_is_not_mislabeled_as_raw_wmf() {
+        let compressed = [0x78, 0x9C, 0x01, 0x02, 0x03, 0x04];
+        let mut payload = vec![0x22; 16]; // rgbUid1
+        payload.extend_from_slice(&1234_u32.to_le_bytes()); // cbSize
+        payload.extend_from_slice(&[0; 16]); // rcBounds
+        payload.extend_from_slice(&[0; 8]); // ptSize
+        payload.extend_from_slice(&(compressed.len() as u32).to_le_bytes()); // cbSave
+        payload.push(0x00); // DEFLATE
+        payload.push(0xFE); // filter
+        payload.extend_from_slice(&compressed);
+
+        let wmf = record(0x2160, OFFICE_ART_BLIP_WMF, &payload);
+        let delayed = inspect_delayed_blips(stream("/Escher/EscherDelayStm"), &wmf)
+            .expect("compressed WMF delay record should parse");
+        let blip = &delayed.records[0];
+        let metafile = blip.metafile_payload.as_ref().expect("WMF metafile header");
+        assert_eq!(metafile.compression, MetafileCompression::Deflate);
+        assert_eq!(metafile.file_data_source.offset, 8 + 50);
+        assert_eq!(metafile.file_data_source.len, compressed.len() as u64);
+        assert!(
+            blip.image_payload_source.is_none(),
+            "compressed carrier must not be presented as standalone WMF bytes"
+        );
+    }
+
+    #[test]
     fn detects_grounded_one_bit_dib_payload_after_blip_prefix() {
         let mut dib_payload = vec![0_u8; 17];
         dib_payload.extend_from_slice(&40u32.to_le_bytes());
