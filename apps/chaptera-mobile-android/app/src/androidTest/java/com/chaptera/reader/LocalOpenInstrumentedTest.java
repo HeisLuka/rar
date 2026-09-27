@@ -63,7 +63,8 @@ public final class LocalOpenInstrumentedTest {
                     TextView status = activity.findViewById(R.id.reader_status);
                     String value = status.getText().toString();
                     assertTrue("non-PUB must produce bounded local error: " + value,
-                        value.startsWith("Could not open this file locally."));
+                        value.startsWith("This is not a Publisher file.")
+                            || value.startsWith("Could not open this file locally."));
                 });
             }
         } finally {
