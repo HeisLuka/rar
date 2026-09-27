@@ -313,3 +313,70 @@ fn copied_control_health_failure_rolls_back_without_deleting_its_own_bytes() {
     assert!(control.is_file(), "rollback must not unlink the running control updater");
     assert!(orchestrator.engine().read_journal().unwrap().is_none());
 }
+
+
+#[test]
+fn front_door_guard_keeps_install_locked_until_handoff_is_spawned() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1");
+    seed_tree(&candidate, b"U2", b"reader-v2");
+
+    let orchestrator = UpdateOrchestrator::new(&root);
+    let prepared = orchestrator
+        .prepare_verified_candidate_for_handoff(
+            "tx-frontdoor",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    assert_eq!(fs::read(&prepared.control_updater).unwrap(), b"U1");
+    assert!(matches!(
+        InstallLock::try_acquire(&root),
+        Err(OrchestrationError::LockBusy)
+    ));
+    let journal = orchestrator.engine().read_journal().unwrap().unwrap();
+    assert_eq!(journal.phase, chaptera_update_engine::UpdatePhase::Prepared);
+    assert_eq!(journal.transaction_id, "tx-frontdoor");
+
+    drop(prepared);
+    let next_owner = InstallLock::try_acquire(&root).unwrap();
+    drop(next_owner);
+
+    assert_eq!(
+        orchestrator.engine().recover().unwrap(),
+        RecoveryOutcome::PreparedTransactionAborted
+    );
+}
+
+#[test]
+fn front_door_rejects_parallel_staging_owner() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1");
+    seed_tree(&candidate, b"U2", b"reader-v2");
+
+    let orchestrator = UpdateOrchestrator::new(&root);
+    let _prepared = orchestrator
+        .prepare_verified_candidate_for_handoff(
+            "tx-first",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    let err = orchestrator
+        .prepare_verified_candidate_for_handoff(
+            "tx-second",
+            "3.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap_err();
+    assert!(matches!(err, OrchestrationError::LockBusy));
+}
