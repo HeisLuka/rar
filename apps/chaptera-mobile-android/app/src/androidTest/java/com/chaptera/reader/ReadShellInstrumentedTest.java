@@ -126,30 +126,39 @@ public final class ReadShellInstrumentedTest {
         );
         canvas.dispatchTouchEvent(secondDown);
 
-        coords[0].x = 100f;
-        coords[1].x = 260f;
-        MotionEvent move = MotionEvent.obtain(
-            downTime, downTime + 35, MotionEvent.ACTION_MOVE,
+        coords[0].x = 120f;
+        coords[1].x = 240f;
+        MotionEvent move1 = MotionEvent.obtain(
+            downTime, downTime + 30, MotionEvent.ACTION_MOVE,
             2, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         );
-        canvas.dispatchTouchEvent(move);
+        canvas.dispatchTouchEvent(move1);
+
+        coords[0].x = 80f;
+        coords[1].x = 280f;
+        MotionEvent move2 = MotionEvent.obtain(
+            downTime, downTime + 55, MotionEvent.ACTION_MOVE,
+            2, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+        );
+        canvas.dispatchTouchEvent(move2);
 
         MotionEvent secondUp = MotionEvent.obtain(
-            downTime, downTime + 45,
+            downTime, downTime + 70,
             MotionEvent.ACTION_POINTER_UP | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
             2, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         );
         canvas.dispatchTouchEvent(secondUp);
 
         MotionEvent up = MotionEvent.obtain(
-            downTime, downTime + 55, MotionEvent.ACTION_UP,
-            100f, 200f, 0
+            downTime, downTime + 80, MotionEvent.ACTION_UP,
+            80f, 200f, 0
         );
         canvas.dispatchTouchEvent(up);
 
         firstDown.recycle();
         secondDown.recycle();
-        move.recycle();
+        move1.recycle();
+        move2.recycle();
         secondUp.recycle();
         up.recycle();
     }
