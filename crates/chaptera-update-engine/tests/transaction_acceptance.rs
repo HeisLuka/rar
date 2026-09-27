@@ -346,14 +346,14 @@ fn legacy_raw_rotation_migrates_without_false_same_generation_ambiguity() {
     let engine = UpdateEngine::new(&root);
 
     let previous = chaptera_update_engine::UpdateJournal {
-        schema_version: "chaptera-update-journal-v1".into(),
+        schema_version: "chaptera.update-journal.v1".into(),
         transaction_id: "tx-legacy-prev".into(),
         candidate_version: "1.0.0".into(),
         updater_relative_path: Path::new("chaptera-updater.bin").to_path_buf(),
         phase: UpdatePhase::Preparing,
     };
     let current = chaptera_update_engine::UpdateJournal {
-        schema_version: "chaptera-update-journal-v1".into(),
+        schema_version: "chaptera.update-journal.v1".into(),
         transaction_id: "tx-legacy-current".into(),
         candidate_version: "2.0.0".into(),
         updater_relative_path: Path::new("chaptera-updater.bin").to_path_buf(),
