@@ -3,6 +3,9 @@ name: Chaptera visual PUB corpus
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "chaptera-visual-corpus-stand-01-v1"
   pull_request:
     paths:
       - "apps/chaptera-desktop/src/main.rs"
