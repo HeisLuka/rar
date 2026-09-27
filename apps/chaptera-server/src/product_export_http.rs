@@ -1,6 +1,4 @@
-use std::{
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::{
     Json, Router,
@@ -172,12 +170,7 @@ async fn export_status(
     let now = now_ms()?;
     let snapshot = state
         .jobs
-        .status_by_job_id(
-            &principal.principal_id,
-            &job_id,
-            "export:status",
-            now,
-        )
+.status_by_job_id(&principal.principal_id, &job_id, "export:status", now)
         .await
         .map_err(ProductExportHttpError::Jobs)?;
 
@@ -214,12 +207,7 @@ async fn cancel_export(
         .map_err(ProductExportHttpError::Auth)?;
     let snapshot = state
         .jobs
-        .request_cancel_by_job_id(
-            &principal.principal_id,
-            &job_id,
-            "export:cancel",
-            now_ms()?,
-        )
+.request_cancel_by_job_id(&principal.principal_id, &job_id, "export:cancel", now_ms()?)
         .await
         .map_err(ProductExportHttpError::Jobs)?;
     Ok(Json(job_response(snapshot, None)))
@@ -242,12 +230,7 @@ async fn authorize_download(
     let now = now_ms()?;
     let publication = state
         .jobs
-        .authorize_download_by_job_id(
-            &principal.principal_id,
-            &job_id,
-            "export:download",
-            now,
-        )
+.authorize_download_by_job_id(&principal.principal_id, &job_id, "export:download", now)
         .await
         .map_err(ProductExportHttpError::Jobs)?;
     if request.artifact_id != publication.artifact_binding_id {
@@ -263,9 +246,9 @@ async fn authorize_download(
         .map_err(ProductExportHttpError::Source)?;
     let now_u64 = u64::try_from(now)
         .map_err(|_| ProductExportHttpError::internal("clock_out_of_range", "negative clock"))?;
-    let expires_at_ms = now_u64
-        .checked_add(DOWNLOAD_GRANT_TTL_MS)
-        .ok_or_else(|| ProductExportHttpError::internal("clock_out_of_range", "grant expiry overflow"))?;
+    let expires_at_ms = now_u64.checked_add(DOWNLOAD_GRANT_TTL_MS).ok_or_else(|| {
+        ProductExportHttpError::internal("clock_out_of_range", "grant expiry overflow")
+    })?;
     let grant = state
         .blobs
         .issue_download_grant(
@@ -345,8 +328,7 @@ fn require_ident(value: &str, label: &'static str) -> Result<(), ProductExportHt
     if value.is_empty()
         || value.len() > 256
         || !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(byte, b'.' | b'_' | b':' | b'@' | b'/' | b'-')
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'@' | b'/' | b'-')
         })
     {
         return Err(ProductExportHttpError::bad_request(
@@ -360,10 +342,13 @@ fn require_ident(value: &str, label: &'static str) -> Result<(), ProductExportHt
 fn now_ms() -> Result<i64, ProductExportHttpError> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| ProductExportHttpError::internal("clock_invalid", "system clock is before epoch"))?
+        .map_err(|_| {
+            ProductExportHttpError::internal("clock_invalid", "system clock is before epoch")
+        })?
         .as_millis();
-    i64::try_from(millis)
-        .map_err(|_| ProductExportHttpError::internal("clock_out_of_range", "system clock is out of range"))
+    i64::try_from(millis).map_err(|_| {
+        ProductExportHttpError::internal("clock_out_of_range", "system clock is out of range")
+    })
 }
 
 #[derive(Debug)]
