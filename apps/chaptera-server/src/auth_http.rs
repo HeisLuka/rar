@@ -35,7 +35,7 @@ pub struct AuthenticatedPrincipal {
 
 #[derive(Clone)]
 pub struct AuthHttpState {
-    oidc: OidcAuthorizationAdapter,
+    oidc: Option<OidcAuthorizationAdapter>,
     flows: LoginFlowStore,
     store: SqliteAuthnStore,
     session_policy: SessionPolicy,
@@ -56,11 +56,27 @@ impl AuthHttpState {
             return Err(AuthHttpError::internal("auth_login_ttl_invalid"));
         }
         Ok(Self {
-            oidc,
+            oidc: Some(oidc),
             flows,
             store,
             session_policy,
             login_ttl,
+            origin: OriginPolicy::new(public_origin)?,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn api_test(
+        store: SqliteAuthnStore,
+        session_policy: SessionPolicy,
+        public_origin: &str,
+    ) -> Result<Self, AuthHttpError> {
+        Ok(Self {
+            oidc: None,
+            flows: LoginFlowStore::new(1).map_err(map_authn_error)?,
+            store,
+            session_policy,
+            login_ttl: Duration::from_secs(60),
             origin: OriginPolicy::new(public_origin)?,
         })
     }
@@ -143,8 +159,11 @@ async fn login(
 ) -> Result<Redirect, AuthHttpError> {
     state.origin.require_host(&headers)?;
     let now = now_ms_u64()?;
-    let start = state
+    let oidc = state
         .oidc
+        .as_ref()
+        .ok_or_else(|| AuthHttpError::internal("oidc_unconfigured"))?;
+    let start = oidc
         .begin_login(
             &state.flows,
             query.return_path.as_deref().unwrap_or("/"),
@@ -181,8 +200,11 @@ async fn callback(
         .as_deref()
         .ok_or_else(|| AuthHttpError::bad_request("oidc_code_missing"))?;
     let now_u64 = now_ms_u64()?;
-    let identity = state
+    let oidc = state
         .oidc
+        .as_ref()
+        .ok_or_else(|| AuthHttpError::internal("oidc_unconfigured"))?;
+    let identity = oidc
         .finish_login(&state.flows, state_token, code, now_u64)
         .await
         .map_err(map_oidc_error)?;
