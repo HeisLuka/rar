@@ -58,7 +58,14 @@ public final class V0UserCycleInstrumentedTest {
 
                     assertTrue(status.getText().toString().contains("CycleOne.pub"));
                     assertTrue(status.getText().toString().contains("page 1/"));
-                    assertTrue(status.getText().toString().contains("offline local open"));
+                    String firstStatus = status.getText().toString();
+                    assertTrue(firstStatus.contains("offline local open"));
+                    assertTrue(
+                        "visible fidelity state must be present: " + firstStatus,
+                        firstStatus.contains("supported")
+                            || firstStatus.contains("partial")
+                            || firstStatus.contains("unsupported")
+                    );
                     assertTrue(next.isEnabled());
 
                     next.performClick();
