@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::Path;
-use tough::{ExpirationEnforcement, FilesystemTransport, Repository, RepositoryLoader};
+use tough::{ExpirationEnforcement, FilesystemTransport, IntoVec, Repository, RepositoryLoader, TargetName};
 use url::Url;
 
 pub const UPDATE_PROTOCOL_VERSION: u32 = 1;
@@ -81,6 +82,81 @@ impl ChapteraReleaseSemantics {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedPayloadReceipt {
+    pub schema_version: String,
+    pub target_name: String,
+    pub product_id: String,
+    pub architecture: String,
+    pub channel: String,
+    pub package_version: String,
+    pub payload_sha256: String,
+    pub payload_byte_len: u64,
+    pub timestamp_version: u64,
+    pub snapshot_version: u64,
+    pub targets_version: u64,
+}
+
+pub async fn read_verified_release_payload(
+    repository: &Repository,
+    target_name: &str,
+    release: &ChapteraReleaseSemantics,
+) -> Result<(Vec<u8>, VerifiedPayloadReceipt)> {
+    let target_name_parsed =
+        TargetName::new(target_name).context("invalid TUF target name")?;
+    let stream = repository
+        .read_target(&target_name_parsed)
+        .await
+        .context("read verified TUF target")?
+        .ok_or_else(|| anyhow::anyhow!("selected TUF target is missing: {target_name}"))?;
+    let bytes = stream.into_vec().await.context("read verified target bytes")?;
+
+    let payload_sha256 = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    let receipt = VerifiedPayloadReceipt {
+        schema_version: "chaptera.verified-payload.v1".to_owned(),
+        target_name: target_name.to_owned(),
+        product_id: release.product_id.clone(),
+        architecture: release.architecture.clone(),
+        channel: release.channel.clone(),
+        package_version: release.package_version.clone(),
+        payload_sha256,
+        payload_byte_len: bytes.len() as u64,
+        timestamp_version: repository.timestamp().signed.version.get(),
+        snapshot_version: repository.snapshot().signed.version.get(),
+        targets_version: repository.targets().signed.version.get(),
+    };
+
+    Ok((bytes, receipt))
+}
+
+pub fn verify_payload_against_receipt(
+    payload: &[u8],
+    receipt: &VerifiedPayloadReceipt,
+) -> Result<()> {
+    if receipt.schema_version != "chaptera.verified-payload.v1" {
+        bail!("unsupported verified payload receipt schema");
+    }
+    if payload.len() as u64 != receipt.payload_byte_len {
+        bail!(
+            "verified payload length mismatch: receipt {}, actual {}",
+            receipt.payload_byte_len,
+            payload.len()
+        );
+    }
+    let actual_sha256 = Sha256::digest(payload)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if actual_sha256 != receipt.payload_sha256 {
+        bail!("verified payload digest mismatch");
+    }
+    Ok(())
+}
+
 /// Loads and verifies a TUF repository from a filesystem-backed test/local origin.
 ///
 /// Expiration is explicitly enforced in Safe mode. The datastore must live outside
@@ -137,6 +213,60 @@ mod tests {
             rollback_compatible_from: vec!["0.1.0".into()],
             installed_tree_bytes: 1024,
         }
+    }
+
+    #[test]
+    fn verified_payload_receipt_rejects_payload_substitution() {
+        let payload = b"signed-release-payload";
+        let receipt = VerifiedPayloadReceipt {
+            schema_version: "chaptera.verified-payload.v1".into(),
+            target_name: "chaptera-reader-win-x64.zip".into(),
+            product_id: "chaptera.reader".into(),
+            architecture: "windows-x86_64".into(),
+            channel: "stable".into(),
+            package_version: "0.2.0".into(),
+            payload_sha256: Sha256::digest(payload)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            payload_byte_len: payload.len() as u64,
+            timestamp_version: 2,
+            snapshot_version: 2,
+            targets_version: 2,
+        };
+
+        verify_payload_against_receipt(payload, &receipt).unwrap();
+        assert!(verify_payload_against_receipt(b"substituted-payload", &receipt).is_err());
+    }
+
+    #[test]
+    fn verified_payload_receipt_rejects_receipt_tamper() {
+        let payload = b"signed-release-payload";
+        let mut receipt = VerifiedPayloadReceipt {
+            schema_version: "chaptera.verified-payload.v1".into(),
+            target_name: "chaptera-reader-win-x64.zip".into(),
+            product_id: "chaptera.reader".into(),
+            architecture: "windows-x86_64".into(),
+            channel: "stable".into(),
+            package_version: "0.2.0".into(),
+            payload_sha256: Sha256::digest(payload)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            payload_byte_len: payload.len() as u64,
+            timestamp_version: 2,
+            snapshot_version: 2,
+            targets_version: 2,
+        };
+
+        receipt.payload_sha256 = "00".repeat(32);
+        assert!(verify_payload_against_receipt(payload, &receipt).is_err());
+        receipt.payload_sha256 = Sha256::digest(payload)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        receipt.payload_byte_len += 1;
+        assert!(verify_payload_against_receipt(payload, &receipt).is_err());
     }
 
     #[test]
