@@ -1,0 +1,52 @@
+name: Mobile Reader Android core portability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/mobile-reader-android-core-portability.yml"
+      - "vendor/producer-a/**"
+
+permissions:
+  contents: read
+
+jobs:
+  android-core-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust Android target
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup target add aarch64-linux-android --toolchain 1.94.1
+
+      - name: Check PUB Reader and Viewer core for Android
+        run: |
+          cargo +1.94.1 check \
+            --manifest-path vendor/producer-a/Cargo.toml \
+            --locked \
+            --target aarch64-linux-android \
+            -p pub-reader \
+            -p pub-layout \
+            -p pub-viewer
+
+      - name: Guard against desktop shell coupling
+        run: |
+          cargo +1.94.1 metadata \
+            --manifest-path vendor/producer-a/Cargo.toml \
+            --no-deps \
+            --format-version 1 > /tmp/producer-a-metadata.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          metadata = json.loads(Path("/tmp/producer-a-metadata.json").read_text())
+          names = {pkg["name"] for pkg in metadata["packages"]}
+          forbidden = {"chaptera-desktop", "eframe", "egui"}
+          leaked = sorted(names & forbidden)
+          if leaked:
+              raise SystemExit(f"desktop UI packages leaked into producer-a workspace: {leaked}")
+          print("OK: shared PUB core metadata contains no desktop UI packages")
+          PY
