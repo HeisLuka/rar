@@ -5,9 +5,10 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.text.InputType;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
@@ -20,6 +21,15 @@ public final class MainActivity extends Activity {
 
     private TextView status;
     private PubCanvasView canvas;
+    private Button previous;
+    private Button next;
+    private EditText pageJump;
+
+    private long sessionId = -1L;
+    private int pageCount = 0;
+    private int currentPage = 0;
+    private String documentName = "Local PUB";
+    private String fidelity = "unknown";
 
     @Override
     protected void onCreate(Bundle state) {
@@ -37,8 +47,51 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setOrientation(LinearLayout.HORIZONTAL);
+
+        previous = new Button(this);
+        previous.setId(R.id.reader_previous);
+        previous.setText("Previous");
+        previous.setEnabled(false);
+        previous.setOnClickListener(v -> showPage(currentPage - 1, true));
+        navigation.addView(previous, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        pageJump = new EditText(this);
+        pageJump.setId(R.id.reader_page_jump);
+        pageJump.setSingleLine(true);
+        pageJump.setGravity(Gravity.CENTER);
+        pageJump.setInputType(InputType.TYPE_CLASS_NUMBER);
+        pageJump.setHint("Page");
+        navigation.addView(pageJump, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button go = new Button(this);
+        go.setId(R.id.reader_page_go);
+        go.setText("Go");
+        go.setOnClickListener(v -> {
+            try {
+                int requested = Integer.parseInt(pageJump.getText().toString().trim()) - 1;
+                showPage(requested, true);
+            } catch (NumberFormatException ignored) {
+                status.setText("Enter a page number between 1 and " + Math.max(1, pageCount) + ".");
+            }
+        });
+        navigation.addView(go, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.6f));
+
+        next = new Button(this);
+        next.setId(R.id.reader_next);
+        next.setText("Next");
+        next.setEnabled(false);
+        next.setOnClickListener(v -> showPage(currentPage + 1, true));
+        navigation.addView(next, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        root.addView(navigation, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
         status = new TextView(this);
-        status.setId(com.chaptera.reader.R.id.reader_status);
+        status.setId(R.id.reader_status);
         status.setGravity(Gravity.CENTER_VERTICAL);
         status.setText("Open a local .pub file. No account or network is required.");
         root.addView(status, new LinearLayout.LayoutParams(
@@ -47,7 +100,7 @@ public final class MainActivity extends Activity {
         ));
 
         canvas = new PubCanvasView(this);
-        canvas.setId(com.chaptera.reader.R.id.reader_canvas);
+        canvas.setId(R.id.reader_canvas);
         root.addView(canvas, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             0,
@@ -95,23 +148,89 @@ public final class MainActivity extends Activity {
             if (wire.startsWith("ERR:")) {
                 String diagnostic = NativeReader.failureDiagnosticJson(bytes);
                 status.setText("Could not open this file locally. " + compactError(wire, diagnostic));
+                closeCurrentSession();
                 canvas.setPage(null);
+                updateNavigation();
                 return;
             }
 
             JSONObject receipt = new JSONObject(wire);
-            int pages = receipt.getInt("page_count");
-            String fidelity = receipt.optString("fidelity", "unknown");
-            JSONObject firstPage = receipt.getJSONObject("first_page");
-            status.setText(displayName(uri) + " · " + pages + " page(s) · " + fidelity + " · offline local open");
-            canvas.setPage(firstPage);
+            closeCurrentSession();
+            sessionId = receipt.getLong("session_id");
+            pageCount = receipt.getInt("page_count");
+            currentPage = 0;
+            fidelity = receipt.optString("fidelity", "unknown");
+            documentName = displayName(uri);
+            canvas.setPage(receipt.getJSONObject("first_page"));
+            pageJump.setText("1");
+            updateStatus();
+            updateNavigation();
         } catch (SecurityException denied) {
             status.setText("Chaptera no longer has permission to read this file. Select it again.");
+            closeCurrentSession();
             canvas.setPage(null);
+            updateNavigation();
         } catch (Exception error) {
             status.setText("Could not read this local file: " + error.getMessage());
+            closeCurrentSession();
             canvas.setPage(null);
+            updateNavigation();
         }
+    }
+
+    private void showPage(int pageIndex, boolean resetViewport) {
+        if (sessionId < 0 || pageIndex < 0 || pageIndex >= pageCount) {
+            status.setText("Page must be between 1 and " + Math.max(1, pageCount) + ".");
+            return;
+        }
+        String wire = NativeReader.renderPageJson(sessionId, pageIndex);
+        if (wire.startsWith("ERR:")) {
+            status.setText("Could not render page " + (pageIndex + 1) + ": " + wire);
+            return;
+        }
+        try {
+            float zoom = canvas.getZoom();
+            float panX = canvas.getPanXOffset();
+            float panY = canvas.getPanYOffset();
+            canvas.setPage(new JSONObject(wire));
+            if (!resetViewport) canvas.restoreViewport(zoom, panX, panY);
+            currentPage = pageIndex;
+            pageJump.setText(Integer.toString(currentPage + 1));
+            updateStatus();
+            updateNavigation();
+        } catch (Exception error) {
+            status.setText("Could not display page " + (pageIndex + 1) + ": " + error.getMessage());
+        }
+    }
+
+    private void updateStatus() {
+        status.setText(
+            documentName + " · page " + (currentPage + 1) + "/" + pageCount +
+            " · " + fidelity + " · offline local open"
+        );
+    }
+
+    private void updateNavigation() {
+        previous.setEnabled(sessionId >= 0 && currentPage > 0);
+        next.setEnabled(sessionId >= 0 && currentPage + 1 < pageCount);
+        pageJump.setEnabled(sessionId >= 0);
+    }
+
+    private void closeCurrentSession() {
+        if (sessionId >= 0) {
+            NativeReader.closeSession(sessionId);
+        }
+        sessionId = -1L;
+        pageCount = 0;
+        currentPage = 0;
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (!isChangingConfigurations()) {
+            closeCurrentSession();
+        }
+        super.onDestroy();
     }
 
     private byte[] readBounded(Uri uri, int maxBytes) throws Exception {
