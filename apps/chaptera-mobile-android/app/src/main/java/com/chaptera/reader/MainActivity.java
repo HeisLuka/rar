@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
         ));
 
         status = new TextView(this);
+        status.setId(com.chaptera.reader.R.id.reader_status);
         status.setGravity(Gravity.CENTER_VERTICAL);
         status.setText("Open a local .pub file. No account or network is required.");
         root.addView(status, new LinearLayout.LayoutParams(
@@ -46,6 +47,7 @@ public final class MainActivity extends Activity {
         ));
 
         canvas = new PubCanvasView(this);
+        canvas.setId(com.chaptera.reader.R.id.reader_canvas);
         root.addView(canvas, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             0,
