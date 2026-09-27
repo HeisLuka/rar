@@ -37,7 +37,7 @@ PRIVATE_PAYLOAD_SUFFIXES = {".pub", ".puz"}
 SAFE_FIXTURE_MARKERS = {"public", "public-safe", "public_safe", "synthetic"}
 
 WINDOWS_ABS_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_])([A-Z]:[\\/][^\s\"'<>|]+)"
+    r"(?i)(?<![A-Za-z0-9_])([A-Z]:[\\/][^\r\n\"'<>|]+)"
 )
 UNIX_USER_RE = re.compile(
     r"(?<![A-Za-z0-9_])((?:/home|/Users)/[A-Za-z0-9._-]+/[^\s\"'<>|]+)"
