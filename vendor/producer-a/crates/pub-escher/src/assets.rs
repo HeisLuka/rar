@@ -61,6 +61,27 @@ pub struct BStoreInventory {
     pub slots: Vec<BStoreSlot>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetafileCompression {
+    Deflate,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeArtMetafilePayload {
+    pub uncompressed_size: u32,
+    pub compressed_size: u32,
+    pub compression: MetafileCompression,
+    pub filter: u8,
+    /// Exact BLIPFileData carrier inside the bounded OfficeArt record.
+    ///
+    /// For `Deflate` this span contains RFC1950-compressed bytes and is not
+    /// itself a standalone WMF/EMF file. For `None` it is the exact standard
+    /// metafile byte span.
+    pub file_data_source: RawSpan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelayedBlip {
     /// Zero-based physical record ordinal inside OfficeArtBStoreDelay.
@@ -70,6 +91,8 @@ pub struct DelayedBlip {
     pub rec_type: u16,
     pub rec_instance: u16,
     pub kind: BlipKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metafile_payload: Option<OfficeArtMetafilePayload>,
     /// Exact standard image payload when it can be identified conservatively.
     ///
     /// Raw OfficeArt record/payload carriers remain available even when this is None.
@@ -194,6 +217,7 @@ pub fn inspect_delayed_blips(
             rec_type: record.header.rec_type,
             rec_instance: record.header.rec_instance,
             kind: blip_kind(record.header.rec_type),
+            metafile_payload: detect_metafile_payload(bytes, record)?,
             image_payload_source: detect_image_payload(bytes, record)?,
         });
     }
@@ -308,6 +332,58 @@ fn parse_fbse(
     })
 }
 
+fn detect_metafile_payload(
+    bytes: &[u8],
+    record: &OfficeArtRecord,
+) -> Result<Option<OfficeArtMetafilePayload>, AssetReadError> {
+    let uid_len = match (record.header.rec_type, record.header.rec_instance) {
+        (OFFICE_ART_BLIP_WMF, 0x216) => 16_usize,
+        (OFFICE_ART_BLIP_WMF, 0x217) => 32_usize,
+        (OFFICE_ART_BLIP_EMF, 0x3D4) => 16_usize,
+        (OFFICE_ART_BLIP_EMF, 0x3D5) => 32_usize,
+        _ => return Ok(None),
+    };
+
+    const METAFILE_HEADER_LEN: usize = 34;
+    let payload = span_slice(bytes, &record.payload_source)?;
+    let data_offset = uid_len + METAFILE_HEADER_LEN;
+    if payload.len() < data_offset {
+        return Ok(None);
+    }
+
+    let header = &payload[uid_len..data_offset];
+    let uncompressed_size = read_u32(header, 0);
+    let compressed_size = read_u32(header, 28);
+    let compression = match header[32] {
+        0x00 => MetafileCompression::Deflate,
+        0xFE => MetafileCompression::None,
+        _ => return Ok(None),
+    };
+    let filter = header[33];
+    if filter != 0xFE {
+        return Ok(None);
+    }
+
+    let available = payload.len() - data_offset;
+    let declared = usize::try_from(compressed_size)
+        .map_err(|_| AssetReadError::OffsetTooLarge { offset: u64::from(compressed_size) })?;
+    if declared > available {
+        return Ok(None);
+    }
+
+    Ok(Some(OfficeArtMetafilePayload {
+        uncompressed_size,
+        compressed_size,
+        compression,
+        filter,
+        file_data_source: RawSpan {
+            stream: record.payload_source.stream.clone(),
+            offset: record.payload_source.offset + data_offset as u64,
+            len: compressed_size as u64,
+        },
+    }))
+}
+
 fn detect_image_payload(
     bytes: &[u8],
     record: &OfficeArtRecord,
@@ -322,6 +398,13 @@ fn detect_image_payload(
         }
         OFFICE_ART_BLIP_JPEG => find_bytes(prefix, &[0xFF, 0xD8, 0xFF]),
         OFFICE_ART_BLIP_DIB => find_dib_header(prefix),
+        OFFICE_ART_BLIP_WMF | OFFICE_ART_BLIP_EMF => {
+            let metafile = detect_metafile_payload(bytes, record)?;
+            return Ok(metafile.and_then(|payload| {
+                (payload.compression == MetafileCompression::None)
+                    .then_some(payload.file_data_source)
+            }));
+        }
         _ => None,
     };
 
