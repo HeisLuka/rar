@@ -1,4 +1,5 @@
 name: Chaptera visual PUB corpus
+# Golden page viewport: 1600x1800 for SampleNewsletter page 2
 
 on:
   workflow_dispatch:
