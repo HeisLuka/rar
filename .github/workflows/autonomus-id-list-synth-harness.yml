@@ -1,0 +1,35 @@
+name: Autonomus source-free id_list contract
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/tests/id_list_source_free_contract.rs"
+      - "tools/pub-research/build_id_list_synth_receipt.py"
+      - ".github/workflows/autonomus-id-list-synth-harness.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run source-free pub-contents contract
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents --test id_list_source_free_contract
+      - name: Build machine-readable receipt
+        run: |
+          python tools/pub-research/build_id_list_synth_receipt.py \
+            --test-source vendor/producer-a/crates/pub-contents/tests/id_list_source_free_contract.rs \
+            --commit-sha "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/autonomus-id-list-synth-receipt.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autonomus-id-list-synth-receipt
+          path: ${{ runner.temp }}/autonomus-id-list-synth-receipt.json
+          if-no-files-found: error
