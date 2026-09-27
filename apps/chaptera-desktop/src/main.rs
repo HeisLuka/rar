@@ -2580,6 +2580,51 @@ impl ViewerApp {
         }
     }
 
+    fn decode_viewer_embedded_image(embedded: &pub_viewer::ViewerEmbeddedImage) -> Option<egui::ColorImage> {
+        match embedded.mime.as_str() {
+            "image/png" | "image/jpeg" => {
+                let format = match embedded.mime.as_str() {
+                    "image/png" => image::ImageFormat::Png,
+                    "image/jpeg" => image::ImageFormat::Jpeg,
+                    _ => unreachable!(),
+                };
+                let decoded = image::load_from_memory_with_format(&embedded.bytes, format).ok()?;
+                let rgba = decoded.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                Some(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+            }
+            "image/x-wmf" | "image/x-emf" => {
+                // OfficeArt metafiles are materialized by pub-reader into standard WMF/EMF
+                // bytes before reaching the Viewer. Convert those bytes to source-neutral SVG,
+                // then rasterize the SVG into a bounded texture for egui.
+                let svg = emf_core::converter::convert_to_svg(embedded.bytes.as_slice()).ok()?;
+                let options = resvg::usvg::Options::default();
+                let tree = resvg::usvg::Tree::from_data(&svg, &options).ok()?;
+                let intrinsic = tree.size().to_int_size();
+                let max_dimension = intrinsic.width().max(intrinsic.height());
+                if max_dimension == 0 {
+                    return None;
+                }
+                const MAX_METAFILE_TEXTURE_DIMENSION: u32 = 2048;
+                let scale = if max_dimension > MAX_METAFILE_TEXTURE_DIMENSION {
+                    MAX_METAFILE_TEXTURE_DIMENSION as f32 / max_dimension as f32
+                } else {
+                    1.0
+                };
+                let width = ((intrinsic.width() as f32 * scale).round() as u32).max(1);
+                let height = ((intrinsic.height() as f32 * scale).round() as u32).max(1);
+                let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
+                let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+                resvg::render(&tree, transform, &mut pixmap.as_mut());
+                Some(egui::ColorImage::from_rgba_premultiplied(
+                    [width as usize, height as usize],
+                    pixmap.data(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn ensure_image_textures(&mut self, ctx: &egui::Context) {
         let Some(visual) = &self.visual else {
             return;
@@ -2591,18 +2636,9 @@ impl ViewerApp {
                 continue;
             }
 
-            let format = match embedded.mime.as_str() {
-                "image/png" => image::ImageFormat::Png,
-                "image/jpeg" => image::ImageFormat::Jpeg,
-                _ => continue,
-            };
-
-            let Ok(decoded) = image::load_from_memory_with_format(&embedded.bytes, format) else {
+            let Some(color_image) = Self::decode_viewer_embedded_image(embedded) else {
                 continue;
             };
-            let rgba = decoded.to_rgba8();
-            let size = [rgba.width() as usize, rgba.height() as usize];
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
             let texture = ctx.load_texture(
                 format!("pub-image-{key}"),
                 color_image,
