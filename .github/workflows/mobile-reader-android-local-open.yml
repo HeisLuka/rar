@@ -93,8 +93,7 @@ jobs:
           script: |
             adb shell svc wifi disable || true
             adb shell svc data disable || true
-            cd apps/chaptera-mobile-android
-            gradle --no-daemon :app:connectedDebugAndroidTest
+            gradle -p apps/chaptera-mobile-android --no-daemon :app:connectedDebugAndroidTest
 
       - uses: actions/upload-artifact@v4
         with:
