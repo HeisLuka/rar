@@ -676,12 +676,7 @@ mod tests {
             .unwrap();
 
         let resumed = runtime
-            .status_by_job_id(
-                "principal:1",
-                &created.job_id,
-                "status:by-job-id",
-                20,
-            )
+            .status_by_job_id("principal:1", &created.job_id, "status:by-job-id", 20)
             .await
             .unwrap();
         assert_eq!(resumed, created);
@@ -709,12 +704,7 @@ mod tests {
             .await
             .unwrap();
         let revoked = runtime
-            .status_by_job_id(
-                "principal:1",
-                &created.job_id,
-                "status:after-revoke",
-                23,
-            )
+            .status_by_job_id("principal:1", &created.job_id, "status:after-revoke", 23)
             .await
             .unwrap_err();
         assert_eq!(revoked.code, "grant_missing");
