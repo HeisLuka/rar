@@ -110,12 +110,63 @@ pub fn paint_document_node_foreground(
 
     let text_clip_rect = node_rect.shrink(2.0);
     let text_painter = painter.with_clip_rect(text_clip_rect);
-    let galley = text_painter.layout(
+    let base_font = crate::fallback_font::font_id_for_scene_scale(scene_scale);
+
+    // The current Viewer text-flow boundary exposes a recovered line budget,
+    // but not Publisher-exact font runs yet. Use the frame geometry and that
+    // line budget to keep fallback text readable without painting outside the
+    // authored frame. This is presentation-only: it does not alter canonical
+    // Story text, frame ownership or text-flow authority.
+    let recovered_lines = fragment.line_count.max(1) as f32;
+    let line_height_ratio = 1.25_f32;
+    let frame_driven_size = (text_clip_rect.height() / recovered_lines / line_height_ratio)
+        .clamp(base_font.size * 0.75_f32, base_font.size * 4.0_f32);
+    let mut fitted_size = frame_driven_size;
+
+    // A single recovered line should stay on one visual line when possible.
+    // This matters for titles/bylines where height-only fitting can otherwise
+    // produce a large font that immediately wraps.
+    if fragment.line_count <= 1 {
+        for _ in 0..8 {
+            let one_line = text_painter.layout_no_wrap(
+                fragment.text.clone(),
+                egui::FontId::new(fitted_size, base_font.family.clone()),
+                egui::Color32::BLACK,
+            );
+            if one_line.size().x <= text_clip_rect.width().max(1.0_f32) {
+                break;
+            }
+            let next_size = (fitted_size * 0.88_f32).max(base_font.size * 0.65_f32);
+            if (next_size - fitted_size).abs() < f32::EPSILON {
+                break;
+            }
+            fitted_size = next_size;
+        }
+    }
+
+    let mut galley = text_painter.layout(
         fragment.text.clone(),
-        crate::fallback_font::font_id_for_scene_scale(scene_scale),
+        egui::FontId::new(fitted_size, base_font.family.clone()),
         egui::Color32::BLACK,
         text_clip_rect.width().max(1.0_f32),
     );
+    for _ in 0..8 {
+        if !preview_text_height_is_clipped(galley.size().y, text_clip_rect.height()) {
+            break;
+        }
+        let next_size = (fitted_size * 0.88_f32).max(base_font.size * 0.65_f32);
+        if (next_size - fitted_size).abs() < f32::EPSILON {
+            break;
+        }
+        fitted_size = next_size;
+        galley = text_painter.layout(
+            fragment.text.clone(),
+            egui::FontId::new(fitted_size, base_font.family.clone()),
+            egui::Color32::BLACK,
+            text_clip_rect.width().max(1.0_f32),
+        );
+    }
+
     let text_clipped = preview_text_height_is_clipped(galley.size().y, text_clip_rect.height());
     text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
 
