@@ -52,7 +52,10 @@ fn confirmed_candidate_keeps_u1_as_control_until_confirmation() {
     engine.confirm_candidate().unwrap();
 
     assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U2");
-    assert!(!control.exists());
+    assert!(
+        control.is_file(),
+        "terminal confirmation must leave copied control bytes for the running U1"
+    );
     assert!(engine.read_journal().unwrap().is_none());
     assert!(engine.journal_previous_path().is_file());
     assert_eq!(fs::read(&sentinel).unwrap(), b"must-survive");
@@ -207,4 +210,33 @@ fn crash_after_candidate_rename_before_phase_persist_rolls_back_u2() {
         RecoveryOutcome::UnconfirmedCandidateRolledBack
     );
     assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U1");
+}
+
+
+#[test]
+fn next_lock_owner_cleans_terminal_control_transaction_after_process_exit() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    let control = engine
+        .begin_verified_candidate(
+            "tx-cleanup",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+    engine.retain_previous().unwrap();
+    engine.activate_candidate().unwrap();
+    engine.confirm_candidate().unwrap();
+
+    assert!(control.is_file());
+    assert!(engine.read_journal().unwrap().is_none());
+    assert_eq!(engine.cleanup_orphaned_transactions().unwrap(), 1);
+    assert!(!control.exists());
+    assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U2");
 }
