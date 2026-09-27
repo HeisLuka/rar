@@ -37,5 +37,7 @@ sha2.workspace = true
 rfd = { version = "=0.17.2", default-features = false }
 
 [dev-dependencies]
+pub-reader = { path = "../../vendor/producer-a/crates/pub-reader" }
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
 egui_kittest = { version = "=0.31.1", features = ["eframe", "wgpu"] }
 zip = "=2.4.2"
