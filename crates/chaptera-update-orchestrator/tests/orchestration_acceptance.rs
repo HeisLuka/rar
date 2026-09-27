@@ -3,7 +3,7 @@ use chaptera_update_orchestrator::{
     ApplyOutcome, InstallLock, OrchestrationError, UpdateHooks, UpdateOrchestrator,
 };
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::tempdir;
 
 fn seed_tree(path: &Path, updater: &[u8], reader: &[u8]) {
