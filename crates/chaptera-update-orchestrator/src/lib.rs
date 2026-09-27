@@ -167,6 +167,66 @@ impl UpdateOrchestrator {
         &self.engine
     }
 
+    /// Continues a transaction that was already staged by the front-door U1
+    /// and handed to a copied control U1. The caller must hold InstallLock.
+    ///
+    /// This path never stages a second candidate and never creates a second
+    /// journal. It consumes the existing Prepared transaction, then owns the
+    /// retain/activate/health/confirm-or-rollback sequence.
+    pub fn continue_prepared_candidate<H: UpdateHooks>(
+        &self,
+        hooks: &mut H,
+    ) -> Result<ApplyOutcome> {
+        let journal = self
+            .engine
+            .read_journal()?
+            .ok_or_else(|| UpdateError::LayoutInvariant("active update journal is missing".into()))?;
+        if journal.phase != chaptera_update_engine::UpdatePhase::Prepared {
+            return Err(UpdateError::UnexpectedPhase {
+                expected: chaptera_update_engine::UpdatePhase::Prepared,
+                actual: journal.phase,
+            }
+            .into());
+        }
+
+        let paths = self
+            .engine
+            .paths_for(&journal.transaction_id, &journal.updater_relative_path)?;
+
+        if let Err(reason) = hooks.quiesce(&paths.control_updater) {
+            self.recover_or_combine("quiesce", &reason)?;
+            return Err(OrchestrationError::QuiesceFailed { reason });
+        }
+
+        self.engine_step("retain_previous", self.engine.retain_previous())?;
+        self.engine_step("activate_candidate", self.engine.activate_candidate())?;
+
+        if let Err(reason) = hooks.health_check(&self.engine.current_dir()) {
+            match self.engine.recover() {
+                Ok(_) => {
+                    return Ok(ApplyOutcome::RolledBack {
+                        candidate_version: journal.candidate_version,
+                        reason,
+                        startup_recovery: RecoveryOutcome::NothingToDo,
+                    });
+                }
+                Err(recovery) => {
+                    return Err(OrchestrationError::RecoveryFailed {
+                        context: "health check",
+                        primary: reason,
+                        recovery: recovery.to_string(),
+                    });
+                }
+            }
+        }
+
+        self.engine_step("confirm_candidate", self.engine.confirm_candidate())?;
+        Ok(ApplyOutcome::Confirmed {
+            candidate_version: journal.candidate_version,
+            startup_recovery: RecoveryOutcome::NothingToDo,
+        })
+    }
+
     pub fn apply_verified_candidate<H: UpdateHooks>(
         &self,
         transaction_id: &str,
