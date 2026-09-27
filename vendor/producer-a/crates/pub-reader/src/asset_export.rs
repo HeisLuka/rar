@@ -1,7 +1,7 @@
 use crate::{
     ESCHER_DELAY_STREAM_PATH, ESCHER_STREAM_PATH, PubAssetManifest, PubAssetUse,
     PubImageResourceCatalog, PubSourceGraph, build_pub_asset_manifest,
-    build_pub_image_resource_catalog,
+    build_pub_image_resource_catalog, image_resource_id_for_slot,
 };
 use anyhow::{Context, Result, bail};
 use pub_core::{RawPublication, RawSpan};
@@ -54,6 +54,23 @@ pub struct PubAssetExportBundle {
     pub manifest: PubAssetExportManifest,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PubRenderableAsset {
+    pub resource_id: ResourceId,
+    pub mime: String,
+    pub node_ids: Vec<pub_model::NodeId>,
+    pub bytes: Vec<u8>,
+    /// True when the standard media bytes were deterministically materialized
+    /// from an OfficeArt compressed carrier rather than copied byte-for-byte.
+    pub derived_from_officeart_compression: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PubRenderableAssetBundle {
+    pub assets: Vec<PubRenderableAsset>,
+    pub diagnostics: Vec<PubAssetExportDiagnostic>,
+}
+
 /// Builds the exact embedded-image export bundle directly from one complete PUB file.
 ///
 /// This keeps CFB/Escher stream handling inside the format-aware reader layer.
@@ -94,6 +111,122 @@ pub fn build_mature_0x2c_asset_export_bundle_from_bytes(
 
     build_pub_asset_export_bundle(&manifest, &catalog, &raw)
         .context("materialize exact embedded PUB image bytes")
+}
+
+/// Builds media bytes suitable for the Viewer while preserving the exact
+/// preservation-export contract separately.
+///
+/// Raster assets already exact in the PUB are reused from the preservation
+/// bundle. OfficeArt WMF/EMF carriers with an explicit metafile header may be
+/// deterministically materialized (for example RFC1950 DEFLATE -> standard WMF)
+/// without pretending those derived bytes were an exact source RawSpan.
+pub fn build_mature_0x2c_renderable_asset_bundle_from_bytes(
+    pub_bytes: &[u8],
+    graph: &PubSourceGraph,
+) -> Result<PubRenderableAssetBundle> {
+    let exact = build_mature_0x2c_asset_export_bundle_from_bytes(pub_bytes, graph)?;
+    let mut assets = Vec::<PubRenderableAsset>::new();
+
+    for file in &exact.files {
+        let entry = exact
+            .manifest
+            .assets
+            .iter()
+            .find(|entry| entry.resource_id == file.resource_id)
+            .with_context(|| {
+                format!(
+                    "missing export manifest entry for render asset {}",
+                    file.resource_id.as_canonical()
+                )
+            })?;
+        assets.push(PubRenderableAsset {
+            resource_id: file.resource_id,
+            mime: entry.mime.clone(),
+            node_ids: entry.uses.iter().map(|usage| usage.node_id).collect(),
+            bytes: file.bytes.clone(),
+            derived_from_officeart_compression: false,
+        });
+    }
+
+    let escher = pub_cfb::read_stream_reader(Cursor::new(pub_bytes), ESCHER_STREAM_PATH)
+        .context("read Escher stream for renderable assets")?;
+    let inventory = pub_cfb::inspect_reader(Cursor::new(pub_bytes))
+        .context("inspect CFB for renderable delayed assets")?;
+    let has_delayed_stream = inventory
+        .entries
+        .iter()
+        .any(|entry| entry.path == ESCHER_DELAY_STREAM_PATH);
+    let delayed = if has_delayed_stream {
+        pub_cfb::read_stream_reader(Cursor::new(pub_bytes), ESCHER_DELAY_STREAM_PATH)
+            .context("read delayed Escher stream for renderable assets")?
+    } else {
+        Vec::new()
+    };
+
+    let manifest = build_pub_asset_manifest(graph, &escher, &delayed)
+        .context("build PUB asset manifest for renderable assets")?;
+    let bstore = pub_escher::inspect_bstore(
+        pub_core::StreamPath(ESCHER_STREAM_PATH.into()),
+        &escher,
+    )
+    .context("inspect BStore for renderable metafiles")?;
+    let delayed_inventory = pub_escher::inspect_delayed_blips(
+        pub_core::StreamPath(ESCHER_DELAY_STREAM_PATH.into()),
+        &delayed,
+    )
+    .context("inspect delayed BLIPs for renderable metafiles")?;
+
+    let mut diagnostics = exact.manifest.diagnostics.clone();
+    for asset in &manifest.assets {
+        if asset.payload_sha256.is_some() {
+            continue;
+        }
+        let Some(kind @ (pub_escher::BlipKind::Wmf | pub_escher::BlipKind::Emf)) = asset.blip_kind
+        else {
+            continue;
+        };
+        let Some(blip) = pub_escher::resolve_delayed_blip(&bstore, &delayed_inventory, asset.slot)
+            .context("resolve delayed metafile BLIP")?
+        else {
+            continue;
+        };
+        let Some(metafile) = blip.metafile_payload.as_ref() else {
+            continue;
+        };
+        let bytes = pub_escher::materialize_metafile_payload(&delayed, metafile)
+            .context("materialize OfficeArt metafile for Viewer")?;
+        let resource_id = image_resource_id_for_slot(graph, asset.slot)?;
+        if assets.iter().any(|existing| existing.resource_id == resource_id) {
+            continue;
+        }
+        let mime = match kind {
+            pub_escher::BlipKind::Wmf => "image/x-wmf",
+            pub_escher::BlipKind::Emf => "image/x-emf",
+            _ => unreachable!(),
+        }
+        .to_owned();
+
+        let mut node_ids = asset.uses.iter().map(|usage| usage.node_id).collect::<Vec<_>>();
+        node_ids.sort();
+        node_ids.dedup();
+        assets.push(PubRenderableAsset {
+            resource_id,
+            mime,
+            node_ids,
+            bytes,
+            derived_from_officeart_compression:
+                metafile.compression == pub_escher::MetafileCompression::Deflate,
+        });
+        diagnostics.retain(|diagnostic| {
+            !matches!(
+                diagnostic,
+                PubAssetExportDiagnostic::AssetNotPromoted { slot } if *slot == asset.slot
+            )
+        });
+    }
+
+    assets.sort_by_key(|asset| asset.resource_id);
+    Ok(PubRenderableAssetBundle { assets, diagnostics })
 }
 
 pub fn build_pub_asset_export_bundle(
