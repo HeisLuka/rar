@@ -1,8 +1,9 @@
 use pub_contents::{
     BlockReadError, ChunkReadError, ChunkReferenceReadError, ContentsCursor, DirectoryReadError,
-    RawSpan, StreamPath, parse_confirmed_0x2c_chunk, parse_confirmed_0x2c_directory,
-    parse_confirmed_block, parse_confirmed_chunk_reference,
+    parse_confirmed_0x2c_chunk, parse_confirmed_0x2c_directory, parse_confirmed_block,
+    parse_confirmed_chunk_reference,
 };
+use pub_core::{RawSpan, StreamPath};
 
 fn span(len: u64) -> RawSpan {
     RawSpan {
