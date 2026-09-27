@@ -1,0 +1,12 @@
+{
+  "receipt_version":"chaptera.pub-research-receipt.v1",
+  "task_id":"PUB-T-746",
+  "run_id":"PUB-RUN-900",
+  "scope":"source-free synthetic id_list parser contract only; does not classify private T733 residuals",
+  "inputs":[{"kind":"synthetic-fixture","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+  "outputs":[{"kind":"test-receipt","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+  "counts":{"observations":12,"supporting":10,"counterexamples":2},
+  "canonical_impact":"none",
+  "limitations":["No private PUB bytes were used.","No semantic claim promotion."],
+  "privacy":{"pub_bytes_in_receipt":false,"document_text_in_receipt":false,"local_path_in_receipt":false,"credentials_in_receipt":false}
+}
