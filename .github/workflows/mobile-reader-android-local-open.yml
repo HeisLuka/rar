@@ -1,6 +1,9 @@
 name: Mobile Reader Android local open
 
 on:
+  push:
+    branches:
+      - "mob-reader-local-open-01-v1"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
