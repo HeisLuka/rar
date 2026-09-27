@@ -8,22 +8,12 @@ ASSET_DIR="$ANDROID_APP/app/src/androidTest/assets"
 RECEIPT_DIR="$ROOT/artifacts/mobile-reader-v0-device"
 mkdir -p "$RECEIPT_DIR" "$ASSET_DIR"
 
-if ! command -v adb >/dev/null 2>&1; then
-  echo "adb is required" >&2
-  exit 2
-fi
-if ! command -v cargo >/dev/null 2>&1; then
-  echo "cargo is required" >&2
-  exit 2
-fi
-if ! command -v cargo-ndk >/dev/null 2>&1; then
-  echo "cargo-ndk is required: cargo install cargo-ndk --locked" >&2
-  exit 2
-fi
-if ! command -v gradle >/dev/null 2>&1; then
-  echo "gradle is required" >&2
-  exit 2
-fi
+for tool in adb cargo cargo-ndk gradle curl git python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "$tool is required" >&2
+    exit 2
+  fi
+done
 
 mapfile -t DEVICES < <(adb devices | awk 'NR>1 && $2=="device" {print $1}')
 if [ "${#DEVICES[@]}" -ne 1 ]; then
@@ -39,12 +29,8 @@ ABI="$(adb -s "$SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')"
 ANDROID_ID="$(adb -s "$SERIAL" shell settings get secure android_id 2>/dev/null | tr -d '\r' || true)"
 
 case "$ABI" in
-  arm64-v8a)
-    NDK_TARGET="arm64-v8a"
-    ;;
-  x86_64)
-    NDK_TARGET="x86_64"
-    ;;
+  arm64-v8a) NDK_TARGET="arm64-v8a" ;;
+  x86_64) NDK_TARGET="x86_64" ;;
   *)
     echo "Unsupported test-device ABI: $ABI" >&2
     exit 4
@@ -55,14 +41,33 @@ echo "Device: $MODEL / API $API / ABI $ABI"
 echo "Preparing local Reader JNI for $NDK_TARGET"
 
 rm -rf "$JNI_OUT"
-cargo +1.94.1 ndk   -t "$NDK_TARGET"   -o "$JNI_OUT"   build   --manifest-path "$ROOT/crates/chaptera-mobile-reader-jni/Cargo.toml"   --release
+cargo +1.94.1 ndk \
+  -t "$NDK_TARGET" \
+  -o "$JNI_OUT" \
+  build \
+  --manifest-path "$ROOT/crates/chaptera-mobile-reader-jni/Cargo.toml" \
+  --release
 
-FIXTURE="$ASSET_DIR/SampleNewsletter.pub"
-EXPECTED_SHA="6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
-if [ ! -f "$FIXTURE" ]; then
-  curl --fail --location     "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"     --output "$FIXTURE"
-fi
-printf '%s  %s\n' "$EXPECTED_SHA" "$FIXTURE" | sha256sum --check
+download_fixture() {
+  local name="$1"
+  local blob_sha="$2"
+  local file="$ASSET_DIR/$name"
+  if [ ! -f "$file" ]; then
+    curl --fail --location \
+      "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/$name" \
+      --output "$file"
+  fi
+  local actual_blob_sha
+  actual_blob_sha="$(git hash-object "$file")"
+  if [ "$actual_blob_sha" != "$blob_sha" ]; then
+    echo "Fixture blob mismatch for $name: $actual_blob_sha != $blob_sha" >&2
+    exit 5
+  fi
+}
+
+download_fixture "Simple.pub" "2397b9d01cfa159de2f73cf5c990d9698eb69567"
+download_fixture "SampleBrochure.pub" "00deec14dc6cff6d8a47b120d6d84e7e20c72166"
+download_fixture "SampleNewsletter.pub" "94900925af5832c493784f3cb51563f838a64df8"
 
 echo "Building app and instrumentation APK"
 gradle -p "$ANDROID_APP" --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
@@ -73,15 +78,35 @@ adb -s "$SERIAL" shell svc data disable || true
 
 START_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 set +e
-gradle -p "$ANDROID_APP" --no-daemon :app:connectedDebugAndroidTest   -Pandroid.testInstrumentationRunnerArguments.class=com.chaptera.reader.V0UserCycleInstrumentedTest
+gradle -p "$ANDROID_APP" --no-daemon :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.chaptera.reader.V0UserCycleInstrumentedTest
 TEST_RC=$?
+
+PERF_RC=0
+if [ "$TEST_RC" -eq 0 ]; then
+  gradle -p "$ANDROID_APP" --no-daemon :app:connectedDebugAndroidTest \
+    -Pandroid.testInstrumentationRunnerArguments.class=com.chaptera.reader.PhysicalPerfInstrumentedTest
+  PERF_RC=$?
+fi
 set -e
 END_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 WIFI_STATE="$(adb -s "$SERIAL" shell dumpsys wifi 2>/dev/null | grep -m1 -E 'Wi-Fi is|wifi state' | tr -d '\r' || true)"
 DATA_STATE="$(adb -s "$SERIAL" shell dumpsys telephony.registry 2>/dev/null | grep -m1 -E 'mDataConnectionState|mDataConnectionNetworkType' | tr -d '\r' || true)"
 
-RECEIPT="$RECEIPT_DIR/receipt-$(date -u +%Y%m%dT%H%M%SZ).json"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+RECEIPT="$RECEIPT_DIR/receipt-$STAMP.json"
+PERF_RECEIPT="$RECEIPT_DIR/perf-$STAMP.json"
+
+if [ "$TEST_RC" -eq 0 ] && [ "$PERF_RC" -eq 0 ]; then
+  if adb -s "$SERIAL" exec-out run-as com.chaptera.reader cat files/chaptera-mobile-perf.json > "$PERF_RECEIPT"; then
+    echo "Performance receipt: $PERF_RECEIPT"
+  else
+    echo "Could not pull performance receipt" >&2
+    PERF_RC=1
+  fi
+fi
+
 python3 - "$RECEIPT" "$MODEL" "$API" "$ABI" "$ANDROID_ID" "$START_UTC" "$END_UTC" "$TEST_RC" "$PERF_RC" "$WIFI_STATE" "$DATA_STATE" <<'PY'
 import json
 import sys
