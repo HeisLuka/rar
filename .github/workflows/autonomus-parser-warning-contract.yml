@@ -1,0 +1,35 @@
+name: Autonomus source-free parser warning contract
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/tests/parser_warning_contract.rs"
+      - "tools/pub-research/build_parser_warning_contract_receipt.py"
+      - ".github/workflows/autonomus-parser-warning-contract.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run source-free parser diagnostic contract
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents --test parser_warning_contract
+      - name: Build receipt
+        run: |
+          python tools/pub-research/build_parser_warning_contract_receipt.py \
+            --test-source vendor/producer-a/crates/pub-contents/tests/parser_warning_contract.rs \
+            --commit-sha "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/autonomus-parser-warning-contract.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autonomus-parser-warning-contract
+          path: ${{ runner.temp }}/autonomus-parser-warning-contract.json
+          if-no-files-found: error
