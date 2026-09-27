@@ -1,4 +1,5 @@
 use chaptera_update_engine::{UpdateEngine, UpdateError, UpdatePhase};
+use chaptera_update_orchestrator::{OrchestrationError, UpdateOrchestrator};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -54,6 +55,7 @@ pub enum HandoffError {
     Io(io::Error),
     Json(serde_json::Error),
     Engine(UpdateError),
+    Orchestration(OrchestrationError),
     JournalMissing,
     JournalNotPrepared(UpdatePhase),
     Schema(String),
@@ -68,6 +70,7 @@ impl fmt::Display for HandoffError {
             Self::Io(err) => write!(f, "I/O error: {err}"),
             Self::Json(err) => write!(f, "handoff JSON error: {err}"),
             Self::Engine(err) => write!(f, "update engine error: {err}"),
+            Self::Orchestration(err) => write!(f, "update orchestration error: {err}"),
             Self::JournalMissing => write!(f, "active update journal is missing"),
             Self::JournalNotPrepared(phase) => {
                 write!(f, "control handoff requires Prepared journal, got {phase:?}")
@@ -104,7 +107,51 @@ impl From<UpdateError> for HandoffError {
     }
 }
 
+impl From<OrchestrationError> for HandoffError {
+    fn from(value: OrchestrationError) -> Self {
+        Self::Orchestration(value)
+    }
+}
+
 pub type Result<T> = std::result::Result<T, HandoffError>;
+
+pub fn spawn_preverified_candidate_handoff(
+    orchestrator: &UpdateOrchestrator,
+    transaction_id: &str,
+    candidate_version: &str,
+    candidate_source: &Path,
+    updater_relative_path: &Path,
+) -> Result<(PreparedControlHandoff, Child)> {
+    let prepared = orchestrator.prepare_verified_candidate_for_handoff(
+        transaction_id,
+        candidate_version,
+        candidate_source,
+        updater_relative_path,
+    )?;
+
+    let handoff = match prepare_control_handoff(orchestrator.engine()) {
+        Ok(handoff) => handoff,
+        Err(error) => {
+            // The Prepared transaction remains recoverable while the guard
+            // still owns the install lock.
+            drop(prepared);
+            return Err(error);
+        }
+    };
+
+    let child = match handoff.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            drop(prepared);
+            return Err(error);
+        }
+    };
+
+    // Copied U1 is now running but blocked on the same install lock.
+    // Releasing the front-door guard transfers mutation authority to it.
+    drop(prepared);
+    Ok((handoff, child))
+}
 
 pub fn prepare_control_handoff(engine: &UpdateEngine) -> Result<PreparedControlHandoff> {
     let journal = engine.read_journal()?.ok_or(HandoffError::JournalMissing)?;
