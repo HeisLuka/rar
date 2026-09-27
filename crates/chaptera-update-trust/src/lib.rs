@@ -216,6 +216,60 @@ mod tests {
     }
 
     #[test]
+    fn verified_payload_receipt_rejects_payload_substitution() {
+        let payload = b"signed-release-payload";
+        let receipt = VerifiedPayloadReceipt {
+            schema_version: "chaptera.verified-payload.v1".into(),
+            target_name: "chaptera-reader-win-x64.zip".into(),
+            product_id: "chaptera.reader".into(),
+            architecture: "windows-x86_64".into(),
+            channel: "stable".into(),
+            package_version: "0.2.0".into(),
+            payload_sha256: Sha256::digest(payload)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            payload_byte_len: payload.len() as u64,
+            timestamp_version: 2,
+            snapshot_version: 2,
+            targets_version: 2,
+        };
+
+        verify_payload_against_receipt(payload, &receipt).unwrap();
+        assert!(verify_payload_against_receipt(b"substituted-payload", &receipt).is_err());
+    }
+
+    #[test]
+    fn verified_payload_receipt_rejects_receipt_tamper() {
+        let payload = b"signed-release-payload";
+        let mut receipt = VerifiedPayloadReceipt {
+            schema_version: "chaptera.verified-payload.v1".into(),
+            target_name: "chaptera-reader-win-x64.zip".into(),
+            product_id: "chaptera.reader".into(),
+            architecture: "windows-x86_64".into(),
+            channel: "stable".into(),
+            package_version: "0.2.0".into(),
+            payload_sha256: Sha256::digest(payload)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            payload_byte_len: payload.len() as u64,
+            timestamp_version: 2,
+            snapshot_version: 2,
+            targets_version: 2,
+        };
+
+        receipt.payload_sha256 = "00".repeat(32);
+        assert!(verify_payload_against_receipt(payload, &receipt).is_err());
+        receipt.payload_sha256 = Sha256::digest(payload)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        receipt.payload_byte_len += 1;
+        assert!(verify_payload_against_receipt(payload, &receipt).is_err());
+    }
+
+    #[test]
     fn accepts_matching_release_semantics() {
         release().validate_for(installed()).unwrap();
     }
