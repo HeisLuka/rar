@@ -2,4 +2,8 @@
 <resources>
     <item name="reader_status" type="id" />
     <item name="reader_canvas" type="id" />
+    <item name="reader_previous" type="id" />
+    <item name="reader_next" type="id" />
+    <item name="reader_page_jump" type="id" />
+    <item name="reader_page_go" type="id" />
 </resources>
