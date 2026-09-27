@@ -240,3 +240,56 @@ fn next_lock_owner_cleans_terminal_control_transaction_after_process_exit() {
     assert!(!control.exists());
     assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U2");
 }
+
+
+#[test]
+fn journal_rotation_recovers_highest_valid_next_copy() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    engine
+        .begin_verified_candidate(
+            "tx-journal-next",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    let current = engine.journal_path();
+    let next = engine.journal_next_path();
+    fs::rename(&current, &next).unwrap();
+
+    let recovered = engine.read_journal().unwrap().unwrap();
+    assert_eq!(recovered.transaction_id, "tx-journal-next");
+    assert_eq!(recovered.phase, UpdatePhase::Prepared);
+}
+
+#[test]
+fn corrupt_newest_journal_falls_back_to_valid_previous_generation() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    engine
+        .begin_verified_candidate(
+            "tx-journal-prev",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    fs::write(engine.journal_path(), b"{corrupt").unwrap();
+
+    let recovered = engine.read_journal().unwrap().unwrap();
+    assert_eq!(recovered.transaction_id, "tx-journal-prev");
+    assert_eq!(recovered.phase, UpdatePhase::Preparing);
+}
