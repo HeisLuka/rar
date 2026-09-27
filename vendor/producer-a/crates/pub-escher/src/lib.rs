@@ -5,7 +5,8 @@ pub use assets::{
     MetafileCompression, OfficeArtMetafilePayload,
     OFFICE_ART_BLIP_DIB, OFFICE_ART_BLIP_EMF, OFFICE_ART_BLIP_JPEG, OFFICE_ART_BLIP_PICT,
     OFFICE_ART_BLIP_PNG, OFFICE_ART_BLIP_TIFF, OFFICE_ART_BLIP_WMF, OFFICE_ART_BSTORE_CONTAINER,
-    OFFICE_ART_FBSE, inspect_bstore, inspect_delayed_blips, resolve_delayed_blip,
+    OFFICE_ART_FBSE, inspect_bstore, inspect_delayed_blips, materialize_metafile_payload,
+    resolve_delayed_blip,
 };
 
 use pub_core::{RawSpan, StreamPath};
