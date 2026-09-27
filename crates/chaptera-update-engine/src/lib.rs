@@ -3,7 +3,9 @@ pub mod staging;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
