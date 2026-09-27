@@ -4679,6 +4679,23 @@ mod tests {
                     .assets
                     .iter()
                     .map(|asset| {
+                        let record_probe = asset.blip_record_source.as_ref().and_then(|span| {
+                            let start = usize::try_from(span.offset).ok()?;
+                            let len = usize::try_from(span.len).ok()?;
+                            let end = start.checked_add(len)?.min(delayed.len());
+                            let bytes = delayed.get(start..end)?;
+                            let payload = bytes.get(8..)?;
+                            Some(json!({
+                                "record_len": bytes.len(),
+                                "record_header_hex": bytes.iter().take(8).map(|byte| format!("{byte:02x}")).collect::<String>(),
+                                "payload_prefix_hex": payload.iter().take(80).map(|byte| format!("{byte:02x}")).collect::<String>(),
+                                "byte_34": payload.get(0x34).copied(),
+                                "byte_44": payload.get(0x44).copied(),
+                                "byte_50": payload.get(0x50).copied(),
+                                "byte_51": payload.get(0x51).copied(),
+                                "tail_16_hex": payload.iter().rev().take(16).copied().collect::<Vec<_>>().into_iter().rev().map(|byte| format!("{byte:02x}")).collect::<String>()
+                            }))
+                        });
                         json!({
                             "slot": asset.slot,
                             "kind": asset.blip_kind.map(|kind| format!("{kind:?}")),
@@ -4686,7 +4703,8 @@ mod tests {
                             "has_image_payload": asset.image_payload_source.is_some(),
                             "has_payload_sha256": asset.payload_sha256.is_some(),
                             "payload_len": asset.payload_len,
-                            "uses": asset.uses.len()
+                            "uses": asset.uses.len(),
+                            "record_probe": record_probe
                         })
                     })
                     .collect::<Vec<_>>();
