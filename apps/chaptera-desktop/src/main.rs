@@ -11,6 +11,7 @@ mod fallback_font;
 #[allow(dead_code)]
 mod locale;
 mod product_smoke;
+mod render_backend;
 #[allow(dead_code)]
 mod supporter;
 #[allow(dead_code)]
@@ -3111,13 +3112,7 @@ impl ViewerApp {
                     }
                 }
 
-                painter.rect_filled(page_rect, 0, egui::Color32::WHITE);
-                painter.rect_stroke(
-                    page_rect,
-                    0,
-                    egui::Stroke::new(1.0_f32, egui::Color32::DARK_GRAY),
-                    egui::StrokeKind::Inside,
-                );
+                render_backend::paint_page_surface(&painter, page_rect);
 
                 for node in page_nodes.iter().copied() {
                     let Some(render_node) = render_plan
@@ -3136,18 +3131,16 @@ impl ViewerApp {
                                 .map(|drag| drag.preview_bounds())
                         })
                         .unwrap_or(render_node.bounds);
-                    let width = node_bounds.width.get();
-                    let height = node_bounds.height.get();
-                    if width <= 0 || height <= 0 {
+                    let Some(node_rect) = render_backend::physical_rect_to_egui(
+                        page_rect,
+                        scene_scale,
+                        node_bounds.x.get(),
+                        node_bounds.y.get(),
+                        node_bounds.width.get(),
+                        node_bounds.height.get(),
+                    ) else {
                         continue;
-                    }
-
-                    let min = egui::pos2(
-                        page_rect.left() + node_bounds.x.get() as f32 * scene_scale,
-                        page_rect.top() + node_bounds.y.get() as f32 * scene_scale,
-                    );
-                    let size = egui::vec2(width as f32 * scene_scale, height as f32 * scene_scale);
-                    let node_rect = egui::Rect::from_min_size(min, size);
+                    };
                     if let Some(instance_id) = hit_index.instance_for_node(node.origin)
                         && movable_nodes.contains_key(instance_id)
                     {
@@ -3180,14 +3173,6 @@ impl ViewerApp {
                             )
                         });
                     }
-                    if let Some(rgb) = render_node.solid_fill_rgb {
-                        painter.rect_filled(
-                            node_rect,
-                            0,
-                            egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-                        );
-                    }
-
                     let replacement_key = self
                         .editor
                         .as_ref()
@@ -3200,14 +3185,14 @@ impl ViewerApp {
                         let key = format!("{:?}", image.resource_id);
                         self.image_textures.get(&key)
                     });
-                    if let Some(texture) = replacement_texture.or(source_texture) {
-                        painter.image(
-                            texture.id(),
-                            node_rect.shrink(1.0),
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                    }
+                    render_backend::paint_document_node_base(
+                        &painter,
+                        render_node,
+                        node_rect,
+                        replacement_texture
+                            .or(source_texture)
+                            .map(egui::TextureHandle::id),
+                    );
 
                     painter.rect_stroke(
                         node_rect,
@@ -3216,51 +3201,30 @@ impl ViewerApp {
                         egui::StrokeKind::Inside,
                     );
 
-                    if let Some(line) = render_node.solid_line.as_ref() {
-                        let line_width_px = line.width_emu as f32 * scene_scale;
-                        if line_width_px > 0.0_f32 {
-                            painter.rect_stroke(
-                                node_rect,
-                                0,
-                                egui::Stroke::new(
-                                    line_width_px,
-                                    egui::Color32::from_rgb(line.rgb[0], line.rgb[1], line.rgb[2]),
-                                ),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                    }
-
-                    if let Some(fragment) = render_node.text.as_ref()
-                        && !fragment.text.is_empty()
-                    {
-                        let text_clip_rect = node_rect.shrink(2.0);
-                        let text_painter = painter.with_clip_rect(text_clip_rect);
-                        let galley = text_painter.layout(
-                            fragment.text.clone(),
-                            fallback_font::font_id_for_scene_scale(scene_scale),
-                            egui::Color32::BLACK,
-                            text_clip_rect.width().max(1.0_f32),
-                        );
-                        if preview_text_height_is_clipped(galley.size().y, text_clip_rect.height())
-                        {
-                            preview_clipped_frames += 1;
+                    let paint_outcome = render_backend::paint_document_node_foreground(
+                        &painter,
+                        render_node,
+                        node_rect,
+                        scene_scale,
+                    );
+                    if paint_outcome.text_clipped {
+                        preview_clipped_frames += 1;
+                        if let Some(fragment) = render_node.text.as_ref() {
                             preview_clipped_story_keys.insert(format!("{:?}", fragment.story_id));
-                            painter.rect_stroke(
-                                node_rect,
-                                0,
-                                egui::Stroke::new(2.0_f32, egui::Color32::RED),
-                                egui::StrokeKind::Inside,
-                            );
-                            painter.text(
-                                node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                                egui::Align2::RIGHT_TOP,
-                                "preview overflow",
-                                egui::FontId::proportional(10.0_f32),
-                                egui::Color32::RED,
-                            );
                         }
-                        text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
+                        painter.rect_stroke(
+                            node_rect,
+                            0,
+                            egui::Stroke::new(2.0_f32, egui::Color32::RED),
+                            egui::StrokeKind::Inside,
+                        );
+                        painter.text(
+                            node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
+                            egui::Align2::RIGHT_TOP,
+                            "preview overflow",
+                            egui::FontId::proportional(10.0_f32),
+                            egui::Color32::RED,
+                        );
                     }
                 }
 
@@ -3569,11 +3533,6 @@ fn resize_handle_label(handle: ResizeHandle) -> &'static str {
     }
 }
 
-fn preview_text_height_is_clipped(galley_height: f32, clip_height: f32) -> bool {
-    const EPSILON_PX: f32 = 0.5;
-    galley_height > clip_height + EPSILON_PX
-}
-
 fn editable_export_path(
     source_path: &Path,
     target: pub_editor::EditorEditableTarget,
@@ -3814,10 +3773,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_text_clipping_uses_visible_galley_height_only() {
-        assert!(!preview_text_height_is_clipped(100.0, 100.0));
-        assert!(!preview_text_height_is_clipped(100.4, 100.0));
-        assert!(preview_text_height_is_clipped(100.6, 100.0));
+    fn preview_text_clipping_warning_keeps_scope_fence() {
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("preview-only"));
         assert!(PREVIEW_TEXT_CLIP_WARNING.contains("not Publisher-native"));
     }
