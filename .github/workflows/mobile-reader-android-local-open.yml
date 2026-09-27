@@ -42,6 +42,9 @@ jobs:
       - name: Install cargo-ndk
         run: cargo +1.94.1 install cargo-ndk --version 4.1.2 --locked
 
+      - name: Check JNI Reader bridge on host
+        run: cargo +1.94.1 check --manifest-path crates/chaptera-mobile-reader-jni/Cargo.toml
+
       - name: Build physical-device and emulator JNI Reader bridges
         run: |
           rm -rf apps/chaptera-mobile-android/app/src/main/jniLibs
