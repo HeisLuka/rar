@@ -1,0 +1,35 @@
+name: Autonomus version header fingerprint guard
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/tests/version_header_fingerprint_contract.rs"
+      - "tools/pub-research/build_version_header_fingerprint_receipt.py"
+      - ".github/workflows/autonomus-version-header-fingerprint.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run source-free family/revision contract
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents --test version_header_fingerprint_contract
+      - name: Build receipt
+        run: |
+          python tools/pub-research/build_version_header_fingerprint_receipt.py \
+            --test-source vendor/producer-a/crates/pub-contents/tests/version_header_fingerprint_contract.rs \
+            --commit-sha "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/autonomus-version-header-fingerprint.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autonomus-version-header-fingerprint
+          path: ${{ runner.temp }}/autonomus-version-header-fingerprint.json
+          if-no-files-found: error
