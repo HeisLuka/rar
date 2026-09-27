@@ -507,7 +507,10 @@ impl chaptera_update_orchestrator::UpdateHooks for ReaderControlHooks {
         let mut child = Command::new(&candidate)
             .arg("--product-smoke-v1")
             .env("CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256", sha256)
-            .env("CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN", bytes.len().to_string())
+            .env(
+                "CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN",
+                bytes.len().to_string(),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
