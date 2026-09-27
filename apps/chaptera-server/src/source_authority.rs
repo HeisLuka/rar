@@ -97,12 +97,10 @@ impl SqliteDocumentSourceAuthority {
         self.pool.close().await;
     }
 
-    pub async fn resolve(
+    pub async fn resolve_by_document_id(
         &self,
-        tenant_id: &str,
         document_id: &str,
     ) -> Result<AuthorizedDocumentSource, SourceAuthorityError> {
-        require_ident(tenant_id, "tenant_id")?;
         require_ident(document_id, "document_id")?;
 
         let rows = sqlx::query(
@@ -117,11 +115,10 @@ impl SqliteDocumentSourceAuthority {
                 u.observed_byte_len
             FROM upload_consumptions c
             INNER JOIN uploads u ON u.upload_id = c.upload_id
-            WHERE c.tenant_id = ? AND c.document_id = ?
+            WHERE c.document_id = ?
             LIMIT 2
             "#,
         )
-        .bind(tenant_id.as_bytes())
         .bind(document_id.as_bytes())
         .fetch_all(&self.pool)
         .await
@@ -143,69 +140,23 @@ impl SqliteDocumentSourceAuthority {
             }
         };
 
-        let stored_tenant = blob_text(row, "tenant_id")?;
-        let stored_document = blob_text(row, "document_id")?;
-        let genesis_revision_id = blob_text(row, "genesis_revision_id")?;
-        let state: String = row.try_get("state").map_err(sqlite_error)?;
+        decode_authorized_source(row, document_id)
+    }
 
-        if stored_tenant != tenant_id || stored_document != document_id {
+    pub async fn resolve(
+        &self,
+        tenant_id: &str,
+        document_id: &str,
+    ) -> Result<AuthorizedDocumentSource, SourceAuthorityError> {
+        require_ident(tenant_id, "tenant_id")?;
+        let source = self.resolve_by_document_id(document_id).await?;
+        if source.tenant_id != tenant_id {
             return Err(SourceAuthorityError::new(
-                "document_source_identity_mismatch",
-                "source authority row belongs to a different tenant or document",
+                "document_source_not_found",
+                "document has no persisted consumed source authority for this tenant",
             ));
         }
-        if state != "CONSUMED" {
-            return Err(SourceAuthorityError::new(
-                "document_source_not_consumed",
-                "document source authority is not backed by a consumed upload",
-            ));
-        }
-
-        let binding_id = optional_blob_text(row, "durable_binding_id")?.ok_or_else(|| {
-            SourceAuthorityError::new(
-                "document_source_corrupt",
-                "consumed upload is missing durable binding id",
-            )
-        })?;
-        let source_sha256 = optional_blob_text(row, "canonical_sha256")?.ok_or_else(|| {
-            SourceAuthorityError::new(
-                "document_source_corrupt",
-                "consumed upload is missing canonical source hash",
-            )
-        })?;
-        let observed_len: Option<i64> = row.try_get("observed_byte_len").map_err(sqlite_error)?;
-        let observed_len = observed_len.ok_or_else(|| {
-            SourceAuthorityError::new(
-                "document_source_corrupt",
-                "consumed upload is missing observed byte length",
-            )
-        })?;
-        let byte_len = u64::try_from(observed_len).map_err(|_| {
-            SourceAuthorityError::new(
-                "document_source_corrupt",
-                "consumed upload byte length is negative",
-            )
-        })?;
-
-        require_ident(&binding_id, "durable_binding_id")?;
-        require_ident(&genesis_revision_id, "genesis_revision_id")?;
-        require_sha256(&source_sha256, "canonical_sha256")?;
-        if byte_len == 0 {
-            return Err(SourceAuthorityError::new(
-                "document_source_corrupt",
-                "consumed upload byte length must be positive",
-            ));
-        }
-
-        Ok(AuthorizedDocumentSource {
-            tenant_id: stored_tenant,
-            document_id: stored_document,
-            binding_id,
-            source_sha256,
-            byte_len,
-            baseline_revision_id: genesis_revision_id,
-            baseline_cursor: 0,
-        })
+        Ok(source)
     }
 
     async fn require_schema(&self) -> Result<(), SourceAuthorityError> {
@@ -240,6 +191,76 @@ impl DocumentSourceAuthority for SqliteDocumentSourceAuthority {
             .await
             .map_err(|error| RevisionMaterializerError::new(error.code, error.message))
     }
+}
+
+fn decode_authorized_source(
+    row: &sqlx::sqlite::SqliteRow,
+    expected_document_id: &str,
+) -> Result<AuthorizedDocumentSource, SourceAuthorityError> {
+    let stored_tenant = blob_text(row, "tenant_id")?;
+    let stored_document = blob_text(row, "document_id")?;
+    let genesis_revision_id = blob_text(row, "genesis_revision_id")?;
+    let state: String = row.try_get("state").map_err(sqlite_error)?;
+
+    if stored_document != expected_document_id {
+        return Err(SourceAuthorityError::new(
+            "document_source_identity_mismatch",
+            "source authority row belongs to a different document",
+        ));
+    }
+    if state != "CONSUMED" {
+        return Err(SourceAuthorityError::new(
+            "document_source_not_consumed",
+            "document source authority is not backed by a consumed upload",
+        ));
+    }
+
+    let binding_id = optional_blob_text(row, "durable_binding_id")?.ok_or_else(|| {
+        SourceAuthorityError::new(
+            "document_source_corrupt",
+            "consumed upload is missing durable binding id",
+        )
+    })?;
+    let source_sha256 = optional_blob_text(row, "canonical_sha256")?.ok_or_else(|| {
+        SourceAuthorityError::new(
+            "document_source_corrupt",
+            "consumed upload is missing canonical source hash",
+        )
+    })?;
+    let observed_len: Option<i64> = row.try_get("observed_byte_len").map_err(sqlite_error)?;
+    let observed_len = observed_len.ok_or_else(|| {
+        SourceAuthorityError::new(
+            "document_source_corrupt",
+            "consumed upload is missing observed byte length",
+        )
+    })?;
+    let byte_len = u64::try_from(observed_len).map_err(|_| {
+        SourceAuthorityError::new(
+            "document_source_corrupt",
+            "consumed upload byte length is negative",
+        )
+    })?;
+
+    require_ident(&stored_tenant, "tenant_id")?;
+    require_ident(&binding_id, "durable_binding_id")?;
+    require_ident(&genesis_revision_id, "genesis_revision_id")?;
+    require_sha256(&source_sha256, "canonical_sha256")?;
+    if byte_len == 0 {
+        return Err(SourceAuthorityError::new(
+            "document_source_corrupt",
+            "consumed upload byte length must be positive",
+        ));
+    }
+
+    Ok(AuthorizedDocumentSource {
+        tenant_id: stored_tenant,
+        document_id: stored_document,
+        binding_id,
+        source_sha256,
+        byte_len,
+        baseline_revision_id: genesis_revision_id,
+        baseline_cursor: 0,
+    })
 }
 
 fn blob_text(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<String, SourceAuthorityError> {
