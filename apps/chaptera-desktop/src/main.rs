@@ -477,19 +477,65 @@ impl chaptera_update_orchestrator::UpdateHooks for ReaderControlHooks {
     }
 
     fn health_check(&mut self, current_tree: &Path) -> std::result::Result<(), String> {
+        use sha2::{Digest, Sha256};
+        use std::process::{Command, Stdio};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        const HEALTH_TIMEOUT: Duration = Duration::from_secs(15);
+
         let candidate = current_tree.join(
             std::env::current_exe()
                 .map_err(|error| format!("resolve control executable: {error}"))?
                 .file_name()
                 .ok_or_else(|| "control executable has no file name".to_owned())?,
         );
-        if !candidate.is_file() {
+        let bytes = fs::read(&candidate)
+            .map_err(|error| format!("read activated Reader {}: {error}", candidate.display()))?;
+        if bytes.is_empty() {
             return Err(format!(
-                "activated Reader executable missing: {}",
+                "activated Reader executable is empty: {}",
                 candidate.display()
             ));
         }
-        Ok(())
+        let sha256 = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+
+        let mut child = Command::new(&candidate)
+            .arg("--product-smoke-v1")
+            .env("CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256", sha256)
+            .env("CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN", bytes.len().to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("launch activated Reader health smoke: {error}"))?;
+
+        let deadline = Instant::now() + HEALTH_TIMEOUT;
+        loop {
+            match child
+                .try_wait()
+                .map_err(|error| format!("wait for activated Reader health smoke: {error}"))?
+            {
+                Some(status) if status.success() => return Ok(()),
+                Some(status) => {
+                    return Err(format!(
+                        "activated Reader health smoke failed with status {status}"
+                    ));
+                }
+                None if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+                None => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "activated Reader health smoke exceeded {} seconds",
+                        HEALTH_TIMEOUT.as_secs()
+                    ));
+                }
+            }
+        }
     }
 }
 
