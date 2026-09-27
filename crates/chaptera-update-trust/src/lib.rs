@@ -29,6 +29,12 @@ pub struct ChapteraReleaseSemantics {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseDecision {
+    PayloadSwap { rollback_compatible: bool },
+    InstallerRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledUpdateContext<'a> {
     pub product_id: &'a str,
     pub architecture: &'a str,
@@ -38,6 +44,23 @@ pub struct InstalledUpdateContext<'a> {
 }
 
 impl ChapteraReleaseSemantics {
+    pub fn decision_for(
+        &self,
+        installed: InstalledUpdateContext<'_>,
+        installed_version: &str,
+    ) -> Result<ReleaseDecision> {
+        self.validate_for(installed)?;
+        Ok(match self.update_mode {
+            UpdateMode::InstallerRequired => ReleaseDecision::InstallerRequired,
+            UpdateMode::PayloadSwap => ReleaseDecision::PayloadSwap {
+                rollback_compatible: self
+                    .rollback_compatible_from
+                    .iter()
+                    .any(|version| version == installed_version),
+            },
+        })
+    }
+
     pub fn validate_for(&self, installed: InstalledUpdateContext<'_>) -> Result<()> {
         if self.product_id != installed.product_id {
             bail!(
@@ -170,6 +193,32 @@ mod tests {
         let mut value = release();
         value.update_protocol_version += 1;
         assert!(value.validate_for(installed()).is_err());
+    }
+
+    #[test]
+    fn classifies_installer_required_without_payload_swap() {
+        let mut value = release();
+        value.update_mode = UpdateMode::InstallerRequired;
+        assert_eq!(
+            value.decision_for(installed(), "0.1.0").unwrap(),
+            ReleaseDecision::InstallerRequired
+        );
+    }
+
+    #[test]
+    fn reports_authenticated_rollback_edge() {
+        assert_eq!(
+            release().decision_for(installed(), "0.1.0").unwrap(),
+            ReleaseDecision::PayloadSwap {
+                rollback_compatible: true,
+            }
+        );
+        assert_eq!(
+            release().decision_for(installed(), "0.0.9").unwrap(),
+            ReleaseDecision::PayloadSwap {
+                rollback_compatible: false,
+            }
+        );
     }
 
     #[test]
