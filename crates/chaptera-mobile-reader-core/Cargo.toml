@@ -1,0 +1,15 @@
+[package]
+name = "chaptera-mobile-reader-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+chaptera-viewer-render-plan = { path = "../chaptera-viewer-render-plan" }
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+
+[workspace]
+resolver = "2"
