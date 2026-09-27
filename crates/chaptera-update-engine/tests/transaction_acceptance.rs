@@ -336,3 +336,42 @@ fn archived_terminal_journal_is_high_water_not_active_transaction() {
         "tx-after-terminal-high-water"
     );
 }
+
+
+#[test]
+fn legacy_raw_rotation_migrates_without_false_same_generation_ambiguity() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    fs::create_dir_all(&root).unwrap();
+    let engine = UpdateEngine::new(&root);
+
+    let previous = chaptera_update_engine::UpdateJournal {
+        schema_version: "chaptera-update-journal-v1".into(),
+        transaction_id: "tx-legacy-prev".into(),
+        candidate_version: "1.0.0".into(),
+        updater_relative_path: Path::new("chaptera-updater.bin").to_path_buf(),
+        phase: UpdatePhase::Preparing,
+    };
+    let current = chaptera_update_engine::UpdateJournal {
+        schema_version: "chaptera-update-journal-v1".into(),
+        transaction_id: "tx-legacy-current".into(),
+        candidate_version: "2.0.0".into(),
+        updater_relative_path: Path::new("chaptera-updater.bin").to_path_buf(),
+        phase: UpdatePhase::Prepared,
+    };
+
+    fs::write(
+        engine.journal_previous_path(),
+        serde_json::to_vec_pretty(&previous).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        engine.journal_path(),
+        serde_json::to_vec_pretty(&current).unwrap(),
+    )
+    .unwrap();
+
+    let recovered = engine.read_journal().unwrap().unwrap();
+    assert_eq!(recovered.transaction_id, "tx-legacy-current");
+    assert_eq!(recovered.phase, UpdatePhase::Prepared);
+}
