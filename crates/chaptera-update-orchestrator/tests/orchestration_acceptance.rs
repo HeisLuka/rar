@@ -242,3 +242,74 @@ fn stale_unconfirmed_u2_is_recovered_before_next_transaction_uses_u1_control() {
     ));
     assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U3");
 }
+
+
+#[test]
+fn copied_control_can_continue_existing_prepared_transaction_without_restaging() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1");
+    seed_tree(&candidate, b"U2", b"reader-v2");
+
+    let orchestrator = UpdateOrchestrator::new(&root);
+    let control = orchestrator
+        .engine()
+        .begin_verified_candidate(
+            "tx-control-continue",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+    assert_eq!(fs::read(&control).unwrap(), b"U1");
+
+    let _control_lock = InstallLock::try_acquire(&root).unwrap();
+    let mut hooks = RecordingHooks::default();
+    let outcome = orchestrator.continue_prepared_candidate(&mut hooks).unwrap();
+
+    assert!(matches!(
+        outcome,
+        ApplyOutcome::Confirmed {
+            startup_recovery: RecoveryOutcome::NothingToDo,
+            ..
+        }
+    ));
+    assert_eq!(hooks.control_bytes.as_deref(), Some(b"U1".as_slice()));
+    assert_eq!(hooks.health_updater_bytes.as_deref(), Some(b"U2".as_slice()));
+    assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U2");
+    assert!(control.is_file(), "running control bytes must survive terminal confirmation");
+    assert!(orchestrator.engine().read_journal().unwrap().is_none());
+}
+
+#[test]
+fn copied_control_health_failure_rolls_back_without_deleting_its_own_bytes() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1");
+    seed_tree(&candidate, b"U2", b"reader-v2");
+
+    let orchestrator = UpdateOrchestrator::new(&root);
+    let control = orchestrator
+        .engine()
+        .begin_verified_candidate(
+            "tx-control-rollback",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    let _control_lock = InstallLock::try_acquire(&root).unwrap();
+    let mut hooks = RecordingHooks {
+        health_error: Some("candidate smoke failed".into()),
+        ..Default::default()
+    };
+    let outcome = orchestrator.continue_prepared_candidate(&mut hooks).unwrap();
+
+    assert!(matches!(outcome, ApplyOutcome::RolledBack { .. }));
+    assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U1");
+    assert!(control.is_file(), "rollback must not unlink the running control updater");
+    assert!(orchestrator.engine().read_journal().unwrap().is_none());
+}
