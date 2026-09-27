@@ -666,6 +666,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn job_id_lookup_derives_durable_scope_and_reauthorizes_current_grant() {
+        let (runtime, path) = runtime("job-id-scope").await;
+        let created = runtime
+            .create_export(create_request("client:job-id-scope"))
+            .await
+            .unwrap();
+
+        let resumed = runtime
+            .status_by_job_id(
+                "principal:1",
+                &created.job_id,
+                "status:by-job-id",
+                20,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed, created);
+
+        let wrong_principal = runtime
+            .status_by_job_id(
+                "principal:other",
+                &created.job_id,
+                "status:wrong-principal",
+                21,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(wrong_principal.code, "grant_missing");
+
+        runtime
+            .authz
+            .revoke(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                "revoke:job-id-scope",
+                22,
+            )
+            .await
+            .unwrap();
+        let revoked = runtime
+            .status_by_job_id(
+                "principal:1",
+                &created.job_id,
+                "status:after-revoke",
+                23,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(revoked.code, "grant_missing");
+
+        runtime.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
     async fn restart_reopens_same_durable_job_without_payload_leakage() {
         let (runtime, path) = runtime("restart").await;
         let created = runtime
