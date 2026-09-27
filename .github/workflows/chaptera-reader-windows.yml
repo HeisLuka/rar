@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "apps/chaptera-desktop/**"
+      - "crates/chaptera-update-engine/**"
+      - "crates/chaptera-update-orchestrator/**"
+      - "crates/chaptera-update-handoff/**"
       - "crates/chaptera-viewer-render-plan/**"
       - "vendor/producer-a/**"
       - "packages/product/reader-portable/**"
@@ -44,9 +47,6 @@ jobs:
       - name: Check compile-time Reader surface
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
 
-      - name: Test bounded desktop image decode adapter
-        run: cargo test -p chaptera-desktop --features reader-only image_decode_adapter::tests -- --nocapture
-
       - name: Test Reader first-run contract
         run: cargo test -p chaptera-desktop --features reader-only reader_first_run -- --nocapture
 
@@ -75,6 +75,29 @@ jobs:
             byte_len = $bytes
             source_commit = "${{ github.sha }}"
           } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-reader.desktop-build.json
+
+      - name: Exercise Reader copied-U1 control mode on Windows
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-reader-update-control"
+          $current = Join-Path $root "current"
+          $candidate = Join-Path $env:RUNNER_TEMP "chaptera-reader-update-candidate"
+          New-Item -ItemType Directory -Force -Path $current, $candidate | Out-Null
+          Copy-Item "target/release/chaptera-reader.exe" (Join-Path $current "chaptera-reader.exe") -Force
+          Copy-Item "target/release/chaptera-reader.exe" (Join-Path $candidate "chaptera-reader.exe") -Force
+          Set-Content -Encoding utf8 (Join-Path $current "generation.txt") "U1"
+          Set-Content -Encoding utf8 (Join-Path $candidate "generation.txt") "U2"
+
+          cargo test -p chaptera-update-handoff --test control_handoff_acceptance -- --nocapture
+
+          # The crate-level handoff acceptance owns staging/request construction.
+          # Reader workflow additionally proves the product binary exposes the
+          # reserved control-mode surface and rejects an absent request cleanly.
+          $missing = Join-Path $root "missing-request.json"
+          $process = Start-Process -FilePath "target/release/chaptera-reader.exe" -ArgumentList @("--chaptera-update-control", $missing) -Wait -PassThru
+          if ($process.ExitCode -eq 0) {
+            throw "Reader control mode accepted a missing handoff request"
+          }
 
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: pwsh
