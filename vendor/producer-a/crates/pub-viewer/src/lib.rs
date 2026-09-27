@@ -24,7 +24,7 @@ use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, build_failure_envelope,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
+    build_mature_0x2c_renderable_asset_bundle_from_bytes, build_mature_0x2c_source_graph,
     resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -413,38 +413,31 @@ pub fn open_mature_0x2c_geometry(
             .push(viewer_fallback_flow_metrics_diagnostic());
     }
 
-    let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
+    let images = match build_mature_0x2c_renderable_asset_bundle_from_bytes(
         bytes,
         &pipeline.source.graph,
     ) {
         Ok(bundle) => {
-            for diagnostic in &bundle.manifest.diagnostics {
+            for diagnostic in &bundle.diagnostics {
                 match diagnostic {
                     PubAssetExportDiagnostic::AssetNotPromoted { .. } => {
                         document.diagnostics.push(ViewerDiagnostic {
-                            code: "viewer.image.asset_not_exact".to_owned(),
+                            code: "viewer.image.asset_not_renderable".to_owned(),
                             severity: ViewerDiagnosticSeverity::FidelityWarning,
-                            message: "An image placement exists, but exact embedded image bytes are not available for the Viewer overlay.".to_owned(),
+                            message: "An image placement exists, but the Viewer could not materialize a renderable media payload for it.".to_owned(),
                         });
                     }
                 }
             }
 
             bundle
-                .files
+                .assets
                 .into_iter()
-                .filter_map(|file| {
-                    let entry = bundle
-                        .manifest
-                        .assets
-                        .iter()
-                        .find(|entry| entry.resource_id == file.resource_id)?;
-                    Some(ViewerEmbeddedImage {
-                        resource_id: file.resource_id,
-                        mime: entry.mime.clone(),
-                        node_ids: entry.uses.iter().map(|usage| usage.node_id).collect(),
-                        bytes: file.bytes,
-                    })
+                .map(|asset| ViewerEmbeddedImage {
+                    resource_id: asset.resource_id,
+                    mime: asset.mime,
+                    node_ids: asset.node_ids,
+                    bytes: asset.bytes,
                 })
                 .collect::<Vec<_>>()
         }
@@ -452,7 +445,7 @@ pub fn open_mature_0x2c_geometry(
             document.diagnostics.push(ViewerDiagnostic {
                 code: "viewer.image.asset_pipeline_unavailable".to_owned(),
                 severity: ViewerDiagnosticSeverity::FidelityWarning,
-                message: "The Viewer could not materialize the exact embedded-image resource bundle for this document.".to_owned(),
+                message: "The Viewer could not materialize the embedded renderable-image resource bundle for this document.".to_owned(),
             });
             Vec::new()
         }
