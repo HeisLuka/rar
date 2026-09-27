@@ -5,12 +5,52 @@
 //! consumers receive canonical pub-model paint, never a competing paint truth.
 
 use pub_model::{
-    ShapePaintProvenanceV1, ShapePaintV1, ShapePaintValidationError, SolidFillV1, SolidStrokeV1,
-    SourceRefV1, Srgb8, validate_shape_paint_v1,
+    AuthorityClassV1, ReadConfidenceV1, ShapePaintProvenanceV1, ShapePaintV1,
+    ShapePaintValidationError, SolidFillV1, SolidStrokeV1, SourceRefV1, SourceRoleV1, Srgb8,
+    validate_shape_paint_v1,
 };
 use serde::{Deserialize, Serialize};
 
 pub const MAX_BOUNDED_SOURCE_LINE_WIDTH_EMU_V1: i64 = 0x0132_F540;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PubPaintSourceRoleV1 {
+    Semantic,
+    Projection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubPaintSourceProvenanceV1 {
+    pub format: String,
+    pub adapter_version: String,
+    pub source_hash_hex: String,
+    pub carrier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub role: PubPaintSourceRoleV1,
+}
+
+impl PubPaintSourceProvenanceV1 {
+    fn into_source_ref(self) -> SourceRefV1 {
+        SourceRefV1 {
+            format: self.format,
+            adapter_version: self.adapter_version,
+            source_hash_hex: self.source_hash_hex,
+            carrier: self.carrier,
+            object_key: self.object_key,
+            path: self.path,
+            role: match self.role {
+                PubPaintSourceRoleV1::Semantic => SourceRoleV1::Semantic,
+                PubPaintSourceRoleV1::Projection => SourceRoleV1::Projection,
+            },
+            authority: AuthorityClassV1::Authoritative,
+            confidence: ReadConfidenceV1::Exact,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PubExplicitShapePaintSourceV1 {
@@ -108,6 +148,16 @@ pub fn promote_explicit_source_paint_v1(
     Ok(Some(paint))
 }
 
+pub fn project_explicit_source_paint_to_viewer_v1(
+    source: &PubExplicitShapePaintSourceV1,
+    provenance: PubPaintSourceProvenanceV1,
+) -> Result<Option<ViewerNodePaintV1>, ShapePaintValidationError> {
+    let Some(paint) = promote_explicit_source_paint_v1(source, provenance.into_source_ref())? else {
+        return Ok(None);
+    };
+    Ok(project_viewer_node_paint_v1(&paint))
+}
+
 pub fn project_viewer_node_paint_v1(paint: &ShapePaintV1) -> Option<ViewerNodePaintV1> {
     let solid_fill_rgb = paint
         .fill
@@ -171,6 +221,18 @@ mod tests {
         }
     }
 
+    fn source_provenance() -> PubPaintSourceProvenanceV1 {
+        PubPaintSourceProvenanceV1 {
+            format: "pub".to_owned(),
+            adapter_version: "pub-rs/0.1".to_owned(),
+            source_hash_hex: "ab".repeat(32),
+            carrier: "/Escher/EscherStm".to_owned(),
+            object_key: Some("escher/client-data-shape-id/7".to_owned()),
+            path: Some("SpContainer/FOPT".to_owned()),
+            role: PubPaintSourceRoleV1::Projection,
+        }
+    }
+
     fn legacy_viewer_projection(
         source: &PubExplicitShapePaintSourceV1,
     ) -> Option<ViewerNodePaintV1> {
@@ -197,6 +259,28 @@ mod tests {
                 solid_line,
             })
         }
+    }
+
+    #[test]
+    fn bridge_owned_provenance_projects_without_exposing_root_model_to_caller() {
+        let source = PubExplicitShapePaintSourceV1 {
+            fill: PubExplicitFillSourceV1 {
+                solid: true,
+                color_rgb: Some([0x11, 0x22, 0x33]),
+                visible: Some(true),
+            },
+            line: PubExplicitLineSourceV1 {
+                color_rgb: Some([0x44, 0x55, 0x66]),
+                width_emu: Some(12_700),
+                visible: Some(true),
+            },
+        };
+
+        assert_eq!(
+            project_explicit_source_paint_to_viewer_v1(&source, source_provenance())
+                .expect("bridge projection"),
+            legacy_viewer_projection(&source)
+        );
     }
 
     #[test]
