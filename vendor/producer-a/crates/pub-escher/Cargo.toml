@@ -5,5 +5,6 @@ edition.workspace=true
 rust-version.workspace=true
 license.workspace=true
 [dependencies]
+flate2="1"
 pub-core={path="../pub-core"}
 serde.workspace=true
