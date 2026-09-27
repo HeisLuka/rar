@@ -699,6 +699,37 @@ mod tests {
     }
 
     #[test]
+    fn materializes_rfc1950_wmf_payload_to_declared_uncompressed_size() {
+        use flate2::{Compression, write::ZlibEncoder};
+        use std::io::Write;
+
+        let wmf_bytes = b"chaptera-wmf-materialization";
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(wmf_bytes).expect("compress WMF fixture");
+        let compressed = encoder.finish().expect("finish WMF fixture");
+
+        let mut payload = vec![0x33; 16];
+        payload.extend_from_slice(&(wmf_bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&[0; 16]);
+        payload.extend_from_slice(&[0; 8]);
+        payload.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        payload.push(0x00);
+        payload.push(0xFE);
+        payload.extend_from_slice(&compressed);
+
+        let record_bytes = record(0x2160, OFFICE_ART_BLIP_WMF, &payload);
+        let delayed = inspect_delayed_blips(stream("/Escher/EscherDelayStm"), &record_bytes)
+            .expect("WMF delay record should parse");
+        let metafile = delayed.records[0]
+            .metafile_payload
+            .as_ref()
+            .expect("metafile payload");
+        let materialized = materialize_metafile_payload(&record_bytes, metafile)
+            .expect("WMF payload should inflate exactly");
+        assert_eq!(materialized, wmf_bytes);
+    }
+
+    #[test]
     fn detects_grounded_one_bit_dib_payload_after_blip_prefix() {
         let mut dib_payload = vec![0_u8; 17];
         dib_payload.extend_from_slice(&40u32.to_le_bytes());
