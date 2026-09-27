@@ -29,7 +29,8 @@ use crate::{
     revision_materializer::{
         BlobStoreExactSourceLoader, EDITOR_REVISION_EVENT_SCHEMA_V1,
         EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorRevisionEventV1,
-        ExactRevisionMaterializer, PubEditorReplayEngine, RevisionMaterializerError,
+        ExactRevisionMaterializer, ExactSourceLoader, PubEditorReplayEngine,
+        RevisionMaterializerError,
         decode_editor_revision_event_v1, encode_editor_revision_event_v1, project_sha256,
     },
     source_authority::{SourceAuthorityError, SqliteDocumentSourceAuthority},
@@ -59,10 +60,26 @@ impl ProductApiHttpState {
         revisions: SqliteRevisionStore,
         source_loader: BlobStoreExactSourceLoader,
     ) -> Result<Self, AuthzError> {
+        Self::with_source_loader(
+            auth,
+            source,
+            authz,
+            revisions,
+            Arc::new(source_loader),
+        )
+    }
+
+    fn with_source_loader(
+        auth: AuthHttpState,
+        source: SqliteDocumentSourceAuthority,
+        authz: SqliteAuthzAuthority,
+        revisions: SqliteRevisionStore,
+        source_loader: Arc<dyn ExactSourceLoader>,
+    ) -> Result<Self, AuthzError> {
         let committer = SqliteAuthorizedRevisionCommitter::new(authz.clone(), revisions.clone())?;
         let materializer = Arc::new(ExactRevisionMaterializer::new(
             Arc::new(source.clone()),
-            Arc::new(source_loader),
+            source_loader,
             revisions.clone(),
             Arc::new(PubEditorReplayEngine),
         ));
