@@ -152,6 +152,13 @@ impl From<UpdateError> for OrchestrationError {
 
 pub type Result<T> = std::result::Result<T, OrchestrationError>;
 
+#[derive(Debug)]
+pub struct PreparedFrontDoor {
+    _lock: InstallLock,
+    pub control_updater: PathBuf,
+    pub startup_recovery: RecoveryOutcome,
+}
+
 #[derive(Debug, Clone)]
 pub struct UpdateOrchestrator {
     engine: UpdateEngine,
@@ -166,6 +173,37 @@ impl UpdateOrchestrator {
 
     pub fn engine(&self) -> &UpdateEngine {
         &self.engine
+    }
+
+    /// Stages an already-authenticated candidate for copied-U1 handoff while
+    /// retaining exclusive install ownership in the returned guard.
+    ///
+    /// The caller must create and spawn the control handoff before dropping
+    /// this guard. Dropping it releases the OS lock so copied U1 can take over.
+    pub fn prepare_verified_candidate_for_handoff(
+        &self,
+        transaction_id: &str,
+        candidate_version: &str,
+        candidate_source: &Path,
+        updater_relative_path: &Path,
+    ) -> Result<PreparedFrontDoor> {
+        let lock = InstallLock::try_acquire(self.engine.root())?;
+
+        let startup_recovery = self.engine.recover()?;
+        self.engine.cleanup_orphaned_transactions()?;
+
+        let control_updater = self.engine.begin_verified_candidate(
+            transaction_id,
+            candidate_version,
+            candidate_source,
+            updater_relative_path,
+        )?;
+
+        Ok(PreparedFrontDoor {
+            _lock: lock,
+            control_updater,
+            startup_recovery,
+        })
     }
 
     /// Continues a transaction that was already staged by the front-door U1
