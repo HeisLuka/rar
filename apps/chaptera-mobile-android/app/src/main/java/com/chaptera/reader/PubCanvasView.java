@@ -5,6 +5,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -12,15 +14,80 @@ import org.json.JSONObject;
 final class PubCanvasView extends View {
     private JSONObject page;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final ScaleGestureDetector scaleDetector;
+    private float zoom = 1f;
+    private float panX = 0f;
+    private float panY = 0f;
+    private float lastX;
+    private float lastY;
 
     PubCanvasView(Context context) {
         super(context);
         paint.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.NORMAL));
+        scaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                zoom = clamp(zoom * detector.getScaleFactor(), 1f, 8f);
+                invalidate();
+                return true;
+            }
+        });
     }
 
     void setPage(JSONObject page) {
         this.page = page;
+        resetViewport();
         invalidate();
+    }
+
+    void restoreViewport(float zoom, float panX, float panY) {
+        this.zoom = clamp(zoom, 1f, 8f);
+        this.panX = panX;
+        this.panY = panY;
+        invalidate();
+    }
+
+    float getZoom() {
+        return zoom;
+    }
+
+    float getPanXOffset() {
+        return panX;
+    }
+
+    float getPanYOffset() {
+        return panY;
+    }
+
+    private void resetViewport() {
+        zoom = 1f;
+        panX = 0f;
+        panY = 0f;
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        scaleDetector.onTouchEvent(event);
+        if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    lastX = event.getX();
+                    lastY = event.getY();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float x = event.getX();
+                    float y = event.getY();
+                    panX += x - lastX;
+                    panY += y - lastY;
+                    lastX = x;
+                    lastY = y;
+                    invalidate();
+                    return true;
+                default:
+                    break;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -36,14 +103,15 @@ final class PubCanvasView extends View {
         if (pageWidth <= 0 || pageHeight <= 0) return;
 
         float margin = 24f;
-        float scale = Math.min(
+        float fitScale = Math.min(
             Math.max(1f, getWidth() - margin * 2f) / pageWidth,
             Math.max(1f, getHeight() - margin * 2f) / pageHeight
         );
+        float scale = fitScale * zoom;
         float drawWidth = pageWidth * scale;
         float drawHeight = pageHeight * scale;
-        float ox = (getWidth() - drawWidth) / 2f;
-        float oy = margin;
+        float ox = (getWidth() - drawWidth) / 2f + panX;
+        float oy = margin + panY;
 
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.WHITE);
@@ -101,5 +169,9 @@ final class PubCanvasView extends View {
                 }
             }
         }
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
     }
 }
