@@ -234,7 +234,7 @@ async fn commit_move_node(
         .await
         .map_err(ProductApiError::Authz)?
     {
-        return accepted_from_receipt(existing, &request, true);
+        return accepted_from_receipt(&state, &source, existing, true).await;
     }
 
     let head = current_head(&state.revisions, &source).await?;
@@ -383,7 +383,7 @@ async fn commit_move_node(
         .await
         .map_err(ProductApiError::Authz)?;
 
-    accepted_from_receipt(committed, &request, false)
+    accepted_from_receipt(&state, &source, committed, false).await
 }
 
 async fn current_head(
@@ -407,48 +407,55 @@ async fn current_head(
     }
 }
 
-fn accepted_from_receipt(
+async fn accepted_from_receipt(
+    state: &ProductApiHttpState,
+    source: &crate::revision_materializer::AuthorizedDocumentSource,
     receipt: crate::authz_runtime::AuthorizedRevisionCommitReceipt,
-    request: &CommitRequestV1,
     replayed_hint: bool,
 ) -> Result<Json<CommitAcceptedResponse>, ProductApiError> {
     let event =
         decode_editor_revision_event_v1(&receipt.edge).map_err(ProductApiError::Materializer)?;
-    let state_id = derive_state_id_from_event_edge(&receipt.edge, &event)?;
+    let child = state
+        .materializer
+        .materialize(
+            &source.tenant_id,
+            &receipt.edge.document_id,
+            &receipt.edge.child_revision,
+        )
+        .await
+        .map_err(ProductApiError::Materializer)?;
+
+    let identities = derive_commit_revision_identities(
+        &receipt.edge.document_id,
+        &event.source_sha256,
+        &child.project.schema_version,
+        &child.project,
+        &receipt.edge.parent_revision,
+        &event.operation,
+    )
+    .map_err(ProductApiError::Baseline)?;
+    if identities.service_revision_id != receipt.edge.child_revision {
+        return Err(ProductApiError::internal(
+            "accepted_revision_identity_mismatch",
+            "durable accepted edge differs from the existing V1 service revision law",
+        ));
+    }
+
     Ok(Json(CommitAcceptedResponse {
         protocol_version: COMMIT_ACCEPTED_V1,
         document_id: receipt.edge.document_id.clone(),
         source_hash: event.source_sha256,
         base_revision_id: receipt.edge.parent_revision,
         revision_id: receipt.edge.child_revision,
-        state_id,
+        state_id: identities.state_id,
         client_operation_id: receipt.edge.operation_id,
         canonical_operation: event.operation,
-        project_schema_version: request_project_schema_version_hint(request),
+        project_schema_version: child.project.schema_version,
         canonical_revision_schema_version: receipt.binding.canonical_schema_version,
         canonical_authoring_revision_id: receipt.binding.canonical_revision_id,
         replayed: replayed_hint || receipt.replayed,
         scene_refresh: "full_snapshot",
     }))
-}
-
-fn derive_state_id_from_event_edge(
-    edge: &RevisionEdge,
-    event: &EditorRevisionEventV1,
-) -> Result<String, ProductApiError> {
-    // The edge intentionally stores only the raw resulting project hash.
-    // Materialize the exact accepted child and derive the public state id there
-    // rather than trusting a browser-provided value. This helper therefore
-    // cannot reconstruct the service state id from edge data alone.
-    let _ = (edge, event);
-    Err(ProductApiError::internal(
-        "accepted_state_requires_materialization",
-        "accepted response state_id must be sourced from exact child materialization",
-    ))
-}
-
-fn request_project_schema_version_hint(_request: &CommitRequestV1) -> String {
-    "unknown".to_owned()
 }
 
 fn validate_request(request: &CommitRequestV1, path_document_id: &str) -> Result<(), ProductApiError> {
