@@ -6,6 +6,7 @@ on:
       - "Cargo.toml"
       - "apps/chaptera-desktop/**"
       - "crates/chaptera-scene-instance/**"
+      - "crates/chaptera-viewer-render-plan/**"
       - "vendor/producer-a/**"
       - "packages/product/editor-live-trial/**"
       - "packages/protocol/editor-agent-control/**"

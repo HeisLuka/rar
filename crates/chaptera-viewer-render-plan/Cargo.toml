@@ -1,0 +1,18 @@
+[package]
+name = "chaptera-viewer-render-plan"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+pub-layout = { path = "../../vendor/producer-a/crates/pub-layout" }
+serde_json = "1"
+
+[workspace]
+resolver = "2"
