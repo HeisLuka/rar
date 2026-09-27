@@ -37,3 +37,11 @@ Harden the landed chaptera-update-engine/orchestrator/handoff split. Do not revi
 - #911 updater orchestration: landed.
 - #912 control handoff: landed.
 - #904: donor/provenance only, not merge authority.
+
+
+## Fresh-main replay receipt — 2026-09-27
+
+- Replayed from current `main` base `426dee38bea50b7c011f3a6f693a0ea0ebbaa4bc` after updater-engine overlap was detected.
+- Preserves landed copied-U1 terminal lifetime and next-lock-owner `cleanup_orphaned_transactions()` semantics.
+- Reapplies journal generation/checksum/high-water recovery and authenticated bounded staging on top of that base.
+- PR #919 was automatically closed when the branch temporarily equaled `main` during force-reset, then reopened after replay; authoritative replay head before this receipt was `1bee323d76ff475b8e1cc3edeb51adaf29a33817`.
