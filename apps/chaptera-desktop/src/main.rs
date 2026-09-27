@@ -477,8 +477,7 @@ struct ViewerApp {
     search_results: Vec<ViewerTextMatch>,
     selected_search_result: Option<usize>,
     image_textures: BTreeMap<String, CachedImageTexture>,
-    image_decode_diagnostics:
-        BTreeMap<String, image_decode_adapter::DesktopImageDecodeDiagnostic>,
+    image_decode_diagnostics: BTreeMap<String, image_decode_adapter::DesktopImageDecodeDiagnostic>,
     editor: Option<pub_editor::EditorSession>,
     editor_load_error: Option<String>,
     edit_buffer: String,
