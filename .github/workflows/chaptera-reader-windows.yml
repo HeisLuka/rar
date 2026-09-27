@@ -44,6 +44,9 @@ jobs:
       - name: Check compile-time Reader surface
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
 
+      - name: Test bounded desktop image decode adapter
+        run: cargo test -p chaptera-desktop --features reader-only image_decode_adapter::tests -- --nocapture
+
       - name: Test Reader first-run contract
         run: cargo test -p chaptera-desktop --features reader-only reader_first_run -- --nocapture
 

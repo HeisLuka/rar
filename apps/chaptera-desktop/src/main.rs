@@ -8,6 +8,7 @@ mod acceptance;
 mod agent;
 mod diagnostic_sweep;
 mod fallback_font;
+mod image_decode_adapter;
 #[allow(dead_code)]
 mod locale;
 mod product_smoke;
@@ -455,6 +456,11 @@ fn smoke_check(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+struct CachedImageTexture {
+    texture: egui::TextureHandle,
+    _cache_identity_sha256: String,
+}
+
 struct ViewerApp {
     source_path: Option<PathBuf>,
     visual: Option<ViewerGeometryDocument>,
@@ -469,7 +475,8 @@ struct ViewerApp {
     search_query: String,
     search_results: Vec<ViewerTextMatch>,
     selected_search_result: Option<usize>,
-    image_textures: BTreeMap<String, egui::TextureHandle>,
+    image_textures: BTreeMap<String, CachedImageTexture>,
+    image_decode_diagnostics: BTreeMap<String, image_decode_adapter::DesktopImageDecodeDiagnostic>,
     editor: Option<pub_editor::EditorSession>,
     editor_load_error: Option<String>,
     edit_buffer: String,
@@ -519,6 +526,7 @@ impl ViewerApp {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
+            image_decode_diagnostics: BTreeMap::new(),
             editor: None,
             editor_load_error: None,
             edit_buffer: String::new(),
@@ -816,6 +824,7 @@ impl ViewerApp {
         self.search_results.clear();
         self.selected_search_result = None;
         self.image_textures.clear();
+        self.image_decode_diagnostics.clear();
         self.editor = None;
         self.editor_load_error = None;
         self.edit_buffer.clear();
@@ -1503,6 +1512,7 @@ impl ViewerApp {
             .any(|diagnostic| diagnostic.code == "viewer.visual.geometry_only");
         let preview_clipped_frames = self.preview_clipped_frames;
         let diagnostics = &visual.document.diagnostics;
+        let decode_diagnostics = &self.image_decode_diagnostics;
         let mut open = self.show_diagnostics;
 
         egui::Window::new("Fidelity & diagnostics")
@@ -1537,12 +1547,34 @@ impl ViewerApp {
                     ui.weak("No Viewer diagnostics.");
                 } else {
                     egui::ScrollArea::vertical()
-                        .max_height(360.0)
+                        .max_height(260.0)
                         .show(ui, |ui| {
                             for diagnostic in diagnostics {
                                 ui.group(|ui| {
                                     ui.strong(&diagnostic.code);
                                     ui.small(diagnostic_severity_label(diagnostic.severity));
+                                    ui.label(&diagnostic.message);
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                }
+
+                if !decode_diagnostics.is_empty() {
+                    ui.add_space(12.0);
+                    ui.heading("Desktop image decode");
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for diagnostic in decode_diagnostics.values() {
+                                ui.group(|ui| {
+                                    ui.strong(&diagnostic.code);
+                                    ui.small("Fidelity warning · desktop decode/runtime");
+                                    ui.label(format!(
+                                        "{} ({})",
+                                        diagnostic.resource_key, diagnostic.mime
+                                    ));
                                     ui.label(&diagnostic.message);
                                 });
                                 ui.add_space(4.0);
@@ -2587,54 +2619,76 @@ impl ViewerApp {
 
         for embedded in &visual.images {
             let key = format!("{:?}", embedded.resource_id);
-            if self.image_textures.contains_key(&key) {
+            if self.image_textures.contains_key(&key)
+                || self.image_decode_diagnostics.contains_key(&key)
+            {
                 continue;
             }
 
-            let format = match embedded.mime.as_str() {
-                "image/png" => image::ImageFormat::Png,
-                "image/jpeg" => image::ImageFormat::Jpeg,
-                _ => continue,
-            };
-
-            let Ok(decoded) = image::load_from_memory_with_format(&embedded.bytes, format) else {
-                continue;
-            };
-            let rgba = decoded.to_rgba8();
-            let size = [rgba.width() as usize, rgba.height() as usize];
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-            let texture = ctx.load_texture(
-                format!("pub-image-{key}"),
-                color_image,
-                egui::TextureOptions::LINEAR,
-            );
-            self.image_textures.insert(key, texture);
+            let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
+            match image_decode_adapter::decode_texture_image_v1(
+                &embedded.bytes,
+                &embedded.mime,
+                &expected_sha256,
+            ) {
+                Ok(admitted) => {
+                    let texture = ctx.load_texture(
+                        format!("pub-image-{key}"),
+                        admitted.color_image,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.image_textures.insert(
+                        key,
+                        CachedImageTexture {
+                            texture,
+                            _cache_identity_sha256: admitted.cache_identity_sha256,
+                        },
+                    );
+                }
+                Err(error) => {
+                    self.image_decode_diagnostics.insert(
+                        key.clone(),
+                        image_decode_adapter::diagnostic_for(key, embedded.mime.clone(), &error),
+                    );
+                }
+            }
         }
 
         if let Some(editor) = &self.editor {
             for asset in editor.replacement_assets() {
                 let key = format!("replacement:{:?}", asset.sha256);
-                if self.image_textures.contains_key(&key) {
+                if self.image_textures.contains_key(&key)
+                    || self.image_decode_diagnostics.contains_key(&key)
+                {
                     continue;
                 }
 
-                let format = match asset.mime.as_str() {
-                    "image/png" => image::ImageFormat::Png,
-                    "image/jpeg" => image::ImageFormat::Jpeg,
-                    _ => continue,
-                };
-                let Ok(decoded) = image::load_from_memory_with_format(&asset.bytes, format) else {
-                    continue;
-                };
-                let rgba = decoded.to_rgba8();
-                let size = [rgba.width() as usize, rgba.height() as usize];
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-                let texture = ctx.load_texture(
-                    format!("chaptera-{key}"),
-                    color_image,
-                    egui::TextureOptions::LINEAR,
-                );
-                self.image_textures.insert(key, texture);
+                match image_decode_adapter::decode_texture_image_v1(
+                    &asset.bytes,
+                    &asset.mime,
+                    &asset.sha256.to_string(),
+                ) {
+                    Ok(admitted) => {
+                        let texture = ctx.load_texture(
+                            format!("chaptera-{key}"),
+                            admitted.color_image,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        self.image_textures.insert(
+                            key,
+                            CachedImageTexture {
+                                texture,
+                                _cache_identity_sha256: admitted.cache_identity_sha256,
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        self.image_decode_diagnostics.insert(
+                            key.clone(),
+                            image_decode_adapter::diagnostic_for(key, asset.mime.clone(), &error),
+                        );
+                    }
+                }
             }
         }
     }
@@ -3191,7 +3245,7 @@ impl ViewerApp {
                         node_rect,
                         replacement_texture
                             .or(source_texture)
-                            .map(egui::TextureHandle::id),
+                            .map(|cached| cached.texture.id()),
                     );
 
                     painter.rect_stroke(
@@ -3987,6 +4041,7 @@ mod tests {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
+            image_decode_diagnostics: BTreeMap::new(),
             editor: None,
             editor_load_error: None,
             edit_buffer: String::new(),
@@ -4039,6 +4094,7 @@ mod tests {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
+            image_decode_diagnostics: BTreeMap::new(),
             editor: None,
             editor_load_error: None,
             edit_buffer: String::new(),
@@ -4236,16 +4292,17 @@ mod tests {
             "exact image resource must retain at least one proven resolved scene-node use"
         );
 
-        let format = match embedded.mime.as_str() {
-            "image/png" => image::ImageFormat::Png,
-            "image/jpeg" => image::ImageFormat::Jpeg,
-            other => panic!("unexpected bounded image MIME: {other}"),
-        };
-        let decoded = image::load_from_memory_with_format(&embedded.bytes, format)
-            .expect("Viewer app decoder must accept exact embedded PNG/JPEG bytes");
+        let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
+        let admitted = image_decode_adapter::decode_texture_image_v1(
+            &embedded.bytes,
+            &embedded.mime,
+            &expected_sha256,
+        )
+        .expect("bounded desktop decoder must admit the exact embedded image");
 
-        assert!(decoded.width() > 0);
-        assert!(decoded.height() > 0);
+        assert!(admitted.color_image.size[0] > 0);
+        assert!(admitted.color_image.size[1] > 0);
+        assert_eq!(admitted.cache_identity_sha256.len(), 64);
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
@@ -4300,6 +4357,7 @@ mod tests {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
+            image_decode_diagnostics: BTreeMap::new(),
             editor: Some(editor),
             editor_load_error: None,
             edit_buffer: replacement.clone(),
