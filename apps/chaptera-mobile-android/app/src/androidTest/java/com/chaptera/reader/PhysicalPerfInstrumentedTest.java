@@ -69,7 +69,7 @@ public final class PhysicalPerfInstrumentedTest {
             .setDataAndType(uri, "application/x-mspublisher")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-        long coldStart = SystemClock.elapsedRealtimeNanos();
+        long handoffStart = SystemClock.elapsedRealtimeNanos();
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(intent);
         final long[] firstUsefulNs = new long[1];
         final long[] pageSwitchNs = new long[1];
@@ -81,7 +81,7 @@ public final class PhysicalPerfInstrumentedTest {
                 String status = ((android.widget.TextView) activity.findViewById(R.id.reader_status))
                     .getText().toString();
                 assertTrue("fixture must reach a useful page: " + name + " / " + status, status.contains("page 1/"));
-                firstUsefulNs[0] = SystemClock.elapsedRealtimeNanos() - coldStart;
+                firstUsefulNs[0] = SystemClock.elapsedRealtimeNanos() - handoffStart;
                 maxPssKb[0] = Math.max(maxPssKb[0], currentPssKb(activity));
 
                 Button next = activity.findViewById(R.id.reader_next);
@@ -107,7 +107,7 @@ public final class PhysicalPerfInstrumentedTest {
         row.put("fixture", name);
         row.put("fixture_bytes", bytes.length);
         row.put("fixture_sha256", hex(MessageDigest.getInstance("SHA-256").digest(bytes)));
-        row.put("cold_open_to_first_useful_page_ms", nsToMs(firstUsefulNs[0]));
+        row.put("activity_handoff_to_first_useful_page_ms", nsToMs(firstUsefulNs[0]));
         row.put("page_switch_ms", pageSwitchNs[0] == 0 ? JSONObject.NULL : nsToMs(pageSwitchNs[0]));
         row.put("zoom_pan_dispatch_ms", nsToMs(interactionNs[0]));
         row.put("sampled_max_pss_kb", maxPssKb[0]);
