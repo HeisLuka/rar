@@ -3189,7 +3189,9 @@ impl ViewerApp {
                         &painter,
                         render_node,
                         node_rect,
-                        replacement_texture.or(source_texture).map(egui::TextureHandle::id),
+                        replacement_texture
+                            .or(source_texture)
+                            .map(egui::TextureHandle::id),
                     );
 
                     painter.rect_stroke(
