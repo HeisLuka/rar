@@ -4654,6 +4654,43 @@ mod tests {
                     .id
                     .into_canonical();
 
+                let escher = pub_cfb::read_stream_reader(
+                    Cursor::new(bytes.as_slice()),
+                    pub_reader::ESCHER_STREAM_PATH,
+                )
+                .expect("read SampleNewsletter Escher stream for visual diagnostics");
+                let delayed = pub_cfb::read_stream_reader(
+                    Cursor::new(bytes.as_slice()),
+                    pub_reader::ESCHER_DELAY_STREAM_PATH,
+                )
+                .unwrap_or_default();
+                let asset_manifest = pub_reader::build_pub_asset_manifest(
+                    &source.graph,
+                    &escher,
+                    &delayed,
+                )
+                .expect("build SampleNewsletter asset manifest for visual diagnostics");
+                let asset_manifest_diagnostics = asset_manifest
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| format!("{diagnostic:?}"))
+                    .collect::<Vec<_>>();
+                let asset_slots = asset_manifest
+                    .assets
+                    .iter()
+                    .map(|asset| {
+                        json!({
+                            "slot": asset.slot,
+                            "kind": asset.blip_kind.map(|kind| format!("{kind:?}")),
+                            "has_blip_record": asset.blip_record_source.is_some(),
+                            "has_image_payload": asset.image_payload_source.is_some(),
+                            "has_payload_sha256": asset.payload_sha256.is_some(),
+                            "payload_len": asset.payload_len,
+                            "uses": asset.uses.len()
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
                 let page2_nodes = resolved
                     .graph
                     .nodes
@@ -4758,6 +4795,8 @@ mod tests {
                         "promotable_by_current_viewer": line_promotable
                     },
                     "image_slots": image_slots,
+                    "asset_manifest_diagnostics": asset_manifest_diagnostics,
+                    "asset_slots": asset_slots,
                     "officeart_shape_types": shape_types,
                     "viewer_diagnostics": visual
                         .document
