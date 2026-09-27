@@ -82,7 +82,7 @@ WIFI_STATE="$(adb -s "$SERIAL" shell dumpsys wifi 2>/dev/null | grep -m1 -E 'Wi-
 DATA_STATE="$(adb -s "$SERIAL" shell dumpsys telephony.registry 2>/dev/null | grep -m1 -E 'mDataConnectionState|mDataConnectionNetworkType' | tr -d '\r' || true)"
 
 RECEIPT="$RECEIPT_DIR/receipt-$(date -u +%Y%m%dT%H%M%SZ).json"
-python3 - "$RECEIPT" "$MODEL" "$API" "$ABI" "$ANDROID_ID" "$START_UTC" "$END_UTC" "$TEST_RC" "$WIFI_STATE" "$DATA_STATE" <<'PY'
+python3 - "$RECEIPT" "$MODEL" "$API" "$ABI" "$ANDROID_ID" "$START_UTC" "$END_UTC" "$TEST_RC" "$PERF_RC" "$WIFI_STATE" "$DATA_STATE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -98,8 +98,9 @@ receipt = {
     "started_at_utc": sys.argv[6],
     "finished_at_utc": sys.argv[7],
     "v0_user_cycle_exit_code": int(sys.argv[8]),
-    "wifi_observation": sys.argv[9],
-    "mobile_data_observation": sys.argv[10],
+    "physical_perf_exit_code": int(sys.argv[9]),
+    "wifi_observation": sys.argv[10],
+    "mobile_data_observation": sys.argv[11],
     "contains_document_bytes": False,
     "contains_recovered_document_text": False,
 }
@@ -111,5 +112,9 @@ if [ "$TEST_RC" -ne 0 ]; then
   echo "Physical-device V0 acceptance failed" >&2
   exit "$TEST_RC"
 fi
+if [ "$PERF_RC" -ne 0 ]; then
+  echo "Physical-device performance receipt failed" >&2
+  exit "$PERF_RC"
+fi
 
-echo "Physical-device V0 acceptance passed"
+echo "Physical-device V0 acceptance and performance receipt passed"
