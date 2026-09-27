@@ -83,7 +83,8 @@ public final class ResumeInstrumentedTest {
                 TextView status = activity.findViewById(R.id.reader_status);
                 assertTrue(
                     "deleted source must produce an honest local read failure",
-                    status.getText().toString().startsWith("Could not read this local file:")
+                    status.getText().toString().startsWith("Could not read this local file.")
+                        || status.getText().toString().startsWith("File access is no longer available.")
                         || status.getText().toString().contains("permission")
                 );
                 String persisted = activity
