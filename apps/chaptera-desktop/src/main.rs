@@ -3194,13 +3194,6 @@ impl ViewerApp {
                             .map(egui::TextureHandle::id),
                     );
 
-                    painter.rect_stroke(
-                        node_rect,
-                        0,
-                        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 120, 210)),
-                        egui::StrokeKind::Inside,
-                    );
-
                     let paint_outcome = render_backend::paint_document_node_foreground(
                         &painter,
                         render_node,
@@ -3212,19 +3205,6 @@ impl ViewerApp {
                         if let Some(fragment) = render_node.text.as_ref() {
                             preview_clipped_story_keys.insert(format!("{:?}", fragment.story_id));
                         }
-                        painter.rect_stroke(
-                            node_rect,
-                            0,
-                            egui::Stroke::new(2.0_f32, egui::Color32::RED),
-                            egui::StrokeKind::Inside,
-                        );
-                        painter.text(
-                            node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                            egui::Align2::RIGHT_TOP,
-                            "preview overflow",
-                            egui::FontId::proportional(10.0_f32),
-                            egui::Color32::RED,
-                        );
                     }
                 }
 
