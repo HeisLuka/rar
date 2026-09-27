@@ -291,7 +291,7 @@ impl JobsRuntime {
         }
         let publication = self
             .publications
-            .get_visible_by_job(tenant_id, job_id)
+            .get_visible_by_job(&job.tenant_id, &job.job_id)
             .await
             .map_err(publication_error)?
             .ok_or_else(|| {
@@ -314,7 +314,6 @@ impl JobsRuntime {
             loss_report_hash: publication.input.loss_report_hash,
         })
     }
-
 
     pub async fn authorize_download_by_job_id(
         &self,
