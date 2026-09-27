@@ -4752,6 +4752,69 @@ mod tests {
                     .filter(|node| node.header.parent_id == page2_origin)
                     .collect::<Vec<_>>();
 
+                let escher_inventory = pub_escher::inspect_sp_containers(
+                    pub_core::StreamPath(pub_reader::ESCHER_STREAM_PATH.into()),
+                    &escher,
+                )
+                .expect("inspect SampleNewsletter OfficeArt for visual paint diagnostics");
+                let paint_property_ids = [
+                    0x0180_u16, 0x0181, 0x0182, 0x0183, 0x0184, 0x0185, 0x0186,
+                    0x01BF, 0x01C0, 0x01C1, 0x01C2, 0x01CB, 0x01FF,
+                ];
+                let officeart_paint_raw = page2_nodes
+                    .iter()
+                    .map(|node| {
+                        let spid = node.payload.officeart_spid;
+                        let shape = spid.and_then(|spid| {
+                            escher_inventory.shapes.iter().find(|shape| {
+                                shape.fsp.as_ref().is_some_and(|fsp| fsp.spid == spid)
+                            })
+                        });
+                        let properties_for = |shape: &pub_escher::SpContainerObservation| {
+                            shape
+                                .fopts
+                                .iter()
+                                .flat_map(|fopt| {
+                                    fopt.properties.iter().filter_map(|property| {
+                                        paint_property_ids
+                                            .contains(&property.property_id())
+                                            .then(|| {
+                                                json!({
+                                                    "rec_type": format!("0x{:04x}", fopt.rec_type),
+                                                    "property_id": format!("0x{:04x}", property.property_id()),
+                                                    "op": property.op,
+                                                    "op_hex": format!("0x{:08x}", property.op),
+                                                    "f_bid": property.f_bid(),
+                                                    "f_complex": property.f_complex(),
+                                                })
+                                            })
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        };
+                        let local_properties =
+                            shape.map(properties_for).unwrap_or_default();
+                        let parent_properties = shape
+                            .and_then(|shape| shape.parent_group_shape_source.as_ref())
+                            .and_then(|parent_source| {
+                                escher_inventory
+                                    .shapes
+                                    .iter()
+                                    .find(|candidate| &candidate.source == parent_source)
+                            })
+                            .map(properties_for)
+                            .unwrap_or_default();
+                        json!({
+                            "contents_seq_num": node.payload.contents_seq_num,
+                            "spid": spid,
+                            "shape_type": node.payload.officeart_shape_type.map(|value| format!("0x{value:04x}")),
+                            "image_slot": node.payload.image_slot,
+                            "local": local_properties,
+                            "parent_group": parent_properties,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
                 let fill_solid = page2_nodes
                     .iter()
                     .filter(|node| node.payload.explicit_paint.fill.solid)
@@ -4852,6 +4915,7 @@ mod tests {
                     "asset_manifest_diagnostics": asset_manifest_diagnostics,
                     "asset_slots": asset_slots,
                     "officeart_shape_types": shape_types,
+                    "officeart_paint_raw": officeart_paint_raw,
                     "viewer_diagnostics": visual
                         .document
                         .diagnostics
