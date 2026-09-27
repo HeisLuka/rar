@@ -100,22 +100,21 @@ fn admit_decoded_image_v1(
         });
     }
 
-    let width = usize::try_from(decoded.decoded_width_px).map_err(|_| {
-        DesktopImageDecodeError {
-            code: "desktop_dimension_overflow".to_owned(),
-            detail: "decoded width does not fit desktop address space".to_owned(),
-        }
+    let width = usize::try_from(decoded.decoded_width_px).map_err(|_| DesktopImageDecodeError {
+        code: "desktop_dimension_overflow".to_owned(),
+        detail: "decoded width does not fit desktop address space".to_owned(),
     })?;
-    let height = usize::try_from(decoded.decoded_height_px).map_err(|_| {
-        DesktopImageDecodeError {
+    let height =
+        usize::try_from(decoded.decoded_height_px).map_err(|_| DesktopImageDecodeError {
             code: "desktop_dimension_overflow".to_owned(),
             detail: "decoded height does not fit desktop address space".to_owned(),
-        }
-    })?;
-    let pixels = width.checked_mul(height).ok_or_else(|| DesktopImageDecodeError {
-        code: "desktop_dimension_overflow".to_owned(),
-        detail: "decoded pixel count overflows desktop address space".to_owned(),
-    })?;
+        })?;
+    let pixels = width
+        .checked_mul(height)
+        .ok_or_else(|| DesktopImageDecodeError {
+            code: "desktop_dimension_overflow".to_owned(),
+            detail: "decoded pixel count overflows desktop address space".to_owned(),
+        })?;
 
     let channels = match decoded.decoded_sample_model.as_str() {
         "gray" => 1,
@@ -125,7 +124,9 @@ fn admit_decoded_image_v1(
         other => {
             return Err(DesktopImageDecodeError {
                 code: "desktop_sample_model_unsupported".to_owned(),
-                detail: format!("decoded sample model {other:?} is not admitted by the egui adapter"),
+                detail: format!(
+                    "decoded sample model {other:?} is not admitted by the egui adapter"
+                ),
             });
         }
     };
@@ -254,13 +255,9 @@ mod tests {
 
     #[test]
     fn non_normal_orientation_fails_closed() {
-        let error = admit_decoded_image_v1(&decoded(
-            "rgb",
-            8,
-            "metadata_only_non_normal",
-            vec![0; 6],
-        ))
-        .expect_err("orientation metadata must not be silently ignored");
+        let error =
+            admit_decoded_image_v1(&decoded("rgb", 8, "metadata_only_non_normal", vec![0; 6]))
+                .expect_err("orientation metadata must not be silently ignored");
         assert_eq!(error.code, "desktop_orientation_unsupported");
     }
 
