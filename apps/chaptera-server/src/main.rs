@@ -13,6 +13,7 @@ use chaptera_server::{
     jobs_runtime::JobsRuntime,
     migrate,
     product_api_http::{self, ProductApiHttpState},
+    product_export_http::{self, ProductExportHttpState},
     project_persistence_sqlite::SqliteProjectPersistence,
     revision_materializer::BlobStoreExactSourceLoader,
     runtime_readiness::{ports_with_configured_serve, ports_with_revision_stream},
@@ -174,14 +175,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                         .await?;
                         let product_state = ProductApiHttpState::new(
                             auth_http.clone(),
-                            source_authority,
+                            source_authority.clone(),
                             authz.clone(),
                             revision_stream.clone(),
                             BlobStoreExactSourceLoader::new(blob_store.service().clone()),
                         )?;
+                        let export_state = ProductExportHttpState::new(
+                            auth_http.clone(),
+                            source_authority,
+                            revision_stream.clone(),
+                            jobs.clone(),
+                            blob_store.service().clone(),
+                        );
                         Some(
                             source_ingress_http::router(source_state)
-                                .merge(product_api_http::router(product_state)),
+                                .merge(product_api_http::router(product_state))
+                                .merge(product_export_http::router(export_state)),
                         )
                     } else {
                         None

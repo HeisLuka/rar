@@ -74,6 +74,7 @@ pub struct ExportJobSnapshotV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuthorizedExportDownloadV1 {
     pub job_id: String,
+    pub tenant_id: String,
     pub document_id: String,
     pub exact_revision_id: String,
     pub canonical_authoring_revision_id: String,
@@ -214,6 +215,19 @@ impl JobsRuntime {
         snapshot_with_payload(&job, &payload)
     }
 
+    pub async fn status_by_job_id(
+        &self,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<ExportJobSnapshotV1, JobsRuntimeError> {
+        let (job, payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
+            .await?;
+        snapshot_with_payload(&job, &payload)
+    }
+
     pub async fn request_cancel(
         &self,
         tenant_id: &str,
@@ -224,6 +238,24 @@ impl JobsRuntime {
     ) -> Result<ExportJobSnapshotV1, JobsRuntimeError> {
         let (_job, _payload) = self
             .authorized_job(tenant_id, principal_id, job_id, operation_id, now_ms)
+            .await?;
+        let job = self
+            .queue
+            .request_cancel(job_id, now_ms)
+            .await
+            .map_err(queue_error)?;
+        snapshot(&job)
+    }
+
+    pub async fn request_cancel_by_job_id(
+        &self,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<ExportJobSnapshotV1, JobsRuntimeError> {
+        let (_job, _payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
             .await?;
         let job = self
             .queue
@@ -244,6 +276,14 @@ impl JobsRuntime {
         let (job, payload) = self
             .authorized_job(tenant_id, principal_id, job_id, operation_id, now_ms)
             .await?;
+        self.authorized_download_from_job(job, payload).await
+    }
+
+    async fn authorized_download_from_job(
+        &self,
+        job: JobRecord,
+        payload: ExportJobPayloadV1,
+    ) -> Result<AuthorizedExportDownloadV1, JobsRuntimeError> {
         if job.status != JobStatus::Succeeded {
             return Err(JobsRuntimeError::new(
                 "export_artifact_not_ready",
@@ -252,7 +292,7 @@ impl JobsRuntime {
         }
         let publication = self
             .publications
-            .get_visible_by_job(tenant_id, job_id)
+            .get_visible_by_job(&job.tenant_id, &job.job_id)
             .await
             .map_err(publication_error)?
             .ok_or_else(|| {
@@ -264,6 +304,7 @@ impl JobsRuntime {
         validate_publication_identity(&payload, &publication)?;
         Ok(AuthorizedExportDownloadV1 {
             job_id: job.job_id,
+            tenant_id: job.tenant_id,
             document_id: payload.document_id,
             exact_revision_id: payload.exact_revision_id,
             canonical_authoring_revision_id: payload.canonical_authoring_revision_id,
@@ -276,9 +317,41 @@ impl JobsRuntime {
         })
     }
 
+    pub async fn authorize_download_by_job_id(
+        &self,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<AuthorizedExportDownloadV1, JobsRuntimeError> {
+        let (job, payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
+            .await?;
+        self.authorized_download_from_job(job, payload).await
+    }
+
     async fn authorized_job(
         &self,
         tenant_id: &str,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<(JobRecord, ExportJobPayloadV1), JobsRuntimeError> {
+        let (job, payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
+            .await?;
+        if job.tenant_id != tenant_id || payload.tenant_id != tenant_id {
+            return Err(JobsRuntimeError::new(
+                "job_scope_mismatch",
+                "job is outside the requested tenant/export scope",
+            ));
+        }
+        Ok((job, payload))
+    }
+
+    async fn authorized_job_by_id(
+        &self,
         principal_id: &str,
         job_id: &str,
         operation_id: &str,
@@ -296,14 +369,14 @@ impl JobsRuntime {
             .await
             .map_err(queue_error)?
             .ok_or_else(|| JobsRuntimeError::new("job_not_found", "export job does not exist"))?;
-        if job.tenant_id != tenant_id || job.job_kind != JobKind::Export {
+        if job.job_kind != JobKind::Export {
             return Err(JobsRuntimeError::new(
                 "job_scope_mismatch",
-                "job is outside the requested tenant/export scope",
+                "job is not an export job",
             ));
         }
         let payload = ExportJobPayloadV1::decode(&job.payload).map_err(export_payload_error)?;
-        if payload.tenant_id != tenant_id {
+        if payload.tenant_id != job.tenant_id {
             return Err(JobsRuntimeError::new(
                 "job_payload_scope_mismatch",
                 "durable export payload tenant differs from queue scope",
@@ -311,7 +384,7 @@ impl JobsRuntime {
         }
         self.authz
             .authorize(
-                tenant_id,
+                &job.tenant_id,
                 &payload.document_id,
                 principal_id,
                 CAP_EXPORT,
@@ -591,6 +664,52 @@ mod tests {
             .unwrap();
 
         authz.close().await;
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn job_id_lookup_derives_durable_scope_and_reauthorizes_current_grant() {
+        let (runtime, path) = runtime("job-id-scope").await;
+        let created = runtime
+            .create_export(create_request("client:job-id-scope"))
+            .await
+            .unwrap();
+
+        let resumed = runtime
+            .status_by_job_id("principal:1", &created.job_id, "status:by-job-id", 20)
+            .await
+            .unwrap();
+        assert_eq!(resumed, created);
+
+        let wrong_principal = runtime
+            .status_by_job_id(
+                "principal:other",
+                &created.job_id,
+                "status:wrong-principal",
+                21,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(wrong_principal.code, "grant_missing");
+
+        runtime
+            .authz
+            .revoke(
+                "tenant:1",
+                "doc:1",
+                "principal:1",
+                "revoke:job-id-scope",
+                22,
+            )
+            .await
+            .unwrap();
+        let revoked = runtime
+            .status_by_job_id("principal:1", &created.job_id, "status:after-revoke", 23)
+            .await
+            .unwrap_err();
+        assert_eq!(revoked.code, "grant_missing");
+
+        runtime.close().await;
         cleanup(&path);
     }
 

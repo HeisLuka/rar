@@ -2550,7 +2550,7 @@ mod tests {
         assert_eq!(summary["operation"]["kind"], "MoveNode");
         assert!(!encoded.contains("SECRET"));
         assert!(!encoded.contains("private"));
-        assert!(!encoded.contains(path.to_string_lossy().as_ref()));
+        assert!(!encoded.contains(&*path.to_string_lossy()));
         let _ = fs::remove_file(path);
     }
 
@@ -2659,8 +2659,8 @@ mod tests {
             true
         );
         let encoded = serde_json::to_string(&summary).expect("serialize joined summary");
-        assert!(!encoded.contains(blast_path.to_string_lossy().as_ref()));
-        assert!(!encoded.contains(joined_path.to_string_lossy().as_ref()));
+        assert!(!encoded.contains(&*blast_path.to_string_lossy()));
+        assert!(!encoded.contains(&*joined_path.to_string_lossy()));
         assert_eq!(
             summary["native_join"]["invariants"]["native_pub_write"],
             false

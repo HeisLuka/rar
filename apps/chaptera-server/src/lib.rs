@@ -23,6 +23,7 @@ pub mod jobs_runtime;
 pub mod migrate;
 pub mod oidc_authn;
 pub mod product_api_http;
+pub mod product_export_http;
 pub mod project_persistence_sqlite;
 pub mod quota_admission;
 pub mod quota_store;
