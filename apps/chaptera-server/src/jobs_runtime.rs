@@ -74,6 +74,7 @@ pub struct ExportJobSnapshotV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuthorizedExportDownloadV1 {
     pub job_id: String,
+    pub tenant_id: String,
     pub document_id: String,
     pub exact_revision_id: String,
     pub canonical_authoring_revision_id: String,
@@ -303,6 +304,7 @@ impl JobsRuntime {
         validate_publication_identity(&payload, &publication)?;
         Ok(AuthorizedExportDownloadV1 {
             job_id: job.job_id,
+            tenant_id: job.tenant_id,
             document_id: payload.document_id,
             exact_revision_id: payload.exact_revision_id,
             canonical_authoring_revision_id: payload.canonical_authoring_revision_id,
