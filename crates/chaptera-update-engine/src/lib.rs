@@ -186,7 +186,17 @@ impl UpdateEngine {
     fn read_journal_candidates(&self) -> Result<Vec<JournalEnvelope>> {
         let mut valid = Vec::new();
         let mut existing = 0usize;
-        for path in [self.journal_path(), self.journal_next_path(), self.journal_previous_path()] {
+        // Legacy #910 journals did not carry an explicit generation. Their
+        // atomic rotation still gives us a deterministic recency order:
+        // .next is a newly-synced pending copy, canonical is newer than .prev,
+        // and .prev is the retained predecessor. Map only legacy raw journals
+        // onto low synthetic generations so the first envelope write outranks
+        // them while preserving crash recovery during format migration.
+        for (path, legacy_generation) in [
+            (self.journal_previous_path(), 0u64),
+            (self.journal_path(), 1u64),
+            (self.journal_next_path(), 2u64),
+        ] {
             let bytes = match fs::read(&path) {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
@@ -200,7 +210,11 @@ impl UpdateEngine {
             if let Ok(journal) = serde_json::from_slice::<UpdateJournal>(&bytes) {
                 if validate_journal(&journal).is_ok() {
                     let journal_sha256 = journal_digest(&journal)?;
-                    valid.push(JournalEnvelope { generation: 0, journal, journal_sha256 });
+                    valid.push(JournalEnvelope {
+                        generation: legacy_generation,
+                        journal,
+                        journal_sha256,
+                    });
                 }
             }
         }
