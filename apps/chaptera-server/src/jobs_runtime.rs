@@ -214,6 +214,19 @@ impl JobsRuntime {
         snapshot_with_payload(&job, &payload)
     }
 
+    pub async fn status_by_job_id(
+        &self,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<ExportJobSnapshotV1, JobsRuntimeError> {
+        let (job, payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
+            .await?;
+        snapshot_with_payload(&job, &payload)
+    }
+
     pub async fn request_cancel(
         &self,
         tenant_id: &str,
@@ -224,6 +237,24 @@ impl JobsRuntime {
     ) -> Result<ExportJobSnapshotV1, JobsRuntimeError> {
         let (_job, _payload) = self
             .authorized_job(tenant_id, principal_id, job_id, operation_id, now_ms)
+            .await?;
+        let job = self
+            .queue
+            .request_cancel(job_id, now_ms)
+            .await
+            .map_err(queue_error)?;
+        snapshot(&job)
+    }
+
+    pub async fn request_cancel_by_job_id(
+        &self,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<ExportJobSnapshotV1, JobsRuntimeError> {
+        let (_job, _payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
             .await?;
         let job = self
             .queue
@@ -244,6 +275,14 @@ impl JobsRuntime {
         let (job, payload) = self
             .authorized_job(tenant_id, principal_id, job_id, operation_id, now_ms)
             .await?;
+        self.authorized_download_from_job(job, payload).await
+    }
+
+    async fn authorized_download_from_job(
+        &self,
+        job: JobRecord,
+        payload: ExportJobPayloadV1,
+    ) -> Result<AuthorizedExportDownloadV1, JobsRuntimeError> {
         if job.status != JobStatus::Succeeded {
             return Err(JobsRuntimeError::new(
                 "export_artifact_not_ready",
@@ -276,9 +315,42 @@ impl JobsRuntime {
         })
     }
 
+
+    pub async fn authorize_download_by_job_id(
+        &self,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<AuthorizedExportDownloadV1, JobsRuntimeError> {
+        let (job, payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
+            .await?;
+        self.authorized_download_from_job(job, payload).await
+    }
+
     async fn authorized_job(
         &self,
         tenant_id: &str,
+        principal_id: &str,
+        job_id: &str,
+        operation_id: &str,
+        now_ms: i64,
+    ) -> Result<(JobRecord, ExportJobPayloadV1), JobsRuntimeError> {
+        let (job, payload) = self
+            .authorized_job_by_id(principal_id, job_id, operation_id, now_ms)
+            .await?;
+        if job.tenant_id != tenant_id || payload.tenant_id != tenant_id {
+            return Err(JobsRuntimeError::new(
+                "job_scope_mismatch",
+                "job is outside the requested tenant/export scope",
+            ));
+        }
+        Ok((job, payload))
+    }
+
+    async fn authorized_job_by_id(
+        &self,
         principal_id: &str,
         job_id: &str,
         operation_id: &str,
@@ -296,14 +368,14 @@ impl JobsRuntime {
             .await
             .map_err(queue_error)?
             .ok_or_else(|| JobsRuntimeError::new("job_not_found", "export job does not exist"))?;
-        if job.tenant_id != tenant_id || job.job_kind != JobKind::Export {
+        if job.job_kind != JobKind::Export {
             return Err(JobsRuntimeError::new(
                 "job_scope_mismatch",
-                "job is outside the requested tenant/export scope",
+                "job is not an export job",
             ));
         }
         let payload = ExportJobPayloadV1::decode(&job.payload).map_err(export_payload_error)?;
-        if payload.tenant_id != tenant_id {
+        if payload.tenant_id != job.tenant_id {
             return Err(JobsRuntimeError::new(
                 "job_payload_scope_mismatch",
                 "durable export payload tenant differs from queue scope",
@@ -311,7 +383,7 @@ impl JobsRuntime {
         }
         self.authz
             .authorize(
-                tenant_id,
+                &job.tenant_id,
                 &payload.document_id,
                 principal_id,
                 CAP_EXPORT,
