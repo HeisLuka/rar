@@ -94,12 +94,8 @@ pub enum ApplyOutcome {
 pub enum OrchestrationError {
     Io(io::Error),
     Engine(UpdateError),
-    PolicyRejected {
-        reason: String,
-    },
-    InstallerRequired {
-        target_version: String,
-    },
+    PolicyRejected { reason: String },
+    InstallerRequired { target_version: String },
     LockBusy,
     QuiesceFailed {
         reason: String,
@@ -122,10 +118,7 @@ impl fmt::Display for OrchestrationError {
             Self::Io(err) => write!(f, "I/O error: {err}"),
             Self::Engine(err) => write!(f, "update engine error: {err}"),
             Self::PolicyRejected { reason } => write!(f, "authenticated update policy rejected: {reason}"),
-            Self::InstallerRequired { target_version } => write!(
-                f,
-                "release {target_version} requires installer flow; retained-tree payload swap is forbidden"
-            ),
+            Self::InstallerRequired { target_version } => write!(f, "release {target_version} requires installer flow; retained-tree payload swap is forbidden"),
             Self::LockBusy => write!(f, "another Chaptera update owns the install lock"),
             Self::QuiesceFailed { reason } => write!(f, "quiesce failed: {reason}"),
             Self::RecoveryFailed {
@@ -164,6 +157,13 @@ impl From<UpdateError> for OrchestrationError {
 
 pub type Result<T> = std::result::Result<T, OrchestrationError>;
 
+#[derive(Debug)]
+pub struct PreparedFrontDoor {
+    _lock: InstallLock,
+    pub control_updater: PathBuf,
+    pub startup_recovery: RecoveryOutcome,
+}
+
 #[derive(Debug, Clone)]
 pub struct UpdateOrchestrator {
     engine: UpdateEngine,
@@ -178,6 +178,37 @@ impl UpdateOrchestrator {
 
     pub fn engine(&self) -> &UpdateEngine {
         &self.engine
+    }
+
+    /// Stages an already-authenticated candidate for copied-U1 handoff while
+    /// retaining exclusive install ownership in the returned guard.
+    ///
+    /// The caller must create and spawn the control handoff before dropping
+    /// this guard. Dropping it releases the OS lock so copied U1 can take over.
+    pub fn prepare_verified_candidate_for_handoff(
+        &self,
+        transaction_id: &str,
+        candidate_version: &str,
+        candidate_source: &Path,
+        updater_relative_path: &Path,
+    ) -> Result<PreparedFrontDoor> {
+        let lock = InstallLock::try_acquire(self.engine.root())?;
+
+        let startup_recovery = self.engine.recover()?;
+        self.engine.cleanup_orphaned_transactions()?;
+
+        let control_updater = self.engine.begin_verified_candidate(
+            transaction_id,
+            candidate_version,
+            candidate_source,
+            updater_relative_path,
+        )?;
+
+        Ok(PreparedFrontDoor {
+            _lock: lock,
+            control_updater,
+            startup_recovery,
+        })
     }
 
     /// Continues a transaction that was already staged by the front-door U1
@@ -240,12 +271,6 @@ impl UpdateOrchestrator {
         })
     }
 
-    /// Canonical product entrypoint for an authenticated release. Policy is
-    /// evaluated before acquiring the install lock or mutating any updater
-    /// state. InstallerRequired never enters retained-tree swap. Until a
-    /// separate forward-only repair path exists, payload swaps also fail
-    /// closed when the authenticated release edge does not permit rollback
-    /// to the currently installed version.
     pub fn apply_authenticated_candidate<H: UpdateHooks>(
         &self,
         transaction_id: &str,
@@ -256,40 +281,14 @@ impl UpdateOrchestrator {
         updater_relative_path: &Path,
         hooks: &mut H,
     ) -> Result<ApplyOutcome> {
-        let decision = release
-            .decision_for(installed, installed_version)
-            .map_err(|error| OrchestrationError::PolicyRejected {
-                reason: error.to_string(),
-            })?;
-
+        let decision = release.decision_for(installed, installed_version)
+            .map_err(|error| OrchestrationError::PolicyRejected { reason: error.to_string() })?;
         match decision {
-            ReleaseDecision::InstallerRequired => {
-                return Err(OrchestrationError::InstallerRequired {
-                    target_version: release.package_version.clone(),
-                });
-            }
-            ReleaseDecision::PayloadSwap {
-                rollback_compatible: false,
-            } => {
-                return Err(OrchestrationError::PolicyRejected {
-                    reason: format!(
-                        "release {} does not authenticate rollback compatibility from installed {}",
-                        release.package_version, installed_version
-                    ),
-                });
-            }
-            ReleaseDecision::PayloadSwap {
-                rollback_compatible: true,
-            } => {}
+            ReleaseDecision::InstallerRequired => return Err(OrchestrationError::InstallerRequired { target_version: release.package_version.clone() }),
+            ReleaseDecision::PayloadSwap { rollback_compatible: false } => return Err(OrchestrationError::PolicyRejected { reason: format!("release {} does not authenticate rollback compatibility from installed {}", release.package_version, installed_version) }),
+            ReleaseDecision::PayloadSwap { rollback_compatible: true } => {}
         }
-
-        self.apply_verified_candidate(
-            transaction_id,
-            &release.package_version,
-            candidate_source,
-            updater_relative_path,
-            hooks,
-        )
+        self.apply_verified_candidate(transaction_id, &release.package_version, candidate_source, updater_relative_path, hooks)
     }
 
     pub fn apply_verified_candidate<H: UpdateHooks>(
