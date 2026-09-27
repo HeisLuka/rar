@@ -170,7 +170,7 @@ async fn export_status(
     let now = now_ms()?;
     let snapshot = state
         .jobs
-.status_by_job_id(&principal.principal_id, &job_id, "export:status", now)
+        .status_by_job_id(&principal.principal_id, &job_id, "export:status", now)
         .await
         .map_err(ProductExportHttpError::Jobs)?;
 
@@ -207,7 +207,7 @@ async fn cancel_export(
         .map_err(ProductExportHttpError::Auth)?;
     let snapshot = state
         .jobs
-.request_cancel_by_job_id(&principal.principal_id, &job_id, "export:cancel", now_ms()?)
+        .request_cancel_by_job_id(&principal.principal_id, &job_id, "export:cancel", now_ms()?)
         .await
         .map_err(ProductExportHttpError::Jobs)?;
     Ok(Json(job_response(snapshot, None)))
@@ -230,7 +230,7 @@ async fn authorize_download(
     let now = now_ms()?;
     let publication = state
         .jobs
-.authorize_download_by_job_id(&principal.principal_id, &job_id, "export:download", now)
+        .authorize_download_by_job_id(&principal.principal_id, &job_id, "export:download", now)
         .await
         .map_err(ProductExportHttpError::Jobs)?;
     if request.artifact_id != publication.artifact_binding_id {
