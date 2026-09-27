@@ -142,8 +142,7 @@ mod tests {
 
     #[test]
     fn physical_rect_conversion_uses_page_origin_and_scene_scale() {
-        let page =
-            egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(400.0, 300.0));
+        let page = egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(400.0, 300.0));
         let rect = physical_rect_to_egui(page, 0.5, 20, 30, 100, 80).expect("valid physical rect");
 
         assert_eq!(rect.min, egui::pos2(110.0, 65.0));
