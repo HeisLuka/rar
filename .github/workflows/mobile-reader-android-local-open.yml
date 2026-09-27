@@ -40,12 +40,19 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Install cargo-ndk
-        run: cargo +1.94.1 install cargo-ndk --locked
+        run: cargo +1.94.1 install cargo-ndk --version 4.1.2 --locked
 
-      - name: Build arm64 JNI Reader bridge
+      - name: Build physical-device and emulator JNI Reader bridges
         run: |
           rm -rf apps/chaptera-mobile-android/app/src/main/jniLibs
-          cargo +1.94.1 ndk             -t arm64-v8a             -o apps/chaptera-mobile-android/app/src/main/jniLibs             build             --manifest-path crates/chaptera-mobile-reader-jni/Cargo.toml             --release
+          cargo +1.94.1 ndk \
+            -t arm64-v8a \
+            -t x86_64 \
+            -o "$GITHUB_WORKSPACE/apps/chaptera-mobile-android/app/src/main/jniLibs" \
+            build \
+            --manifest-path crates/chaptera-mobile-reader-jni/Cargo.toml \
+            --release
+          find apps/chaptera-mobile-android/app/src/main/jniLibs -maxdepth 2 -type f -print
           test -f apps/chaptera-mobile-android/app/src/main/jniLibs/arm64-v8a/libchaptera_mobile_reader_jni.so
           test -f apps/chaptera-mobile-android/app/src/main/jniLibs/x86_64/libchaptera_mobile_reader_jni.so
 
