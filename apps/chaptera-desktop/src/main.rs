@@ -216,7 +216,11 @@ fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
 
-    if first_arg.as_deref() == Some(std::ffi::OsStr::new(chaptera_update_handoff::CONTROL_MODE_ARG)) {
+    if first_arg.as_deref()
+        == Some(std::ffi::OsStr::new(
+            chaptera_update_handoff::CONTROL_MODE_ARG,
+        ))
+    {
         if !reader_only_mode() {
             eprintln!("update control mode is reserved for the Chaptera Reader product");
             std::process::exit(2);
@@ -480,7 +484,10 @@ impl chaptera_update_orchestrator::UpdateHooks for ReaderControlHooks {
                 .ok_or_else(|| "control executable has no file name".to_owned())?,
         );
         if !candidate.is_file() {
-            return Err(format!("activated Reader executable missing: {}", candidate.display()));
+            return Err(format!(
+                "activated Reader executable missing: {}",
+                candidate.display()
+            ));
         }
         Ok(())
     }
