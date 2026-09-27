@@ -91,6 +91,19 @@ jobs:
             throw "Reader control mode accepted a missing handoff request"
           }
 
+      - name: Prove activated Reader product smoke is executable
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "target/release/chaptera-reader.exe").Path
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $exe).Length
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_SHA256 = $hash
+          $env:CHAPTERA_PRODUCT_SMOKE_BINARY_BYTE_LEN = [string]$bytes
+          $process = Start-Process -FilePath $exe -ArgumentList @("--product-smoke-v1") -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Reader candidate health smoke failed with exit code $($process.ExitCode)"
+          }
+
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: pwsh
         run: |
