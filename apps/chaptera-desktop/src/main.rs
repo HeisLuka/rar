@@ -4571,6 +4571,7 @@ mod tests {
         use egui_kittest::Harness;
         use serde_json::json;
         use sha2::{Digest, Sha256};
+        use std::io::Cursor;
 
         let corpus_dir = std::env::var_os("CHAPTERA_VISUAL_CORPUS_DIR")
             .map(PathBuf::from)
@@ -4631,6 +4632,142 @@ mod tests {
                     }));
                     continue;
                 }
+            };
+
+            let source_observations = if file_name.eq_ignore_ascii_case("SampleNewsletter.pub") {
+                let source_hash = source_sha256
+                    .parse::<pub_model::Sha256Digest>()
+                    .expect("visual fixture SHA-256 must parse");
+                let source = pub_reader::build_mature_0x2c_source_graph(
+                    Cursor::new(bytes.as_slice()),
+                    source_hash,
+                )
+                .expect("build SampleNewsletter source graph for visual diagnostics");
+                let resolved = pub_reader::resolve_pub_source_graph(&source.graph)
+                    .expect("resolve SampleNewsletter graph for visual diagnostics");
+                let page2_origin = visual
+                    .document
+                    .pages
+                    .iter()
+                    .find(|page| page.index == 2)
+                    .expect("SampleNewsletter page 2")
+                    .id
+                    .into_canonical();
+
+                let page2_nodes = resolved
+                    .graph
+                    .nodes
+                    .values()
+                    .filter(|node| node.header.parent_id == page2_origin)
+                    .collect::<Vec<_>>();
+
+                let fill_solid = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.fill.solid)
+                    .count();
+                let fill_color = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.fill.color_rgb.is_some())
+                    .count();
+                let fill_visible_true = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.fill.visible == Some(true))
+                    .count();
+                let fill_visible_false = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.fill.visible == Some(false))
+                    .count();
+                let fill_visible_unknown = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.fill.visible.is_none())
+                    .count();
+                let fill_promotable = page2_nodes
+                    .iter()
+                    .filter(|node| {
+                        let fill = &node.payload.explicit_paint.fill;
+                        fill.solid && fill.color_rgb.is_some() && fill.visible == Some(true)
+                    })
+                    .count();
+
+                let line_color = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.line.color_rgb.is_some())
+                    .count();
+                let line_width_positive = page2_nodes
+                    .iter()
+                    .filter(|node| {
+                        node.payload
+                            .explicit_paint
+                            .line
+                            .width_emu
+                            .is_some_and(|width| width > 0)
+                    })
+                    .count();
+                let line_visible_true = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.line.visible == Some(true))
+                    .count();
+                let line_visible_false = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.line.visible == Some(false))
+                    .count();
+                let line_visible_unknown = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.explicit_paint.line.visible.is_none())
+                    .count();
+                let line_promotable = page2_nodes
+                    .iter()
+                    .filter(|node| {
+                        let line = &node.payload.explicit_paint.line;
+                        line.color_rgb.is_some()
+                            && line.width_emu.is_some_and(|width| width > 0)
+                            && line.visible == Some(true)
+                    })
+                    .count();
+                let image_slots = page2_nodes
+                    .iter()
+                    .filter(|node| node.payload.image_slot.is_some())
+                    .count();
+
+                let mut shape_types = std::collections::BTreeMap::<String, usize>::new();
+                for node in &page2_nodes {
+                    let key = node
+                        .payload
+                        .officeart_shape_type
+                        .map(|value| format!("0x{value:04x}"))
+                        .unwrap_or_else(|| "none".to_owned());
+                    *shape_types.entry(key).or_default() += 1;
+                }
+
+                json!({
+                    "page_2_resolved_nodes": page2_nodes.len(),
+                    "fill": {
+                        "solid": fill_solid,
+                        "color_rgb": fill_color,
+                        "visible_true": fill_visible_true,
+                        "visible_false": fill_visible_false,
+                        "visible_unknown": fill_visible_unknown,
+                        "promotable_by_current_viewer": fill_promotable
+                    },
+                    "line": {
+                        "color_rgb": line_color,
+                        "positive_width": line_width_positive,
+                        "visible_true": line_visible_true,
+                        "visible_false": line_visible_false,
+                        "visible_unknown": line_visible_unknown,
+                        "promotable_by_current_viewer": line_promotable
+                    },
+                    "image_slots": image_slots,
+                    "officeart_shape_types": shape_types,
+                    "viewer_diagnostics": visual
+                        .document
+                        .diagnostics
+                        .iter()
+                        .map(|diagnostic| diagnostic.code.clone())
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                serde_json::Value::Null
             };
 
             let mut pages = Vec::new();
@@ -4785,6 +4922,7 @@ mod tests {
                 "open_status": "OPENED",
                 "fidelity_status": format!("{:?}", visual.document.fidelity_status()),
                 "page_count": visual.document.pages.len(),
+                "source_observations": source_observations,
                 "pages": pages,
             }));
         }
