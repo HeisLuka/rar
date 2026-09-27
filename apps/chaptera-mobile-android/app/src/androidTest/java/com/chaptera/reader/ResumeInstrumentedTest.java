@@ -44,13 +44,7 @@ public final class ResumeInstrumentedTest {
 
                     PubCanvasView canvas = activity.findViewById(R.id.reader_canvas);
                     dispatchPan(canvas);
-
-                    activity.getSharedPreferences("chaptera_reader_resume_v1", android.content.Context.MODE_PRIVATE)
-                        .edit()
-                        .putFloat("zoom", 2.0f)
-                        .putFloat("pan_x", canvas.getPanXOffset())
-                        .putFloat("pan_y", canvas.getPanYOffset())
-                        .commit();
+                    canvas.applyScaleFactor(2f);
                 });
             }
 
