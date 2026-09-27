@@ -16,9 +16,7 @@ use chaptera_cdm_model::{
     AUTHORING_REVISION_SCHEMA_V1, AuthoringRevisionIdV1, canonical_revision_json_v1,
     derive_authoring_revision_id_v1,
 };
-use pub_editor::{
-    EditOperation, LengthEmu, NodeId, Sha256Digest, open_mature_0x2c_editor,
-};
+use pub_editor::{EditOperation, LengthEmu, NodeId, Sha256Digest, open_mature_0x2c_editor};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -26,13 +24,13 @@ use sha2::{Digest, Sha256};
 use crate::{
     auth_http::{AuthHttpError, AuthHttpState},
     authz_runtime::{
-        CAP_VIEW, AuthzError, SqliteAuthzAuthority, SqliteAuthorizedRevisionCommitter,
+        AuthzError, CAP_VIEW, SqliteAuthorizedRevisionCommitter, SqliteAuthzAuthority,
     },
     revision_materializer::{
-        BlobStoreExactSourceLoader, EditorRevisionEventV1, ExactRevisionMaterializer,
-        PubEditorReplayEngine, RevisionMaterializerError, decode_editor_revision_event_v1,
-        encode_editor_revision_event_v1, project_sha256,
-        EDITOR_REVISION_EVENT_SCHEMA_V1, EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION,
+        BlobStoreExactSourceLoader, EDITOR_REVISION_EVENT_SCHEMA_V1,
+        EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorRevisionEventV1,
+        ExactRevisionMaterializer, PubEditorReplayEngine, RevisionMaterializerError,
+        decode_editor_revision_event_v1, encode_editor_revision_event_v1, project_sha256,
     },
     source_authority::{SourceAuthorityError, SqliteDocumentSourceAuthority},
     source_baseline::{SourceBaselineError, derive_commit_revision_identities},
@@ -61,8 +59,7 @@ impl ProductApiHttpState {
         revisions: SqliteRevisionStore,
         source_loader: BlobStoreExactSourceLoader,
     ) -> Result<Self, AuthzError> {
-        let committer =
-            SqliteAuthorizedRevisionCommitter::new(authz.clone(), revisions.clone())?;
+        let committer = SqliteAuthorizedRevisionCommitter::new(authz.clone(), revisions.clone())?;
         let materializer = Arc::new(ExactRevisionMaterializer::new(
             Arc::new(source.clone()),
             Arc::new(source_loader),
@@ -273,10 +270,11 @@ async fn commit_move_node(
             )
         })?;
 
-    let node_id: NodeId = serde_json::from_value(serde_json::Value::String(
-        request.command.node_id.clone(),
-    ))
-    .map_err(|_| ProductApiError::bad_request("node_id_invalid", "node_id is not canonical"))?;
+    let node_id: NodeId =
+        serde_json::from_value(serde_json::Value::String(request.command.node_id.clone()))
+            .map_err(|_| {
+                ProductApiError::bad_request("node_id_invalid", "node_id is not canonical")
+            })?;
 
     let operation = session
         .move_node_to(
@@ -344,10 +342,9 @@ async fn commit_move_node(
     let canonical_event =
         encode_editor_revision_event_v1(&event).map_err(ProductApiError::Materializer)?;
 
-    let child_cursor = head
-        .cursor
-        .checked_add(1)
-        .ok_or_else(|| ProductApiError::internal("revision_cursor_overflow", "revision cursor overflow"))?;
+    let child_cursor = head.cursor.checked_add(1).ok_or_else(|| {
+        ProductApiError::internal("revision_cursor_overflow", "revision cursor overflow")
+    })?;
 
     let edge = RevisionEdge {
         document_id: document_id.clone(),
@@ -458,7 +455,10 @@ async fn accepted_from_receipt(
     }))
 }
 
-fn validate_request(request: &CommitRequestV1, path_document_id: &str) -> Result<(), ProductApiError> {
+fn validate_request(
+    request: &CommitRequestV1,
+    path_document_id: &str,
+) -> Result<(), ProductApiError> {
     if request.protocol_version != COMMIT_REQUEST_V1 {
         return Err(ProductApiError::bad_request(
             "protocol_version_invalid",
@@ -538,8 +538,9 @@ fn now_ms() -> Result<i64, ProductApiError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| ProductApiError::internal("clock_invalid", "system clock is before epoch"))?
         .as_millis();
-    i64::try_from(millis)
-        .map_err(|_| ProductApiError::internal("clock_out_of_range", "system clock is out of range"))
+    i64::try_from(millis).map_err(|_| {
+        ProductApiError::internal("clock_out_of_range", "system clock is out of range")
+    })
 }
 
 #[derive(Debug)]
@@ -630,7 +631,11 @@ impl IntoResponse for ProductApiError {
                 status,
                 code,
                 message,
-            } => (status, Json(json!({"error": {"code": code, "message": message}}))).into_response(),
+            } => (
+                status,
+                Json(json!({"error": {"code": code, "message": message}})),
+            )
+                .into_response(),
         }
     }
 }
@@ -674,6 +679,9 @@ mod tests {
                 y_emu: 20,
             },
         };
-        assert_eq!(request_hash(&request).unwrap(), request_hash(&request).unwrap());
+        assert_eq!(
+            request_hash(&request).unwrap(),
+            request_hash(&request).unwrap()
+        );
     }
 }
