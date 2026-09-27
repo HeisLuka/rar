@@ -37,7 +37,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Install cargo-ndk
         run: cargo +1.94.1 install cargo-ndk --locked
@@ -47,6 +47,7 @@ jobs:
           rm -rf apps/chaptera-mobile-android/app/src/main/jniLibs
           cargo +1.94.1 ndk             -t arm64-v8a             -o apps/chaptera-mobile-android/app/src/main/jniLibs             build             --manifest-path crates/chaptera-mobile-reader-jni/Cargo.toml             --release
           test -f apps/chaptera-mobile-android/app/src/main/jniLibs/arm64-v8a/libchaptera_mobile_reader_jni.so
+          test -f apps/chaptera-mobile-android/app/src/main/jniLibs/x86_64/libchaptera_mobile_reader_jni.so
 
       - name: Acquire pinned real PUB fixture
         run: |
@@ -62,6 +63,7 @@ jobs:
       - name: Verify APK contains native Reader bridge and no INTERNET permission declaration
         run: |
           unzip -l apps/chaptera-mobile-android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/arm64-v8a/libchaptera_mobile_reader_jni.so'
+          unzip -l apps/chaptera-mobile-android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/x86_64/libchaptera_mobile_reader_jni.so'
           if grep -R --fixed-string 'android.permission.INTERNET' apps/chaptera-mobile-android/app/src/main; then
             echo "mobile Reader common path must not request INTERNET permission"
             exit 1
@@ -71,7 +73,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          arch: arm64-v8a
+          arch: x86_64
           profile: pixel_6
           disable-animations: true
           script: |
