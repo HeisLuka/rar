@@ -120,6 +120,15 @@ pub struct BaselineIdentityDerivation {
     pub canonical_authoring_revision_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitIdentityDerivation {
+    pub project_hash: String,
+    pub state_id: String,
+    pub transition_hash: String,
+    pub service_revision_id: String,
+}
+
+
 #[derive(Serialize)]
 struct WebAuthoringStateV1<'a> {
     protocol_version: &'static str,
@@ -181,6 +190,49 @@ pub fn derive_import_baseline_identities<G: Serialize + ?Sized>(
         state_id,
         service_revision_id,
         canonical_authoring_revision_id,
+    })
+}
+
+pub fn derive_commit_revision_identities<
+    G: Serialize + ?Sized,
+    O: Serialize + ?Sized,
+>(
+    document_id: &str,
+    source_sha256: &str,
+    project_schema_version: &str,
+    project: &G,
+    parent_revision_id: &str,
+    canonical_operation: &O,
+) -> Result<CommitIdentityDerivation, SourceBaselineError> {
+    require_ident(document_id, "document_id")?;
+    require_sha256(source_sha256, "source_sha256")?;
+    require_ident(project_schema_version, "project_schema_version")?;
+    require_ident(parent_revision_id, "parent_revision_id")?;
+
+    let project_hash = web_hash_id(project)?;
+    let state_id = web_hash_id(&WebAuthoringStateV1 {
+        protocol_version: "chaptera.authoring-state.v1",
+        document_id,
+        source_hash: source_sha256,
+        project_schema_version,
+        project_hash: &project_hash,
+    })?;
+    let transition_hash = web_hash_id(canonical_operation)?;
+    let service_revision_id = web_hash_id(&WebRevisionNodeV1 {
+        protocol_version: "chaptera.revision-node.v1",
+        document_id,
+        source_hash: source_sha256,
+        parent_revision_id: Some(parent_revision_id),
+        state_id: &state_id,
+        transition_kind: "commit",
+        transition_hash: Some(&transition_hash),
+    })?;
+
+    Ok(CommitIdentityDerivation {
+        project_hash,
+        state_id,
+        transition_hash,
+        service_revision_id,
     })
 }
 
