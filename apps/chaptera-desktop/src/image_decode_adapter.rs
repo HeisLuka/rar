@@ -226,7 +226,7 @@ mod tests {
         let rgb = admit_decoded_image_v1(&decoded("rgb", 8, "normal", vec![1, 2, 3, 4, 5, 6]))
             .expect("RGB admitted");
         assert_eq!(
-            rgb.color_image.as_raw(),
+            rgb.color_image.pixels.as_slice(),
             &[
                 egui::Color32::from_rgba_unmultiplied(1, 2, 3, 255),
                 egui::Color32::from_rgba_unmultiplied(4, 5, 6, 255),
@@ -237,7 +237,7 @@ mod tests {
             admit_decoded_image_v1(&decoded("gray_alpha", 8, "normal", vec![7, 8, 9, 10]))
                 .expect("gray-alpha admitted");
         assert_eq!(
-            gray_alpha.color_image.as_raw(),
+            gray_alpha.color_image.pixels.as_slice(),
             &[
                 egui::Color32::from_rgba_unmultiplied(7, 7, 7, 8),
                 egui::Color32::from_rgba_unmultiplied(9, 9, 9, 10),
