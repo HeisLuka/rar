@@ -164,6 +164,22 @@ impl UpdateEngine {
             )));
         }
         validate_journal(&winner.journal)?;
+
+        // A terminal journal retained only as .prev is durable install-root
+        // history/high-water, not an active transaction. Keep it visible to
+        // generation seeding through read_journal_candidates(), but preserve
+        // the landed public contract that read_journal() returns None once
+        // confirmation/rollback has been archived.
+        let only_archived_terminal = !self.journal_path().exists()
+            && !self.journal_next_path().exists()
+            && matches!(
+                winner.journal.phase,
+                UpdatePhase::CandidateConfirmed | UpdatePhase::RolledBack
+            );
+        if only_archived_terminal {
+            return Ok(None);
+        }
+
         Ok(Some(winner.journal.clone()))
     }
 
