@@ -239,11 +239,6 @@ async fn authorize_download(
             "requested artifact_id differs from the visible authorized export publication",
         ));
     }
-    let source = state
-        .source
-        .resolve_by_document_id(&publication.document_id)
-        .await
-        .map_err(ProductExportHttpError::Source)?;
     let now_u64 = u64::try_from(now)
         .map_err(|_| ProductExportHttpError::internal("clock_out_of_range", "negative clock"))?;
     let expires_at_ms = now_u64.checked_add(DOWNLOAD_GRANT_TTL_MS).ok_or_else(|| {
@@ -252,7 +247,7 @@ async fn authorize_download(
     let grant = state
         .blobs
         .issue_download_grant(
-            &source.tenant_id,
+            &publication.tenant_id,
             &publication.artifact_binding_id,
             now_u64,
             expires_at_ms,
