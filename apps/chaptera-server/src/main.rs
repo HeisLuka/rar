@@ -12,10 +12,13 @@ use chaptera_server::{
     jobs::UnconfiguredWorkerRuntime,
     jobs_runtime::JobsRuntime,
     migrate,
+    product_api_http::{self, ProductApiHttpState},
     project_persistence_sqlite::SqliteProjectPersistence,
+    revision_materializer::BlobStoreExactSourceLoader,
     runtime_readiness::{ports_with_configured_serve, ports_with_revision_stream},
     schema_migration::SqliteMigrationRuntime,
     serve, source_baseline,
+    source_authority::SqliteDocumentSourceAuthority,
     source_baseline::IsolatedSourceBaselineProducer,
     source_ingress_http::{self, SourceIngressHttpState},
     source_ingress_sqlite::SqliteSourceIngressRepository,
@@ -162,7 +165,23 @@ async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                             projects,
                             source_ingress_http::http_config(source_config),
                         )?;
-                        Some(source_ingress_http::router(source_state))
+                        let source_authority = SqliteDocumentSourceAuthority::open(
+                            &config.sqlite.path,
+                            config.sqlite.pool_max,
+                            busy_timeout,
+                        )
+                        .await?;
+                        let product_state = ProductApiHttpState::new(
+                            auth_http.clone(),
+                            source_authority,
+                            authz.clone(),
+                            revision_stream.clone(),
+                            BlobStoreExactSourceLoader::new(blob_store.service().clone()),
+                        )?;
+                        Some(
+                            source_ingress_http::router(source_state)
+                                .merge(product_api_http::router(product_state)),
+                        )
                     } else {
                         None
                     };
