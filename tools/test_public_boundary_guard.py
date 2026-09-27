@@ -54,6 +54,15 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             [],
         )
 
+    def test_program_files_path_with_spaces_is_allowed(self):
+        program_files = "C:" + "\\Program Files\\Chaptera\\tool.exe"
+        self.assertEqual(
+            self.guard.content_violations(
+                "tools/platform_probe.py", 'EXE = r"' + program_files + '"'
+            ),
+            [],
+        )
+
     def test_user_home_path_is_rejected_but_github_runner_path_is_allowed(self):
         leaked = "/home/" + "alice/Downloads/pub/sample.pub"
         violations = self.guard.content_violations(
