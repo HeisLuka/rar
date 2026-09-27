@@ -30,61 +30,62 @@ public final class ReadShellInstrumentedTest {
     public void navigation_zoom_pan_and_rotation_keep_one_reader_session() throws Exception {
         byte[] fixture = readAsset("SampleNewsletter.pub");
         Uri uri = insertDownload("SampleNewsletter.pub", fixture);
+        ActivityScenario<MainActivity> scenario = null;
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW)
                 .setClass(InstrumentationRegistry.getInstrumentation().getTargetContext(), MainActivity.class)
                 .setDataAndType(uri, "application/x-mspublisher")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-            try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(intent)) {
-                scenario.onActivity(activity -> {
-                    TextView status = activity.findViewById(R.id.reader_status);
-                    Button next = activity.findViewById(R.id.reader_next);
-                    EditText jump = activity.findViewById(R.id.reader_page_jump);
-                    Button go = activity.findViewById(R.id.reader_page_go);
-                    PubCanvasView canvas = activity.findViewById(R.id.reader_canvas);
+            scenario = ActivityScenario.launch(intent);
+            final String[] statusBefore = new String[1];
+            final float[] viewportBefore = new float[3];
 
-                    assertTrue(status.getText().toString().contains("page 1/"));
-                    assertTrue("fixture should exercise multipage navigation", next.isEnabled());
+            scenario.onActivity(activity -> {
+                TextView status = activity.findViewById(R.id.reader_status);
+                Button next = activity.findViewById(R.id.reader_next);
+                EditText jump = activity.findViewById(R.id.reader_page_jump);
+                Button go = activity.findViewById(R.id.reader_page_go);
+                PubCanvasView canvas = activity.findViewById(R.id.reader_canvas);
 
-                    next.performClick();
-                    assertTrue(status.getText().toString().contains("page 2/"));
+                assertTrue(status.getText().toString().contains("page 1/"));
+                assertTrue("fixture should exercise multipage navigation", next.isEnabled());
 
-                    jump.setText("1");
-                    go.performClick();
-                    assertTrue(status.getText().toString().contains("page 1/"));
+                next.performClick();
+                assertTrue(status.getText().toString().contains("page 2/"));
 
-                    dispatchPan(canvas);
-                    assertTrue(Math.abs(canvas.getPanXOffset()) > 0f || Math.abs(canvas.getPanYOffset()) > 0f);
+                jump.setText("1");
+                go.performClick();
+                assertTrue(status.getText().toString().contains("page 1/"));
 
-                    canvas.applyScaleFactor(2f);
-                    assertTrue("bounded scale operation should increase zoom", canvas.getZoom() > 1f);
+                dispatchPan(canvas);
+                assertTrue(Math.abs(canvas.getPanXOffset()) > 0f || Math.abs(canvas.getPanYOffset()) > 0f);
 
-                    float zoomBefore = canvas.getZoom();
-                    float panXBefore = canvas.getPanXOffset();
-                    float panYBefore = canvas.getPanYOffset();
-                    String statusBefore = status.getText().toString();
+                canvas.applyScaleFactor(2f);
+                assertTrue("bounded scale operation should increase zoom", canvas.getZoom() > 1f);
 
-                    activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+                statusBefore[0] = status.getText().toString();
+                viewportBefore[0] = canvas.getZoom();
+                viewportBefore[1] = canvas.getPanXOffset();
+                viewportBefore[2] = canvas.getPanYOffset();
 
-                    activity.getIntent().putExtra("chaptera_test_status_before", statusBefore);
-                    activity.getIntent().putExtra("chaptera_test_zoom_before", zoomBefore);
-                    activity.getIntent().putExtra("chaptera_test_pan_x_before", panXBefore);
-                    activity.getIntent().putExtra("chaptera_test_pan_y_before", panYBefore);
-                });
-            }
+                activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+            });
 
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
             scenario.onActivity(activity -> {
                 TextView status = activity.findViewById(R.id.reader_status);
                 PubCanvasView canvas = activity.findViewById(R.id.reader_canvas);
-                Intent current = activity.getIntent();
-                assertEquals(current.getStringExtra("chaptera_test_status_before"), status.getText().toString());
-                assertEquals(current.getFloatExtra("chaptera_test_zoom_before", 1f), canvas.getZoom(), 0.001f);
-                assertEquals(current.getFloatExtra("chaptera_test_pan_x_before", 0f), canvas.getPanXOffset(), 0.001f);
-                assertEquals(current.getFloatExtra("chaptera_test_pan_y_before", 0f), canvas.getPanYOffset(), 0.001f);
+                assertEquals(statusBefore[0], status.getText().toString());
+                assertEquals(viewportBefore[0], canvas.getZoom(), 0.001f);
+                assertEquals(viewportBefore[1], canvas.getPanXOffset(), 0.001f);
+                assertEquals(viewportBefore[2], canvas.getPanYOffset(), 0.001f);
             });
         } finally {
+            if (scenario != null) {
+                scenario.close();
+            }
             InstrumentationRegistry.getInstrumentation().getTargetContext()
                 .getContentResolver().delete(uri, null, null);
         }
