@@ -4566,6 +4566,260 @@ mod tests {
 
     #[cfg(not(feature = "reader-only"))]
     #[test]
+    #[ignore = "visual corpus evidence requires CHAPTERA_VISUAL_CORPUS_DIR and CHAPTERA_VISUAL_CORPUS_OUT"]
+    fn visual_corpus_semantic_probe_and_snapshots() {
+        use egui_kittest::Harness;
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
+
+        let corpus_dir = std::env::var_os("CHAPTERA_VISUAL_CORPUS_DIR")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_VISUAL_CORPUS_DIR must name a directory with .pub fixtures");
+        let output_dir = std::env::var_os("CHAPTERA_VISUAL_CORPUS_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_VISUAL_CORPUS_OUT must name the retained visual-corpus directory");
+        fs::create_dir_all(&output_dir).expect("create visual corpus output directory");
+
+        let mut fixtures = fs::read_dir(&corpus_dir)
+            .expect("read visual corpus directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pub"))
+            })
+            .collect::<Vec<_>>();
+        fixtures.sort();
+        assert!(
+            fixtures.len() >= 3,
+            "visual corpus must contain at least three PUB fixtures"
+        );
+
+        let mut documents = Vec::new();
+        let mut opened_documents = 0_usize;
+        let mut rendered_pages = 0_usize;
+
+        for fixture in fixtures {
+            let file_name = fixture
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "unknown.pub".to_owned());
+            let safe_name = file_name
+                .chars()
+                .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+                .collect::<String>()
+                .trim_matches('-')
+                .to_ascii_lowercase();
+            let bytes = fs::read(&fixture)
+                .unwrap_or_else(|error| panic!("read visual fixture {}: {error}", fixture.display()));
+            let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+
+            let visual = match diagnostic_sweep::open_for_product(&bytes) {
+                Ok(visual) => {
+                    opened_documents += 1;
+                    visual
+                }
+                Err(error) => {
+                    documents.push(json!({
+                        "file": file_name,
+                        "source_sha256": source_sha256,
+                        "byte_len": bytes.len(),
+                        "open_status": "OPEN_FAILED",
+                        "error": error.to_string(),
+                        "pages": [],
+                    }));
+                    continue;
+                }
+            };
+
+            let mut pages = Vec::new();
+            let mut selected_pages = Vec::new();
+
+            for (page_offset, page) in visual.document.pages.iter().enumerate() {
+                let page_origin = page.id.into_canonical();
+                let page_node_ids = visual
+                    .scene
+                    .nodes
+                    .iter()
+                    .filter(|node| node.parent_origin == page_origin)
+                    .map(|node| node.origin)
+                    .collect::<Vec<_>>();
+
+                let scene_nodes = page_node_ids.len();
+                let painted_nodes = visual
+                    .paints
+                    .iter()
+                    .filter(|paint| page_node_ids.contains(&paint.node_id))
+                    .count();
+                let text_fragments = visual
+                    .text_fragments
+                    .iter()
+                    .filter(|fragment| {
+                        page_node_ids.contains(&fragment.frame_id) && !fragment.text.trim().is_empty()
+                    })
+                    .count();
+                let non_whitespace_chars = visual
+                    .text_fragments
+                    .iter()
+                    .filter(|fragment| page_node_ids.contains(&fragment.frame_id))
+                    .map(|fragment| fragment.text.chars().filter(|ch| !ch.is_whitespace()).count())
+                    .sum::<usize>();
+                let image_placements = visual
+                    .images
+                    .iter()
+                    .map(|image| {
+                        image
+                            .node_ids
+                            .iter()
+                            .filter(|node_id| page_node_ids.contains(node_id))
+                            .count()
+                    })
+                    .sum::<usize>();
+
+                // Current Viewer paints every resolved page-owned scene node with at least
+                // a visible outline. Surface/background alone is not content. Therefore
+                // a page with zero page-owned scene nodes is semantically empty for this
+                // visual test stand and does not need a screenshot.
+                let semantic_status = if scene_nodes > 0 {
+                    "HAS_CONTENT"
+                } else {
+                    "EMPTY"
+                };
+
+                if semantic_status == "HAS_CONTENT" && selected_pages.len() < 3 {
+                    selected_pages.push(page_offset);
+                }
+
+                pages.push(json!({
+                    "page_offset": page_offset,
+                    "page_number": page.index,
+                    "semantic_status": semantic_status,
+                    "scene_nodes": scene_nodes,
+                    "painted_nodes": painted_nodes,
+                    "text_fragments": text_fragments,
+                    "non_whitespace_chars": non_whitespace_chars,
+                    "image_placements": image_placements,
+                    "selected_for_render": false,
+                    "png": null,
+                }));
+            }
+
+            for page_offset in selected_pages {
+                let page_number = visual.document.pages[page_offset].index;
+                let png_name = format!("{safe_name}-page-{page_number:03}.png");
+                let fixture_for_app = fixture.clone();
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(1280.0, 820.0))
+                    .with_pixels_per_point(1.0)
+                    .with_max_steps(20)
+                    .wgpu()
+                    .build_eframe(move |cc| {
+                        fallback_font::install(&cc.egui_ctx)
+                            .expect("pinned Chaptera fallback font resource must validate");
+                        let mut app =
+                            ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                        app.selected_page = page_offset;
+                        app
+                    });
+                harness.step();
+
+                let image = harness
+                    .render()
+                    .expect("headless WGPU visual-corpus render must succeed");
+                assert_eq!(image.width(), 1280);
+                assert_eq!(image.height(), 820);
+
+                let output = output_dir.join(&png_name);
+                image.save(&output).expect("write visual-corpus PNG");
+                assert!(
+                    output.metadata().expect("visual PNG metadata").len() >= 16_384,
+                    "visual-corpus PNG is implausibly small"
+                );
+
+                if let Some(page) = pages.get_mut(page_offset) {
+                    page["selected_for_render"] = json!(true);
+                    page["png"] = json!(png_name);
+                }
+                rendered_pages += 1;
+            }
+
+            if file_name.eq_ignore_ascii_case("SampleNewsletter.pub") {
+                if let Some(golden_page_offset) = visual
+                    .document
+                    .pages
+                    .iter()
+                    .position(|page| page.index == 2)
+                {
+                    let golden_name = "samplenewsletter-golden-page-002.png";
+                    let fixture_for_app = fixture.clone();
+                    let mut harness = Harness::builder()
+                        .with_size(egui::vec2(1600.0, 1800.0))
+                        .with_pixels_per_point(1.0)
+                        .with_max_steps(20)
+                        .wgpu()
+                        .build_eframe(move |cc| {
+                            fallback_font::install(&cc.egui_ctx)
+                                .expect("pinned Chaptera fallback font resource must validate");
+                            let mut app =
+                                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                            app.selected_page = golden_page_offset;
+                            app
+                        });
+                    harness.step();
+                    let image = harness
+                        .render()
+                        .expect("headless WGPU golden-page render must succeed");
+                    assert_eq!(image.width(), 1600);
+                    assert_eq!(image.height(), 1800);
+                    image
+                        .save(output_dir.join(golden_name))
+                        .expect("write golden-page PNG");
+                }
+            }
+
+            documents.push(json!({
+                "file": file_name,
+                "source_sha256": source_sha256,
+                "byte_len": bytes.len(),
+                "open_status": "OPENED",
+                "fidelity_status": format!("{:?}", visual.document.fidelity_status()),
+                "page_count": visual.document.pages.len(),
+                "pages": pages,
+            }));
+        }
+
+        assert!(
+            opened_documents >= 2,
+            "visual stand must open at least two corpus documents"
+        );
+        assert!(
+            rendered_pages >= 2,
+            "visual stand must retain at least two semantically non-empty page renders"
+        );
+
+        let receipt = json!({
+            "schema_version": "chaptera.visual-corpus.v1",
+            "renderer": "chaptera-egui-kittest-wgpu-headless-windows",
+            "semantic_empty_rule": "page-owned resolved scene node count == 0",
+            "max_renders_per_document": 3,
+            "opened_documents": opened_documents,
+            "rendered_pages": rendered_pages,
+            "documents": documents,
+        });
+        fs::write(
+            output_dir.join("visual-corpus-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize visual-corpus receipt"),
+        )
+        .expect("write visual-corpus receipt");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&receipt).expect("print visual-corpus receipt")
+        );
+    }
+
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
     #[ignore = "runtime UX evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER and snapshot output env"]
     fn headless_wgpu_ux_snapshots_render_current_viewer_app() {
         use egui_kittest::Harness;
