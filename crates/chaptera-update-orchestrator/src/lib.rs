@@ -240,6 +240,10 @@ impl UpdateOrchestrator {
         // Crash leftovers are repaired while the exclusive OS lock is held,
         // before a new transaction can stage or switch anything.
         let startup_recovery = self.engine.recover()?;
+        // A terminal copied-control process may have left its own executable in
+        // .staging because Windows cannot unlink a running image. Once this new
+        // owner has the lock, that prior process is gone and cleanup is safe.
+        self.engine.cleanup_orphaned_transactions()?;
 
         let control_updater = self.engine.begin_verified_candidate(
             transaction_id,
