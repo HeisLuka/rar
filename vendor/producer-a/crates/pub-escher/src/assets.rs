@@ -1,5 +1,7 @@
 use crate::{OfficeArtBody, OfficeArtReadError, OfficeArtRecord, parse_officeart_stream};
 use pub_core::{RawSpan, StreamPath};
+use flate2::read::ZlibDecoder;
+use std::io::Read;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -132,6 +134,13 @@ pub enum AssetReadError {
         slot: u32,
         fo_delay: u32,
     },
+    MetafileDecompressionFailed {
+        message: String,
+    },
+    MetafileSizeMismatch {
+        expected: u32,
+        actual: usize,
+    },
 }
 
 impl fmt::Display for AssetReadError {
@@ -167,6 +176,13 @@ impl fmt::Display for AssetReadError {
             Self::DelayedRecordNotFound { slot, fo_delay } => write!(
                 formatter,
                 "BStore slot {slot} points to missing delayed BLIP offset {fo_delay}"
+            ),
+            Self::MetafileDecompressionFailed { message } => {
+                write!(formatter, "OfficeArt metafile DEFLATE decode failed: {message}")
+            }
+            Self::MetafileSizeMismatch { expected, actual } => write!(
+                formatter,
+                "OfficeArt metafile materialized size mismatch: expected {expected} bytes, got {actual}"
             ),
         }
     }
@@ -382,6 +398,34 @@ fn detect_metafile_payload(
             len: compressed_size as u64,
         },
     }))
+}
+
+pub fn materialize_metafile_payload(
+    stream_bytes: &[u8],
+    payload: &OfficeArtMetafilePayload,
+) -> Result<Vec<u8>, AssetReadError> {
+    let carrier = span_slice(stream_bytes, &payload.file_data_source)?;
+    let materialized = match payload.compression {
+        MetafileCompression::None => carrier.to_vec(),
+        MetafileCompression::Deflate => {
+            let mut decoder = ZlibDecoder::new(carrier);
+            let mut output = Vec::with_capacity(payload.uncompressed_size as usize);
+            decoder
+                .read_to_end(&mut output)
+                .map_err(|error| AssetReadError::MetafileDecompressionFailed {
+                    message: error.to_string(),
+                })?;
+            output
+        }
+    };
+
+    if materialized.len() != payload.uncompressed_size as usize {
+        return Err(AssetReadError::MetafileSizeMismatch {
+            expected: payload.uncompressed_size,
+            actual: materialized.len(),
+        });
+    }
+    Ok(materialized)
 }
 
 fn detect_image_payload(
