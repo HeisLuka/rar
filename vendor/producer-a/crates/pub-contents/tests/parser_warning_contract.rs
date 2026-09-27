@@ -92,8 +92,8 @@ fn directory_wrong_supported_wire_is_context_error() {
 #[test]
 fn reference_context_reports_unsupported_reference_wire_separately() {
     let bytes = [
-        0x00, 0x88, 0x08, 0x00, 0x00, 0x00,
-        0x02, 0x19, 0x44, 0x00,
+        0x00, 0x88, 0x06, 0x00, 0x00, 0x00,
+        0x02, 0xC0,
     ];
     let directory = parse_confirmed_0x2c_directory(&bytes, span(bytes.len() as u64))
         .expect("directory envelope must parse");
@@ -103,10 +103,7 @@ fn reference_context_reports_unsupported_reference_wire_separately() {
     assert!(matches!(
         error,
         ChunkReferenceReadError::UnsupportedReferenceWireType {
-            block_type: 0x18,
-            offset: 6
-        } | ChunkReferenceReadError::UnsupportedReferenceWireType {
-            block_type: 0x19,
+            block_type: 0xC0,
             offset: 6
         }
     ));
