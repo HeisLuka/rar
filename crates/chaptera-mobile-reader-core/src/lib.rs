@@ -13,7 +13,9 @@ pub use pub_viewer::{
     BoundedLayoutEnvironment, ViewerDiagnostic, ViewerFidelityStatus, ViewerTextMatch,
     local_failure_diagnostic_json,
 };
-use pub_viewer::{ViewerGeometryDocument, open_mature_0x2c_geometry};
+use pub_viewer::{
+    ViewerGeometryDocument, open_mature_0x2c_geometry, viewer_geometry_environment_v0_1,
+};
 
 pub const MOBILE_READER_CORE_SCHEMA_V1: &str = "chaptera.mobile-reader-core.v1";
 
@@ -36,6 +38,13 @@ impl MobileReaderDocumentV1 {
         Ok(Self {
             visual: open_mature_0x2c_geometry(bytes, environment)?,
         })
+    }
+
+    /// Opens immutable local PUB bytes using the shared Viewer environment.
+    /// Platform shells should prefer this so Android/iOS do not duplicate
+    /// layout-environment authority.
+    pub fn open_default(bytes: &[u8]) -> Result<Self> {
+        Self::open(bytes, viewer_geometry_environment_v0_1())
     }
 
     pub fn page_count(&self) -> usize {
@@ -101,6 +110,8 @@ mod tests {
     fn public_surface_is_compile_time_read_only_facade() {
         let _open: fn(&[u8], BoundedLayoutEnvironment) -> Result<MobileReaderDocumentV1> =
             MobileReaderDocumentV1::open;
+        let _open_default: fn(&[u8]) -> Result<MobileReaderDocumentV1> =
+            MobileReaderDocumentV1::open_default;
         let _plan: fn(
             &MobileReaderDocumentV1,
             usize,
