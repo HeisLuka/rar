@@ -86,11 +86,11 @@ jobs:
       - name: Run content-URI offline acceptance on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           arch: x86_64
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          disable-animations: true
+          disable-animations: false
           script: |
             adb shell svc wifi disable || true
             adb shell svc data disable || true
