@@ -8,6 +8,10 @@ on:
       - ".github/workflows/k8s-adoption-evidence-v1.yml"
   workflow_dispatch:
 
+concurrency:
+  group: k8s-adoption-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
