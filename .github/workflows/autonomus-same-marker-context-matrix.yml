@@ -1,0 +1,35 @@
+name: Autonomus same-marker context matrix
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/tests/same_marker_context_matrix.rs"
+      - "tools/pub-research/build_same_marker_context_matrix_receipt.py"
+      - ".github/workflows/autonomus-same-marker-context-matrix.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run source-free same-marker context matrix
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents --test same_marker_context_matrix
+      - name: Build receipt
+        run: |
+          python tools/pub-research/build_same_marker_context_matrix_receipt.py \
+            --test-source vendor/producer-a/crates/pub-contents/tests/same_marker_context_matrix.rs \
+            --commit-sha "${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/autonomus-same-marker-context-matrix.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autonomus-same-marker-context-matrix
+          path: ${{ runner.temp }}/autonomus-same-marker-context-matrix.json
+          if-no-files-found: error
