@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/mobile-reader-android-core-portability.yml"
       - "vendor/producer-a/**"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "crates/chaptera-mobile-reader-core/**"
 
 permissions:
   contents: read
@@ -31,15 +33,23 @@ jobs:
             -p pub-layout \
             -p pub-viewer
 
+      - name: Check Chaptera mobile Reader facade for Android
+        run: |
+          cargo +1.94.1 check \
+            --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml \
+            --target aarch64-linux-android
+
+      - name: Test mobile Reader facade on host
+        run: cargo +1.94.1 test --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml
+
       - name: Guard against desktop shell coupling
         run: |
           cargo +1.94.1 tree \
-            --manifest-path vendor/producer-a/Cargo.toml \
-            --target aarch64-linux-android \
-            -p pub-viewer > /tmp/pub-viewer-android-tree.txt
-          cat /tmp/pub-viewer-android-tree.txt
-          if grep -E '(^|[[:space:]])(chaptera-desktop|eframe|egui) v' /tmp/pub-viewer-android-tree.txt; then
-            echo "desktop UI dependency leaked into Android Viewer core"
+            --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml \
+            --target aarch64-linux-android > /tmp/chaptera-mobile-reader-android-tree.txt
+          cat /tmp/chaptera-mobile-reader-android-tree.txt
+          if grep -E '(^|[[:space:]])(chaptera-desktop|eframe|egui) v' /tmp/chaptera-mobile-reader-android-tree.txt; then
+            echo "desktop UI dependency leaked into Android mobile Reader core"
             exit 1
           fi
-          echo "OK: Android Viewer dependency tree contains no desktop UI packages"
+          echo "OK: Android mobile Reader dependency tree contains no desktop UI packages"
