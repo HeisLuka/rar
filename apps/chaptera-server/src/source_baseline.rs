@@ -128,7 +128,6 @@ pub struct CommitIdentityDerivation {
     pub service_revision_id: String,
 }
 
-
 #[derive(Serialize)]
 struct WebAuthoringStateV1<'a> {
     protocol_version: &'static str,
@@ -193,10 +192,7 @@ pub fn derive_import_baseline_identities<G: Serialize + ?Sized>(
     })
 }
 
-pub fn derive_commit_revision_identities<
-    G: Serialize + ?Sized,
-    O: Serialize + ?Sized,
->(
+pub fn derive_commit_revision_identities<G: Serialize + ?Sized, O: Serialize + ?Sized>(
     document_id: &str,
     source_sha256: &str,
     project_schema_version: &str,
