@@ -1,0 +1,59 @@
+name: Mobile Reader Android core portability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/mobile-reader-android-core-portability.yml"
+      - "vendor/producer-a/**"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "crates/chaptera-mobile-reader-core/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  android-core-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust Android target
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup target add aarch64-linux-android --toolchain 1.94.1
+
+      - name: Check PUB Reader and Viewer core for Android
+        run: |
+          cargo +1.94.1 check \
+            --manifest-path vendor/producer-a/Cargo.toml \
+            --target aarch64-linux-android \
+            -p pub-reader \
+            -p pub-layout \
+            -p pub-viewer
+
+      - name: Check Chaptera mobile Reader facade for Android
+        run: |
+          cargo +1.94.1 check \
+            --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml \
+            --target aarch64-linux-android
+
+      - name: Test mobile Reader facade on host
+        run: cargo +1.94.1 test --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml
+
+      - name: Guard against desktop shell coupling
+        run: |
+          cargo +1.94.1 tree \
+            --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml \
+            --target aarch64-linux-android > /tmp/chaptera-mobile-reader-android-tree.txt
+          cat /tmp/chaptera-mobile-reader-android-tree.txt
+          if grep -E '(^|[[:space:]])(chaptera-desktop|eframe|egui) v' /tmp/chaptera-mobile-reader-android-tree.txt; then
+            echo "desktop UI dependency leaked into Android mobile Reader core"
+            exit 1
+          fi
+          echo "OK: Android mobile Reader dependency tree contains no desktop UI packages"
