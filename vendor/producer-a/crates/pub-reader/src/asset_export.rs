@@ -1,8 +1,9 @@
 use crate::{
     ESCHER_DELAY_STREAM_PATH, ESCHER_STREAM_PATH, PubAssetManifest, PubAssetUse,
     PubImageResourceCatalog, PubSourceGraph, build_pub_asset_manifest,
-    build_pub_image_resource_catalog, image_resource_id_for_slot,
+    build_pub_image_resource_catalog,
 };
+use crate::assets::image_resource_id_for_slot;
 use anyhow::{Context, Result, bail};
 use pub_core::{RawPublication, RawSpan};
 use pub_model::{ResourceId, Sha256Digest};
