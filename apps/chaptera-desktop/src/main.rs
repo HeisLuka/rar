@@ -8,7 +8,6 @@ mod acceptance;
 mod agent;
 mod diagnostic_sweep;
 mod fallback_font;
-mod image_decode_adapter;
 #[allow(dead_code)]
 mod locale;
 mod product_smoke;
@@ -216,6 +215,30 @@ fn direct_scene_instance(
 fn main() -> eframe::Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first_arg = args.next();
+
+    if first_arg.as_deref()
+        == Some(std::ffi::OsStr::new(
+            chaptera_update_handoff::CONTROL_MODE_ARG,
+        ))
+    {
+        if !reader_only_mode() {
+            eprintln!("update control mode is reserved for the Chaptera Reader product");
+            std::process::exit(2);
+        }
+        let Some(request_path) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --chaptera-update-control HANDOFF-REQUEST.json");
+            std::process::exit(2);
+        };
+        if args.next().is_some() {
+            eprintln!("Reader update control mode accepts exactly one handoff request");
+            std::process::exit(2);
+        }
+        if let Err(error) = run_reader_update_control(&request_path) {
+            eprintln!("Reader update control failed: {error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--agent-v1")) {
         if args.next().is_some() {
@@ -441,6 +464,75 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+#[cfg(feature = "reader-only")]
+struct ReaderControlHooks;
+
+#[cfg(feature = "reader-only")]
+impl chaptera_update_orchestrator::UpdateHooks for ReaderControlHooks {
+    fn quiesce(&mut self, _control_updater: &Path) -> std::result::Result<(), String> {
+        // Ownership of the install lock proves the front-door U1 released its
+        // mutation authority before copied U1 reaches this point. Product-level
+        // process shutdown is deliberately a later slice.
+        Ok(())
+    }
+
+    fn health_check(&mut self, current_tree: &Path) -> std::result::Result<(), String> {
+        let candidate = current_tree.join(
+            std::env::current_exe()
+                .map_err(|error| format!("resolve control executable: {error}"))?
+                .file_name()
+                .ok_or_else(|| "control executable has no file name".to_owned())?,
+        );
+        if !candidate.is_file() {
+            return Err(format!(
+                "activated Reader executable missing: {}",
+                candidate.display()
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "reader-only")]
+fn run_reader_update_control(request_path: &Path) -> Result<(), String> {
+    let request = chaptera_update_handoff::read_control_request(request_path)
+        .map_err(|error| error.to_string())?;
+    let orchestrator = chaptera_update_orchestrator::UpdateOrchestrator::new(&request.install_root);
+    chaptera_update_handoff::validate_request_against_engine(&request, orchestrator.engine())
+        .map_err(|error| error.to_string())?;
+
+    let _lock = chaptera_update_orchestrator::InstallLock::acquire(&request.install_root)
+        .map_err(|error| error.to_string())?;
+    // Revalidate after blocking lock acquisition: the request may have become
+    // stale while copied U1 waited for its parent/front-door process to exit.
+    chaptera_update_handoff::validate_request_against_engine(&request, orchestrator.engine())
+        .map_err(|error| error.to_string())?;
+
+    let receipt = chaptera_update_handoff::ControlReceipt {
+        schema_version: chaptera_update_handoff::CONTROL_RECEIPT_SCHEMA_VERSION.to_owned(),
+        transaction_id: request.transaction_id.clone(),
+        pid: std::process::id(),
+        executable: std::env::current_exe()
+            .map_err(|error| format!("resolve control executable: {error}"))?,
+    };
+    chaptera_update_handoff::write_control_receipt(
+        &chaptera_update_handoff::receipt_path(request_path),
+        &receipt,
+    )
+    .map_err(|error| error.to_string())?;
+
+    let mut hooks = ReaderControlHooks;
+    orchestrator
+        .continue_prepared_candidate(&mut hooks)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(feature = "reader-only"))]
+fn run_reader_update_control(_request_path: &Path) -> Result<(), String> {
+    Err("update control mode is unavailable outside the Reader build".to_owned())
+}
+
 fn smoke_check(path: &Path) -> Result<(), String> {
     let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let visual = diagnostic_sweep::open_for_product(&bytes)
@@ -454,11 +546,6 @@ fn smoke_check(path: &Path) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-struct CachedImageTexture {
-    texture: egui::TextureHandle,
-    _cache_identity_sha256: String,
 }
 
 struct ViewerApp {
@@ -475,8 +562,7 @@ struct ViewerApp {
     search_query: String,
     search_results: Vec<ViewerTextMatch>,
     selected_search_result: Option<usize>,
-    image_textures: BTreeMap<String, CachedImageTexture>,
-    image_decode_diagnostics: BTreeMap<String, image_decode_adapter::DesktopImageDecodeDiagnostic>,
+    image_textures: BTreeMap<String, egui::TextureHandle>,
     editor: Option<pub_editor::EditorSession>,
     editor_load_error: Option<String>,
     edit_buffer: String,
@@ -526,7 +612,6 @@ impl ViewerApp {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
-            image_decode_diagnostics: BTreeMap::new(),
             editor: None,
             editor_load_error: None,
             edit_buffer: String::new(),
@@ -824,7 +909,6 @@ impl ViewerApp {
         self.search_results.clear();
         self.selected_search_result = None;
         self.image_textures.clear();
-        self.image_decode_diagnostics.clear();
         self.editor = None;
         self.editor_load_error = None;
         self.edit_buffer.clear();
@@ -1512,7 +1596,6 @@ impl ViewerApp {
             .any(|diagnostic| diagnostic.code == "viewer.visual.geometry_only");
         let preview_clipped_frames = self.preview_clipped_frames;
         let diagnostics = &visual.document.diagnostics;
-        let decode_diagnostics = &self.image_decode_diagnostics;
         let mut open = self.show_diagnostics;
 
         egui::Window::new("Fidelity & diagnostics")
@@ -1547,34 +1630,12 @@ impl ViewerApp {
                     ui.weak("No Viewer diagnostics.");
                 } else {
                     egui::ScrollArea::vertical()
-                        .max_height(260.0)
+                        .max_height(360.0)
                         .show(ui, |ui| {
                             for diagnostic in diagnostics {
                                 ui.group(|ui| {
                                     ui.strong(&diagnostic.code);
                                     ui.small(diagnostic_severity_label(diagnostic.severity));
-                                    ui.label(&diagnostic.message);
-                                });
-                                ui.add_space(4.0);
-                            }
-                        });
-                }
-
-                if !decode_diagnostics.is_empty() {
-                    ui.add_space(12.0);
-                    ui.heading("Desktop image decode");
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .max_height(180.0)
-                        .show(ui, |ui| {
-                            for diagnostic in decode_diagnostics.values() {
-                                ui.group(|ui| {
-                                    ui.strong(&diagnostic.code);
-                                    ui.small("Fidelity warning · desktop decode/runtime");
-                                    ui.label(format!(
-                                        "{} ({})",
-                                        diagnostic.resource_key, diagnostic.mime
-                                    ));
                                     ui.label(&diagnostic.message);
                                 });
                                 ui.add_space(4.0);
@@ -2619,76 +2680,54 @@ impl ViewerApp {
 
         for embedded in &visual.images {
             let key = format!("{:?}", embedded.resource_id);
-            if self.image_textures.contains_key(&key)
-                || self.image_decode_diagnostics.contains_key(&key)
-            {
+            if self.image_textures.contains_key(&key) {
                 continue;
             }
 
-            let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
-            match image_decode_adapter::decode_texture_image_v1(
-                &embedded.bytes,
-                &embedded.mime,
-                &expected_sha256,
-            ) {
-                Ok(admitted) => {
-                    let texture = ctx.load_texture(
-                        format!("pub-image-{key}"),
-                        admitted.color_image,
-                        egui::TextureOptions::LINEAR,
-                    );
-                    self.image_textures.insert(
-                        key,
-                        CachedImageTexture {
-                            texture,
-                            _cache_identity_sha256: admitted.cache_identity_sha256,
-                        },
-                    );
-                }
-                Err(error) => {
-                    self.image_decode_diagnostics.insert(
-                        key.clone(),
-                        image_decode_adapter::diagnostic_for(key, embedded.mime.clone(), &error),
-                    );
-                }
-            }
+            let format = match embedded.mime.as_str() {
+                "image/png" => image::ImageFormat::Png,
+                "image/jpeg" => image::ImageFormat::Jpeg,
+                _ => continue,
+            };
+
+            let Ok(decoded) = image::load_from_memory_with_format(&embedded.bytes, format) else {
+                continue;
+            };
+            let rgba = decoded.to_rgba8();
+            let size = [rgba.width() as usize, rgba.height() as usize];
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+            let texture = ctx.load_texture(
+                format!("pub-image-{key}"),
+                color_image,
+                egui::TextureOptions::LINEAR,
+            );
+            self.image_textures.insert(key, texture);
         }
 
         if let Some(editor) = &self.editor {
             for asset in editor.replacement_assets() {
                 let key = format!("replacement:{:?}", asset.sha256);
-                if self.image_textures.contains_key(&key)
-                    || self.image_decode_diagnostics.contains_key(&key)
-                {
+                if self.image_textures.contains_key(&key) {
                     continue;
                 }
 
-                match image_decode_adapter::decode_texture_image_v1(
-                    &asset.bytes,
-                    &asset.mime,
-                    &asset.sha256.to_string(),
-                ) {
-                    Ok(admitted) => {
-                        let texture = ctx.load_texture(
-                            format!("chaptera-{key}"),
-                            admitted.color_image,
-                            egui::TextureOptions::LINEAR,
-                        );
-                        self.image_textures.insert(
-                            key,
-                            CachedImageTexture {
-                                texture,
-                                _cache_identity_sha256: admitted.cache_identity_sha256,
-                            },
-                        );
-                    }
-                    Err(error) => {
-                        self.image_decode_diagnostics.insert(
-                            key.clone(),
-                            image_decode_adapter::diagnostic_for(key, asset.mime.clone(), &error),
-                        );
-                    }
-                }
+                let format = match asset.mime.as_str() {
+                    "image/png" => image::ImageFormat::Png,
+                    "image/jpeg" => image::ImageFormat::Jpeg,
+                    _ => continue,
+                };
+                let Ok(decoded) = image::load_from_memory_with_format(&asset.bytes, format) else {
+                    continue;
+                };
+                let rgba = decoded.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                let texture = ctx.load_texture(
+                    format!("chaptera-{key}"),
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.image_textures.insert(key, texture);
             }
         }
     }
@@ -3245,7 +3284,7 @@ impl ViewerApp {
                         node_rect,
                         replacement_texture
                             .or(source_texture)
-                            .map(|cached| cached.texture.id()),
+                            .map(egui::TextureHandle::id),
                     );
 
                     painter.rect_stroke(
@@ -4041,7 +4080,6 @@ mod tests {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
-            image_decode_diagnostics: BTreeMap::new(),
             editor: None,
             editor_load_error: None,
             edit_buffer: String::new(),
@@ -4094,7 +4132,6 @@ mod tests {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
-            image_decode_diagnostics: BTreeMap::new(),
             editor: None,
             editor_load_error: None,
             edit_buffer: String::new(),
@@ -4292,17 +4329,16 @@ mod tests {
             "exact image resource must retain at least one proven resolved scene-node use"
         );
 
-        let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
-        let admitted = image_decode_adapter::decode_texture_image_v1(
-            &embedded.bytes,
-            &embedded.mime,
-            &expected_sha256,
-        )
-        .expect("bounded desktop decoder must admit the exact embedded image");
+        let format = match embedded.mime.as_str() {
+            "image/png" => image::ImageFormat::Png,
+            "image/jpeg" => image::ImageFormat::Jpeg,
+            other => panic!("unexpected bounded image MIME: {other}"),
+        };
+        let decoded = image::load_from_memory_with_format(&embedded.bytes, format)
+            .expect("Viewer app decoder must accept exact embedded PNG/JPEG bytes");
 
-        assert!(admitted.color_image.size[0] > 0);
-        assert!(admitted.color_image.size[1] > 0);
-        assert_eq!(admitted.cache_identity_sha256.len(), 64);
+        assert!(decoded.width() > 0);
+        assert!(decoded.height() > 0);
     }
 
     #[cfg(feature = "embedded-fixture-tests")]
@@ -4357,7 +4393,6 @@ mod tests {
             search_results: Vec::new(),
             selected_search_result: None,
             image_textures: BTreeMap::new(),
-            image_decode_diagnostics: BTreeMap::new(),
             editor: Some(editor),
             editor_load_error: None,
             edit_buffer: replacement.clone(),
