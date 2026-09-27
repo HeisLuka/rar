@@ -448,6 +448,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn create_shape_rejects_browser_tenant_and_canonical_revision_authority() {
+        let value = json!({
+            "protocol_version": EXPORT_CREATE_V1,
+            "document_id": "doc:one",
+            "revision_id": format!("sha256:{}", "a".repeat(64)),
+            "target_profile": "idml:bounded-editable",
+            "layout_environment_id": format!("sha256:{}", "b".repeat(64)),
+            "client_request_id": "export-request-0001",
+            "tenant_id": "tenant:browser",
+            "canonical_authoring_revision_id": "c".repeat(64)
+        });
+        assert!(serde_json::from_value::<CreateExportHttpV1>(value).is_err());
+    }
+
+    #[test]
+    fn succeeded_job_becomes_ready_only_with_visible_publication_ids() {
+        let snapshot = ExportJobSnapshotV1 {
+            job_id: "export-job:ready".into(),
+            tenant_id: "tenant:one".into(),
+            document_id: "doc:one".into(),
+            exact_revision_id: format!("sha256:{}", "a".repeat(64)),
+            canonical_authoring_revision_id: "b".repeat(64),
+            target_profile: "idml:bounded-editable".into(),
+            layout_environment_id: format!("sha256:{}", "c".repeat(64)),
+            status: "succeeded".into(),
+            attempt: 1,
+            max_attempts: 3,
+            cancel_requested: false,
+            terminal_code: None,
+        };
+        let publication = AuthorizedExportDownloadV1 {
+            job_id: "export-job:ready".into(),
+            tenant_id: "tenant:one".into(),
+            document_id: "doc:one".into(),
+            exact_revision_id: format!("sha256:{}", "a".repeat(64)),
+            canonical_authoring_revision_id: "b".repeat(64),
+            target_profile: "idml:bounded-editable".into(),
+            layout_environment_id: format!("sha256:{}", "c".repeat(64)),
+            artifact_binding_id: "binding:artifact".into(),
+            artifact_content_hash: format!("sha256:{}", "d".repeat(64)),
+            loss_binding_id: "binding:loss".into(),
+            loss_report_hash: format!("sha256:{}", "e".repeat(64)),
+        };
+        let response = job_response(snapshot, Some(&publication));
+        assert_eq!(response.status, "ready");
+        assert_eq!(response.artifact_id.as_deref(), Some("binding:artifact"));
+        assert_eq!(response.loss_report_id.as_deref(), Some("binding:loss"));
+        assert_eq!(response.progress_percent, None);
+    }
+
+    #[test]
     fn web_job_shape_never_fabricates_progress_or_artifact_before_ready() {
         let snapshot = ExportJobSnapshotV1 {
             job_id: "export-job:one".into(),
