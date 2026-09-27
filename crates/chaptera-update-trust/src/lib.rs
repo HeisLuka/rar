@@ -92,6 +92,7 @@ pub struct VerifiedPayloadReceipt {
     pub package_version: String,
     pub payload_sha256: String,
     pub payload_byte_len: u64,
+    pub installed_tree_bytes: u64,
     pub timestamp_version: u64,
     pub snapshot_version: u64,
     pub targets_version: u64,
@@ -125,6 +126,7 @@ pub async fn read_verified_release_payload(
         package_version: release.package_version.clone(),
         payload_sha256,
         payload_byte_len: bytes.len() as u64,
+        installed_tree_bytes: release.installed_tree_bytes,
         timestamp_version: repository.timestamp().signed.version.get(),
         snapshot_version: repository.snapshot().signed.version.get(),
         targets_version: repository.targets().signed.version.get(),
@@ -230,6 +232,7 @@ mod tests {
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
             payload_byte_len: payload.len() as u64,
+            installed_tree_bytes: 1024,
             timestamp_version: 2,
             snapshot_version: 2,
             targets_version: 2,
@@ -254,6 +257,7 @@ mod tests {
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
             payload_byte_len: payload.len() as u64,
+            installed_tree_bytes: 1024,
             timestamp_version: 2,
             snapshot_version: 2,
             targets_version: 2,
