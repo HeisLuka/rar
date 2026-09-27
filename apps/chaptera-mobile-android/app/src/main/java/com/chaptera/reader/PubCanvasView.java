@@ -27,8 +27,7 @@ final class PubCanvasView extends View {
         scaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override
             public boolean onScale(ScaleGestureDetector detector) {
-                zoom = clamp(zoom * detector.getScaleFactor(), 1f, 8f);
-                invalidate();
+                applyScaleFactor(detector.getScaleFactor());
                 return true;
             }
         });
@@ -57,6 +56,11 @@ final class PubCanvasView extends View {
 
     float getPanYOffset() {
         return panY;
+    }
+
+    void applyScaleFactor(float factor) {
+        zoom = clamp(zoom * factor, 1f, 8f);
+        invalidate();
     }
 
     private void resetViewport() {
