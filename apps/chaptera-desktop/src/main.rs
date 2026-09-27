@@ -4838,6 +4838,40 @@ mod tests {
                 rendered_pages += 1;
             }
 
+            if file_name.eq_ignore_ascii_case("SampleNewsletter.pub") {
+                if let Some(golden_page_offset) = visual
+                    .document
+                    .pages
+                    .iter()
+                    .position(|page| page.index == 2)
+                {
+                    let golden_name = "samplenewsletter-golden-page-002.png";
+                    let fixture_for_app = fixture.clone();
+                    let mut harness = Harness::builder()
+                        .with_size(egui::vec2(1600.0, 1800.0))
+                        .with_pixels_per_point(1.0)
+                        .with_max_steps(20)
+                        .wgpu()
+                        .build_eframe(move |cc| {
+                            fallback_font::install(&cc.egui_ctx)
+                                .expect("pinned Chaptera fallback font resource must validate");
+                            let mut app =
+                                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                            app.selected_page = golden_page_offset;
+                            app
+                        });
+                    harness.step();
+                    let image = harness
+                        .render()
+                        .expect("headless WGPU golden-page render must succeed");
+                    assert_eq!(image.width(), 1600);
+                    assert_eq!(image.height(), 1800);
+                    image
+                        .save(output_dir.join(golden_name))
+                        .expect("write golden-page PNG");
+                }
+            }
+
             documents.push(json!({
                 "file": file_name,
                 "source_sha256": source_sha256,
