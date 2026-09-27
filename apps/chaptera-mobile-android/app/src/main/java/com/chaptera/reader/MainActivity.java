@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -30,6 +31,12 @@ public final class MainActivity extends Activity {
     private Button previous;
     private Button next;
     private EditText pageJump;
+    private Button retry;
+    private Button chooseAnother;
+    private Button diagnostics;
+
+    private Uri lastFailedUri;
+    private String lastDiagnosticJson;
 
     private long sessionId = -1L;
     private int pageCount = 0;
@@ -106,6 +113,37 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
+        LinearLayout recovery = new LinearLayout(this);
+        recovery.setOrientation(LinearLayout.HORIZONTAL);
+
+        retry = new Button(this);
+        retry.setId(R.id.reader_retry);
+        retry.setText("Retry");
+        retry.setVisibility(View.GONE);
+        retry.setOnClickListener(v -> {
+            if (lastFailedUri != null) openUri(lastFailedUri, null);
+        });
+        recovery.addView(retry, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        chooseAnother = new Button(this);
+        chooseAnother.setId(R.id.reader_choose_another);
+        chooseAnother.setText("Choose another file");
+        chooseAnother.setVisibility(View.GONE);
+        chooseAnother.setOnClickListener(v -> chooseDocument());
+        recovery.addView(chooseAnother, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        diagnostics = new Button(this);
+        diagnostics.setId(R.id.reader_diagnostics);
+        diagnostics.setText("Diagnostics");
+        diagnostics.setVisibility(View.GONE);
+        diagnostics.setOnClickListener(v -> showDiagnostics());
+        recovery.addView(diagnostics, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        root.addView(recovery, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
         canvas = new PubCanvasView(this);
         canvas.setId(R.id.reader_canvas);
         root.addView(canvas, new LinearLayout.LayoutParams(
@@ -152,6 +190,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openUri(Uri uri, ResumeState resume) {
+        clearFailureUi();
         try {
             byte[] bytes = readBounded(uri, 128 * 1024 * 1024);
             String before = sha256(bytes);
@@ -161,9 +200,12 @@ public final class MainActivity extends Activity {
                 throw new IllegalStateException("Reader core mutated the supplied source bytes");
             }
             if (wire.startsWith("ERR:")) {
-                String diagnostic = NativeReader.failureDiagnosticJson(bytes);
-                status.setText("Could not open this file locally. " + compactError(wire, diagnostic));
+                lastFailedUri = uri;
+                lastDiagnosticJson = NativeReader.failureDiagnosticJson(bytes);
+                FailurePresentation failure = FailurePresentation.fromDiagnosticJson(lastDiagnosticJson);
+                showFailure(failure);
                 closeCurrentSession();
+                currentUri = null;
                 canvas.setPage(null);
                 updateNavigation();
                 return;
@@ -192,14 +234,16 @@ public final class MainActivity extends Activity {
                 persistResumeState();
             }
         } catch (SecurityException denied) {
-            status.setText("Chaptera no longer has permission to read this file. Select it again.");
+            lastFailedUri = uri;
+            showFailure(FailurePresentation.accessDenied());
             clearResumeState();
             closeCurrentSession();
             currentUri = null;
             canvas.setPage(null);
             updateNavigation();
         } catch (Exception error) {
-            status.setText("Could not read this local file: " + error.getMessage());
+            lastFailedUri = uri;
+            showFailure(FailurePresentation.providerUnavailable(error.getMessage()));
             if (resume != null) {
                 clearResumeState();
             }
@@ -313,6 +357,33 @@ public final class MainActivity extends Activity {
             closeCurrentSession();
         }
         super.onDestroy();
+    }
+
+    private void showFailure(FailurePresentation failure) {
+        status.setText(failure.title + ". " + failure.message);
+        retry.setVisibility(View.VISIBLE);
+        chooseAnother.setVisibility(View.VISIBLE);
+        diagnostics.setVisibility(lastDiagnosticJson == null ? View.GONE : View.VISIBLE);
+    }
+
+    private void clearFailureUi() {
+        lastFailedUri = null;
+        lastDiagnosticJson = null;
+        if (retry != null) retry.setVisibility(View.GONE);
+        if (chooseAnother != null) chooseAnother.setVisibility(View.GONE);
+        if (diagnostics != null) diagnostics.setVisibility(View.GONE);
+    }
+
+    private void showDiagnostics() {
+        if (lastDiagnosticJson == null) return;
+        String bounded = lastDiagnosticJson.length() > 4000
+            ? lastDiagnosticJson.substring(0, 4000) + "\n…"
+            : lastDiagnosticJson;
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Local diagnostics")
+            .setMessage(bounded)
+            .setPositiveButton("Close", null)
+            .show();
     }
 
     private byte[] readBounded(Uri uri, int maxBytes) throws Exception {
