@@ -6,12 +6,12 @@
 //! the same Reader pipeline used by the desktop product.
 
 use anyhow::Result;
-use chaptera_viewer_render_plan::{
-    PageRenderPlanV1, RenderPlanErrorV1, build_page_render_plan_v1,
-};
+pub use chaptera_viewer_render_plan::{PageRenderPlanV1, RenderPlanErrorV1};
+use chaptera_viewer_render_plan::build_page_render_plan_v1;
 pub use pub_model::ResourceId;
 pub use pub_viewer::{
     BoundedLayoutEnvironment, ViewerDiagnostic, ViewerFidelityStatus, ViewerTextMatch,
+    local_failure_diagnostic_json,
 };
 use pub_viewer::{ViewerGeometryDocument, open_mature_0x2c_geometry};
 
