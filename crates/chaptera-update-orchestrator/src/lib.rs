@@ -44,6 +44,7 @@ impl InstallLock {
         let path = root.join(INSTALL_LOCK_FILENAME);
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)?;
