@@ -158,6 +158,33 @@ impl UpdateEngine {
         Ok(Some(journal))
     }
 
+    /// Removes transaction directories left by a terminal updater process.
+    ///
+    /// A copied control updater executes from .staging/<tx>/control. Windows
+    /// cannot reliably delete a running executable, so terminal confirmation
+    /// and rollback deliberately leave staging cleanup to the next owner after
+    /// the control process exits. Call this only while holding the install lock.
+    pub fn cleanup_orphaned_transactions(&self) -> Result<usize> {
+        if let Some(active) = self.read_journal()? {
+            return Err(UpdateError::ActiveTransaction(active.transaction_id));
+        }
+
+        let mut removed = 0usize;
+        for root in [self.root.join(".staging"), self.root.join(".rollback")] {
+            let entries = match fs::read_dir(&root) {
+                Ok(entries) => entries,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err.into()),
+            };
+            for entry in entries {
+                let path = entry?.path();
+                remove_path_if_exists(&path)?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Begins a transaction from a candidate tree that the caller has already
     /// authenticated and policy-checked. The current updater is copied to a
     /// transaction-local control path before any active-tree rename occurs.
@@ -273,7 +300,8 @@ impl UpdateEngine {
         self.write_journal(&journal)?;
 
         remove_path_if_exists(&paths.rollback_transaction)?;
-        remove_path_if_exists(&paths.staging_transaction)?;
+        // Keep .staging/<tx>/control until the copied U1 process exits. The
+        // next exclusive lock owner removes this terminal transaction tree.
         self.archive_terminal_journal()?;
         Ok(())
     }
@@ -305,7 +333,6 @@ impl UpdateEngine {
 
                 journal.phase = UpdatePhase::RolledBack;
                 self.write_journal(&journal)?;
-                remove_path_if_exists(&paths.staging_transaction)?;
                 remove_path_if_exists(&paths.rollback_transaction)?;
                 self.archive_terminal_journal()?;
                 Ok(RecoveryOutcome::PreparedTransactionAborted)
@@ -328,7 +355,6 @@ impl UpdateEngine {
 
                 journal.phase = UpdatePhase::RolledBack;
                 self.write_journal(&journal)?;
-                remove_path_if_exists(&paths.staging_transaction)?;
                 remove_path_if_exists(&paths.rollback_transaction)?;
                 self.archive_terminal_journal()?;
                 Ok(RecoveryOutcome::UnconfirmedCandidateRolledBack)
@@ -340,7 +366,6 @@ impl UpdateEngine {
                     ));
                 }
                 remove_path_if_exists(&paths.rollback_transaction)?;
-                remove_path_if_exists(&paths.staging_transaction)?;
                 self.archive_terminal_journal()?;
                 Ok(RecoveryOutcome::ConfirmedCandidateRetained)
             }
@@ -351,7 +376,6 @@ impl UpdateEngine {
                     ));
                 }
                 remove_path_if_exists(&paths.rollback_transaction)?;
-                remove_path_if_exists(&paths.staging_transaction)?;
                 self.archive_terminal_journal()?;
                 Ok(RecoveryOutcome::RolledBackTransactionFinalized)
             }
