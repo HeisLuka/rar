@@ -232,6 +232,21 @@ pub struct PubImageResourceCatalog {
     pub diagnostics: Vec<PubImageResourceDiagnostic>,
 }
 
+pub(crate) fn image_resource_id_for_slot(
+    graph: &PubSourceGraph,
+    slot: u32,
+) -> Result<ResourceId> {
+    Ok(ResourceId::from_canonical(
+        derive_source_canonical_id(SourceDerivedIdInput {
+            source_hash: &graph.source.source_hash,
+            adapter_id: PUB_ADAPTER_ID,
+            source_object_key: &format!("escher/bstore/slot/{slot}"),
+            semantic_role: "cdm.resource.image",
+        })
+        .map_err(|error| anyhow::anyhow!("image resource identity error: {error:?}"))?,
+    ))
+}
+
 pub fn build_pub_image_resource_catalog(
     graph: &PubSourceGraph,
     manifest: &PubAssetManifest,
@@ -250,15 +265,7 @@ pub fn build_pub_image_resource_catalog(
             continue;
         };
 
-        let resource_id = ResourceId::from_canonical(
-            derive_source_canonical_id(SourceDerivedIdInput {
-                source_hash: &graph.source.source_hash,
-                adapter_id: PUB_ADAPTER_ID,
-                source_object_key: &format!("escher/bstore/slot/{}", asset.slot),
-                semantic_role: "cdm.resource.image",
-            })
-            .map_err(|error| anyhow::anyhow!("image resource identity error: {error:?}"))?,
-        );
+        let resource_id = image_resource_id_for_slot(graph, asset.slot)?;
 
         let mime = match kind {
             BlipKind::Png => "image/png",
