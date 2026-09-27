@@ -1,6 +1,6 @@
 use chaptera_update_engine::{RecoveryOutcome, UpdateEngine};
 use chaptera_update_handoff::{
-    prepare_control_handoff, read_control_request, receipt_path, started_path,
+    prepare_control_handoff, read_control_request, receipt_path, spawn_preverified_candidate_handoff, started_path,
     validate_request_against_engine, ControlReceipt, HandoffError,
 };
 use chaptera_update_orchestrator::InstallLock;
@@ -135,4 +135,57 @@ fn handoff_requires_prepared_journal_and_existing_control_copy() {
 
     let missing = prepare_control_handoff(&engine).unwrap_err();
     assert!(matches!(missing, HandoffError::JournalMissing));
+}
+
+
+#[test]
+fn front_door_spawns_copied_u1_before_releasing_install_ownership() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("candidate");
+    let updater_rel = Path::new("chaptera-updater.exe");
+
+    copy_probe(&root.join("current").join(updater_rel));
+    fs::write(root.join("current/reader.bin"), b"reader-v1").unwrap();
+    seed_candidate(&candidate, b"U2-not-yet-usable");
+
+    let orchestrator = chaptera_update_orchestrator::UpdateOrchestrator::new(&root);
+    let (handoff, mut child) = spawn_preverified_candidate_handoff(
+        &orchestrator,
+        "tx-frontdoor-full",
+        "2.0.0",
+        &candidate,
+        updater_rel,
+    )
+    .unwrap();
+
+    let started = started_path(&handoff.request_path);
+    let receipt = receipt_path(&handoff.request_path);
+    wait_for_file(&started);
+
+    let status = child.wait().unwrap();
+    assert!(status.success(), "copied U1 failed after ownership transfer: {status}");
+    wait_for_file(&receipt);
+
+    let receipt: ControlReceipt =
+        serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
+    assert_eq!(receipt.transaction_id, "tx-frontdoor-full");
+    assert_eq!(
+        fs::canonicalize(receipt.executable).unwrap(),
+        fs::canonicalize(&handoff.control_updater).unwrap()
+    );
+
+    let request = read_control_request(&handoff.request_path).unwrap();
+    validate_request_against_engine(&request, orchestrator.engine()).unwrap();
+
+    assert_eq!(
+        fs::read(root.join("current/reader.bin")).unwrap(),
+        b"reader-v1",
+        "handoff probe owns the lock but must not switch product bytes itself"
+    );
+
+    assert_eq!(
+        orchestrator.engine().recover().unwrap(),
+        RecoveryOutcome::PreparedTransactionAborted
+    );
 }
