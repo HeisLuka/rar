@@ -66,14 +66,24 @@ public final class ReadShellInstrumentedTest {
                     String statusBefore = status.getText().toString();
 
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-                    InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
-                    assertEquals(statusBefore, status.getText().toString());
-                    assertEquals(zoomBefore, canvas.getZoom(), 0.001f);
-                    assertEquals(panXBefore, canvas.getPanXOffset(), 0.001f);
-                    assertEquals(panYBefore, canvas.getPanYOffset(), 0.001f);
+                    activity.getIntent().putExtra("chaptera_test_status_before", statusBefore);
+                    activity.getIntent().putExtra("chaptera_test_zoom_before", zoomBefore);
+                    activity.getIntent().putExtra("chaptera_test_pan_x_before", panXBefore);
+                    activity.getIntent().putExtra("chaptera_test_pan_y_before", panYBefore);
                 });
             }
+
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                TextView status = activity.findViewById(R.id.reader_status);
+                PubCanvasView canvas = activity.findViewById(R.id.reader_canvas);
+                Intent current = activity.getIntent();
+                assertEquals(current.getStringExtra("chaptera_test_status_before"), status.getText().toString());
+                assertEquals(current.getFloatExtra("chaptera_test_zoom_before", 1f), canvas.getZoom(), 0.001f);
+                assertEquals(current.getFloatExtra("chaptera_test_pan_x_before", 0f), canvas.getPanXOffset(), 0.001f);
+                assertEquals(current.getFloatExtra("chaptera_test_pan_y_before", 0f), canvas.getPanYOffset(), 0.001f);
+            });
         } finally {
             InstrumentationRegistry.getInstrumentation().getTargetContext()
                 .getContentResolver().delete(uri, null, null);
