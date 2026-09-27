@@ -30,8 +30,8 @@ use crate::{
         BlobStoreExactSourceLoader, EDITOR_REVISION_EVENT_SCHEMA_V1,
         EDITOR_REVISION_EVENT_SEMANTIC_SCHEMA_VERSION, EditorRevisionEventV1,
         ExactRevisionMaterializer, ExactSourceLoader, PubEditorReplayEngine,
-        RevisionMaterializerError,
-        decode_editor_revision_event_v1, encode_editor_revision_event_v1, project_sha256,
+        RevisionMaterializerError, decode_editor_revision_event_v1,
+        encode_editor_revision_event_v1, project_sha256,
     },
     source_authority::{SourceAuthorityError, SqliteDocumentSourceAuthority},
     source_baseline::{SourceBaselineError, derive_commit_revision_identities},
@@ -60,13 +60,7 @@ impl ProductApiHttpState {
         revisions: SqliteRevisionStore,
         source_loader: BlobStoreExactSourceLoader,
     ) -> Result<Self, AuthzError> {
-        Self::with_source_loader(
-            auth,
-            source,
-            authz,
-            revisions,
-            Arc::new(source_loader),
-        )
+        Self::with_source_loader(auth, source, authz, revisions, Arc::new(source_loader))
     }
 
     fn with_source_loader(
@@ -659,15 +653,14 @@ impl IntoResponse for ProductApiError {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        sync::Arc,
-        time::Duration,
-    };
+    use std::{fs, sync::Arc, time::Duration};
 
     use axum::{
         body::{Body, to_bytes},
-        http::{Request, header::{CONTENT_TYPE, COOKIE, HOST, ORIGIN}},
+        http::{
+            Request,
+            header::{CONTENT_TYPE, COOKIE, HOST, ORIGIN},
+        },
     };
     use chaptera_cdm_model::AUTHORING_REVISION_SCHEMA_V1;
     use sqlx::SqlitePool;
@@ -728,8 +721,16 @@ mod tests {
         for quartet in cleaned.chunks_exact(4) {
             let a = base64_value(quartet[0]);
             let b = base64_value(quartet[1]);
-            let c = if quartet[2] == b'=' { 0 } else { base64_value(quartet[2]) };
-            let d = if quartet[3] == b'=' { 0 } else { base64_value(quartet[3]) };
+            let c = if quartet[2] == b'=' {
+                0
+            } else {
+                base64_value(quartet[2])
+            };
+            let d = if quartet[3] == b'=' {
+                0
+            } else {
+                base64_value(quartet[3])
+            };
             output.push((a << 2) | (b >> 4));
             if quartet[2] != b'=' {
                 output.push((b << 4) | (c >> 2));
@@ -944,8 +945,8 @@ mod tests {
         )
         .await;
 
-        let policy = SessionPolicy::new(Duration::from_secs(600), Duration::from_secs(3600))
-            .unwrap();
+        let policy =
+            SessionPolicy::new(Duration::from_secs(600), Duration::from_secs(3600)).unwrap();
         let authn = SqliteAuthnStore::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
@@ -962,8 +963,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let auth = AuthHttpState::api_test(authn.clone(), policy, "https://cloud.example.test")
-            .unwrap();
+        let auth =
+            AuthHttpState::api_test(authn.clone(), policy, "https://cloud.example.test").unwrap();
         let authz = SqliteAuthzAuthority::open(&path, 4, Duration::from_secs(2))
             .await
             .unwrap();
