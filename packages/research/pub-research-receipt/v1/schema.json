@@ -1,0 +1,47 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://chaptera.example/research/pub-research-receipt/v1/schema.json",
+  "title":"Chaptera source-free PUB research receipt v1",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["receipt_version","task_id","run_id","scope","inputs","outputs","counts","canonical_impact","limitations","privacy"],
+  "properties":{
+    "receipt_version":{"const":"chaptera.pub-research-receipt.v1"},
+    "task_id":{"type":"string","pattern":"^PUB-[A-Z0-9-]{2,64}$"},
+    "run_id":{"type":"string","pattern":"^PUB-RUN-[0-9]{1,8}$"},
+    "scope":{"type":"string","minLength":3,"maxLength":1000},
+    "inputs":{"type":"array","items":{"$ref":"#/$defs/hashRef"},"maxItems":10000},
+    "outputs":{"type":"array","items":{"$ref":"#/$defs/hashRef"},"maxItems":10000},
+    "counts":{
+      "type":"object","additionalProperties":false,
+      "required":["observations","supporting","counterexamples"],
+      "properties":{
+        "observations":{"type":"integer","minimum":0},
+        "supporting":{"type":"integer","minimum":0},
+        "counterexamples":{"type":"integer","minimum":0}
+      }
+    },
+    "canonical_impact":{"enum":["none","reconfirmation","model-narrowing","candidate-change"]},
+    "limitations":{"type":"array","items":{"type":"string","minLength":1,"maxLength":500},"minItems":1,"maxItems":50},
+    "privacy":{
+      "type":"object","additionalProperties":false,
+      "required":["pub_bytes_in_receipt","document_text_in_receipt","local_path_in_receipt","credentials_in_receipt"],
+      "properties":{
+        "pub_bytes_in_receipt":{"const":false},
+        "document_text_in_receipt":{"const":false},
+        "local_path_in_receipt":{"const":false},
+        "credentials_in_receipt":{"const":false}
+      }
+    }
+  },
+  "$defs":{
+    "hashRef":{
+      "type":"object","additionalProperties":false,
+      "required":["kind","sha256"],
+      "properties":{
+        "kind":{"type":"string","pattern":"^[a-z0-9._-]{1,64}$"},
+        "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

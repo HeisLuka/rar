@@ -1,0 +1,27 @@
+name: PUB research receipt guard
+
+on:
+  pull_request:
+    paths:
+      - "packages/research/pub-research-receipt/**"
+      - "tools/validate_pub_research_receipt.py"
+      - "tools/test_pub_research_receipt.py"
+      - ".github/workflows/pub-research-receipt-guard.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python -m unittest tools.test_pub_research_receipt
+      - name: Validate retained synthetic receipt
+        run: python tools/validate_pub_research_receipt.py packages/research/pub-research-receipt/v1/fixtures/synthetic.json
