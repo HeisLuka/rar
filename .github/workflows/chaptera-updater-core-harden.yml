@@ -1,0 +1,36 @@
+name: Chaptera updater core hardening
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-update-engine/**"
+      - "crates/chaptera-update-orchestrator/**"
+      - "crates/chaptera-update-handoff/**"
+      - "crates/chaptera-update-trust/**"
+      - ".github/workflows/chaptera-updater-core-harden.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+concurrency:
+  group: chaptera-updater-core-harden-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hardening:
+    name: updater-hardening-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - name: Test updater split
+        run: cargo test -p chaptera-update-trust -p chaptera-update-engine -p chaptera-update-orchestrator -p chaptera-update-handoff
