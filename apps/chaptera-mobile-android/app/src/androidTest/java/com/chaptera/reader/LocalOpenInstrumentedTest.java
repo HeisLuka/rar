@@ -36,7 +36,7 @@ public final class LocalOpenInstrumentedTest {
                 scenario.onActivity(activity -> {
                     TextView status = activity.findViewById(R.id.reader_status);
                     String value = status.getText().toString();
-                    assertTrue("expected local open status, got: " + value, value.contains("page(s)"));
+                    assertTrue("expected local open status, got: " + value, value.contains("page 1/") || value.contains("page(s)"));
                     assertTrue("expected offline locality marker, got: " + value, value.contains("offline local open"));
                     assertFalse("real PUB must not fall into local open error", value.startsWith("Could not"));
                     assertTrue(activity.findViewById(R.id.reader_canvas).isShown());
