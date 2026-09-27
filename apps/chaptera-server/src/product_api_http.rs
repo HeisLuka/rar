@@ -659,7 +659,206 @@ impl IntoResponse for ProductApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        sync::Arc,
+        time::Duration,
+    };
+
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, header::{CONTENT_TYPE, COOKIE, HOST, ORIGIN}},
+    };
+    use chaptera_cdm_model::AUTHORING_REVISION_SCHEMA_V1;
+    use sqlx::SqlitePool;
+    use tower::ServiceExt;
+
+    use crate::{
+        auth_http::{CSRF_HEADER, SESSION_COOKIE},
+        authn::SqliteAuthnStore,
+        authn_session::{SessionPolicy, issue_verified_login_session},
+        authz_runtime::DocumentRole,
+        oidc_authn::OidcVerifiedIdentity,
+        revision_materializer::{AuthorizedDocumentSource, EditorReplayEngine},
+        schema_migration::SqliteMigrationRuntime,
+        source_baseline::derive_import_baseline_identities,
+    };
+
     use super::*;
+
+    #[derive(Clone)]
+    struct FixtureSourceLoader {
+        bytes: Arc<Vec<u8>>,
+        source_sha256: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ExactSourceLoader for FixtureSourceLoader {
+        async fn load_exact_source(
+            &self,
+            source: &AuthorizedDocumentSource,
+        ) -> Result<Vec<u8>, RevisionMaterializerError> {
+            if source.source_sha256 != self.source_sha256
+                || source.byte_len != self.bytes.len() as u64
+            {
+                return Err(RevisionMaterializerError::new(
+                    "fixture_source_identity_mismatch",
+                    "fixture source differs from durable source authority",
+                ));
+            }
+            Ok(self.bytes.as_ref().clone())
+        }
+    }
+
+    fn sample3_pub() -> Vec<u8> {
+        decode_base64(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../vendor/producer-a/crates/pub-quill/tests/fixtures/Sample3.pub.b64"
+        )))
+    }
+
+    fn decode_base64(text: &str) -> Vec<u8> {
+        let cleaned = text
+            .bytes()
+            .filter(|byte| !byte.is_ascii_whitespace())
+            .collect::<Vec<_>>();
+        assert_eq!(cleaned.len() % 4, 0, "base64 fixture length");
+
+        let mut output = Vec::with_capacity(cleaned.len() / 4 * 3);
+        for quartet in cleaned.chunks_exact(4) {
+            let a = base64_value(quartet[0]);
+            let b = base64_value(quartet[1]);
+            let c = if quartet[2] == b'=' { 0 } else { base64_value(quartet[2]) };
+            let d = if quartet[3] == b'=' { 0 } else { base64_value(quartet[3]) };
+            output.push((a << 2) | (b >> 4));
+            if quartet[2] != b'=' {
+                output.push((b << 4) | (c >> 2));
+            }
+            if quartet[3] != b'=' {
+                output.push((c << 6) | d);
+            }
+        }
+        output
+    }
+
+    fn base64_value(byte: u8) -> u8 {
+        match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            other => panic!("invalid base64 byte {other:#x}"),
+        }
+    }
+
+    fn fixture_hash(bytes: &[u8]) -> String {
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    async fn seed_document(
+        pool: &SqlitePool,
+        tenant_id: &str,
+        document_id: &str,
+        source_sha256: &str,
+        source_len: usize,
+        genesis_revision_id: &str,
+        canonical_revision_id: &str,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO uploads (
+                upload_id, tenant_id, principal_id, purpose, expected_byte_len,
+                physical_upload_ref, state, upload_generation,
+                object_version, object_etag, observed_byte_len,
+                canonical_sha256, durable_binding_id,
+                created_at_ms, expires_at_ms, completed_at_ms,
+                idempotency_key, request_hash
+            ) VALUES (?, ?, ?, 'pub_source', ?, 'fixture/ref', 'CONSUMED', 2,
+                      'v1', 'etag', ?, ?, 'binding-sample3',
+                      1, 9999999999999, 2, 'upload-idem', ?)
+            "#,
+        )
+        .bind(b"upload-sample3".as_slice())
+        .bind(tenant_id.as_bytes())
+        .bind(b"principal-seed".as_slice())
+        .bind(i64::try_from(source_len).unwrap())
+        .bind(i64::try_from(source_len).unwrap())
+        .bind(source_sha256.as_bytes())
+        .bind(b"a".repeat(64))
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO upload_consumptions (
+                upload_id, tenant_id, idempotency_key, request_hash,
+                project_id, document_id, genesis_revision_id, committed_at_ms
+            ) VALUES (?, ?, 'consume-idem', ?, 'project-sample3', ?, ?, 3)
+            "#,
+        )
+        .bind(b"upload-sample3".as_slice())
+        .bind(tenant_id.as_bytes())
+        .bind(b"b".repeat(64))
+        .bind(document_id.as_bytes())
+        .bind(genesis_revision_id.as_bytes())
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO revision_identity_bindings (
+                document_id, service_revision_id, canonical_schema_version,
+                canonical_revision_id, bound_at_ms
+            ) VALUES (?, ?, ?, ?, 3)
+            "#,
+        )
+        .bind(document_id.as_bytes())
+        .bind(genesis_revision_id.as_bytes())
+        .bind(AUTHORING_REVISION_SCHEMA_V1)
+        .bind(canonical_revision_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn authenticated_request(
+        method: &str,
+        uri: &str,
+        session_token: &str,
+        csrf: Option<&str>,
+        body: Option<serde_json::Value>,
+    ) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(HOST, "cloud.example.test")
+            .header(COOKIE, format!("{SESSION_COOKIE}={session_token}"));
+        if method != "GET" {
+            builder = builder.header(ORIGIN, "https://cloud.example.test");
+        }
+        if let Some(csrf) = csrf {
+            builder = builder.header(CSRF_HEADER, csrf);
+        }
+        if body.is_some() {
+            builder = builder.header(CONTENT_TYPE, "application/json");
+        }
+        builder
+            .body(match body {
+                Some(value) => Body::from(serde_json::to_vec(&value).unwrap()),
+                None => Body::empty(),
+            })
+            .unwrap()
+    }
+
+    async fn json_body(response: Response) -> serde_json::Value {
+        let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
 
     #[test]
     fn request_shape_rejects_tenant_and_authoritative_before_fields() {
@@ -700,5 +899,255 @@ mod tests {
             request_hash(&request).unwrap(),
             request_hash(&request).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn http_open_move_retry_stale_and_auth_csrf_are_authoritative() {
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-product-api-http-{}-{}.sqlite",
+            std::process::id(),
+            now_ms().unwrap()
+        ));
+        SqliteMigrationRuntime::new(&path, Duration::from_secs(2))
+            .unwrap()
+            .migrate_up()
+            .await
+            .unwrap();
+
+        let source_bytes = sample3_pub();
+        let source_sha256 = fixture_hash(&source_bytes);
+        let document_id = "document-sample3";
+        let tenant_id = "tenant-sample3";
+        let replay = PubEditorReplayEngine;
+        let baseline_project = replay
+            .baseline_project(&source_bytes, &source_sha256)
+            .unwrap();
+        let baseline = derive_import_baseline_identities(
+            document_id,
+            &source_sha256,
+            &baseline_project.schema_version,
+            &baseline_project,
+        )
+        .unwrap();
+
+        let pool = SqlitePool::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .unwrap();
+        seed_document(
+            &pool,
+            tenant_id,
+            document_id,
+            &source_sha256,
+            source_bytes.len(),
+            &baseline.service_revision_id,
+            &baseline.canonical_authoring_revision_id,
+        )
+        .await;
+
+        let policy = SessionPolicy::new(Duration::from_secs(600), Duration::from_secs(3600))
+            .unwrap();
+        let authn = SqliteAuthnStore::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let issued = issue_verified_login_session(
+            &authn,
+            OidcVerifiedIdentity {
+                issuer: "https://issuer.example.test".to_owned(),
+                subject: "subject-product-api".to_owned(),
+                email_snapshot: Some("editor@example.test".to_owned()),
+                return_path: "/".to_owned(),
+            },
+            now_ms().unwrap(),
+            policy,
+        )
+        .await
+        .unwrap();
+        let auth = AuthHttpState::api_test(authn.clone(), policy, "https://cloud.example.test")
+            .unwrap();
+        let authz = SqliteAuthzAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        authz
+            .set_role(
+                tenant_id,
+                document_id,
+                &issued.principal_id,
+                DocumentRole::Editor,
+                None,
+                "grant-product-api",
+                now_ms().unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let revisions = SqliteRevisionStore::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let source = SqliteDocumentSourceAuthority::open(&path, 4, Duration::from_secs(2))
+            .await
+            .unwrap();
+        let source_loader = FixtureSourceLoader {
+            bytes: Arc::new(source_bytes.clone()),
+            source_sha256: source_sha256.clone(),
+        };
+        let app = router(
+            ProductApiHttpState::with_source_loader(
+                auth,
+                source.clone(),
+                authz.clone(),
+                revisions.clone(),
+                Arc::new(source_loader),
+            )
+            .unwrap(),
+        );
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/documents/{document_id}/current"))
+                    .header(HOST, "cloud.example.test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let opened = app
+            .clone()
+            .oneshot(authenticated_request(
+                "GET",
+                &format!("/v1/documents/{document_id}/current"),
+                &issued.session_token,
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(opened.status(), StatusCode::OK);
+        let opened = json_body(opened).await;
+        assert_eq!(opened["revision_id"], baseline.service_revision_id);
+
+        let source_digest = Sha256Digest::from_str(&source_sha256).unwrap();
+        let session = open_mature_0x2c_editor(&source_bytes, source_digest).unwrap();
+        let (node_id, x_emu, y_emu) = session
+            .graph()
+            .nodes
+            .iter()
+            .find_map(|(node_id, node)| {
+                let x = node.header.bounds.x.get().checked_add(9_525)?;
+                let y = node.header.bounds.y.get().checked_add(9_525)?;
+                session
+                    .can_move_node_to(*node_id, LengthEmu::new(x), LengthEmu::new(y))
+                    .ok()
+                    .map(|_| (*node_id, x, y))
+            })
+            .expect("Sample3 must contain one movable canonical node");
+        let node_id = serde_json::to_value(node_id)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let body = json!({
+            "protocol_version": COMMIT_REQUEST_V1,
+            "document_id": document_id,
+            "source_hash": source_sha256,
+            "base_revision_id": baseline.service_revision_id,
+            "client_operation_id": "move-sample3-1",
+            "command": {
+                "kind": "move_node_to",
+                "node_id": node_id,
+                "x_emu": x_emu,
+                "y_emu": y_emu
+            }
+        });
+
+        let missing_csrf = app
+            .clone()
+            .oneshot(authenticated_request(
+                "POST",
+                &format!("/v1/documents/{document_id}/commit"),
+                &issued.session_token,
+                None,
+                Some(body.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+
+        let accepted = app
+            .clone()
+            .oneshot(authenticated_request(
+                "POST",
+                &format!("/v1/documents/{document_id}/commit"),
+                &issued.session_token,
+                Some(&issued.csrf_token),
+                Some(body.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let accepted = json_body(accepted).await;
+        let child_revision = accepted["revision_id"].as_str().unwrap().to_owned();
+        assert_ne!(child_revision, baseline.service_revision_id);
+        assert_eq!(accepted["replayed"], false);
+
+        let retry = app
+            .clone()
+            .oneshot(authenticated_request(
+                "POST",
+                &format!("/v1/documents/{document_id}/commit"),
+                &issued.session_token,
+                Some(&issued.csrf_token),
+                Some(body.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let retry = json_body(retry).await;
+        assert_eq!(retry["revision_id"], child_revision);
+        assert_eq!(retry["replayed"], true);
+
+        let mut stale_body = body;
+        stale_body["client_operation_id"] = json!("move-sample3-stale");
+        let stale = app
+            .clone()
+            .oneshot(authenticated_request(
+                "POST",
+                &format!("/v1/documents/{document_id}/commit"),
+                &issued.session_token,
+                Some(&issued.csrf_token),
+                Some(stale_body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let stale = json_body(stale).await;
+        assert_eq!(stale["error"]["code"], "stale_revision");
+
+        let reopened = app
+            .oneshot(authenticated_request(
+                "GET",
+                &format!("/v1/documents/{document_id}/current"),
+                &issued.session_token,
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(reopened.status(), StatusCode::OK);
+        let reopened = json_body(reopened).await;
+        assert_eq!(reopened["revision_id"], child_revision);
+
+        pool.close().await;
+        authn.close().await;
+        authz.close().await;
+        source.close().await;
+        revisions.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{}", path.display(), suffix));
+        }
     }
 }
