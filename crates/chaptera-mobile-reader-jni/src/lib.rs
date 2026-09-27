@@ -1,6 +1,6 @@
 use chaptera_mobile_reader_core::{MobileReaderDocumentV1, PageRenderPlanV1, ViewerDiagnostic};
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JString};
+use jni::objects::{JByteArray, JClass};
 use jni::sys::jstring;
 use serde::Serialize;
 
@@ -31,7 +31,7 @@ fn open_receipt_json(bytes: &[u8]) -> Result<String, String> {
     .map_err(|error| error.to_string())
 }
 
-fn java_string(mut env: JNIEnv<'_>, value: &str) -> jstring {
+fn java_string(env: JNIEnv<'_>, value: &str) -> jstring {
     env.new_string(value)
         .expect("JNI string allocation")
         .into_raw()
