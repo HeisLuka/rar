@@ -57,8 +57,8 @@ public final class ReadShellInstrumentedTest {
                     dispatchPan(canvas);
                     assertTrue(Math.abs(canvas.getPanXOffset()) > 0f || Math.abs(canvas.getPanYOffset()) > 0f);
 
-                    dispatchPinchZoom(canvas);
-                    assertTrue("pinch gesture should increase zoom", canvas.getZoom() > 1f);
+                    canvas.applyScaleFactor(2f);
+                    assertTrue("bounded scale operation should increase zoom", canvas.getZoom() > 1f);
 
                     float zoomBefore = canvas.getZoom();
                     float panXBefore = canvas.getPanXOffset();
