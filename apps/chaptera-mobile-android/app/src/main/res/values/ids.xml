@@ -6,4 +6,7 @@
     <item name="reader_next" type="id" />
     <item name="reader_page_jump" type="id" />
     <item name="reader_page_go" type="id" />
+    <item name="reader_retry" type="id" />
+    <item name="reader_choose_another" type="id" />
+    <item name="reader_diagnostics" type="id" />
 </resources>
