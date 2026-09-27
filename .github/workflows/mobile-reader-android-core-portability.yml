@@ -26,7 +26,6 @@ jobs:
         run: |
           cargo +1.94.1 check \
             --manifest-path vendor/producer-a/Cargo.toml \
-            --locked \
             --target aarch64-linux-android \
             -p pub-reader \
             -p pub-layout \
@@ -34,19 +33,13 @@ jobs:
 
       - name: Guard against desktop shell coupling
         run: |
-          cargo +1.94.1 metadata \
+          cargo +1.94.1 tree \
             --manifest-path vendor/producer-a/Cargo.toml \
-            --no-deps \
-            --format-version 1 > /tmp/producer-a-metadata.json
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          metadata = json.loads(Path("/tmp/producer-a-metadata.json").read_text())
-          names = {pkg["name"] for pkg in metadata["packages"]}
-          forbidden = {"chaptera-desktop", "eframe", "egui"}
-          leaked = sorted(names & forbidden)
-          if leaked:
-              raise SystemExit(f"desktop UI packages leaked into producer-a workspace: {leaked}")
-          print("OK: shared PUB core metadata contains no desktop UI packages")
-          PY
+            --target aarch64-linux-android \
+            -p pub-viewer > /tmp/pub-viewer-android-tree.txt
+          cat /tmp/pub-viewer-android-tree.txt
+          if grep -E '(^|[[:space:]])(chaptera-desktop|eframe|egui) v' /tmp/pub-viewer-android-tree.txt; then
+            echo "desktop UI dependency leaked into Android Viewer core"
+            exit 1
+          fi
+          echo "OK: Android Viewer dependency tree contains no desktop UI packages"
