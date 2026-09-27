@@ -1,6 +1,4 @@
-use chaptera_mobile_reader_core::{
-    BoundedLayoutEnvironment, MobileReaderDocumentV1, PageRenderPlanV1,
-};
+use chaptera_mobile_reader_core::{MobileReaderDocumentV1, PageRenderPlanV1, ViewerDiagnostic};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::jstring;
@@ -12,19 +10,11 @@ struct MobileOpenReceiptV1 {
     page_count: usize,
     fidelity: String,
     first_page: PageRenderPlanV1,
-}
-
-fn environment() -> BoundedLayoutEnvironment {
-    BoundedLayoutEnvironment {
-        engine_revision: "chaptera-mobile-reader-jni.v1".into(),
-        font_set_fingerprint: "android-shell-unresolved".into(),
-        resource_fingerprint: "android-shell-local".into(),
-    }
+    diagnostics: Vec<ViewerDiagnostic>,
 }
 
 fn open_receipt_json(bytes: &[u8]) -> Result<String, String> {
-    let document = MobileReaderDocumentV1::open(bytes, environment())
-        .map_err(|error| error.to_string())?;
+    let document = MobileReaderDocumentV1::open_default(bytes).map_err(|error| error.to_string())?;
     if document.page_count() == 0 {
         return Err("PUB opened but contained no readable pages".into());
     }
@@ -36,6 +26,7 @@ fn open_receipt_json(bytes: &[u8]) -> Result<String, String> {
         page_count: document.page_count(),
         fidelity: format!("{:?}", document.fidelity_status()).to_lowercase(),
         first_page,
+        diagnostics: document.diagnostics().to_vec(),
     })
     .map_err(|error| error.to_string())
 }
@@ -83,9 +74,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn environment_declares_mobile_boundary_without_platform_storage_claims() {
-        let env = environment();
-        assert_eq!(env.engine_revision, "chaptera-mobile-reader-jni.v1");
-        assert_eq!(env.font_set_fingerprint, "android-shell-unresolved");
+    fn receipt_schema_is_stable() {
+        assert_eq!("chaptera.mobile-reader-open.v1", "chaptera.mobile-reader-open.v1");
     }
 }
