@@ -15,6 +15,9 @@ reader-only = []
 embedded-fixture-tests = []
 
 [dependencies]
+chaptera-update-engine = { path = "../../crates/chaptera-update-engine" }
+chaptera-update-orchestrator = { path = "../../crates/chaptera-update-orchestrator" }
+chaptera-update-handoff = { path = "../../crates/chaptera-update-handoff" }
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
 chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
 chaptera-viewer-render-plan = { path = "../../crates/chaptera-viewer-render-plan" }
