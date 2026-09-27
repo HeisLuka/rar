@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tough::{IntoVec, TargetName};
 use std::path::Path;
 use tough::{ExpirationEnforcement, FilesystemTransport, Repository, RepositoryLoader};
 use url::Url;
