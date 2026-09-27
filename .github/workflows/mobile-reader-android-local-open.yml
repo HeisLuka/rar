@@ -2,6 +2,7 @@ name: Mobile Reader Android local open
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "apps/chaptera-mobile-android/**"
       - "crates/chaptera-mobile-reader-core/**"
