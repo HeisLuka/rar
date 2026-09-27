@@ -10,6 +10,7 @@ import android.content.pm.ActivityInfo;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.provider.MediaStore;
+import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.EditText;
@@ -112,7 +113,7 @@ public final class ReadShellInstrumentedTest {
             downTime, downTime, MotionEvent.ACTION_DOWN, 1,
             new MotionEvent.PointerProperties[]{props[0]},
             new MotionEvent.PointerCoords[]{coords[0]},
-            0, 0, 1f, 1f, 0, 0, MotionEvent.SOURCE_TOUCHSCREEN, 0
+            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         );
         canvas.dispatchTouchEvent(firstDown);
 
@@ -121,7 +122,7 @@ public final class ReadShellInstrumentedTest {
         MotionEvent secondDown = MotionEvent.obtain(
             downTime, downTime + 10,
             MotionEvent.ACTION_POINTER_DOWN | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
-            2, props, coords, 0, 0, 1f, 1f, 0, 0, MotionEvent.SOURCE_TOUCHSCREEN, 0
+            2, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         );
         canvas.dispatchTouchEvent(secondDown);
 
@@ -129,14 +130,14 @@ public final class ReadShellInstrumentedTest {
         coords[1].x = 260f;
         MotionEvent move = MotionEvent.obtain(
             downTime, downTime + 35, MotionEvent.ACTION_MOVE,
-            2, props, coords, 0, 0, 1f, 1f, 0, 0, MotionEvent.SOURCE_TOUCHSCREEN, 0
+            2, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         );
         canvas.dispatchTouchEvent(move);
 
         MotionEvent secondUp = MotionEvent.obtain(
             downTime, downTime + 45,
             MotionEvent.ACTION_POINTER_UP | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT),
-            2, props, coords, 0, 0, 1f, 1f, 0, 0, MotionEvent.SOURCE_TOUCHSCREEN, 0
+            2, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
         );
         canvas.dispatchTouchEvent(secondUp);
 
