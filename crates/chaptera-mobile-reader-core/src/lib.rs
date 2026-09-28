@@ -26,6 +26,11 @@ use pub_viewer::{
 pub const MOBILE_READER_CORE_SCHEMA_V1: &str = "chaptera.mobile-reader-core.v1";
 pub const MOBILE_READER_MAX_FILE_BYTES_V1: u64 = 128 * 1024 * 1024;
 
+const CFB_MAGIC_V1: &[u8; 8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
+pub const MOBILE_ADMISSION_FAILURE_SCHEMA_V1: &str =
+    "chaptera.mobile-reader-admission-failure.v1";
+
+
 pub fn mobile_reader_admission_policy_v1() -> PubScanPolicyV1 {
     PubScanPolicyV1 {
         max_file_bytes: MOBILE_READER_MAX_FILE_BYTES_V1,
@@ -59,7 +64,40 @@ fn admit_mobile_pub_bytes_with_policy_v1(bytes: &[u8], policy: PubScanPolicyV1) 
             ))
         }
     }
+
 }
+
+pub fn mobile_failure_diagnostic_json(bytes: &[u8]) -> Result<String> {
+    mobile_failure_diagnostic_json_with_policy(bytes, mobile_reader_admission_policy_v1())
+}
+
+fn mobile_failure_diagnostic_json_with_policy(
+    bytes: &[u8],
+    policy: PubScanPolicyV1,
+) -> Result<String> {
+    let admission = inspect_pub_bytes_v1(bytes, policy, false);
+    let bypass_shared_classifier = matches!(admission.status, PubScanStatusV1::RejectedByPolicy)
+        || (matches!(admission.status, PubScanStatusV1::ParseFailed)
+            && bytes.starts_with(CFB_MAGIC_V1));
+
+    if bypass_shared_classifier {
+        return serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": MOBILE_ADMISSION_FAILURE_SCHEMA_V1,
+            "admission": {
+                "status": match admission.status {
+                    PubScanStatusV1::RejectedByPolicy => "rejected_by_policy",
+                    PubScanStatusV1::ParseFailed => "parse_failed",
+                    PubScanStatusV1::AcceptedCfb => "accepted_cfb",
+                },
+                "security_event": admission.security_event.as_deref().unwrap_or("none"),
+            },
+            "contains_document_bytes": false,
+            "contains_recovered_document_text": false,
+        }))
+        .map_err(Into::into);
+    }
+
+    pub_viewer::local_failure_diagnostic_json(bytes)
 
 
 /// Read-only, source-neutral document state for a mobile Reader shell.
