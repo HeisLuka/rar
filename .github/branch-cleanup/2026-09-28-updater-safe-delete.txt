@@ -43,3 +43,5 @@ chaptera-local-restart-preflight-01-v1
 chaptera-local-restart-preflight-01-v2
 
 # execution kick after workflow landed on main
+
+# pr execution trigger after pull_request landed on main
