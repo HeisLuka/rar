@@ -7,6 +7,7 @@ on:
       - "crates/pub-model/**"
       - "crates/pub-presentation-profile/**"
       - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
 
@@ -1372,6 +1373,62 @@ jobs:
           cat out/carlton/exact/March-2026-presentation-manifest.json
           cat out/carlton/exact/December-2025-presentation-manifest.json
 
+      - name: Gate admitted Viewer presentation selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin presentation-selection-receipt \
+            -- out/carlton/exact/March-2026.pub \
+               out/carlton/exact/March-2026-presentation-manifest.json \
+               out/carlton/exact/March-2026-viewer-presentation-receipt.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin presentation-selection-receipt \
+            -- out/carlton/exact/December-2025.pub \
+               out/carlton/exact/December-2025-presentation-manifest.json \
+               out/carlton/exact/December-2025-viewer-presentation-receipt.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          march_manifest = json.loads((root / "March-2026-presentation-manifest.json").read_text())
+          december_manifest = json.loads((root / "December-2025-presentation-manifest.json").read_text())
+          march = json.loads((root / "March-2026-viewer-presentation-receipt.json").read_text())
+          december = json.loads((root / "December-2025-viewer-presentation-receipt.json").read_text())
+
+          assert march["schema"] == "chaptera.viewer-presentation-selection-receipt.v1"
+          assert march["profile_id"] == march_manifest["profile_id"]
+          assert march["generic_viewer_page_count"] == 8
+          assert march["generic_scene_surface_count"] == 8
+          assert march["selected_viewer_page_count"] == 3
+          assert march["selected_scene_surface_count"] == 3
+          assert march["selected_viewer_page_ids"] == march_manifest["customer_page_ids"]
+          assert march["selected_scene_surface_ids"] == march_manifest["customer_page_ids"]
+          assert "viewer.page_projection.presentation_profile" in march["diagnostic_codes"]
+          assert "viewer.page_projection.roles_unresolved" not in march["diagnostic_codes"]
+
+          assert december["schema"] == "chaptera.viewer-presentation-selection-receipt.v1"
+          assert december["profile_id"] == december_manifest["profile_id"]
+          assert december["generic_viewer_page_count"] == 10
+          assert december["generic_scene_surface_count"] == 10
+          assert december["selected_viewer_page_count"] == 5
+          assert december["selected_scene_surface_count"] == 5
+          assert december["selected_viewer_page_ids"] == december_manifest["customer_page_ids"]
+          assert december["selected_scene_surface_ids"] == december_manifest["customer_page_ids"]
+          assert "viewer.page_projection.presentation_profile" in december["diagnostic_codes"]
+          assert "viewer.page_projection.roles_unresolved" not in december["diagnostic_codes"]
+
+          print(
+              "CARLTON VIEWER PRESENTATION PASS "
+              "March generic=8/8 selected=3/3; "
+              "December generic=10/10 selected=5/5"
+          )
+          PY
+
       - name: Gate March 8-to-3 and December family control
         shell: bash
         run: |
@@ -1472,6 +1529,17 @@ jobs:
             out/carlton/exact/December-2025-projection-context.json
             out/carlton/exact/March-2026-plccmob-receipt.json
             out/carlton/exact/December-2025-plccmob-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Viewer presentation receipts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-viewer-presentation-receipts
+          path: |
+            out/carlton/exact/March-2026-viewer-presentation-receipt.json
+            out/carlton/exact/December-2025-viewer-presentation-receipt.json
           if-no-files-found: error
           retention-days: 30
 
