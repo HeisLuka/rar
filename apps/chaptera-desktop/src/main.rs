@@ -7171,21 +7171,22 @@ mod tests {
         let bytes = fs::read(&fixture).expect("read exact Carlton March PUB");
         let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(
-            source_sha256,
-            "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+            source_sha256, "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
             "Carlton March source identity drifted"
         );
 
         let visual = diagnostic_sweep::open_for_product(&bytes)
             .expect("exact Carlton March must open through current product Reader");
         assert_eq!(visual.document.pages.len(), 3, "Carlton product page count");
-        assert_eq!(visual.scene.surfaces.len(), 3, "Carlton product surface count");
+        assert_eq!(
+            visual.scene.surfaces.len(),
+            3,
+            "Carlton product surface count"
+        );
         assert!(
-            visual
-                .document
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "viewer.page_projection.family_profile_applied"),
+            visual.document.diagnostics.iter().any(
+                |diagnostic| diagnostic.code == "viewer.page_projection.family_profile_applied"
+            ),
             "exact Carlton family presentation profile must be active before visual rendering"
         );
 
