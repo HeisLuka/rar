@@ -118,6 +118,12 @@ jobs:
               raise SystemExit(f"page-count mismatch: {diff['page_count']!r}")
           if golden["page_count"] != 3 or golden["scene_surface_count"] != 3:
               raise SystemExit("current Reader is not on Carlton 3/3 presentation")
+          if golden.get("projected_page_counts") != [1, 2, 1]:
+              raise SystemExit(
+                  f"canonical Cmo projected-page distribution drift: {golden.get('projected_page_counts')!r}"
+              )
+          if len(golden.get("projected_scene_instance_ids", [])) != 4:
+              raise SystemExit("expected four canonical Cmo SceneInstance ids")
 
           pages = []
           for golden_page, diff_page in zip(golden["pages"], diff["pages"]):
@@ -133,6 +139,9 @@ jobs:
                   ],
                   "raster_size_match": visual["raster_size_match"],
                   "node_count": golden_page["node_count"],
+                  "projected_scene_instance_count": golden_page[
+                      "projected_scene_instance_count"
+                  ],
                   "fill_node_count": golden_page["fill_node_count"],
                   "line_node_count": golden_page["line_node_count"],
                   "image_node_count": golden_page["image_node_count"],
@@ -164,6 +173,10 @@ jobs:
               "page_count": 3,
               "family_profile_applied": golden["family_profile_applied"],
               "viewer_diagnostic_codes": golden["viewer_diagnostic_codes"],
+              "projected_scene_instance_count": len(
+                  golden["projected_scene_instance_ids"]
+              ),
+              "projected_page_counts": golden["projected_page_counts"],
               "reader_render": {
                   "backend": golden["render_backend"],
                   "raster_dpi": golden["raster_dpi"],
@@ -209,6 +222,9 @@ jobs:
               ],
               "fallback_typography_sections": [
                   page["executed_fallback_typography_sections"] for page in pages
+              ],
+              "projected_scene_instance_counts": [
+                  page["projected_scene_instance_count"] for page in pages
               ],
           }, indent=2, sort_keys=True))
           '@ | python -
