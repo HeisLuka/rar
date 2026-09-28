@@ -110,20 +110,28 @@ fn span_slice<'a>(bytes: &'a [u8], span: &RawSpan) -> Result<&'a [u8], Connector
         len: span.len,
         stream_len: bytes.len(),
     })?;
-    let end = start.checked_add(len).ok_or(ConnectorReadError::SpanOutOfBounds {
-        offset: span.offset,
-        len: span.len,
-        stream_len: bytes.len(),
-    })?;
-    bytes.get(start..end).ok_or(ConnectorReadError::SpanOutOfBounds {
-        offset: span.offset,
-        len: span.len,
-        stream_len: bytes.len(),
-    })
+    let end = start
+        .checked_add(len)
+        .ok_or(ConnectorReadError::SpanOutOfBounds {
+            offset: span.offset,
+            len: span.len,
+            stream_len: bytes.len(),
+        })?;
+    bytes
+        .get(start..end)
+        .ok_or(ConnectorReadError::SpanOutOfBounds {
+            offset: span.offset,
+            len: span.len,
+            stream_len: bytes.len(),
+        })
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("bounded connector payload"))
+    u32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("bounded connector payload"),
+    )
 }
 
 fn decode_connector_rule(
