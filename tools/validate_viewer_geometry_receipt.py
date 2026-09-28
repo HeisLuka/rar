@@ -37,6 +37,7 @@ def main():
         "node_count": len(receipt["scene"]["nodes"]),
         "story_count": len(receipt["document"]["stories"]),
         "text_fragment_count": len(receipt.get("text_fragments", [])),
+        "typography_run_count": len(receipt.get("typography_runs", [])),
         "image_descriptor_count": len(receipt.get("images", [])),
         "allowlist_valid": True,
     }
