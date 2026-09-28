@@ -53,6 +53,13 @@ jobs:
       - name: Test Reader first-run contract
         run: cargo test -p chaptera-desktop --features reader-only reader_first_run -- --nocapture
 
+      - name: Test Reader atomic open-state and source freshness
+        run: |
+          cargo test -p chaptera-desktop --features reader-only open_generation -- --nocapture
+          cargo test -p chaptera-desktop --features reader-only committed_source -- --nocapture
+          cargo test -p chaptera-desktop --features reader-only multi_file_drop -- --nocapture
+          cargo test -p chaptera-desktop --features reader-only failed_replacement_open -- --nocapture
+
       - name: Build Reader-only desktop source
         run: cargo build -p chaptera-desktop --release --features reader-only
 
