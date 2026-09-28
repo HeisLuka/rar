@@ -271,6 +271,7 @@ impl UpdateOrchestrator {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_authenticated_candidate<H: UpdateHooks>(
         &self,
         transaction_id: &str,
