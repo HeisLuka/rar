@@ -28,8 +28,8 @@ jobs:
       - name: Format
         run: cargo fmt --manifest-path crates/chaptera-reader-resume-state/Cargo.toml -- --check
       - name: Check
-        run: cargo check -p chaptera-reader-resume-state
+        run: cargo check --manifest-path crates/chaptera-reader-resume-state/Cargo.toml
       - name: Clippy
-        run: cargo clippy -p chaptera-reader-resume-state --all-targets -- -D warnings
+        run: cargo clippy --manifest-path crates/chaptera-reader-resume-state/Cargo.toml --all-targets -- -D warnings
       - name: Test resume authority
-        run: cargo test -p chaptera-reader-resume-state -- --nocapture
+        run: cargo test --manifest-path crates/chaptera-reader-resume-state/Cargo.toml -- --nocapture
