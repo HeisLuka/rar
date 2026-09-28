@@ -1,0 +1,73 @@
+name: Reader corpus truth V1
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "tools/reader_corpus_manifest_v1.json"
+      - "tools/run_reader_corpus_matrix_v1.py"
+      - ".github/workflows/reader-corpus-truth-v1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reader-corpus-truth-v1-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  corpus-truth:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check corpus runner syntax
+        run: python -m py_compile tools/run_reader_corpus_matrix_v1.py
+
+      - name: Build current Reader-only product
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p chaptera-desktop --release --features reader-only
+          Copy-Item "target/release/chaptera-editor.exe" "target/release/chaptera-reader.exe" -Force
+
+      - name: Build source-free structural receipt producer
+        run: cargo build --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer --release --bin corpus-reader-receipt
+
+      - name: Run pinned real-PUB corpus through actual Reader product path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/run_reader_corpus_matrix_v1.py `
+            --manifest tools/reader_corpus_manifest_v1.json `
+            --reader-exe target/release/chaptera-reader.exe `
+            --viewer-receipt-exe vendor/producer-a/target/release/corpus-reader-receipt.exe `
+            --output target/reader-corpus-truth-v1/matrix.json `
+            --per-file-dir target/reader-corpus-truth-v1/receipts
+
+      - name: Print corpus summary
+        shell: pwsh
+        run: |
+          $matrix = Get-Content -Raw "target/reader-corpus-truth-v1/matrix.json" | ConvertFrom-Json
+          $matrix.summary | ConvertTo-Json -Depth 4
+          Write-Host "Visual fidelity proven: $($matrix.claims.visual_fidelity_proven)"
+          Write-Host "Publisher equivalence claimed: $($matrix.claims.publisher_equivalence_claimed)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-reader-corpus-truth-v1
+          path: target/reader-corpus-truth-v1/
+          if-no-files-found: error
