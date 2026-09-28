@@ -160,18 +160,15 @@ pub fn paint_document_node_foreground(
         }
     }
 
-    let backend_fallback_reason =
-        fragment
-            .layout
-            .as_ref()
-            .and_then(|layout| match &layout.disposition {
-                RenderTextLayoutDispositionV1::BackendFallback { reason } => {
-                    Some(reason.code().to_owned())
-                }
-                RenderTextLayoutDispositionV1::SharedResolved { .. } => {
-                    Some("shared_layout_backend_execution_invalid".to_owned())
-                }
-            });
+    let backend_fallback_reason = Some(match fragment.layout.as_ref() {
+        Some(layout) => match &layout.disposition {
+            RenderTextLayoutDispositionV1::BackendFallback { reason } => reason.code().to_owned(),
+            RenderTextLayoutDispositionV1::SharedResolved { .. } => {
+                "shared_layout_backend_execution_invalid".to_owned()
+            }
+        },
+        None => "shared_layout_not_requested".to_owned(),
+    });
 
     let (layout_job, usage) =
         layout_document_text(fragment, scene_scale, text_clip_rect.width().max(1.0_f32));
@@ -270,7 +267,9 @@ fn paint_shared_resolved_text(
         } else {
             vec![font_size_px]
         },
-        wrap_width_px: clip_rect.width().max(1.0),
+        // Shared lines are already broken upstream; zero deliberately records
+        // that the backend did not choose a wrapping width for this path.
+        wrap_width_px: 0.0,
         galley_width_px: max_width_px,
         galley_height_px: resolved_height_px,
         clip_width_px: clip_rect.width(),
