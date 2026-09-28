@@ -240,3 +240,138 @@ fn next_lock_owner_cleans_terminal_control_transaction_after_process_exit() {
     assert!(!control.exists());
     assert_eq!(fs::read(root.join("current/chaptera-updater.bin")).unwrap(), b"U2");
 }
+
+
+#[test]
+fn journal_rotation_recovers_highest_valid_next_copy() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    engine
+        .begin_verified_candidate(
+            "tx-journal-next",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    let current = engine.journal_path();
+    let next = engine.journal_next_path();
+    fs::rename(&current, &next).unwrap();
+
+    let recovered = engine.read_journal().unwrap().unwrap();
+    assert_eq!(recovered.transaction_id, "tx-journal-next");
+    assert_eq!(recovered.phase, UpdatePhase::Prepared);
+}
+
+#[test]
+fn corrupt_newest_journal_falls_back_to_valid_previous_generation() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    engine
+        .begin_verified_candidate(
+            "tx-journal-prev",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+
+    fs::write(engine.journal_path(), b"{corrupt").unwrap();
+
+    let recovered = engine.read_journal().unwrap().unwrap();
+    assert_eq!(recovered.transaction_id, "tx-journal-prev");
+    assert_eq!(recovered.phase, UpdatePhase::Preparing);
+}
+
+
+#[test]
+fn archived_terminal_journal_is_high_water_not_active_transaction() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let candidate = temp.path().join("verified-candidate");
+    seed_current(&root);
+    seed_candidate(&candidate);
+
+    let engine = UpdateEngine::new(&root);
+    engine
+        .begin_verified_candidate(
+            "tx-terminal-high-water",
+            "2.0.0",
+            &candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+    engine.retain_previous().unwrap();
+    engine.activate_candidate().unwrap();
+    engine.confirm_candidate().unwrap();
+
+    assert!(engine.journal_previous_path().is_file());
+    assert!(engine.read_journal().unwrap().is_none());
+
+    // The archived terminal envelope must still seed the next generation,
+    // while not blocking a new transaction as ActiveTransaction.
+    let next_candidate = temp.path().join("verified-candidate-2");
+    seed_candidate(&next_candidate);
+    engine
+        .begin_verified_candidate(
+            "tx-after-terminal-high-water",
+            "3.0.0",
+            &next_candidate,
+            Path::new("chaptera-updater.bin"),
+        )
+        .unwrap();
+    assert_eq!(
+        engine.read_journal().unwrap().unwrap().transaction_id,
+        "tx-after-terminal-high-water"
+    );
+}
+
+
+#[test]
+fn legacy_raw_rotation_migrates_without_false_same_generation_ambiguity() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    fs::create_dir_all(&root).unwrap();
+    let engine = UpdateEngine::new(&root);
+
+    let previous = chaptera_update_engine::UpdateJournal {
+        schema_version: "chaptera.update-journal.v1".into(),
+        transaction_id: "tx-legacy-prev".into(),
+        candidate_version: "1.0.0".into(),
+        updater_relative_path: Path::new("chaptera-updater.bin").to_path_buf(),
+        phase: UpdatePhase::Preparing,
+    };
+    let current = chaptera_update_engine::UpdateJournal {
+        schema_version: "chaptera.update-journal.v1".into(),
+        transaction_id: "tx-legacy-current".into(),
+        candidate_version: "2.0.0".into(),
+        updater_relative_path: Path::new("chaptera-updater.bin").to_path_buf(),
+        phase: UpdatePhase::Prepared,
+    };
+
+    fs::write(
+        engine.journal_previous_path(),
+        serde_json::to_vec_pretty(&previous).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        engine.journal_path(),
+        serde_json::to_vec_pretty(&current).unwrap(),
+    )
+    .unwrap();
+
+    let recovered = engine.read_journal().unwrap().unwrap();
+    assert_eq!(recovered.transaction_id, "tx-legacy-current");
+    assert_eq!(recovered.phase, UpdatePhase::Prepared);
+}

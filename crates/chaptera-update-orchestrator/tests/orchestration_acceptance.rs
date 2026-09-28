@@ -1,4 +1,5 @@
 use chaptera_update_engine::RecoveryOutcome;
+use chaptera_update_trust::{ChapteraReleaseSemantics, InstalledUpdateContext, UpdateMode, INSTALL_LAYOUT_EPOCH, UPDATE_PROTOCOL_VERSION};
 use chaptera_update_orchestrator::{
     ApplyOutcome, InstallLock, OrchestrationError, UpdateHooks, UpdateOrchestrator,
 };
@@ -10,6 +11,14 @@ fn seed_tree(path: &Path, updater: &[u8], reader: &[u8]) {
     fs::create_dir_all(path).unwrap();
     fs::write(path.join("chaptera-updater.bin"), updater).unwrap();
     fs::write(path.join("reader.bin"), reader).unwrap();
+}
+
+
+fn authenticated_release(mode: UpdateMode, rollback_from: &[&str]) -> ChapteraReleaseSemantics {
+    ChapteraReleaseSemantics { product_id:"chaptera.reader".into(), architecture:"windows-x86_64".into(), channel:"stable".into(), package_version:"2.0.0".into(), install_layout_epoch:INSTALL_LAYOUT_EPOCH, update_protocol_version:UPDATE_PROTOCOL_VERSION, update_mode:mode, state_schema:"reader-state-v1".into(), rollback_compatible_from:rollback_from.iter().map(|v|(*v).into()).collect(), installed_tree_bytes:1024 }
+}
+fn installed_context() -> InstalledUpdateContext<'static> {
+    InstalledUpdateContext { product_id:"chaptera.reader", architecture:"windows-x86_64", channel:"stable", install_layout_epoch:INSTALL_LAYOUT_EPOCH, max_update_protocol_version:UPDATE_PROTOCOL_VERSION }
 }
 
 #[derive(Default)]
@@ -379,4 +388,29 @@ fn front_door_rejects_parallel_staging_owner() {
         )
         .unwrap_err();
     assert!(matches!(err, OrchestrationError::LockBusy));
+}
+
+#[test]
+fn installer_required_is_rejected_before_transaction_mutation() {
+    let temp=tempdir().unwrap(); let root=temp.path().join("install"); let candidate=temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1"); seed_tree(&candidate,b"U2",b"reader-v2");
+    let orchestrator=UpdateOrchestrator::new(&root); let mut hooks=RecordingHooks::default();
+    let err=orchestrator.apply_authenticated_candidate("tx-installer-required","1.0.0",&authenticated_release(UpdateMode::InstallerRequired,&["1.0.0"]),installed_context(),&candidate,Path::new("chaptera-updater.bin"),&mut hooks).unwrap_err();
+    assert!(matches!(err,OrchestrationError::InstallerRequired{..})); assert!(orchestrator.engine().read_journal().unwrap().is_none());
+}
+#[test]
+fn payload_swap_without_authenticated_rollback_edge_fails_closed_before_mutation() {
+    let temp=tempdir().unwrap(); let root=temp.path().join("install"); let candidate=temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1"); seed_tree(&candidate,b"U2",b"reader-v2");
+    let orchestrator=UpdateOrchestrator::new(&root); let mut hooks=RecordingHooks::default();
+    let err=orchestrator.apply_authenticated_candidate("tx-no-rollback","1.0.0",&authenticated_release(UpdateMode::PayloadSwap,&["0.9.0"]),installed_context(),&candidate,Path::new("chaptera-updater.bin"),&mut hooks).unwrap_err();
+    assert!(matches!(err,OrchestrationError::PolicyRejected{..})); assert!(orchestrator.engine().read_journal().unwrap().is_none());
+}
+#[test]
+fn authenticated_rollback_compatible_payload_swap_uses_existing_engine() {
+    let temp=tempdir().unwrap(); let root=temp.path().join("install"); let candidate=temp.path().join("candidate");
+    seed_tree(&root.join("current"), b"U1", b"reader-v1"); seed_tree(&candidate,b"U2",b"reader-v2");
+    let orchestrator=UpdateOrchestrator::new(&root); let mut hooks=RecordingHooks::default();
+    let outcome=orchestrator.apply_authenticated_candidate("tx-auth","1.0.0",&authenticated_release(UpdateMode::PayloadSwap,&["1.0.0"]),installed_context(),&candidate,Path::new("chaptera-updater.bin"),&mut hooks).unwrap();
+    assert!(matches!(outcome,ApplyOutcome::Confirmed{..}));
 }

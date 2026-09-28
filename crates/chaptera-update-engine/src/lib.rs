@@ -1,6 +1,11 @@
+pub mod staging;
+
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
@@ -24,6 +29,13 @@ pub struct UpdateJournal {
     pub candidate_version: String,
     pub updater_relative_path: PathBuf,
     pub phase: UpdatePhase,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct JournalEnvelope {
+    generation: u64,
+    journal: UpdateJournal,
+    journal_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,22 +152,80 @@ impl UpdateEngine {
     }
 
     pub fn read_journal(&self) -> Result<Option<UpdateJournal>> {
-        let path = self.journal_path();
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(err.into()),
-        };
-        let journal: UpdateJournal = serde_json::from_slice(&bytes)?;
-        if journal.schema_version != JOURNAL_SCHEMA_VERSION {
+        let candidates = self.read_journal_candidates()?;
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        let highest = candidates.iter().map(|entry| entry.generation).max().unwrap_or(0);
+        let mut winners = candidates.iter().filter(|entry| entry.generation == highest);
+        let winner = winners.next().expect("highest generation has a candidate");
+        if winners.any(|other| other.journal_sha256 != winner.journal_sha256) {
             return Err(UpdateError::LayoutInvariant(format!(
-                "unsupported journal schema {}",
-                journal.schema_version
+                "ambiguous update journals at generation {highest}"
             )));
         }
-        validate_transaction_id(&journal.transaction_id)?;
-        validate_relative_path(&journal.updater_relative_path)?;
-        Ok(Some(journal))
+        validate_journal(&winner.journal)?;
+
+        // A terminal journal retained only as .prev is durable install-root
+        // history/high-water, not an active transaction. Keep it visible to
+        // generation seeding through read_journal_candidates(), but preserve
+        // the landed public contract that read_journal() returns None once
+        // confirmation/rollback has been archived.
+        let only_archived_terminal = !self.journal_path().exists()
+            && !self.journal_next_path().exists()
+            && matches!(
+                winner.journal.phase,
+                UpdatePhase::CandidateConfirmed | UpdatePhase::RolledBack
+            );
+        if only_archived_terminal {
+            return Ok(None);
+        }
+
+        Ok(Some(winner.journal.clone()))
+    }
+
+    fn read_journal_candidates(&self) -> Result<Vec<JournalEnvelope>> {
+        let mut valid = Vec::new();
+        let mut existing = 0usize;
+        // Legacy #910 journals did not carry an explicit generation. Their
+        // atomic rotation still gives us a deterministic recency order:
+        // .next is a newly-synced pending copy, canonical is newer than .prev,
+        // and .prev is the retained predecessor. Map only legacy raw journals
+        // onto low synthetic generations so the first envelope write outranks
+        // them while preserving crash recovery during format migration.
+        for (path, legacy_generation) in [
+            (self.journal_previous_path(), 0u64),
+            (self.journal_path(), 1u64),
+            (self.journal_next_path(), 2u64),
+        ] {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err.into()),
+            };
+            existing += 1;
+            if let Ok(envelope) = decode_journal_envelope(&bytes) {
+                valid.push(envelope);
+                continue;
+            }
+            if let Ok(journal) = serde_json::from_slice::<UpdateJournal>(&bytes) {
+                if validate_journal(&journal).is_ok() {
+                    let journal_sha256 = journal_digest(&journal)?;
+                    valid.push(JournalEnvelope {
+                        generation: legacy_generation,
+                        journal,
+                        journal_sha256,
+                    });
+                }
+            }
+        }
+        if existing != 0 && valid.is_empty() {
+            return Err(UpdateError::LayoutInvariant(
+                "all updater journal copies are invalid".into(),
+            ));
+        }
+        Ok(valid)
     }
 
     /// Removes transaction directories left by a terminal updater process.
@@ -402,7 +472,20 @@ impl UpdateEngine {
         let previous = self.journal_previous_path();
 
         remove_path_if_exists(&next)?;
-        let bytes = serde_json::to_vec_pretty(journal)?;
+        let generation = self
+            .read_journal_candidates()?
+            .iter()
+            .map(|entry| entry.generation)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| UpdateError::LayoutInvariant("journal generation overflow".into()))?;
+        let envelope = JournalEnvelope {
+            generation,
+            journal: journal.clone(),
+            journal_sha256: journal_digest(journal)?,
+        };
+        let bytes = serde_json::to_vec_pretty(&envelope)?;
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -432,6 +515,33 @@ impl UpdateEngine {
         remove_path_if_exists(&self.journal_next_path())?;
         Ok(())
     }
+}
+
+fn validate_journal(journal: &UpdateJournal) -> Result<()> {
+    if journal.schema_version != JOURNAL_SCHEMA_VERSION {
+        return Err(UpdateError::LayoutInvariant(format!(
+            "unsupported journal schema {}",
+            journal.schema_version
+        )));
+    }
+    validate_transaction_id(&journal.transaction_id)?;
+    validate_relative_path(&journal.updater_relative_path)?;
+    Ok(())
+}
+
+fn journal_digest(journal: &UpdateJournal) -> Result<String> {
+    let canonical = serde_json::to_vec(journal)?;
+    Ok(format!("{:x}", Sha256::digest(canonical)))
+}
+
+fn decode_journal_envelope(bytes: &[u8]) -> Result<JournalEnvelope> {
+    let envelope: JournalEnvelope = serde_json::from_slice(bytes)?;
+    validate_journal(&envelope.journal)?;
+    let actual = journal_digest(&envelope.journal)?;
+    if actual != envelope.journal_sha256 {
+        return Err(UpdateError::LayoutInvariant("journal digest mismatch".into()));
+    }
+    Ok(envelope)
 }
 
 fn validate_transaction_id(transaction_id: &str) -> Result<()> {

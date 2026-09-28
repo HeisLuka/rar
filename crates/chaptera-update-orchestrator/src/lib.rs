@@ -1,4 +1,5 @@
 use chaptera_update_engine::{RecoveryOutcome, UpdateEngine, UpdateError};
+use chaptera_update_trust::{ChapteraReleaseSemantics, InstalledUpdateContext, ReleaseDecision};
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
@@ -93,6 +94,8 @@ pub enum ApplyOutcome {
 pub enum OrchestrationError {
     Io(io::Error),
     Engine(UpdateError),
+    PolicyRejected { reason: String },
+    InstallerRequired { target_version: String },
     LockBusy,
     QuiesceFailed {
         reason: String,
@@ -114,6 +117,8 @@ impl fmt::Display for OrchestrationError {
         match self {
             Self::Io(err) => write!(f, "I/O error: {err}"),
             Self::Engine(err) => write!(f, "update engine error: {err}"),
+            Self::PolicyRejected { reason } => write!(f, "authenticated update policy rejected: {reason}"),
+            Self::InstallerRequired { target_version } => write!(f, "release {target_version} requires installer flow; retained-tree payload swap is forbidden"),
             Self::LockBusy => write!(f, "another Chaptera update owns the install lock"),
             Self::QuiesceFailed { reason } => write!(f, "quiesce failed: {reason}"),
             Self::RecoveryFailed {
@@ -264,6 +269,26 @@ impl UpdateOrchestrator {
             candidate_version: journal.candidate_version,
             startup_recovery: RecoveryOutcome::NothingToDo,
         })
+    }
+
+    pub fn apply_authenticated_candidate<H: UpdateHooks>(
+        &self,
+        transaction_id: &str,
+        installed_version: &str,
+        release: &ChapteraReleaseSemantics,
+        installed: InstalledUpdateContext<'_>,
+        candidate_source: &Path,
+        updater_relative_path: &Path,
+        hooks: &mut H,
+    ) -> Result<ApplyOutcome> {
+        let decision = release.decision_for(installed, installed_version)
+            .map_err(|error| OrchestrationError::PolicyRejected { reason: error.to_string() })?;
+        match decision {
+            ReleaseDecision::InstallerRequired => return Err(OrchestrationError::InstallerRequired { target_version: release.package_version.clone() }),
+            ReleaseDecision::PayloadSwap { rollback_compatible: false } => return Err(OrchestrationError::PolicyRejected { reason: format!("release {} does not authenticate rollback compatibility from installed {}", release.package_version, installed_version) }),
+            ReleaseDecision::PayloadSwap { rollback_compatible: true } => {}
+        }
+        self.apply_verified_candidate(transaction_id, &release.package_version, candidate_source, updater_relative_path, hooks)
     }
 
     pub fn apply_verified_candidate<H: UpdateHooks>(
