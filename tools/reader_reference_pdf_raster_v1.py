@@ -18,7 +18,8 @@ from pdf_reference_diff_v1 import (
 )
 
 EMU_PER_POINT = 12_700.0
-PHYSICAL_SIZE_TOLERANCE_PT = 0.02
+PHYSICAL_SIZE_TOLERANCE_PX = 0.1
+PHYSICAL_SIZE_TOLERANCE_PT = 72.0 / RASTER_DPI * PHYSICAL_SIZE_TOLERANCE_PX
 
 
 def render_png(path):
@@ -37,14 +38,22 @@ def render_png(path):
     }
 
 
-def physical_size_match(page_receipt, reference_box):
+def physical_size_comparison(page_receipt, reference_box):
     expected_width = page_receipt["width_emu"] / EMU_PER_POINT
     expected_height = page_receipt["height_emu"] / EMU_PER_POINT
     actual = reference_box["render_rect"]
-    return (
-        abs(expected_width - actual["width_pt"]) <= PHYSICAL_SIZE_TOLERANCE_PT
-        and abs(expected_height - actual["height_pt"]) <= PHYSICAL_SIZE_TOLERANCE_PT
-    )
+    width_delta_pt = expected_width - actual["width_pt"]
+    height_delta_pt = expected_height - actual["height_pt"]
+    return {
+        "matches_within_tolerance": (
+            abs(width_delta_pt) <= PHYSICAL_SIZE_TOLERANCE_PT
+            and abs(height_delta_pt) <= PHYSICAL_SIZE_TOLERANCE_PT
+        ),
+        "width_delta_pt": round(width_delta_pt, 6),
+        "height_delta_pt": round(height_delta_pt, 6),
+        "width_delta_px": round(width_delta_pt * RASTER_DPI / 72.0, 6),
+        "height_delta_px": round(height_delta_pt * RASTER_DPI / 72.0, 6),
+    }
 
 
 def compare_reader_rasters(golden_receipt_path, reference_pdf_path):
@@ -67,6 +76,7 @@ def compare_reader_rasters(golden_receipt_path, reference_pdf_path):
         reference_box = page_boxes(reference_page)
         reference_raster = render_page(reference_page)
         diff = compare_rasters(candidate, reference_raster)
+        physical_size = physical_size_comparison(candidate_meta, reference_box)
 
         compared.append(
             {
@@ -76,9 +86,15 @@ def compare_reader_rasters(golden_receipt_path, reference_pdf_path):
                 "candidate_raster_sha256": candidate["raster_sha256"],
                 "reference_raster_sha256": reference_raster["raster_sha256"],
                 "reference_boxes": reference_box,
-                "physical_page_size_matches_reference": physical_size_match(
-                    candidate_meta, reference_box
-                ),
+                "physical_page_size_matches_reference": physical_size[
+                    "matches_within_tolerance"
+                ],
+                "physical_page_size_delta": {
+                    "width_pt": physical_size["width_delta_pt"],
+                    "height_pt": physical_size["height_delta_pt"],
+                    "width_px": physical_size["width_delta_px"],
+                    "height_px": physical_size["height_delta_px"],
+                },
                 "candidate_physical_size": {
                     "width_emu": candidate_meta["width_emu"],
                     "height_emu": candidate_meta["height_emu"],
@@ -121,6 +137,7 @@ def compare_reader_rasters(golden_receipt_path, reference_pdf_path):
             "significant_channel_delta": SIGNIFICANT_CHANNEL_DELTA,
             "region_tile_px": TILE,
             "physical_size_tolerance_pt": PHYSICAL_SIZE_TOLERANCE_PT,
+            "physical_size_tolerance_px": PHYSICAL_SIZE_TOLERANCE_PX,
         },
         "pages": compared,
         "limitations": [
