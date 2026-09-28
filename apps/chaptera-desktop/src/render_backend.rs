@@ -110,11 +110,8 @@ pub fn paint_document_node_foreground(
 
     let text_clip_rect = node_rect.shrink(2.0);
     let text_painter = painter.with_clip_rect(text_clip_rect);
-    let layout_job = layout_document_text(
-        fragment,
-        scene_scale,
-        text_clip_rect.width().max(1.0_f32),
-    );
+    let layout_job =
+        layout_document_text(fragment, scene_scale, text_clip_rect.width().max(1.0_f32));
     let galley = text_painter.layout_job(layout_job);
     let text_clipped = preview_text_height_is_clipped(galley.size().y, text_clip_rect.height());
     text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
@@ -154,7 +151,11 @@ fn layout_document_text(
                 return None;
             }
             let size = source_text_size_px(run.text_size_emu, scene_scale)?;
-            Some((start - fragment.scalar_start, end - fragment.scalar_start, size))
+            Some((
+                start - fragment.scalar_start,
+                end - fragment.scalar_start,
+                size,
+            ))
         })
         .collect::<Vec<_>>();
 
@@ -162,10 +163,7 @@ fn layout_document_text(
         return fallback_job();
     }
     source_sections.sort_by_key(|(start, end, size)| (*start, *end, size.to_bits()));
-    if source_sections
-        .windows(2)
-        .any(|pair| pair[1].0 < pair[0].1)
-    {
+    if source_sections.windows(2).any(|pair| pair[1].0 < pair[0].1) {
         return fallback_job();
     }
 
@@ -195,7 +193,7 @@ fn layout_document_text(
         let Some(text) = scalar_slice(&fragment.text, cursor, fragment_scalar_len) else {
             return fallback_job();
         };
-        append_text_section(&mut job, text, fallback);
+        append_text_section(&mut job, text, fallback.clone());
     }
 
     if job.text != fragment.text {
@@ -317,11 +315,19 @@ mod tests {
             .iter()
             .map(|section| section.format.font_id.size)
             .collect::<Vec<_>>();
-        assert_eq!(sizes, vec![24.0, crate::fallback_font::screen_font_size(scene_scale), 14.0]);
-        assert!(job
-            .sections
-            .iter()
-            .all(|section| section.format.font_id.family == crate::fallback_font::family()));
+        assert_eq!(
+            sizes,
+            vec![
+                24.0,
+                crate::fallback_font::screen_font_size(scene_scale),
+                14.0
+            ]
+        );
+        assert!(
+            job.sections
+                .iter()
+                .all(|section| section.format.font_id.family == crate::fallback_font::family())
+        );
     }
 
     #[test]
@@ -340,6 +346,9 @@ mod tests {
         .expect("render text fragment");
         let job = layout_document_text(&fragment, 1.0 / 12_700.0, 400.0);
         assert_eq!(job.sections.len(), 1);
-        assert_eq!(job.sections[0].format.font_id, crate::fallback_font::font_id_for_scene_scale(1.0 / 12_700.0));
+        assert_eq!(
+            job.sections[0].format.font_id,
+            crate::fallback_font::font_id_for_scene_scale(1.0 / 12_700.0)
+        );
     }
 }
