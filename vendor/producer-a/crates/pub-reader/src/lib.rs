@@ -170,6 +170,8 @@ pub struct PubControllingFieldObservation {
     pub block_type: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_container_hex: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -573,17 +575,28 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
             let fields = chunk
                 .fields
                 .iter()
-                .map(|field| PubControllingFieldObservation {
-                    id: field.id,
-                    block_type: field.block_type,
-                    declared_length: match &field.body {
+                .map(|field| {
+                    let (declared_length, observed_container_hex) = match &field.body {
                         RawContentsBlockBody::Container {
-                            declared_length, ..
-                        } => Some(*declared_length),
-                        _ => None,
-                    },
+                            declared_length,
+                            content_source,
+                            ..
+                        } => {
+                            let observed = (field.id == 0x06)
+                                .then(|| raw_span_hex(&contents, content_source))
+                                .transpose()?;
+                            (Some(*declared_length), observed)
+                        }
+                        _ => (None, None),
+                    };
+                    Ok(PubControllingFieldObservation {
+                        id: field.id,
+                        block_type: field.block_type,
+                        declared_length,
+                        observed_container_hex,
+                    })
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>()?
             Ok(PubControllingObservation {
                 contents_seq_num: seq_u32(reference.seq_num)?,
                 parent_seq_num: single_parent_seq(reference),
@@ -602,6 +615,19 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
         pages,
         controlling,
     })
+}
+
+fn raw_span_hex(bytes: &[u8], span: &pub_core::RawSpan) -> Result<String> {
+    let start = usize::try_from(span.offset).context("raw span offset does not fit usize")?;
+    let len = usize::try_from(span.len).context("raw span length does not fit usize")?;
+    let end = start
+        .checked_add(len)
+        .filter(|end| *end <= bytes.len())
+        .context("raw span is outside Contents")?;
+    Ok(bytes[start..end]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>())
 }
 
 /// Canonical source key for a physical mature-0x2C Contents directory slot.
