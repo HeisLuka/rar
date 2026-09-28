@@ -40,6 +40,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
+      - name: Check canonical SceneInstance compose feature
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml -- --check
+          cargo fmt --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml -- --check
+          cargo clippy \
+            --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml \
+            --features projected-scene-instances \
+            --all-targets -- -D warnings
       - name: Run canonical SceneInstance render-plan contract
         run: |
           set -euo pipefail
