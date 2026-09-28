@@ -5,6 +5,8 @@ on:
     paths:
       - 'vendor/producer-a/crates/pub-viewer/**'
       - 'crates/chaptera-viewer-render-plan/**'
+      - 'crates/chaptera-scene-instance/**'
+      - 'crates/chaptera-layout-projection/**'
       - 'apps/chaptera-desktop/**'
       - '.github/workflows/reader-cmo-scene-instance-compose-v1.yml'
   workflow_dispatch:
@@ -17,18 +19,18 @@ permissions:
   contents: read
 
 jobs:
-  vendor-msrv:
+  vendor-reader-msrv:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
-      - name: Keep default vendor Viewer on Rust 1.85
+          toolchain: "1.85.0"
+      - name: Keep default vendor Reader on Rust 1.85
         run: |
           set -euo pipefail
-          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer --no-default-features
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader --no-default-features
 
   canonical-projected-render-plan:
     runs-on: ubuntu-latest
@@ -36,6 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
       - name: Run canonical SceneInstance render-plan contract
         run: |
           set -euo pipefail
