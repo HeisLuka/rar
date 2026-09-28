@@ -146,7 +146,6 @@ impl PreviewTextMetricDiagnostic {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
