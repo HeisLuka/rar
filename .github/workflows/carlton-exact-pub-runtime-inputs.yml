@@ -3,6 +3,10 @@ name: Carlton exact PUB runtime inputs
 on:
   pull_request:
     paths:
+      - "Cargo.toml"
+      - "crates/pub-model/**"
+      - "crates/pub-presentation-profile/**"
+      - "vendor/producer-a/crates/pub-reader/**"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
 
@@ -1028,6 +1032,10 @@ jobs:
 
           python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/March-2026-plccmob-receipt.json
           python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/December-2025-plccmob-receipt.json
+            out/carlton/exact/March-2026-page-role.json
+            out/carlton/exact/December-2025-page-role.json
+            out/carlton/exact/March-2026-presentation-manifest.json
+            out/carlton/exact/December-2025-presentation-manifest.json
 
       - name: Parse exact PlcCmob chunks through Rust core
         shell: bash
@@ -1072,6 +1080,151 @@ jobs:
                   f"{label}: Rust exact-wire PASS size={rust['declared_length']} "
                   f"rows={rust['declared_count']}"
               )
+          PY
+
+      - name: Emit source-free PAGE-role evidence for exact family controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- out/carlton/exact/March-2026.pub \
+               out/carlton/exact/March-2026-page-role.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- out/carlton/exact/December-2025.pub \
+               out/carlton/exact/December-2025-page-role.json
+
+      - name: Assemble bounded Carlton presentation inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          extraction = json.loads((root / "plccmob-runtime-extraction.json").read_text())
+
+          specs = {
+              "March-2026": root / "March-2026.pub",
+              "December-2025": root / "December-2025.pub",
+          }
+          for label, source in specs.items():
+              roles = json.loads((root / f"{label}-page-role.json").read_text())
+              receipt = extraction["receipts"][label]
+              carrier_pages = sorted({
+                  check["parent_seq_num"]
+                  for check in receipt["carrier_checks"]
+              })
+              pages = [
+                  {
+                      "document_ordinal": page["document_ordinal"],
+                      "contents_seq_num": page["contents_seq_num"],
+                      "oid_dword0": page.get("oid_dword0"),
+                      "oid_dword1": page.get("oid_dword1"),
+                      "applied_master_seq_num": page.get("applied_master_seq_num"),
+                      "shape_child_count": page["shape_child_count"],
+                  }
+                  for page in roles["pages"]
+              ]
+              payload = {
+                  "schema_version": "chaptera.carlton-presentation-profile-input.v1",
+                  "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                  "pages": pages,
+                  "carrier_page_seq_nums": carrier_pages,
+              }
+              (root / f"{label}-presentation-input.json").write_text(
+                  json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              print(
+                  f"{label}: presentation input pages={len(pages)} "
+                  f"carriers={carrier_pages}"
+              )
+          PY
+
+      - name: Build exact admitted Carlton presentation manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p pub-presentation-profile --bin carlton-presentation-profile -- \
+            out/carlton/exact/March-2026-presentation-input.json \
+            out/carlton/exact/March-2026-presentation-manifest.json
+          cargo run -q -p pub-presentation-profile --bin carlton-presentation-profile -- \
+            out/carlton/exact/December-2025-presentation-input.json \
+            out/carlton/exact/December-2025-presentation-manifest.json
+          cat out/carlton/exact/March-2026-presentation-manifest.json
+          cat out/carlton/exact/December-2025-presentation-manifest.json
+
+      - name: Gate March 8-to-3 and December family control
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          march = json.loads((root / "March-2026-presentation-manifest.json").read_text())
+          december = json.loads((root / "December-2025-presentation-manifest.json").read_text())
+
+          assert march["profile_id"] == "carlton-school-jotter/march-2026/v1"
+          assert march["raw_page_count"] == 8
+          assert march["customer_page_count"] == 3
+          assert march["customer_page_seq_nums"] == [266, 361, 406]
+          assert march["master_page_seq_nums"] == [263]
+          assert march["carrier_page_seq_nums"] == [279]
+          roles = {
+              page["contents_seq_num"]: page["role"]
+              for page in march["pages"]
+          }
+          assert roles == {
+              263: "master",
+              266: "customer",
+              361: "customer",
+              406: "customer",
+              269: "internal_service",
+              272: "internal_service",
+              275: "internal_service",
+              279: "carrier",
+          }, roles
+          assert all(
+              edge["master_page_seq_num"] == 263
+              for edge in march["customer_master_relations"]
+          )
+          assert march["invariants"] == {
+              "exact_source_admission": True,
+              "family_scoped_oid_rule": True,
+              "canonical_source_graph_mutated": False,
+              "canonical_page_ids_preserved": True,
+              "carrier_pages_exposed_as_customer_pages": False,
+              "master_pages_exposed_as_customer_pages": False,
+          }
+
+          assert december["profile_id"] == "carlton-school-jotter/december-2025/v1"
+          assert december["customer_page_count"] == 5
+          assert set(december["customer_page_seq_nums"]) == {266, 361, 406, 456, 493}
+          assert december["master_page_seq_nums"] == [263]
+          assert december["carrier_page_seq_nums"] == [279]
+          assert all(
+              page["role"] != "customer"
+              for page in december["pages"]
+              if page["contents_seq_num"] in {263, 279}
+          )
+          assert all(
+              edge["master_page_seq_num"] == 263
+              for edge in december["customer_master_relations"]
+          )
+
+          print(
+              "CARLTON PRESENTATION PROFILE PASS "
+              "March raw=8 customer=3 master=263 carrier=279; "
+              "December customer=5 master=263 carrier=279"
+          )
           PY
 
       - name: Upload exact runtime inputs
