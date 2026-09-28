@@ -9,7 +9,9 @@
 
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cmo-slot-compose")]
-use chaptera_layout_projection::{CarrierExtentV1, CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1};
+use chaptera_layout_projection::{
+    CarrierExtentV1, CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1,
+};
 #[cfg(feature = "cmo-slot-compose")]
 use chaptera_scene_instance::{SceneInstanceV1, SceneProjectionKindV1, cmo_story_slot_instance_v1};
 use pub_layout::{
@@ -26,6 +28,8 @@ use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
     carlton_admitted_carrier_page_seq_nums_v1, select_carlton_customer_page_seq_nums_v1,
 };
+#[cfg(feature = "cmo-slot-compose")]
+use pub_reader::build_mature_0x2c_cmo_projection_bridge_v1;
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -38,8 +42,6 @@ use pub_reader::{
     build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
     build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
-#[cfg(feature = "cmo-slot-compose")]
-use pub_reader::build_mature_0x2c_cmo_projection_bridge_v1;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -1366,14 +1368,21 @@ fn page_for_resolved_node(graph: &PubResolvedGraph, node_id: NodeId) -> Result<P
     let mut current = graph
         .nodes
         .get(&node_id)
-        .with_context(|| format!("projected target frame {} is absent", node_id.as_canonical()))?
+        .with_context(|| {
+            format!(
+                "projected target frame {} is absent",
+                node_id.as_canonical()
+            )
+        })?
         .header
         .parent_id;
     let mut seen = BTreeSet::new();
 
     loop {
         if !seen.insert(current) {
-            return Err(anyhow!("projected target ancestry contains a cycle at {current}"));
+            return Err(anyhow!(
+                "projected target ancestry contains a cycle at {current}"
+            ));
         }
 
         let page_id = PageId::from_canonical(current);
@@ -1415,7 +1424,9 @@ fn project_carlton_march_cmo_instances(
     )
     .context("build active Reader Cmo authority bridge for Carlton March")?;
     if !bridge.active_graph_identity_parity {
-        return Err(anyhow!("active Reader Cmo bridge did not prove identity parity"));
+        return Err(anyhow!(
+            "active Reader Cmo bridge did not prove identity parity"
+        ));
     }
 
     let graph = &pipeline.resolved.graph;
@@ -1457,9 +1468,10 @@ fn project_carlton_march_cmo_instances(
 
         let target_story_id =
             parse_projected_story_id(&first.target_story_id, "Cmo target_story_id")?;
-        let target_frame_text = first.target_frame_node_id.as_deref().with_context(|| {
-            format!("Cmo target Qsid {target_qsid} has no unique target frame")
-        })?;
+        let target_frame_text = first
+            .target_frame_node_id
+            .as_deref()
+            .with_context(|| format!("Cmo target Qsid {target_qsid} has no unique target frame"))?;
         let target_frame_node_id =
             parse_projected_node_id(target_frame_text, "Cmo target_frame_node_id")?;
         let target_frame = graph.nodes.get(&target_frame_node_id).with_context(|| {
@@ -1657,13 +1669,12 @@ fn project_carlton_march_cmo_instances(
                 LengthEmu::new(slot.resolved_height_emu),
             );
 
-            let relation = relations
-                .get(slot.slot_index)
-                .copied()
-                .with_context(|| format!(
+            let relation = relations.get(slot.slot_index).copied().with_context(|| {
+                format!(
                     "visible Cmo slot {} has no canonical relation",
                     slot.slot_index
-                ))?;
+                )
+            })?;
             let scene_instance = cmo_story_slot_instance_v1(
                 relation,
                 &target_page_id.as_canonical().to_string(),
