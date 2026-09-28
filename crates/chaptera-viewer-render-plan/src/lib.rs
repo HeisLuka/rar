@@ -8,7 +8,12 @@
 use chaptera_scene_instance::{SceneInstanceV1, SceneProjectionKindV1};
 #[cfg(feature = "projected-scene-instances")]
 use pub_model::CanonicalId;
-use pub_model::{Affine2D, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
+use pub_layout::{
+    BoundedLayoutEnvironment, BoundedLayoutProjection, BoundedShapedFlowRuntime,
+    BoundedShapingRuntime, ProjectedNodeGeometry, ProjectedPage, ProjectedStory,
+    ProjectedStoryFrame, font_fingerprint_sha256, resolve_bounded_shaped_flow,
+};
+use pub_model::{Affine2D, LengthEmu, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
 use pub_viewer::ViewerGeometryDocument;
 #[cfg(feature = "projected-scene-instances")]
 use pub_viewer::ViewerProjectedSceneInstanceV1;
@@ -16,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub const PAGE_RENDER_PLAN_SCHEMA_V1: &str = "chaptera.page-render-plan.v1";
+pub const SHARED_TEXT_LAYOUT_REVISION_V1: &str =
+    "chaptera.viewer.shared-text-layout.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageRenderPlanV1 {
@@ -64,6 +71,8 @@ pub struct RenderTextFragmentV1 {
     pub line_count: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typography: Vec<RenderTypographyRunV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<RenderTextLayoutV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +83,81 @@ pub struct RenderTypographyRunV1 {
     pub text_size_emu: u32,
     pub font_inherited: bool,
     pub size_inherited: bool,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExplicitRenderTextFontResourceV1<'a> {
+    pub resource_id: &'a str,
+    pub expected_sha256: &'a str,
+    pub face_index: u32,
+    pub default_font_size_emu: i64,
+    pub default_line_height_emu: i64,
+    pub bytes: &'a [u8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderTextLayoutV1 {
+    pub disposition: RenderTextLayoutDispositionV1,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<RenderResolvedTextLineV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RenderTextLayoutDispositionV1 {
+    SharedResolved {
+        font_resource_id: String,
+        font_fingerprint_sha256: String,
+        font_size_emu: i64,
+        line_height_emu: i64,
+    },
+    BackendFallback {
+        reason: RenderTextLayoutFallbackReasonV1,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderTextLayoutFallbackReasonV1 {
+    StoryMissing,
+    StoryExtentMismatch,
+    SingleFrameRequired,
+    FrameGeometryInvalid,
+    TypographyCoverageGap,
+    MixedTypographySize,
+    FontResourceInvalid,
+    FontFingerprintMismatch,
+    SharedLayoutFailed,
+    SharedLayoutIncomplete,
+}
+
+impl RenderTextLayoutFallbackReasonV1 {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::StoryMissing => "story_missing",
+            Self::StoryExtentMismatch => "story_extent_mismatch",
+            Self::SingleFrameRequired => "single_frame_required",
+            Self::FrameGeometryInvalid => "frame_geometry_invalid",
+            Self::TypographyCoverageGap => "typography_coverage_gap",
+            Self::MixedTypographySize => "mixed_typography_size",
+            Self::FontResourceInvalid => "font_resource_invalid",
+            Self::FontFingerprintMismatch => "font_fingerprint_mismatch",
+            Self::SharedLayoutFailed => "shared_layout_failed",
+            Self::SharedLayoutIncomplete => "shared_layout_incomplete",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderResolvedTextLineV1 {
+    pub line_index: u32,
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+    pub consumed_scalar_end: u32,
+    pub text: String,
+    pub measured_width_emu: i64,
+    pub line_height_emu: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +222,7 @@ fn clip_render_text_at_story_scalar_end(fragment: &mut RenderTextFragmentV1, sca
         fragment.scalar_end = fragment.scalar_start;
         fragment.text.clear();
         fragment.typography.clear();
+        fragment.layout = None;
         fragment.line_count = 0;
         return;
     }
@@ -149,6 +234,7 @@ fn clip_render_text_at_story_scalar_end(fragment: &mut RenderTextFragmentV1, sca
         .expect("u32 scalar span fits usize on supported targets");
     fragment.text = fragment.text.chars().take(keep).collect();
     fragment.scalar_end = clipped_end;
+    fragment.layout = None;
     fragment.line_count = 0;
     for run in &mut fragment.typography {
         run.scalar_end = run.scalar_end.min(clipped_end);
@@ -223,6 +309,7 @@ fn projected_text(
         text: story.text.clone(),
         line_count: 0,
         typography,
+        layout: None,
     }))
 }
 
@@ -287,6 +374,7 @@ pub fn build_page_render_plan_v1(
                             })
                         })
                         .collect(),
+                    layout: None,
                 });
             #[cfg(feature = "projected-scene-instances")]
             {
@@ -400,6 +488,240 @@ pub fn build_page_render_plan_v1(
         page_size: surface.size,
         nodes,
     })
+}
+
+
+
+pub fn build_page_render_plan_with_text_layout_v1(
+    visual: &ViewerGeometryDocument,
+    page_index: usize,
+    font: &ExplicitRenderTextFontResourceV1<'_>,
+) -> Result<PageRenderPlanV1, RenderPlanErrorV1> {
+    let mut plan = build_page_render_plan_v1(visual, page_index)?;
+    let page_id = plan.page_id;
+    let page_size = plan.page_size.clone();
+
+    for node in &mut plan.nodes {
+        let Some(fragment) = node.text.as_mut() else {
+            continue;
+        };
+        fragment.layout = Some(resolve_text_layout_v1(
+            visual,
+            page_id,
+            page_size.clone(),
+            node.node_id,
+            node.bounds.clone(),
+            node.transform.clone(),
+            fragment,
+            font,
+        ));
+    }
+
+    Ok(plan)
+}
+
+fn fallback_layout(reason: RenderTextLayoutFallbackReasonV1) -> RenderTextLayoutV1 {
+    RenderTextLayoutV1 {
+        disposition: RenderTextLayoutDispositionV1::BackendFallback { reason },
+        lines: Vec::new(),
+    }
+}
+
+fn resolve_text_layout_v1(
+    visual: &ViewerGeometryDocument,
+    page_id: PageId,
+    page_size: Size2D,
+    node_id: NodeId,
+    bounds: RectEmu,
+    transform: Affine2D,
+    fragment: &RenderTextFragmentV1,
+    font: &ExplicitRenderTextFontResourceV1<'_>,
+) -> RenderTextLayoutV1 {
+    let Some(story) = visual.document.stories.iter().find(|story| story.id == fragment.story_id)
+    else {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::StoryMissing);
+    };
+
+    let Ok(story_scalar_len) = u32::try_from(story.text.chars().count()) else {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::StoryExtentMismatch);
+    };
+    if fragment.scalar_start != 0
+        || fragment.scalar_end != story_scalar_len
+        || fragment.text != story.text
+    {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::StoryExtentMismatch);
+    }
+
+    let mut frames = visual
+        .story_frames
+        .iter()
+        .filter(|frame| frame.story_id == fragment.story_id);
+    let Some(frame) = frames.next() else {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::SingleFrameRequired);
+    };
+    if frames.next().is_some() || frame.frame_id != node_id {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::SingleFrameRequired);
+    }
+
+    if bounds.width.get() <= 0 || bounds.height.get() <= 0 {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::FrameGeometryInvalid);
+    }
+    if font.resource_id.is_empty()
+        || font.bytes.is_empty()
+        || font.default_font_size_emu <= 0
+        || font.default_line_height_emu <= 0
+    {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::FontResourceInvalid);
+    }
+
+    let fingerprint = font_fingerprint_sha256(font.bytes);
+    if font.expected_sha256.is_empty() || fingerprint != font.expected_sha256 {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::FontFingerprintMismatch);
+    }
+
+    let font_size_emu = match admitted_font_size_emu(fragment, font.default_font_size_emu) {
+        Ok(size) => size,
+        Err(reason) => return fallback_layout(reason),
+    };
+    let Some(line_height_emu) = scaled_line_height_emu(
+        font_size_emu,
+        font.default_font_size_emu,
+        font.default_line_height_emu,
+    ) else {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::FontResourceInvalid);
+    };
+
+    let projection = BoundedLayoutProjection {
+        pages: vec![ProjectedPage {
+            origin: page_id,
+            size: page_size,
+            bleed: None,
+            margins: None,
+        }],
+        node_geometry: vec![ProjectedNodeGeometry {
+            origin: node_id,
+            parent_origin: page_id.into_canonical(),
+            bounds,
+            transform,
+        }],
+        stories: vec![ProjectedStory {
+            origin: story.id,
+            text: story.text.clone(),
+            paragraph_origins: Vec::new(),
+            run_origins: Vec::new(),
+        }],
+        story_frames: vec![ProjectedStoryFrame {
+            story_origin: story.id,
+            frame_origin: node_id,
+            ordinal: frame.ordinal,
+            previous_frame_origin: None,
+            next_frame_origin: None,
+        }],
+        tables: Vec::new(),
+        guides: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+
+    let runtime = BoundedShapedFlowRuntime {
+        shaping: BoundedShapingRuntime {
+            layout: BoundedLayoutEnvironment {
+                engine_revision: SHARED_TEXT_LAYOUT_REVISION_V1.to_owned(),
+                font_set_fingerprint: fingerprint.clone(),
+                resource_fingerprint: font.resource_id.to_owned(),
+            },
+            face_index: font.face_index,
+            font_size_emu: LengthEmu::new(font_size_emu),
+            font_bytes: font.bytes,
+        },
+        line_height: LengthEmu::new(line_height_emu),
+    };
+
+    let Ok(scene) = resolve_bounded_shaped_flow(&projection, &runtime) else {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::SharedLayoutFailed);
+    };
+    let mut source_lines = scene
+        .lines
+        .into_iter()
+        .filter(|line| line.story_origin == story.id && line.frame_origin == node_id)
+        .collect::<Vec<_>>();
+    source_lines.sort_by_key(|line| line.frame_line_index);
+
+    if story_scalar_len > 0
+        && source_lines.last().map(|line| line.consumed_scalar_end) != Some(story_scalar_len)
+    {
+        return fallback_layout(RenderTextLayoutFallbackReasonV1::SharedLayoutIncomplete);
+    }
+
+    let lines = source_lines
+        .into_iter()
+        .map(|line| RenderResolvedTextLineV1 {
+            line_index: line.frame_line_index,
+            scalar_start: line.scalar_start,
+            scalar_end: line.scalar_end,
+            consumed_scalar_end: line.consumed_scalar_end,
+            text: line.text,
+            measured_width_emu: line.measured_width.get(),
+            line_height_emu,
+        })
+        .collect();
+
+    RenderTextLayoutV1 {
+        disposition: RenderTextLayoutDispositionV1::SharedResolved {
+            font_resource_id: font.resource_id.to_owned(),
+            font_fingerprint_sha256: fingerprint,
+            font_size_emu,
+            line_height_emu,
+        },
+        lines,
+    }
+}
+
+fn admitted_font_size_emu(
+    fragment: &RenderTextFragmentV1,
+    default_font_size_emu: i64,
+) -> Result<i64, RenderTextLayoutFallbackReasonV1> {
+    if fragment.typography.is_empty() {
+        return (default_font_size_emu > 0)
+            .then_some(default_font_size_emu)
+            .ok_or(RenderTextLayoutFallbackReasonV1::FontResourceInvalid);
+    }
+    let mut cursor = fragment.scalar_start;
+    let mut admitted_size = None;
+    for run in &fragment.typography {
+        if run.scalar_start != cursor
+            || run.scalar_end <= run.scalar_start
+            || run.scalar_end > fragment.scalar_end
+            || run.text_size_emu == 0
+        {
+            return Err(RenderTextLayoutFallbackReasonV1::TypographyCoverageGap);
+        }
+        let size = i64::from(run.text_size_emu);
+        match admitted_size {
+            None => admitted_size = Some(size),
+            Some(existing) if existing == size => {}
+            Some(_) => return Err(RenderTextLayoutFallbackReasonV1::MixedTypographySize),
+        }
+        cursor = run.scalar_end;
+    }
+    if cursor != fragment.scalar_end {
+        return Err(RenderTextLayoutFallbackReasonV1::TypographyCoverageGap);
+    }
+    admitted_size.ok_or(RenderTextLayoutFallbackReasonV1::TypographyCoverageGap)
+}
+
+fn scaled_line_height_emu(
+    font_size_emu: i64,
+    default_font_size_emu: i64,
+    default_line_height_emu: i64,
+) -> Option<i64> {
+    if font_size_emu <= 0 || default_font_size_emu <= 0 || default_line_height_emu <= 0 {
+        return None;
+    }
+    let numerator = i128::from(font_size_emu).checked_mul(i128::from(default_line_height_emu))?;
+    let denominator = i128::from(default_font_size_emu);
+    let rounded = numerator.checked_add(denominator / 2)?.checked_div(denominator)?;
+    let value = i64::try_from(rounded).ok()?;
+    (value > 0).then_some(value)
 }
 
 #[cfg(test)]
