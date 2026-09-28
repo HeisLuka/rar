@@ -5,6 +5,7 @@ members = [
   "crates/pub-model",
   "crates/chaptera-layout-projection",
   "crates/chaptera-scene-instance",
+  "crates/chaptera-canvas-creation-interaction",
   "crates/chaptera-layout-invalidation",
   "crates/chaptera-image-decode-contract",
   "crates/chaptera-glyph-runtime",
