@@ -5,7 +5,12 @@ edition = "2024"
 rust-version = "1.94.1"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+projected-scene-instances = ["dep:chaptera-scene-instance", "pub-viewer/cmo-slot-compose"]
+
 [dependencies]
+chaptera-scene-instance = { path = "../chaptera-scene-instance", optional = true }
 pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
 pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde = { version = "1", features = ["derive"] }
