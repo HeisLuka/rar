@@ -3049,6 +3049,7 @@ impl ViewerApp {
             .editor
             .as_ref()
             .ok_or_else(|| "Editor session is unavailable.".to_owned())?;
+        let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
 
         for scene_node in visual
@@ -3510,7 +3511,6 @@ impl ViewerApp {
             .ok_or_else(|| "Selected page is unavailable.".to_owned())?;
         let render_plan =
             build_page_render_plan_v1(visual, page_index).map_err(|error| error.to_string())?;
-        let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
 
         let mut hit_entries = Vec::new();
