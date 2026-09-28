@@ -2360,8 +2360,7 @@ mod tests {
             text_preset: pub_editor::AuthoringTextPresetV1 {
                 resource_id: "chaptera.desktop.fallback-font.ubuntu-light.v1".to_owned(),
                 font_fingerprint_sha256:
-                    "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70"
-                        .to_owned(),
+                    "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70".to_owned(),
                 face_index: 0,
                 font_size_emu: LengthEmu::new(114_300),
                 line_height_emu: LengthEmu::new(142_875),
