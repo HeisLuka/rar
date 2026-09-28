@@ -106,6 +106,15 @@ fn create_text_box_is_atomic_then_uses_existing_story_edit_history() {
     assert!(matches!(create, EditOperation::CreateTextBox { .. }));
     assert_eq!(session.operations().len(), 1);
 
+    let proof = session
+        .prove_author_created_story_v1(story_id())
+        .expect("proof evaluation")
+        .expect("applied CreateTextBox proves Chaptera-created Story");
+    assert_eq!(proof.story_id, story_id());
+    assert_eq!(proof.frame_id, text_node_id());
+    assert_eq!(proof.page_id, page_id());
+    assert_eq!(proof.text_preset, preset());
+
     let node = session
         .graph()
         .nodes
@@ -148,6 +157,13 @@ fn create_text_box_is_atomic_then_uses_existing_story_edit_history() {
         "Hello"
     );
     assert_eq!(session.operations().len(), 2);
+    assert!(
+        session
+            .prove_author_created_story_v1(story_id())
+            .expect("proof after Story edit")
+            .is_some(),
+        "ordinary Story edits must not erase CreateTextBox provenance"
+    );
 
     session.undo().expect("undo typing");
     assert_eq!(session.graph().stories[&story_id()].text, "");
@@ -155,6 +171,13 @@ fn create_text_box_is_atomic_then_uses_existing_story_edit_history() {
     assert!(!session.graph().nodes.contains_key(&text_node_id()));
     assert!(!session.graph().stories.contains_key(&story_id()));
     assert!(session.graph().pages[&page_id()].children.is_empty());
+    assert!(
+        session
+            .prove_author_created_story_v1(story_id())
+            .expect("proof after undo")
+            .is_none(),
+        "undone CreateTextBox must not remain provenance"
+    );
 
     session.redo().expect("redo create");
     session.redo().expect("redo typing");
@@ -228,4 +251,16 @@ fn create_text_box_wire_persists_explicit_text_preset() {
     assert_eq!(value["text_preset"]["face_index"], 0);
     assert_eq!(value["text_preset"]["font_size_emu"], 114_300);
     assert_eq!(value["text_preset"]["line_height_emu"], 142_875);
+}
+
+#[test]
+fn source_free_state_without_applied_create_text_box_is_not_author_created_provenance() {
+    let session = EditorSession::new(graph()).expect("session");
+    assert!(
+        session
+            .prove_author_created_story_v1(story_id())
+            .expect("absence of claim is not an error")
+            .is_none(),
+        "UUID shape or missing SourceRefs alone must never prove Chaptera-created ownership"
+    );
 }
