@@ -75,9 +75,9 @@ impl AdmittedSource {
         require_pub_path(path)?;
         let display_path = path.to_path_buf();
         let locator_path = fs::canonicalize(path)
-            .map_err(|error| format!("canonicalize {}: {error}", path.display()))?;
+            .map_err(|error| source_path_error("canonicalize", path, error))?;
         let mut file = File::open(&locator_path)
-            .map_err(|error| format!("open {}: {error}", locator_path.display()))?;
+            .map_err(|error| source_path_error("open", &locator_path, error))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
             .map_err(|error| format!("read {}: {error}", locator_path.display()))?;
@@ -158,6 +158,18 @@ fn lower_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn source_path_error(operation: &str, path: &Path, error: std::io::Error) -> String {
+    #[cfg(target_os = "windows")]
+    if error.raw_os_error() == Some(206) {
+        return format!(
+            "source_path_platform_unsupported: {operation} {}: {error}",
+            path.display()
+        );
+    }
+
+    format!("{operation} {}: {error}", path.display())
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
