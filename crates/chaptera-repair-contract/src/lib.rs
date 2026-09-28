@@ -1,3 +1,5 @@
+use sha2::{Digest, Sha256};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokenInstallEvidence {
     pub candidate_tree_digest: String,
@@ -31,6 +33,8 @@ pub enum RepairError {
     WrongChannel,
     InvalidLength,
     InvalidDigest,
+    InstallerLengthMismatch { expected: u64, actual: u64 },
+    InstallerDigestMismatch,
     InstallerFailed(String),
     SelfCheckFailed(String),
 }
@@ -68,11 +72,27 @@ impl RepairSession {
         Ok(())
     }
 
-    pub fn installer_verified(&mut self) -> Result<(), RepairError> {
+    pub fn verify_installer_bytes(&mut self, installer_bytes: &[u8]) -> Result<(), RepairError> {
         let (evidence, target) = match &self.state {
             RepairState::Verifying { evidence, target } => (evidence.clone(), target.clone()),
             _ => return Err(RepairError::NotRepairRequired),
         };
+
+        let actual_length = installer_bytes.len() as u64;
+        if actual_length != target.installer_length {
+            self.state = RepairState::RepairRequired { evidence };
+            return Err(RepairError::InstallerLengthMismatch {
+                expected: target.installer_length,
+                actual: actual_length,
+            });
+        }
+
+        let actual_digest = format!("{:x}", Sha256::digest(installer_bytes));
+        if !actual_digest.eq_ignore_ascii_case(&target.installer_sha256) {
+            self.state = RepairState::RepairRequired { evidence };
+            return Err(RepairError::InstallerDigestMismatch);
+        }
+
         self.state = RepairState::Applying { evidence, target };
         Ok(())
     }
@@ -113,6 +133,8 @@ impl RepairSession {
 mod tests {
     use super::*;
 
+    const INSTALLER: &[u8] = b"chaptera-test-installer-v1";
+
     fn evidence() -> BrokenInstallEvidence {
         BrokenInstallEvidence {
             candidate_tree_digest: "a".repeat(64),
@@ -127,8 +149,8 @@ mod tests {
             architecture: "windows-x86_64".into(),
             channel: "stable".into(),
             version: "0.2.0".into(),
-            installer_sha256: "c".repeat(64),
-            installer_length: 1024,
+            installer_sha256: format!("{:x}", Sha256::digest(INSTALLER)),
+            installer_length: INSTALLER.len() as u64,
         }
     }
 
@@ -137,7 +159,7 @@ mod tests {
         let original = evidence();
         let mut session = RepairSession::required(original.clone());
         session.begin_verified_target("chaptera.reader", "windows-x86_64", "stable", target()).unwrap();
-        session.installer_verified().unwrap();
+        session.verify_installer_bytes(INSTALLER).unwrap();
         let err = session.installer_failed("installer exit 1603");
         assert_eq!(err, RepairError::InstallerFailed("installer exit 1603".into()));
         assert_eq!(session.state(), &RepairState::RepairRequired { evidence: original });
@@ -156,10 +178,37 @@ mod tests {
     }
 
     #[test]
-    fn repair_clears_required_only_after_explicit_success() {
+    fn installer_bytes_are_bound_to_authenticated_length_and_digest() {
+        let original = evidence();
+        let mut session = RepairSession::required(original.clone());
+        session.begin_verified_target("chaptera.reader", "windows-x86_64", "stable", target()).unwrap();
+
+        assert_eq!(
+            session.verify_installer_bytes(b"tampered"),
+            Err(RepairError::InstallerLengthMismatch {
+                expected: INSTALLER.len() as u64,
+                actual: 8,
+            })
+        );
+        assert_eq!(session.state(), &RepairState::RepairRequired { evidence: original });
+
+        let mut same_length_tamper = INSTALLER.to_vec();
+        same_length_tamper[0] ^= 0x01;
+        let original = evidence();
+        let mut session = RepairSession::required(original.clone());
+        session.begin_verified_target("chaptera.reader", "windows-x86_64", "stable", target()).unwrap();
+        assert_eq!(
+            session.verify_installer_bytes(&same_length_tamper),
+            Err(RepairError::InstallerDigestMismatch)
+        );
+        assert_eq!(session.state(), &RepairState::RepairRequired { evidence: original });
+    }
+
+    #[test]
+    fn repair_clears_required_only_after_verified_bytes_and_explicit_success() {
         let mut session = RepairSession::required(evidence());
         session.begin_verified_target("chaptera.reader", "windows-x86_64", "stable", target()).unwrap();
-        session.installer_verified().unwrap();
+        session.verify_installer_bytes(INSTALLER).unwrap();
         assert!(matches!(session.state(), RepairState::Applying { .. }));
         session.confirm_repaired("0.2.0").unwrap();
         assert_eq!(session.state(), &RepairState::Repaired { version: "0.2.0".into() });
@@ -169,7 +218,7 @@ mod tests {
     fn failed_post_install_self_check_returns_to_repair_required_with_evidence() {
         let mut session = RepairSession::required(evidence());
         session.begin_verified_target("chaptera.reader", "windows-x86_64", "stable", target()).unwrap();
-        session.installer_verified().unwrap();
+        session.verify_installer_bytes(INSTALLER).unwrap();
         let err = session.self_check_failed("reader_smoke_failed");
         assert_eq!(err, RepairError::SelfCheckFailed("reader_smoke_failed".into()));
         match session.state() {
