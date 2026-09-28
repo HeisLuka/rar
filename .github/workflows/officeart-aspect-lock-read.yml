@@ -1,0 +1,30 @@
+name: OfficeArt aspect-lock raw observation
+
+on:
+  pull_request:
+    paths:
+      - "tools/officeart-aspect-lock-read/**"
+      - "vendor/producer-a/crates/pub-escher/**"
+      - "docs/officeart-aspect-lock-read-01.md"
+      - ".github/workflows/officeart-aspect-lock-read.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+      - name: Format
+        run: cargo fmt --manifest-path tools/officeart-aspect-lock-read/Cargo.toml --check
+      - name: Test source-free aspect-lock observations
+        run: cargo test --manifest-path tools/officeart-aspect-lock-read/Cargo.toml --locked
