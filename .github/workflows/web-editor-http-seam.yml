@@ -6,6 +6,8 @@ on:
       - "apps/web/editor-service-client-v1.mjs"
       - "apps/web/current-authoring-graph-scene-v1.mjs"
       - "apps/web/current-authoring-graph-scene-v1.test.mjs"
+      - "apps/web/chaptera-product-editor-service-v1.mjs"
+      - "apps/web/chaptera-product-editor-service-v1.test.mjs"
       - "apps/web/observability-v1.mjs"
       - "apps/web/observability-v1.test.mjs"
       - "apps/web/editor-shell-http-harness.html"
@@ -46,6 +48,7 @@ jobs:
         run: |
           node --test apps/web/interaction-v1.test.mjs
           node --test apps/web/current-authoring-graph-scene-v1.test.mjs
+          node --test apps/web/chaptera-product-editor-service-v1.test.mjs
           node --test apps/web/render-v1.test.mjs
           node --test apps/web/observability-v1.test.mjs
       - name: Install Playwright
