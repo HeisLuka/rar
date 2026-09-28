@@ -5469,6 +5469,43 @@ mod tests {
     }
 
     #[test]
+    fn periodic_exact_revalidation_catches_change_even_when_metadata_signal_matches() {
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-open-state-exact-revalidation-{}.pub",
+            std::process::id()
+        ));
+        let before = b"same-metadata-source-a";
+        let after = b"same-metadata-source-b";
+        assert_eq!(before.len(), after.len());
+        fs::write(&path, after).expect("write replacement source fixture");
+        let observed_stamp = source_file_stamp(&path).expect("replacement source metadata");
+
+        let mut app = ViewerApp::new(None);
+        app.source_path = Some(path.clone());
+        app.committed_source = Some(CommittedSourceState {
+            generation: OpenGeneration(8),
+            source_hash: source_sha256(before),
+            byte_len: u64::try_from(before.len()).expect("fixture length"),
+            file_stamp: Some(observed_stamp),
+            freshness: SourceFreshness::Current,
+        });
+        app.source_exact_revalidate_after = Some(Instant::now() - Duration::from_secs(1));
+
+        app.revalidate_committed_source_now();
+
+        assert_eq!(
+            app.committed_source
+                .as_ref()
+                .expect("committed source state")
+                .freshness,
+            SourceFreshness::ReloadRequiredChanged,
+            "periodic exact identity check must override an unchanged metadata signal"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn missing_committed_source_becomes_reload_required_not_unsupported() {
         let path = std::env::temp_dir().join(format!(
             "chaptera-open-state-source-missing-{}.pub",
