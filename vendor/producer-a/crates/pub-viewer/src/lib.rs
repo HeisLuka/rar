@@ -501,7 +501,9 @@ fn apply_presentation_selection_to_document(
     selection: &ViewerPresentationSelection,
 ) -> Result<Vec<PageId>> {
     if selection.profile_id.trim().is_empty() {
-        return Err(anyhow!(\n            "Viewer presentation selection requires a non-empty profile id"\n        ));
+        return Err(anyhow!(
+            "Viewer presentation selection requires a non-empty profile id"
+        ));
     }
     if selection.source_hash != document.source.source_hash {
         return Err(anyhow!(
@@ -509,7 +511,9 @@ fn apply_presentation_selection_to_document(
         ));
     }
     if selection.page_ids.is_empty() {
-        return Err(anyhow!(\n            "Viewer presentation selection cannot hide every page"\n        ));
+        return Err(anyhow!(
+            "Viewer presentation selection cannot hide every page"
+        ));
     }
 
     let mut seen = BTreeSet::new();
