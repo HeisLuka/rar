@@ -2,8 +2,8 @@
 //! This crate does not mutate EditorSession or own selection/text truth.
 
 use chaptera_canvas_creation_interaction::{
-    escape_canvas_tool_v1, CanvasToolActionV1, CanvasToolStateV1, CanvasToolTransitionV1,
-    CreationInteractionError,
+    CanvasToolActionV1, CanvasToolStateV1, CanvasToolTransitionV1, CreationInteractionError,
+    escape_canvas_tool_v1,
 };
 use serde::{Deserialize, Serialize};
 
@@ -72,16 +72,22 @@ pub fn route_arrow_v1(
     active_story_owns_selected_object: bool,
 ) -> ArrowDecisionV1 {
     if focus == FocusOwnerV1::StoryText && !modifiers.alt {
-        return ArrowDecisionV1 { route: ArrowRouteV1::RouteStory, dx_emu: 0, dy_emu: 0 };
+        return ArrowDecisionV1 {
+            route: ArrowRouteV1::RouteStory,
+            dx_emu: 0,
+            dy_emu: 0,
+        };
     }
     if modifiers.shift || modifiers.control_or_command {
-        return ArrowDecisionV1 { route: ArrowRouteV1::Ignored, dx_emu: 0, dy_emu: 0 };
+        return ArrowDecisionV1 {
+            route: ArrowRouteV1::Ignored,
+            dx_emu: 0,
+            dy_emu: 0,
+        };
     }
 
     let admitted = match focus {
-        FocusOwnerV1::Canvas => {
-            !modifiers.alt && selected_count == 1 && selected_object_movable
-        }
+        FocusOwnerV1::Canvas => !modifiers.alt && selected_count == 1 && selected_object_movable,
         FocusOwnerV1::StoryText => {
             modifiers.alt
                 && selected_count == 1
@@ -94,7 +100,11 @@ pub fn route_arrow_v1(
         return ArrowDecisionV1 { route: ArrowRouteV1::Ignored, dx_emu: 0, dy_emu: 0 };
     }
     let (dx_emu, dy_emu) = delta(direction);
-    ArrowDecisionV1 { route: ArrowRouteV1::MoveObject, dx_emu, dy_emu }
+    ArrowDecisionV1 {
+        route: ArrowRouteV1::MoveObject,
+        dx_emu,
+        dy_emu,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,7 +153,10 @@ pub fn route_select_all_v1(
 
     let mut selected = Vec::new();
     let mut excluded = 0;
-    for candidate in candidates.iter().filter(|item| item.page_id == current_page_id) {
+    for candidate in candidates
+        .iter()
+        .filter(|item| item.page_id == current_page_id)
+    {
         if candidate.authored_direct {
             selected.push(candidate.instance_id.clone());
         } else {
@@ -213,7 +226,10 @@ mod tests {
         let alt = route_arrow_v1(
             FocusOwnerV1::StoryText,
             ArrowDirectionV1::Right,
-            KeyModifiersV1 { alt: true, ..Default::default() },
+            KeyModifiersV1 {
+                alt: true,
+                ..Default::default()
+            },
             1,
             true,
             true,
@@ -242,7 +258,8 @@ mod tests {
                 2,
                 true,
                 false,
-            ).route,
+            )
+            .route,
             ArrowRouteV1::Ignored
         );
     }
@@ -250,10 +267,26 @@ mod tests {
     #[test]
     fn select_all_routes_by_focus_and_semantic_page_ownership() {
         let candidates = vec![
-            SelectAllCandidateV1 { instance_id: "b".into(), page_id: "p1".into(), authored_direct: true },
-            SelectAllCandidateV1 { instance_id: "a".into(), page_id: "p1".into(), authored_direct: true },
-            SelectAllCandidateV1 { instance_id: "projection".into(), page_id: "p1".into(), authored_direct: false },
-            SelectAllCandidateV1 { instance_id: "other-page".into(), page_id: "p2".into(), authored_direct: true },
+            SelectAllCandidateV1 {
+                instance_id: "b".into(),
+                page_id: "p1".into(),
+                authored_direct: true,
+            },
+            SelectAllCandidateV1 {
+                instance_id: "a".into(),
+                page_id: "p1".into(),
+                authored_direct: true,
+            },
+            SelectAllCandidateV1 {
+                instance_id: "projection".into(),
+                page_id: "p1".into(),
+                authored_direct: false,
+            },
+            SelectAllCandidateV1 {
+                instance_id: "other-page".into(),
+                page_id: "p2".into(),
+                authored_direct: true,
+            },
         ];
         let result = route_select_all_v1(FocusOwnerV1::Canvas, "p1", true, false, &candidates);
         assert_eq!(result.route, SelectAllRouteV1::SelectObjects);
@@ -273,8 +306,12 @@ mod tests {
             EscapeRouteV1::ExitTextSession
         ));
 
-        let text_tool = activate_canvas_tool_v1(&select, textbox_create_tool_v1()).unwrap().state;
-        let gesture = start_pointer_gesture_v1(&text_tool, textbox_create_tool_v1(), "g1").unwrap().state;
+        let text_tool = activate_canvas_tool_v1(&select, textbox_create_tool_v1())
+            .unwrap()
+            .state;
+        let gesture = start_pointer_gesture_v1(&text_tool, textbox_create_tool_v1(), "g1")
+            .unwrap()
+            .state;
         assert!(matches!(
             route_escape_v1(FocusOwnerV1::Canvas, false, &gesture, true).unwrap(),
             EscapeRouteV1::CanvasTransition(_)
