@@ -1,0 +1,37 @@
+name: Editor Desktop Creation Interaction Rust Adapter V1
+
+on:
+  push:
+    branches:
+      - editor-desktop-creation-interaction-rust-adapter-01
+  pull_request:
+    paths:
+      - "crates/chaptera-canvas-creation-interaction/**"
+      - ".github/workflows/editor-desktop-creation-interaction-rust-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path crates/chaptera-canvas-creation-interaction/Cargo.toml -- --check
+      - name: Check
+        run: cargo check --manifest-path crates/chaptera-canvas-creation-interaction/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/chaptera-canvas-creation-interaction/Cargo.toml --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --manifest-path crates/chaptera-canvas-creation-interaction/Cargo.toml
