@@ -24,13 +24,7 @@ export async function sendResultEmail(record: CheckRecord) {
           .join('')}</ul>`
       : '<p>No additional limitations were included in this receipt.</p>';
 
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
+  const payload = JSON.stringify({
       from,
       to: [record.email],
       subject: 'Your Chaptera PUB compatibility report',
@@ -68,8 +62,31 @@ export async function sendResultEmail(record: CheckRecord) {
           </p>
         </div>
       `,
-    }),
-  });
+    });
 
-  return response.ok ? ('sent' as const) : ('failed' as const);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'idempotency-key': `pub-check-result/${record.id}`,
+        },
+        body: payload,
+        signal: controller.signal,
+      });
+      if (response.ok) return 'sent' as const;
+      if (attempt === 0 && (response.status === 429 || response.status >= 500)) continue;
+      return 'failed' as const;
+    } catch {
+      if (attempt === 1) return 'failed' as const;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return 'failed' as const;
 }
