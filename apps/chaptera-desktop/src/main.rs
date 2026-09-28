@@ -4987,8 +4987,7 @@ mod tests {
                 "read-only projected instances must not expose an authored origin for mutation"
             );
             assert_eq!(
-                admission.reason,
-                "cmo_story_slot_object_read_only",
+                admission.reason, "cmo_story_slot_object_read_only",
                 "Cmo projection must remain explicitly read-only"
             );
         }
