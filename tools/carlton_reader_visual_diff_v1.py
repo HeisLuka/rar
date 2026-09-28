@@ -12,7 +12,7 @@ from pdf_reference_diff_v1 import (
     SIGNIFICANT_CHANNEL_DELTA,
     compare_rasters,
     file_sha256,
-    page_box,
+    page_boxes,
 )
 
 EXPECTED_SOURCE_SHA256 = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
@@ -138,7 +138,7 @@ def main() -> int:
                 "reader_page_id": page_receipt["page_id"],
                 "reader_png": page_receipt["png"],
                 "reader_png_sha256": file_sha256(reader_png),
-                "reference_page_box": page_box(reference_page),
+                "reference_page_boxes": page_boxes(reference_page),
                 "reference_raster_png": reference_png.name,
                 "reference_raster_sha256": reference_raster["raster_sha256"],
                 "diff_png": diff_png,
