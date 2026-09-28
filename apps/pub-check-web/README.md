@@ -22,8 +22,11 @@ The landing must never claim compatibility merely because upload succeeded.
 ```
 BLOB_READ_WRITE_TOKEN=...
 CHECKER_ADMIN_TOKEN=<long random shared secret used by checker for source/result endpoints>
-CHECKER_WEBHOOK_URL=https://checker.example/jobs
-CHECKER_WEBHOOK_TOKEN=<optional auth from landing to checker>
+GITHUB_CHECKER_TOKEN=<fine-grained GitHub token with Actions write access to the checker repo>
+GITHUB_CHECKER_REPOSITORY=HeisLuka/rar
+GITHUB_CHECKER_REF=main
+CHECKER_WEBHOOK_URL=<optional fallback checker webhook>
+CHECKER_WEBHOOK_TOKEN=<optional auth from landing to fallback checker>
 RESEND_API_KEY=...
 REPORT_FROM_EMAIL=Chaptera <reports@your-domain.example>
 CRON_SECRET=<long random Vercel cron secret>
@@ -34,6 +37,23 @@ are capped at 64 MB.
 
 ## Checker dispatch contract
 
+The preferred zero-new-server path is GitHub Actions. When `GITHUB_CHECKER_TOKEN`
+is configured, the landing dispatches `.github/workflows/pub-check-worker.yml`
+with only the opaque `check_id`. The worker builds the source/result URLs from
+the **GitHub Secret** `PUB_CHECK_ORIGIN`, so a manual workflow dispatch cannot
+redirect `CHECKER_ADMIN_TOKEN` to an arbitrary host.
+
+Configure these GitHub repository secrets after merge:
+
+```
+PUB_CHECK_ORIGIN=https://<canonical-landing-host>
+CHECKER_ADMIN_TOKEN=<same high-entropy value configured on the landing>
+```
+
+The fine-grained token stored on Vercel should have the minimum repository
+permission required to dispatch Actions workflows.
+
+If `GITHUB_CHECKER_TOKEN` is absent, an optional generic checker can be used.
 When `CHECKER_WEBHOOK_URL` is configured, the landing sends:
 
 ```json
@@ -45,7 +65,7 @@ When `CHECKER_WEBHOOK_URL` is configured, the landing sends:
 }
 ```
 
-The checker is configured separately with `CHECKER_ADMIN_TOKEN` and uses:
+The generic checker is configured separately with `CHECKER_ADMIN_TOKEN` and uses:
 
 ```
 Authorization: Bearer <CHECKER_ADMIN_TOKEN>
@@ -89,5 +109,5 @@ npm run dev
 ```
 
 The frontend can be previewed without a checker, but checks remain queued until
-`CHECKER_WEBHOOK_URL` is connected. That is deliberate; the UI does not fake a
+GitHub Actions or the fallback webhook checker is connected. That is deliberate; the UI does not fake a
 successful compatibility result.
