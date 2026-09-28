@@ -5,7 +5,7 @@
 //! carrier names, source offsets, or mutable authoring commands.
 
 use pub_model::{Affine2D, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
-use pub_viewer::ViewerGeometryDocument;
+use pub_viewer::{ViewerGeometryDocument, ViewerProjectionKind};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -22,6 +22,10 @@ pub struct PageRenderPlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRenderPlanV1 {
     pub node_id: NodeId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_kind: Option<ViewerProjectionKind>,
     pub bounds: RectEmu,
     pub transform: Affine2D,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,10 +127,17 @@ pub fn build_page_render_plan_v1(
                     resource_id: image.resource_id,
                     mime: image.mime.clone(),
                 });
-            let text = visual
-                .text_fragments
-                .iter()
-                .find(|fragment| fragment.frame_id == node.origin)
+            let target_frame_has_projected_slot = visual.projected_instances.iter().any(|instance| {
+                instance.target_page_id == page.id && instance.target_frame_node_id == node.origin
+            });
+            let text = (!target_frame_has_projected_slot)
+                .then(|| {
+                    visual
+                        .text_fragments
+                        .iter()
+                        .find(|fragment| fragment.frame_id == node.origin)
+                })
+                .flatten()
                 .map(|fragment| {
                     let current_story_text = visual
                         .document
@@ -169,6 +180,8 @@ pub fn build_page_render_plan_v1(
 
             NodeRenderPlanV1 {
                 node_id: node.origin,
+                scene_instance_id: None,
+                projection_kind: None,
                 bounds: node.bounds,
                 transform: node.transform.clone(),
                 solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
@@ -182,7 +195,79 @@ pub fn build_page_render_plan_v1(
                 text,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    for instance in visual
+        .projected_instances
+        .iter()
+        .filter(|instance| instance.target_page_id == page.id)
+    {
+        let paint = visual
+            .paints
+            .iter()
+            .find(|paint| paint.node_id == instance.origin_node_id);
+        let image = visual
+            .images
+            .iter()
+            .find(|image| image.node_ids.contains(&instance.origin_node_id))
+            .map(|image| RenderImageRefV1 {
+                resource_id: image.resource_id,
+                mime: image.mime.clone(),
+            });
+        let text = instance.carrier_story_id.and_then(|story_id| {
+            let story = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| story.id == story_id)?;
+            let scalar_end = u32::try_from(story.text.chars().count()).ok()?;
+            let mut typography = visual
+                .typography_runs
+                .iter()
+                .filter(|run| run.story_id == story_id)
+                .filter(|run| run.applies_to_story_text(&story.text))
+                .filter_map(|run| {
+                    let scalar_start = run.scalar_start.min(scalar_end);
+                    let run_end = run.scalar_end.min(scalar_end);
+                    (scalar_start < run_end).then(|| RenderTypographyRunV1 {
+                        scalar_start,
+                        scalar_end: run_end,
+                        source_font_name: run.source_font_name.clone(),
+                        text_size_emu: run.text_size_emu,
+                        font_inherited: run.font_inherited,
+                        size_inherited: run.size_inherited,
+                    })
+                })
+                .collect::<Vec<_>>();
+            typography.sort_by_key(|run| (run.scalar_start, run.scalar_end, run.text_size_emu));
+
+            Some(RenderTextFragmentV1 {
+                story_id,
+                scalar_start: 0,
+                scalar_end,
+                text: story.text.clone(),
+                line_count: 0,
+                typography,
+            })
+        });
+
+        nodes.push(NodeRenderPlanV1 {
+            node_id: instance.origin_node_id,
+            scene_instance_id: Some(instance.instance_id.clone()),
+            projection_kind: Some(instance.projection_kind),
+            bounds: instance.bounds,
+            transform: instance.transform.clone(),
+            solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
+            solid_line: paint
+                .and_then(|paint| paint.solid_line.as_ref())
+                .map(|line| RenderSolidLineV1 {
+                    rgb: line.rgb,
+                    width_emu: line.width_emu,
+                }),
+            image,
+            text,
+        });
+    }
 
     Ok(PageRenderPlanV1 {
         schema_version: PAGE_RENDER_PLAN_SCHEMA_V1.to_owned(),
@@ -263,6 +348,7 @@ mod tests {
                 origin_mapping: Vec::new(),
                 diagnostics: Vec::new(),
             },
+            projected_instances: Vec::new(),
             paints: vec![ViewerNodePaint {
                 node_id,
                 solid_fill_rgb: Some([1, 2, 3]),
