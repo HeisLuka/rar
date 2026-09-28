@@ -314,6 +314,17 @@ pub fn validate_text_find_snapshot_v1(
     Ok(())
 }
 
+pub fn serialize_text_find_snapshot_v1(
+    snapshot: &TextFindSnapshotV1,
+) -> Result<String, TextFindReplaceError> {
+    let value = serde_json::to_value(snapshot).map_err(|error| {
+        TextFindReplaceError::new("invalid_snapshot", format!("snapshot JSON failed: {error}"))
+    })?;
+    serde_json::to_string(&value).map_err(|error| {
+        TextFindReplaceError::new("invalid_snapshot", format!("snapshot JSON failed: {error}"))
+    })
+}
+
 pub fn navigate_text_find_snapshot_v1(
     snapshot: &TextFindSnapshotV1,
     direction: TextFindDirectionV1,
@@ -639,6 +650,77 @@ mod tests {
         let next = navigate_text_find_snapshot_v1(&refreshed, TextFindDirectionV1::Next, 4, false)
             .unwrap();
         assert_eq!((next.start_scalar, next.end_scalar), (5, 7));
+    }
+
+    #[test]
+    fn navigation_wrap_matches_canonical_origin_law() {
+        let text = "a a a";
+        let snapshot = build_text_find_snapshot_v1(
+            "rev:1",
+            text,
+            &domain(text),
+            TextFindExtentV1::FullEditableStory,
+            "a",
+        )
+        .unwrap();
+
+        assert_eq!(
+            navigate_text_find_snapshot_v1(&snapshot, TextFindDirectionV1::Next, 2, false)
+                .unwrap()
+                .start_scalar,
+            2
+        );
+        assert!(
+            navigate_text_find_snapshot_v1(&snapshot, TextFindDirectionV1::Next, 5, false)
+                .is_none()
+        );
+        assert_eq!(
+            navigate_text_find_snapshot_v1(&snapshot, TextFindDirectionV1::Next, 5, true)
+                .unwrap()
+                .start_scalar,
+            0
+        );
+        assert_eq!(
+            navigate_text_find_snapshot_v1(&snapshot, TextFindDirectionV1::Previous, 3, false)
+                .unwrap()
+                .start_scalar,
+            2
+        );
+        assert!(
+            navigate_text_find_snapshot_v1(&snapshot, TextFindDirectionV1::Previous, 0, false)
+                .is_none()
+        );
+        assert_eq!(
+            navigate_text_find_snapshot_v1(&snapshot, TextFindDirectionV1::Previous, 0, true)
+                .unwrap()
+                .start_scalar,
+            4
+        );
+    }
+
+    #[test]
+    fn identical_snapshot_serialization_is_byte_deterministic() {
+        let text = "one\rtwo one";
+        let a = build_text_find_snapshot_v1(
+            "rev:1",
+            text,
+            &domain(text),
+            TextFindExtentV1::FullEditableStory,
+            "one",
+        )
+        .unwrap();
+        let b = build_text_find_snapshot_v1(
+            "rev:1",
+            text,
+            &domain(text),
+            TextFindExtentV1::FullEditableStory,
+            "one",
+        )
+        .unwrap();
+        assert_eq!(
+            serialize_text_find_snapshot_v1(&a).unwrap(),
+            serialize_text_find_snapshot_v1(&b).unwrap()
+        );
     }
 
     #[test]
