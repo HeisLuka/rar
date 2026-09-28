@@ -101,6 +101,10 @@ pub enum CarltonPresentationError {
         expected: usize,
         observed: usize,
     },
+    CustomerPageSetMismatch {
+        expected: Vec<u32>,
+        observed: Vec<u32>,
+    },
     MissingMasterTarget,
     MultipleMasterTargets(Vec<u32>),
     MasterTargetMissingFromPages(u32),
@@ -134,6 +138,10 @@ impl fmt::Display for CarltonPresentationError {
             Self::CustomerCountMismatch { expected, observed } => write!(
                 f,
                 "Carlton customer-page count mismatch: expected {expected}, observed {observed}"
+            ),
+            Self::CustomerPageSetMismatch { expected, observed } => write!(
+                f,
+                "Carlton customer-page set mismatch: expected {expected:?}, observed {observed:?}"
             ),
             Self::MissingMasterTarget => {
                 write!(f, "Carlton family evidence has no applied-master target")
@@ -190,21 +198,37 @@ impl Error for CarltonPresentationError {}
 #[derive(Debug, Clone, Copy)]
 struct AdmittedProfile {
     profile_id: &'static str,
-    expected_customer_count: usize,
+    expected_customer_seq_nums: &'static [u32],
+    carrier_page_seq_nums: &'static [u32],
 }
 
 fn admitted_profile(source_sha256: &str) -> Result<AdmittedProfile, CarltonPresentationError> {
     match source_sha256 {
         MARCH_2026_SHA256 => Ok(AdmittedProfile {
             profile_id: "carlton-school-jotter/march-2026/v1",
-            expected_customer_count: 3,
+            expected_customer_seq_nums: &[266, 361, 406],
+            carrier_page_seq_nums: &[279],
         }),
         DECEMBER_2025_SHA256 => Ok(AdmittedProfile {
             profile_id: "carlton-school-jotter/december-2025/v1",
-            expected_customer_count: 5,
+            expected_customer_seq_nums: &[266, 361, 406, 456, 493],
+            carrier_page_seq_nums: &[279],
         }),
         _ => Err(CarltonPresentationError::UnsupportedSourceHash),
     }
+}
+
+pub fn build_admitted_carlton_presentation_manifest_v1(
+    source_sha256: &str,
+    pages: Vec<CarltonPageEvidenceV1>,
+) -> Result<CarltonPresentationManifestV1, CarltonPresentationError> {
+    let profile = admitted_profile(source_sha256)?;
+    build_carlton_presentation_manifest_v1(CarltonPresentationProfileInputV1 {
+        schema_version: CARLTON_PRESENTATION_INPUT_SCHEMA_V1.to_owned(),
+        source_sha256: source_sha256.to_owned(),
+        pages,
+        carrier_page_seq_nums: profile.carrier_page_seq_nums.to_vec(),
+    })
 }
 
 pub fn build_carlton_presentation_manifest_v1(
@@ -240,10 +264,16 @@ pub fn build_carlton_presentation_manifest_v1(
         .filter(|page| page.oid_dword0 == Some(2))
         .map(|page| page.contents_seq_num)
         .collect::<Vec<_>>();
-    if customer_seq_nums.len() != profile.expected_customer_count {
+    if customer_seq_nums.len() != profile.expected_customer_seq_nums.len() {
         return Err(CarltonPresentationError::CustomerCountMismatch {
-            expected: profile.expected_customer_count,
+            expected: profile.expected_customer_seq_nums.len(),
             observed: customer_seq_nums.len(),
+        });
+    }
+    if customer_seq_nums != profile.expected_customer_seq_nums {
+        return Err(CarltonPresentationError::CustomerPageSetMismatch {
+            expected: profile.expected_customer_seq_nums.to_vec(),
+            observed: customer_seq_nums,
         });
     }
     let customer_set = customer_seq_nums.iter().copied().collect::<BTreeSet<_>>();
@@ -492,6 +522,43 @@ mod tests {
             Err(CarltonPresentationError::CustomerCountMismatch {
                 expected: 3,
                 observed: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn admitted_runtime_helper_reuses_exact_family_profile() {
+        let input = march_input();
+        let manifest = build_admitted_carlton_presentation_manifest_v1(
+            &input.source_sha256,
+            input.pages,
+        )
+        .unwrap();
+        assert_eq!(manifest.customer_page_seq_nums, vec![266, 361, 406]);
+        assert_eq!(manifest.carrier_page_seq_nums, vec![279]);
+    }
+
+    #[test]
+    fn same_count_wrong_customer_set_fails_closed() {
+        let mut input = march_input();
+        input
+            .pages
+            .iter_mut()
+            .find(|page| page.contents_seq_num == 406)
+            .unwrap()
+            .oid_dword0 = Some(0);
+        input
+            .pages
+            .iter_mut()
+            .find(|page| page.contents_seq_num == 269)
+            .unwrap()
+            .oid_dword0 = Some(2);
+
+        assert_eq!(
+            build_carlton_presentation_manifest_v1(input),
+            Err(CarltonPresentationError::CustomerPageSetMismatch {
+                expected: vec![266, 361, 406],
+                observed: vec![266, 361, 269],
             })
         );
     }
