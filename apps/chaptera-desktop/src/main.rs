@@ -3463,8 +3463,7 @@ impl ViewerApp {
                     let move_admission =
                         admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
                     if move_admission.admitted
-                        && move_admission.origin_node_id.as_deref()
-                            == Some(origin_node_id.as_str())
+                        && move_admission.origin_node_id.as_deref() == Some(origin_node_id.as_str())
                         && editor
                             .can_move_node_to(node.origin, bounds.x, bounds.y)
                             .is_ok()
