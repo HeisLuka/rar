@@ -1,0 +1,30 @@
+name: CHAPTERA-CI-TRUST-01 release workflow trust guard
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tools/ci/check_chaptera_ci_trust.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - "tools/ci/check_chaptera_ci_trust.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trust-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Audit protected release/package workflows
+        run: python3 tools/ci/check_chaptera_ci_trust.py
