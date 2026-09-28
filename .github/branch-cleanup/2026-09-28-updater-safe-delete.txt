@@ -41,3 +41,5 @@ chaptera-win-lifecycle-soak-01-v2
 chaptera-win-lifecycle-chaos-01-v1
 chaptera-local-restart-preflight-01-v1
 chaptera-local-restart-preflight-01-v2
+
+# execution kick after workflow landed on main
