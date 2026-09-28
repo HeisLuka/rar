@@ -2,7 +2,11 @@ use anyhow::{Context, Result};
 use pub_presentation_profile::{
     CarltonPresentationProfileInputV1, build_carlton_presentation_manifest_v1,
 };
-use std::{\n    env,\n    fs::File,\n    io::{BufReader, BufWriter},\n};
+use std::{
+    env,
+    fs::File,
+    io::{BufReader, BufWriter},
+};
 
 fn main() -> Result<()> {
     let mut args = env::args_os().skip(1);
