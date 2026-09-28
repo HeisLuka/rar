@@ -1,0 +1,98 @@
+name: Reader PAGE role observation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - ".github/workflows/reader-page-role-observation.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  samplenewsletter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire pinned SampleNewsletter
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$fixture"
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          expected="6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          test "$actual" = "$expected"
+          out="$RUNNER_TEMP/reader-page-role"
+          mkdir -p "$out"
+          echo "CHAPTERA_PAGE_ROLE_FIXTURE=$fixture" >> "$GITHUB_ENV"
+          echo "CHAPTERA_PAGE_ROLE_OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Check pub-reader
+        run: cargo check --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml --all-targets
+
+      - name: Emit physical PAGE observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_FIXTURE" "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role.json"
+
+      - name: Compare to pinned Publisher customer-page reference
+        shell: python
+        env:
+          SOURCE_SHA256: 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CHAPTERA_PAGE_ROLE_OUT"])
+          physical = json.loads((root / "physical-page-role.json").read_text(encoding="utf-8"))
+          actual = [page["contents_seq_num"] for page in physical["pages"]]
+          expected_raw = [263, 266, 323, 352, 381, 269, 273, 277]
+          if actual != expected_raw:
+              raise SystemExit(f"raw PAGE order drifted: {actual!r}")
+
+          customer_reference = [266, 323, 352, 381]
+          comparison = {
+              "schema": "chaptera.reader-page-role-reference.v1",
+              "source_sha256": os.environ["SOURCE_SHA256"],
+              "raw_page_seq_nums": actual,
+              "publisher_reference_customer_seq_nums": customer_reference,
+              "publisher_reference_basis": "recorded same-source side-by-side Publisher page crosswalk",
+              "classification_promoted": False,
+              "pages": [
+                  {
+                      **page,
+                      "publisher_reference_customer": page["contents_seq_num"] in customer_reference,
+                  }
+                  for page in physical["pages"]
+              ],
+          }
+          target = root / "samplenewsletter-page-role-reference.json"
+          target.write_text(json.dumps(comparison, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(target.read_text(encoding="utf-8"))
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reader-page-role-samplenewsletter
+          path: ${{ env.CHAPTERA_PAGE_ROLE_OUT }}
+          if-no-files-found: error
