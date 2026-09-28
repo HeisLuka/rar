@@ -1,0 +1,62 @@
+name: Reader typography golden SampleNewsletter
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-quill/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "apps/chaptera-desktop/src/render_backend.rs"
+      - "apps/chaptera-desktop/src/main.rs"
+      - ".github/workflows/reader-typography-golden.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # The Producer A receipt workflow may update the branch once; this job renders only the settled head.
+  golden:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire pinned SampleNewsletter
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          }
+          $out = Join-Path $env:RUNNER_TEMP "chaptera-reader-golden-samplenewsletter"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          "CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_GOLDEN_OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check bounded typography parser
+        run: cargo test --manifest-path vendor/producer-a/crates/pub-quill/Cargo.toml typography -- --nocapture
+
+      - name: Check shared render plan
+        run: cargo test --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml
+
+      - name: Render Reader page 2 from current shared stack
+        run: cargo test -p chaptera-desktop --features reader-only golden_sample_newsletter_reader_page_2_uses_shared_typography_render_plan -- --ignored --nocapture
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-reader-golden-samplenewsletter
+          path: ${{ env.CHAPTERA_GOLDEN_OUT }}
+          if-no-files-found: warn
