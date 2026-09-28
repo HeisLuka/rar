@@ -185,17 +185,11 @@ impl SceneSelectionState {
 
 #[derive(Debug, Clone)]
 struct SceneHitEntry {
-    instance: SceneInstanceV1,
+    instance_id: String,
     node_id: pub_editor::NodeId,
     bounds: pub_editor::RectEmu,
     z_order: i64,
     paint_order: u32,
-}
-
-impl SceneHitEntry {
-    fn instance_id(&self) -> &str {
-        self.instance.instance_id.as_str()
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -208,16 +202,16 @@ struct SceneHitTestIndex {
 impl SceneHitTestIndex {
     fn new(mut entries: Vec<SceneHitEntry>) -> Self {
         entries.sort_by(|left, right| {
-            (left.z_order, left.paint_order, left.instance_id()).cmp(&(
+            (left.z_order, left.paint_order, left.instance_id.as_str()).cmp(&(
                 right.z_order,
                 right.paint_order,
-                right.instance_id(),
+                right.instance_id.as_str(),
             ))
         });
         let by_instance = entries
             .iter()
             .enumerate()
-            .map(|(index, entry)| (entry.instance.instance_id.clone(), index))
+            .map(|(index, entry)| (entry.instance_id.clone(), index))
             .collect();
         let by_node = entries
             .iter()
@@ -252,7 +246,7 @@ impl SceneHitTestIndex {
         self.by_node
             .get(&node_id)
             .and_then(|index| self.entries.get(*index))
-            .map(SceneHitEntry::instance_id)
+            .map(|entry| entry.instance_id.as_str())
     }
 }
 
@@ -676,6 +670,7 @@ struct CachedPageFrameWork {
     page_index: usize,
     render_plan: PageRenderPlanV1,
     hit_index: SceneHitTestIndex,
+    render_node_by_id: BTreeMap<pub_editor::NodeId, usize>,
     movable_nodes: BTreeMap<String, (pub_editor::NodeId, pub_editor::RectEmu)>,
     resizable_nodes: BTreeMap<String, (pub_editor::NodeId, pub_editor::RectEmu)>,
 }
@@ -3060,95 +3055,74 @@ impl ViewerApp {
             .ok_or_else(|| "Selected page is unavailable.".to_owned())?;
         let render_plan =
             build_page_render_plan_v1(visual, page_index).map_err(|error| error.to_string())?;
+        let render_node_by_id = render_plan
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.node_id, index))
+            .collect::<BTreeMap<_, _>>();
         let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
 
-        let hit_index = SceneHitTestIndex::new(
-            self.editor
-                .as_ref()
-                .map(|editor| {
-                    visual
-                        .scene
-                        .nodes
-                        .iter()
-                        .filter(|node| node.parent_origin == page_origin)
-                        .enumerate()
-                        .filter_map(|(paint_order, node)| {
-                            let instance =
-                                direct_scene_instance(editor, &page_id_text, node.origin)?;
-                            Some(SceneHitEntry {
-                                instance,
-                                node_id: node.origin,
-                                bounds: node.bounds,
-                                z_order: 0,
-                                paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        );
+        let mut hit_entries = Vec::new();
+        let mut movable_nodes = BTreeMap::new();
+        let mut resizable_nodes = BTreeMap::new();
 
-        let movable_nodes = self
-            .editor
-            .as_ref()
-            .map(|editor| {
-                hit_index
-                    .entries
-                    .iter()
-                    .filter_map(|hit| {
-                        let admission =
-                            admit_object_mutation_v1(&hit.instance, ObjectMutationKindV1::MoveNode);
-                        let origin_node_id = hit.node_id.as_canonical().to_string();
-                        if !admission.admitted
-                            || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
-                        {
-                            return None;
-                        }
-                        let authored_node = editor.graph().nodes.get(&hit.node_id)?;
-                        let bounds = authored_node.header.bounds;
-                        editor
-                            .can_move_node_to(hit.node_id, bounds.x, bounds.y)
-                            .ok()
-                            .map(|_| (hit.instance.instance_id.clone(), (hit.node_id, bounds)))
-                    })
-                    .collect::<BTreeMap<_, _>>()
-            })
-            .unwrap_or_default();
+        if let Some(editor) = self.editor.as_ref() {
+            for (paint_order, node) in visual
+                .scene
+                .nodes
+                .iter()
+                .filter(|node| node.parent_origin == page_origin)
+                .enumerate()
+            {
+                let Some(instance) = direct_scene_instance(editor, &page_id_text, node.origin)
+                else {
+                    continue;
+                };
+                let instance_id = instance.instance_id.clone();
+                let origin_node_id = node.origin.as_canonical().to_string();
 
-        let resizable_nodes = self
-            .editor
-            .as_ref()
-            .map(|editor| {
-                hit_index
-                    .entries
-                    .iter()
-                    .filter_map(|hit| {
-                        let admission = admit_object_mutation_v1(
-                            &hit.instance,
-                            ObjectMutationKindV1::ResizeNode,
-                        );
-                        let origin_node_id = hit.node_id.as_canonical().to_string();
-                        if !admission.admitted
-                            || admission.origin_node_id.as_deref() != Some(origin_node_id.as_str())
-                        {
-                            return None;
-                        }
-                        let authored_node = editor.graph().nodes.get(&hit.node_id)?;
-                        let bounds = authored_node.header.bounds;
-                        editor
-                            .can_resize_node(hit.node_id)
-                            .ok()
-                            .map(|_| (hit.instance.instance_id.clone(), (hit.node_id, bounds)))
-                    })
-                    .collect::<BTreeMap<_, _>>()
-            })
-            .unwrap_or_default();
+                if let Some(authored_node) = editor.graph().nodes.get(&node.origin) {
+                    let bounds = authored_node.header.bounds;
+                    let move_admission =
+                        admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                    if move_admission.admitted
+                        && move_admission.origin_node_id.as_deref()
+                            == Some(origin_node_id.as_str())
+                        && editor
+                            .can_move_node_to(node.origin, bounds.x, bounds.y)
+                            .is_ok()
+                    {
+                        movable_nodes.insert(instance_id.clone(), (node.origin, bounds));
+                    }
+
+                    let resize_admission =
+                        admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
+                    if resize_admission.admitted
+                        && resize_admission.origin_node_id.as_deref()
+                            == Some(origin_node_id.as_str())
+                        && editor.can_resize_node(node.origin).is_ok()
+                    {
+                        resizable_nodes.insert(instance_id.clone(), (node.origin, bounds));
+                    }
+                }
+
+                hit_entries.push(SceneHitEntry {
+                    instance_id,
+                    node_id: node.origin,
+                    bounds: node.bounds,
+                    z_order: 0,
+                    paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+                });
+            }
+        }
 
         Ok(CachedPageFrameWork {
             page_index,
             render_plan,
-            hit_index,
+            hit_index: SceneHitTestIndex::new(hit_entries),
+            render_node_by_id,
             movable_nodes,
             resizable_nodes,
         })
@@ -3460,10 +3434,10 @@ impl ViewerApp {
                     }
 
                     if !resize_started && let Some(hit) = hit_index.topmost_at(pointer_start) {
-                        canvas_hit = Some(hit.instance.instance_id.clone());
+                        canvas_hit = Some(hit.instance_id.clone());
                         next_canvas_resize = None;
                         if let Some((node_id, before)) =
-                            movable_nodes.get(hit.instance_id()).copied()
+                            movable_nodes.get(hit.instance_id.as_str()).copied()
                         {
                             match MoveTransaction::begin(node_id, before, pointer_start).and_then(
                                 |mut drag| {
@@ -3549,12 +3523,12 @@ impl ViewerApp {
                     if let Some(mode) = self.text_mode.as_ref() {
                         match topmost {
                             Some(hit) if hit.node_id == mode.frame_id => {
-                                canvas_hit = Some(hit.instance.instance_id.clone());
+                                canvas_hit = Some(hit.instance_id.clone());
                                 text_pointer_request = Some((page_id_text.clone(), point));
                             }
                             Some(hit) => {
                                 text_exit_request = true;
-                                canvas_hit = Some(hit.instance.instance_id.clone());
+                                canvas_hit = Some(hit.instance_id.clone());
                             }
                             None => {
                                 text_exit_request = true;
@@ -3562,17 +3536,17 @@ impl ViewerApp {
                             }
                         }
                     } else {
-                        canvas_hit = topmost.map(|hit| hit.instance.instance_id.clone());
+                        canvas_hit = topmost.map(|hit| hit.instance_id.clone());
                     }
                 }
 
                 render_backend::paint_page_surface(&painter, page_rect);
 
                 for node in page_nodes.iter().copied() {
-                    let Some(render_node) = render_plan
-                        .nodes
-                        .iter()
-                        .find(|planned| planned.node_id == node.origin)
+                    let Some(render_node) = frame_work
+                        .render_node_by_id
+                        .get(&node.origin)
+                        .and_then(|index| render_plan.nodes.get(*index))
                     else {
                         continue;
                     };
@@ -4378,18 +4352,10 @@ mod tests {
 
     #[test]
     fn scene_hit_index_builds_stable_bidirectional_lookup_once() {
-        let node_id = pub_editor::NodeId::from_canonical(
-            pub_editor::CanonicalId::from_bytes([0x22; 16]),
-        );
-        let page_id = pub_editor::PageId::from_canonical(
-            pub_editor::CanonicalId::from_bytes([0x33; 16]),
-        );
-        let instance = direct_page_local_instance_v1(
-            &node_id.as_canonical().to_string(),
-            &page_id.as_canonical().to_string(),
-        )
-        .expect("direct scene instance");
-        let instance_id = instance.instance_id.clone();
+        use pub_model::{CanonicalId, NodeId};
+
+        let node_id = NodeId::from_canonical(CanonicalId::from_bytes([0x22; 16]));
+        let instance_id = "sha256:test-instance".to_owned();
         let bounds = pub_editor::RectEmu::new(
             pub_editor::LengthEmu::new(10),
             pub_editor::LengthEmu::new(20),
@@ -4397,7 +4363,7 @@ mod tests {
             pub_editor::LengthEmu::new(40),
         );
         let index = SceneHitTestIndex::new(vec![SceneHitEntry {
-            instance,
+            instance_id: instance_id.clone(),
             node_id,
             bounds,
             z_order: 0,
