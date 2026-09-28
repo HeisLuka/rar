@@ -224,11 +224,13 @@ jobs:
         shell: pwsh
         run: |
           $env:LOCALAPPDATA = $env:CHAPTERA_TEST_STATE
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
-          if (Get-Command python -ErrorAction SilentlyContinue) { throw "system python unexpectedly visible" }
-          if (Get-Command py -ErrorAction SilentlyContinue) { throw "py launcher unexpectedly visible" }
-          if (Get-Command cargo -ErrorAction SilentlyContinue) { throw "cargo unexpectedly visible" }
-          if (Get-Command rustc -ErrorAction SilentlyContinue) { throw "rustc unexpectedly visible" }
+          $poison = Join-Path $env:RUNNER_TEMP "chaptera-forbidden-runtime-shims"
+          New-Item -ItemType Directory -Force -Path $poison | Out-Null
+          foreach ($name in @("py","python","python3","pip","pip3","cargo","rustc")) {
+            @("@echo off","echo forbidden runtime command invoked: $name 1>&2","exit /b 97") |
+              Set-Content -Encoding ascii (Join-Path $poison "$name.cmd")
+          }
+          $env:PATH = "$poison;$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
           $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
           $launcher = Join-Path $env:CHAPTERA_CLEAN_ROOT "Start-Chaptera-Local.cmd"
           $quoted = [char]34 + $launcher + [char]34
@@ -270,8 +272,8 @@ jobs:
           @{
             schema_version = "chaptera.local-portable-clean-smoke.v1"
             no_checkout = $true
-            system_python_hidden = $true
-            cargo_hidden = $true
+            system_python_not_required = $true
+            forbidden_runtime_commands_poisoned = $true
             package_manifest_zip_verified = $true
             internal_sha256sums_verified = $true
             package_tree_unchanged = $true
