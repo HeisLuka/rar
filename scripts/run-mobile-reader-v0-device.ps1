@@ -113,6 +113,32 @@ function Invoke-AdbText {
     return $result.Text
 }
 
+function Test-ChapteraUsefulPage {
+    param(
+        [string]$DeviceSerial,
+        [string]$ExpectedName
+    )
+
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $dump = Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "uiautomator", "dump", "/sdcard/chaptera-window.xml")
+        if ($dump.ExitCode -eq 0) {
+            $xml = Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "cat", "/sdcard/chaptera-window.xml")
+            Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "rm", "-f", "/sdcard/chaptera-window.xml") | Out-Null
+            if ($xml.ExitCode -eq 0) {
+                $hasDocument = $xml.Text -match [regex]::Escape($ExpectedName)
+                $hasPage = $xml.Text -match "page 1/"
+                $hasLocalOpen = $xml.Text -match "offline local open"
+                if ($hasDocument -and $hasPage -and $hasLocalOpen) {
+                    return $true
+                }
+            }
+        }
+        Start-Sleep -Seconds 1
+    }
+
+    return $false
+}
+
 $deviceRows = @(& adb devices 2>$null) |
     Select-Object -Skip 1 |
     ForEach-Object { $_.Trim() } |
@@ -179,6 +205,7 @@ $ResolverState = "not_run_v0_failed"
 $ResolverMime = ""
 $ResolverChapteraOffered = $false
 $ResolverUnqualifiedIntent = $false
+$ResolverUsefulPageVisible = $false
 
 if ($V0Exit -eq 0) {
     $ResolverName = "ChapteraResolverProbe.pub"
@@ -245,8 +272,14 @@ if ($V0Exit -eq 0) {
                             Where-Object { $_ -match "mResumedActivity|topResumedActivity" }) -join " | "
 
                         if ($resumed -match "com\.chaptera\.reader") {
-                            $ResolverExit = 0
-                            $ResolverState = "chaptera_launched"
+                            $ResolverUsefulPageVisible = Test-ChapteraUsefulPage -DeviceSerial $Serial -ExpectedName $ResolverName
+                            if ($ResolverUsefulPageVisible) {
+                                $ResolverExit = 0
+                                $ResolverState = "chaptera_useful_page_visible"
+                            } else {
+                                $ResolverExit = 8
+                                $ResolverState = "resolver_chaptera_no_useful_page"
+                            }
                         } elseif ($InteractiveResolver) {
                             Write-Host "Android chooser is active or Chaptera is not yet resumed."
                             Write-Host "On the device, choose Chaptera Reader from the system Open with UI and wait until the PUB page is visible."
@@ -256,8 +289,14 @@ if ($V0Exit -eq 0) {
                             $resumed = (($activities.Text -split "\r?\n") |
                                 Where-Object { $_ -match "mResumedActivity|topResumedActivity" }) -join " | "
                             if ($resumed -match "com\.chaptera\.reader") {
-                                $ResolverExit = 0
-                                $ResolverState = "chaptera_launched_after_human_choice"
+                                $ResolverUsefulPageVisible = Test-ChapteraUsefulPage -DeviceSerial $Serial -ExpectedName $ResolverName
+                                if ($ResolverUsefulPageVisible) {
+                                    $ResolverExit = 0
+                                    $ResolverState = "chaptera_useful_page_visible_after_human_choice"
+                                } else {
+                                    $ResolverExit = 8
+                                    $ResolverState = "resolver_chaptera_no_useful_page"
+                                }
                             } else {
                                 $ResolverExit = 6
                                 $ResolverState = "resolver_human_choice_not_confirmed"
@@ -325,6 +364,7 @@ $receiptObject = [ordered]@{
         supplied_mime = $ResolverMime
         chaptera_offered = $ResolverChapteraOffered
         unqualified_view_intent = $ResolverUnqualifiedIntent
+        useful_page_visible = $ResolverUsefulPageVisible
     }
     physical_perf_exit_code = [int]$PerfExit
     wifi_observation = $WifiObservation
