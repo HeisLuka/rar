@@ -64,7 +64,6 @@ export async function writeCheck(record: CheckRecord) {
     access: 'private',
     allowOverwrite: true,
     contentType: 'application/json; charset=utf-8',
-    cacheControlMaxAge: 0,
   });
 }
 
@@ -74,6 +73,7 @@ export async function readCheck(id: string): Promise<CheckRecord | null> {
     useCache: false,
   });
   if (!result || result.statusCode !== 200) return null;
+  if (!result.stream) return null;
   const parsed = JSON.parse(await streamText(result.stream)) as CheckRecord;
   if (parsed.schema !== 'chaptera.pub-check.v1' || parsed.id !== id) return null;
   return parsed;
@@ -94,6 +94,7 @@ export async function listCheckRecords() {
     for (const blob of page.blobs) {
       const result = await get(blob.pathname, { access: 'private', useCache: false });
       if (!result || result.statusCode !== 200) continue;
+      if (!result.stream) continue;
       try {
         const parsed = JSON.parse(await streamText(result.stream)) as CheckRecord;
         if (parsed.schema === 'chaptera.pub-check.v1') found.push(parsed);
