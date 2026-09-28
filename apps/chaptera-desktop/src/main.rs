@@ -6741,7 +6741,7 @@ mod tests {
                 .text_fragments
                 .iter()
                 .find_map(|fragment| {
-                    text_session::enter_explicit_text_mode(
+                    let probe = text_session::enter_explicit_text_mode(
                         editor,
                         fragment.story_id,
                         fragment.frame_id,
@@ -6781,14 +6781,32 @@ mod tests {
                             })
                             .collect(),
                     );
-                    let point = pub_interaction::DocumentPoint::new(
-                        pub_editor::LengthEmu::new(
-                            node.bounds.x.get() + node.bounds.width.get() / 2,
-                        ),
-                        pub_editor::LengthEmu::new(
-                            node.bounds.y.get() + node.bounds.height.get() / 2,
-                        ),
-                    );
+                    let right = node.bounds.right()?.get();
+                    let bottom = node.bounds.bottom()?.get();
+                    let point = probe
+                        .layout
+                        .caret_map
+                        .caret_stops
+                        .iter()
+                        .find_map(|stop| {
+                            if stop.frame_id != fragment.frame_id.as_canonical().to_string()
+                                || stop.page_id != page_id_text
+                            {
+                                return None;
+                            }
+                            let y = stop.page_y_top_emu
+                                + (stop.page_y_bottom_emu - stop.page_y_top_emu) / 2;
+                            (stop.page_x_emu > node.bounds.x.get()
+                                && stop.page_x_emu < right
+                                && y > node.bounds.y.get()
+                                && y < bottom)
+                                .then(|| {
+                                    pub_interaction::DocumentPoint::new(
+                                        pub_editor::LengthEmu::new(stop.page_x_emu),
+                                        pub_editor::LengthEmu::new(y),
+                                    )
+                                })
+                        })?;
                     hit_index
                         .topmost_at(point)
                         .filter(|top| top.node_id == fragment.frame_id)
@@ -6847,6 +6865,14 @@ mod tests {
             )
         };
 
+        let operations_before = harness
+            .state()
+            .editor
+            .as_ref()
+            .expect("editor")
+            .operations()
+            .len();
+
         harness.input_mut().events.extend([
             egui::Event::PointerMoved(frame_center),
             egui::Event::PointerButton {
@@ -6864,22 +6890,12 @@ mod tests {
         ]);
         harness.step();
         harness.step();
-        let operations_before = harness
-            .state()
-            .editor
-            .as_ref()
-            .expect("editor")
-            .operations()
-            .len();
-
-        harness.get_by_label("Edit Text").click();
-        harness.step();
         assert_eq!(
             harness
                 .state()
                 .text_mode
                 .as_ref()
-                .expect("explicit Edit Text enters a session")
+                .expect("interior click enters a canonical text session")
                 .story_id,
             target_story_id
         );
@@ -6901,7 +6917,7 @@ mod tests {
                 .operations()
                 .len(),
             operations_before,
-            "entering direct text mode is transient"
+            "interior click text activation is transient"
         );
 
         harness.input_mut().events.extend([
