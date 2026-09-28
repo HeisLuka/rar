@@ -19,6 +19,13 @@ mod supporter;
 mod supporter_attribution;
 mod text_session;
 
+use chaptera_canvas_creation_interaction::{
+    BoxDrawCommitStatusV1, BoxDrawTransactionV1, CanvasToolStateV1, PointEmuV1, RectEmuV1,
+    activate_canvas_tool_v1, cancel_box_draw_v1, commit_box_draw_v1,
+    default_canvas_tool_state_v1, end_pointer_gesture_v1, preview_box_draw_v1,
+    select_tool_v1, start_box_draw_v1, start_pointer_gesture_v1, textbox_create_tool_v1,
+    update_box_draw_v1, update_pointer_gesture_v1,
+};
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
     direct_page_local_instance_v1, geometry_sync_policy_v1,
@@ -81,6 +88,7 @@ const MIN_NUMERIC_ZOOM: f32 = 0.10;
 const MAX_NUMERIC_ZOOM: f32 = 4.00;
 const PAGE_THUMBNAIL_MAX_WIDTH: f32 = 116.0;
 const PAGE_THUMBNAIL_MAX_HEIGHT: f32 = 148.0;
+const TEXTBOX_DRAW_GESTURE_TOKEN: &str = "chaptera.desktop.textbox-create.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
@@ -612,6 +620,8 @@ struct ViewerApp {
     canvas_selection: SceneSelectionState,
     canvas_drag: Option<MoveTransaction>,
     canvas_resize: Option<ResizeTransaction>,
+    canvas_tool_state: CanvasToolStateV1,
+    canvas_box_draw: Option<BoxDrawTransactionV1>,
     created_text_box_scene_nodes: BTreeSet<pub_editor::NodeId>,
     text_mode: Option<text_session::DesktopTextMode>,
     zoom: f32,
@@ -663,6 +673,8 @@ impl ViewerApp {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            canvas_tool_state: default_canvas_tool_state_v1(),
+            canvas_box_draw: None,
             created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
@@ -1112,6 +1124,15 @@ impl ViewerApp {
                     ui.weak("Local · read-only");
                 });
                 return;
+            }
+
+            let textbox_active = self.canvas_tool_state.active_tool == textbox_create_tool_v1();
+            let textbox_button = ui.add_enabled(
+                editor_available && self.text_mode.is_none(),
+                egui::SelectableLabel::new(textbox_active, "Text Box"),
+            );
+            if textbox_button.clicked() {
+                self.activate_canvas_textbox_tool();
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2164,6 +2185,111 @@ impl ViewerApp {
         }
     }
 
+    fn activate_canvas_textbox_tool(&mut self) {
+        if reader_only_mode() || self.editor.is_none() || self.text_mode.is_some() {
+            return;
+        }
+        match activate_canvas_tool_v1(&self.canvas_tool_state, textbox_create_tool_v1()) {
+            Ok(transition) => {
+                self.canvas_tool_state = transition.state;
+                self.canvas_box_draw = None;
+                self.canvas_drag = None;
+                self.canvas_resize = None;
+                self.edit_status = Some(
+                    "Text Box tool active. Drag on the current page to create an empty Story."
+                        .to_owned(),
+                );
+            }
+            Err(error) => {
+                self.edit_status = Some(format!("Text Box tool unavailable: {error}"));
+            }
+        }
+    }
+
+    fn cancel_canvas_textbox_tool(&mut self) {
+        if self.canvas_tool_state.active_tool != textbox_create_tool_v1() {
+            return;
+        }
+        if let Some(draw) = self.canvas_box_draw.as_ref() {
+            let _ = cancel_box_draw_v1(draw);
+        }
+        if let Some(gesture) = self.canvas_tool_state.active_gesture.as_ref() {
+            if let Ok(transition) = chaptera_canvas_creation_interaction::cancel_pointer_gesture_v1(
+                &self.canvas_tool_state,
+                &textbox_create_tool_v1(),
+                &gesture.token,
+            ) {
+                self.canvas_tool_state = transition.state;
+            }
+        }
+        if let Ok(transition) =
+            activate_canvas_tool_v1(&self.canvas_tool_state, select_tool_v1())
+        {
+            self.canvas_tool_state = transition.state;
+        }
+        self.canvas_box_draw = None;
+        self.edit_status =
+            Some("Text Box creation cancelled without creating a document revision.".to_owned());
+    }
+
+    fn create_canvas_text_box(
+        &mut self,
+        page_id: pub_editor::PageId,
+        bounds: RectEmuV1,
+    ) {
+        let node_id =
+            pub_editor::NodeId::from_canonical(pub_model::new_editor_canonical_id());
+        let story_id =
+            pub_editor::StoryId::from_canonical(pub_model::new_editor_canonical_id());
+        let preset = pub_editor::AuthoringTextPresetV1 {
+            resource_id: chaptera_desktop_fallback_font_resource::RESOURCE_ID.to_owned(),
+            font_fingerprint_sha256:
+                chaptera_desktop_fallback_font_resource::EXPECTED_SHA256.to_owned(),
+            face_index: 0,
+            font_size_emu: pub_editor::LengthEmu::new(
+                chaptera_desktop_fallback_font_resource::FONT_SIZE_EMU,
+            ),
+            line_height_emu: pub_editor::LengthEmu::new(
+                chaptera_desktop_fallback_font_resource::LINE_HEIGHT_EMU,
+            ),
+        };
+        let bounds = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(bounds.x),
+            pub_editor::LengthEmu::new(bounds.y),
+            pub_editor::LengthEmu::new(bounds.width),
+            pub_editor::LengthEmu::new(bounds.height),
+        );
+        let outcome = self
+            .editor
+            .as_mut()
+            .ok_or_else(|| "Editor session is unavailable.".to_owned())
+            .and_then(|editor| {
+                editor
+                    .create_text_box(node_id, story_id, page_id, bounds, preset)
+                    .map_err(|error| {
+                        format!("CreateTextBox rejected: {} ({})", error, error.code())
+                    })
+            });
+
+        match outcome {
+            Ok(_) => {
+                self.finish_authoring_change(
+                    "Created one empty TextBox through the canonical CreateTextBox operation.",
+                );
+                if let Ok(instance) = direct_page_local_instance_v1(
+                    &node_id.as_canonical().to_string(),
+                    &page_id.as_canonical().to_string(),
+                ) {
+                    self.canvas_selection.select_only(instance.instance_id);
+                }
+                self.enter_canvas_text_mode(story_id, node_id);
+            }
+            Err(error) => {
+                self.edit_status = Some(error);
+            }
+        }
+    }
+
     fn finish_authoring_change(&mut self, status: &str) {
         self.canvas_drag = None;
         self.canvas_resize = None;
@@ -3105,6 +3231,10 @@ impl ViewerApp {
         let mut edit_text_request: Option<(pub_editor::StoryId, pub_editor::NodeId)> = None;
         let mut text_pointer_request: Option<(String, pub_interaction::DocumentPoint)> = None;
         let mut text_exit_request = false;
+        let mut next_canvas_tool_state = self.canvas_tool_state.clone();
+        let mut next_canvas_box_draw = self.canvas_box_draw.clone();
+        let mut textbox_create_request: Option<(pub_editor::PageId, RectEmuV1)> = None;
+        let mut textbox_error: Option<String> = None;
         let hit_index = SceneHitTestIndex::new(
             self.editor
                 .as_ref()
@@ -3245,9 +3375,116 @@ impl ViewerApp {
                 let press_screen = ui.ctx().input(|input| input.pointer.press_origin());
                 let press_document = press_screen
                     .and_then(|pointer| canvas_document_point(page_rect, scene_scale, pointer));
+                let textbox_tool_active =
+                    next_canvas_tool_state.active_tool == textbox_create_tool_v1()
+                        && self.text_mode.is_none();
+
+                if !reader_only_mode()
+                    && textbox_tool_active
+                    && response.drag_started_by(egui::PointerButton::Primary)
+                    && let (Some(pointer_start), Some(pointer_current)) =
+                        (press_document, pointer_document)
+                {
+                    let start = PointEmuV1::new(pointer_start.x.get(), pointer_start.y.get());
+                    let current = PointEmuV1::new(pointer_current.x.get(), pointer_current.y.get());
+                    match (start, current) {
+                        (Ok(start), Ok(current)) => match start_pointer_gesture_v1(
+                            &next_canvas_tool_state,
+                            textbox_create_tool_v1(),
+                            TEXTBOX_DRAW_GESTURE_TOKEN,
+                        ) {
+                            Ok(transition) => match start_box_draw_v1(&page_id_text, start)
+                                .and_then(|draw| update_box_draw_v1(&draw, current))
+                            {
+                                Ok(draw) => {
+                                    next_canvas_tool_state = transition.state;
+                                    next_canvas_box_draw = Some(draw);
+                                    next_canvas_drag = None;
+                                    next_canvas_resize = None;
+                                }
+                                Err(error) => textbox_error =
+                                    Some(format!("Text Box draw could not start: {error}")),
+                            },
+                            Err(error) => textbox_error =
+                                Some(format!("Text Box gesture could not start: {error}")),
+                        },
+                        (Err(error), _) | (_, Err(error)) => {
+                            textbox_error = Some(format!("Text Box point rejected: {error}"));
+                        }
+                    }
+                } else if !reader_only_mode()
+                    && textbox_tool_active
+                    && response.dragged_by(egui::PointerButton::Primary)
+                    && let (Some(draw), Some(point)) =
+                        (next_canvas_box_draw.as_ref(), pointer_document)
+                {
+                    let point = PointEmuV1::new(point.x.get(), point.y.get());
+                    match point.and_then(|point| {
+                        update_pointer_gesture_v1(
+                            &next_canvas_tool_state,
+                            &textbox_create_tool_v1(),
+                            TEXTBOX_DRAW_GESTURE_TOKEN,
+                        )?;
+                        update_box_draw_v1(draw, point)
+                    }) {
+                        Ok(draw) => next_canvas_box_draw = Some(draw),
+                        Err(error) => {
+                            next_canvas_box_draw = None;
+                            textbox_error = Some(format!("Text Box draw cancelled: {error}"));
+                        }
+                    }
+                } else if !reader_only_mode()
+                    && textbox_tool_active
+                    && response.drag_stopped_by(egui::PointerButton::Primary)
+                    && let (Some(draw), Some(point)) =
+                        (next_canvas_box_draw.take(), pointer_document)
+                {
+                    let result = PointEmuV1::new(point.x.get(), point.y.get())
+                        .and_then(|point| update_box_draw_v1(&draw, point))
+                        .and_then(|draw| commit_box_draw_v1(&draw));
+                    match result {
+                        Ok(commit) => {
+                            match end_pointer_gesture_v1(
+                                &next_canvas_tool_state,
+                                &textbox_create_tool_v1(),
+                                TEXTBOX_DRAW_GESTURE_TOKEN,
+                            ) {
+                                Ok(ended) => {
+                                    next_canvas_tool_state = ended.state;
+                                    if commit.status == BoxDrawCommitStatusV1::Commit {
+                                        if let Some(bounds) = commit.bounds {
+                                            textbox_create_request = Some((page.id, bounds));
+                                        }
+                                    }
+                                    match activate_canvas_tool_v1(
+                                        &next_canvas_tool_state,
+                                        select_tool_v1(),
+                                    ) {
+                                        Ok(completed) => next_canvas_tool_state = completed.state,
+                                        Err(error) => textbox_error = Some(format!(
+                                            "Text Box tool could not return to Select: {error}"
+                                        )),
+                                    }
+                                }
+                                Err(error) => textbox_error =
+                                    Some(format!("Text Box gesture could not end: {error}")),
+                            }
+                        }
+                        Err(error) => {
+                            textbox_error = Some(format!("Text Box draw rejected: {error}"));
+                            if let Ok(completed) = activate_canvas_tool_v1(
+                                &next_canvas_tool_state,
+                                select_tool_v1(),
+                            ) {
+                                next_canvas_tool_state = completed.state;
+                            }
+                        }
+                    }
+                }
 
                 if !reader_only_mode()
                     && self.text_mode.is_none()
+                    && !textbox_tool_active
                     && response.drag_started_by(egui::PointerButton::Primary)
                     && let (Some(pointer_start), Some(pointer_current)) =
                         (press_document, pointer_document)
@@ -3321,6 +3558,7 @@ impl ViewerApp {
                     }
                 } else if !reader_only_mode()
                     && self.text_mode.is_none()
+                    && !textbox_tool_active
                     && response.drag_stopped_by(egui::PointerButton::Primary)
                 {
                     if let (Some(mut resize), Some(point)) =
@@ -3356,6 +3594,7 @@ impl ViewerApp {
                     }
                 } else if !reader_only_mode()
                     && self.text_mode.is_none()
+                    && !textbox_tool_active
                     && response.dragged_by(egui::PointerButton::Primary)
                     && let Some(point) = pointer_document
                 {
@@ -3381,6 +3620,21 @@ impl ViewerApp {
                 }
 
                 if !reader_only_mode()
+                    && textbox_tool_active
+                    && response.clicked_by(egui::PointerButton::Primary)
+                {
+                    next_canvas_box_draw = None;
+                    if let Ok(completed) =
+                        activate_canvas_tool_v1(&next_canvas_tool_state, select_tool_v1())
+                    {
+                        next_canvas_tool_state = completed.state;
+                    }
+                    textbox_error = Some(
+                        "Text Box creation produced no positive rectangle; no document revision was created."
+                            .to_owned(),
+                    );
+                } else if !reader_only_mode()
+                    && !textbox_tool_active
                     && response.clicked_by(egui::PointerButton::Primary)
                     && let Some(point) = pointer_document
                 {
@@ -3407,6 +3661,34 @@ impl ViewerApp {
                 }
 
                 render_backend::paint_page_surface(&painter, page_rect);
+
+                if let Some(draw) = next_canvas_box_draw.as_ref()
+                    && let Ok(preview) = preview_box_draw_v1(draw)
+                    && let Some(bounds) = preview.bounds
+                    && let Some(preview_rect) = render_backend::physical_rect_to_egui(
+                        page_rect,
+                        scene_scale,
+                        bounds.x,
+                        bounds.y,
+                        bounds.width,
+                        bounds.height,
+                    )
+                {
+                    painter.rect_filled(
+                        preview_rect,
+                        0,
+                        egui::Color32::from_rgba_unmultiplied(232, 126, 36, 24),
+                    );
+                    painter.rect_stroke(
+                        preview_rect,
+                        0,
+                        egui::Stroke::new(
+                            2.0_f32,
+                            egui::Color32::from_rgb(232, 126, 36),
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                }
 
                 for node in page_nodes.iter().copied() {
                     let Some(render_node) = render_plan
@@ -3695,6 +3977,14 @@ impl ViewerApp {
             self.canvas_resize = next_canvas_resize;
         }
 
+        self.canvas_tool_state = next_canvas_tool_state;
+        self.canvas_box_draw = next_canvas_box_draw;
+        if let Some(error) = textbox_error {
+            self.edit_status = Some(error);
+        } else if let Some((page_id, bounds)) = textbox_create_request {
+            self.create_canvas_text_box(page_id, bounds);
+        }
+
         self.preview_clipped_frames = preview_clipped_frames;
         self.preview_clipped_story_keys = preview_clipped_story_keys;
     }
@@ -3718,6 +4008,13 @@ impl eframe::App for ViewerApp {
         }
         self.accept_dropped_file(ctx);
         self.poll_diagnostic_sweep();
+        if !reader_only_mode()
+            && self.text_mode.is_none()
+            && ctx.input(|input| input.key_pressed(egui::Key::Escape))
+            && self.canvas_tool_state.active_tool == textbox_create_tool_v1()
+        {
+            self.cancel_canvas_textbox_tool();
+        }
         self.process_canvas_text_input(ctx);
 
         debug_assert_eq!(
@@ -4436,6 +4733,8 @@ mod tests {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            canvas_tool_state: default_canvas_tool_state_v1(),
+            canvas_box_draw: None,
             created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
@@ -4490,6 +4789,8 @@ mod tests {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            canvas_tool_state: default_canvas_tool_state_v1(),
+            canvas_box_draw: None,
             created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
@@ -4759,6 +5060,8 @@ mod tests {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            canvas_tool_state: default_canvas_tool_state_v1(),
+            canvas_box_draw: None,
             created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
