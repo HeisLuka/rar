@@ -2176,10 +2176,7 @@ fn derive_customer_page_projection(
         let chunk = match chunk_for_reference(contents_stream.clone(), contents, reference) {
             Ok(chunk) => chunk,
             Err(error) => {
-                return fallback(format!(
-                    "controlling_chunk_unavailable:{}",
-                    error
-                ));
+                return fallback(format!("controlling_chunk_unavailable:{error}"));
             }
         };
         let page_list_fields = chunk
@@ -2220,13 +2217,6 @@ fn derive_customer_page_projection(
         pgid_lists.push(pgids);
     }
 
-    let Some(consensus) = pgid_lists.first().cloned() else {
-        return fallback("no_controlling_page_list_authority".to_owned());
-    };
-    if pgid_lists.iter().skip(1).any(|candidate| *candidate != consensus) {
-        return fallback("controlling_page_lists_disagree".to_owned());
-    }
-
     let mut pages_by_oid = BTreeMap::<(u32, u32), Vec<PageId>>::new();
     for (seq_num, page_id) in page_seq_to_id {
         let Some(reference) = references.get(seq_num) else {
@@ -2253,33 +2243,10 @@ fn derive_customer_page_projection(
             .push(*page_id);
     }
 
-    let mut projected = Vec::with_capacity(consensus.len());
-    let mut seen = BTreeSet::new();
-    for pgid in &consensus {
-        let Some(matches) = pages_by_oid.get(pgid) else {
-            return fallback(format!(
-                "pgid_has_no_page:{:08x}:{:08x}",
-                pgid.0, pgid.1
-            ));
-        };
-        if matches.len() != 1 {
-            return fallback(format!(
-                "pgid_is_ambiguous:{:08x}:{:08x}:matches={}",
-                pgid.0,
-                pgid.1,
-                matches.len()
-            ));
-        }
-        let page_id = matches[0];
-        if !seen.insert(page_id) {
-            return fallback("controlling_page_list_repeats_page".to_owned());
-        }
-        projected.push(page_id);
-    }
-
-    if projected.is_empty() {
-        return fallback("controlling_page_projection_empty".to_owned());
-    }
+    let projected = match resolve_customer_page_ids_from_evidence(&pgid_lists, &pages_by_oid) {
+        Ok(projected) => projected,
+        Err(reason) => return fallback(reason),
+    };
 
     (
         PubCustomerPageProjection {
@@ -2294,6 +2261,47 @@ fn derive_customer_page_projection(
             evidence_list_count: pgid_lists.len(),
         }),
     )
+}
+
+fn resolve_customer_page_ids_from_evidence(
+    pgid_lists: &[Vec<(u32, u32)>],
+    pages_by_oid: &BTreeMap<(u32, u32), Vec<PageId>>,
+) -> std::result::Result<Vec<PageId>, String> {
+    let Some(consensus) = pgid_lists.first() else {
+        return Err("no_controlling_page_list_authority".to_owned());
+    };
+    if consensus.is_empty() {
+        return Err("controlling_page_projection_empty".to_owned());
+    }
+    if pgid_lists.iter().skip(1).any(|candidate| candidate != consensus) {
+        return Err("controlling_page_lists_disagree".to_owned());
+    }
+
+    let mut projected = Vec::with_capacity(consensus.len());
+    let mut seen = BTreeSet::new();
+    for pgid in consensus {
+        let Some(matches) = pages_by_oid.get(pgid) else {
+            return Err(format!(
+                "pgid_has_no_page:{:08x}:{:08x}",
+                pgid.0, pgid.1
+            ));
+        };
+        if matches.len() != 1 {
+            return Err(format!(
+                "pgid_is_ambiguous:{:08x}:{:08x}:matches={}",
+                pgid.0,
+                pgid.1,
+                matches.len()
+            ));
+        }
+        let page_id = matches[0];
+        if !seen.insert(page_id) {
+            return Err("controlling_page_list_repeats_page".to_owned());
+        }
+        projected.push(page_id);
+    }
+
+    Ok(projected)
 }
 
 fn build_reference_index(
@@ -3066,6 +3074,61 @@ mod tests {
         "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
             .parse()
             .expect("known SampleNewsletter SHA-256")
+    }
+
+    fn test_page_id(seed: u8) -> PageId {
+        PageId::from_canonical(CanonicalId::from_bytes([seed; 16]))
+    }
+
+    #[test]
+    fn customer_page_projection_uses_unanimous_pgid_order() {
+        let p0 = test_page_id(1);
+        let p1 = test_page_id(2);
+        let p2 = test_page_id(3);
+        let pgids = vec![
+            vec![(1, 0), (1, 1), (1, 2)],
+            vec![(1, 0), (1, 1), (1, 2)],
+        ];
+        let pages_by_oid = BTreeMap::from([
+            ((1, 0), vec![p0]),
+            ((1, 1), vec![p1]),
+            ((1, 2), vec![p2]),
+            ((2, 0), vec![test_page_id(9)]),
+        ]);
+
+        assert_eq!(
+            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap(),
+            vec![p0, p1, p2]
+        );
+    }
+
+    #[test]
+    fn customer_page_projection_rejects_disagreeing_authorities() {
+        let pgids = vec![vec![(1, 0), (1, 1)], vec![(1, 1), (1, 0)]];
+        let pages_by_oid = BTreeMap::from([
+            ((1, 0), vec![test_page_id(1)]),
+            ((1, 1), vec![test_page_id(2)]),
+        ]);
+
+        assert_eq!(
+            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap_err(),
+            "controlling_page_lists_disagree"
+        );
+    }
+
+    #[test]
+    fn customer_page_projection_rejects_ambiguous_page_oid() {
+        let pgids = vec![vec![(1, 0)]];
+        let pages_by_oid = BTreeMap::from([(
+            (1, 0),
+            vec![test_page_id(1), test_page_id(2)],
+        )]);
+
+        assert!(
+            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid)
+                .unwrap_err()
+                .starts_with("pgid_is_ambiguous:")
+        );
     }
 
     fn crop_test_span(offset: u64, len: u64) -> RawSpan {
