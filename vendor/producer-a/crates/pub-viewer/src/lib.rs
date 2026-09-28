@@ -1910,7 +1910,6 @@ mod tests {
         let source_hash = graph.source.source_hash;
         let mut visual = ViewerGeometryDocument {
             schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
-            projected_instances: Vec::new(),
             document: ViewerDocument {
                 schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
                 source: ViewerSource {
@@ -2059,7 +2058,6 @@ mod tests {
         let existing = *graph.nodes.keys().next().expect("fixture node");
         let mut visual = ViewerGeometryDocument {
             schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
-            projected_instances: Vec::new(),
             document: ViewerDocument {
                 schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
                 source: ViewerSource {
@@ -2475,7 +2473,6 @@ mod tests {
         let source_hash = graph.source.source_hash;
         let mut visual = ViewerGeometryDocument {
             schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
-            projected_instances: Vec::new(),
             document: ViewerDocument {
                 schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
                 source: ViewerSource {
@@ -2579,7 +2576,6 @@ mod tests {
         let source_hash = graph.source.source_hash;
         let mut visual = ViewerGeometryDocument {
             schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
-            projected_instances: Vec::new(),
             document: ViewerDocument {
                 schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
                 source: ViewerSource {
@@ -2643,7 +2639,6 @@ mod tests {
         let source_hash = graph.source.source_hash;
         let mut visual = ViewerGeometryDocument {
             schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
-            projected_instances: Vec::new(),
             document: ViewerDocument {
                 schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
                 source: ViewerSource {
