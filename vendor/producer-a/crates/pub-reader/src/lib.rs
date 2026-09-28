@@ -585,7 +585,7 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
                 })
                 .collect::<Vec<_>>();
             Ok(PubControllingObservation {
-                contents_seq_num: reference.seq_num,
+                contents_seq_num: seq_u32(reference.seq_num)?,
                 parent_seq_num: single_parent_seq(reference),
                 fully_decoded: chunk.is_fully_decoded(),
                 fields,
