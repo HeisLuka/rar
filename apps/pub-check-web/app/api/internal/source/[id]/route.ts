@@ -18,7 +18,9 @@ export async function GET(
   if (!record) return new Response('Not found', { status: 404 });
 
   const blob = await get(record.source.url, { access: 'private', useCache: false });
-  if (!blob || blob.statusCode !== 200) return new Response('Source unavailable', { status: 404 });
+  if (!blob || blob.statusCode !== 200 || !blob.stream) {
+    return new Response('Source unavailable', { status: 404 });
+  }
 
   if (record.status === 'queued') {
     record.status = 'processing';
