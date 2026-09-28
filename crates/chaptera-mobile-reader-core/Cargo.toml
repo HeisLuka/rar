@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1"
+chaptera-untrusted-pub-scan = { path = "../chaptera-untrusted-pub-scan" }
 chaptera-viewer-render-plan = { path = "../chaptera-viewer-render-plan" }
 pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
 pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }

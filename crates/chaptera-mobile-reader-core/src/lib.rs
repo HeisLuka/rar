@@ -6,6 +6,9 @@
 //! the same Reader pipeline used by the desktop product.
 
 use anyhow::Result;
+use chaptera_untrusted_pub_scan::{
+    PubScanPolicyV1, PubScanStatusV1, inspect_pub_bytes_v1,
+};
 pub use chaptera_viewer_render_plan::{PageRenderPlanV1, RenderPlanErrorV1};
 use chaptera_viewer_render_plan::build_page_render_plan_v1;
 pub use pub_model::ResourceId;
@@ -18,6 +21,38 @@ use pub_viewer::{
 };
 
 pub const MOBILE_READER_CORE_SCHEMA_V1: &str = "chaptera.mobile-reader-core.v1";
+pub const MOBILE_READER_MAX_FILE_BYTES_V1: u64 = 128 * 1024 * 1024;
+
+pub fn mobile_reader_admission_policy_v1() -> PubScanPolicyV1 {
+    PubScanPolicyV1 {
+        max_file_bytes: MOBILE_READER_MAX_FILE_BYTES_V1,
+        ..PubScanPolicyV1::default()
+    }
+}
+
+/// Applies the portable structural admission shared with hostile-PUB tooling.
+///
+/// This is an in-memory CFB/resource fence only. It deliberately does not claim
+/// Linux seccomp, process isolation, filesystem confinement, or malware scan on
+/// Android/iOS.
+pub fn admit_mobile_pub_bytes_v1(bytes: &[u8]) -> Result<()> {
+    let result = inspect_pub_bytes_v1(bytes, mobile_reader_admission_policy_v1(), false);
+    match result.status {
+        PubScanStatusV1::AcceptedCfb => Ok(()),
+        PubScanStatusV1::ParseFailed => {
+            Err(anyhow::anyhow!("mobile_reader_admission.parse_failed"))
+        }
+        PubScanStatusV1::RejectedByPolicy => {
+            let event = result
+                .security_event
+                .as_deref()
+                .unwrap_or("policy_rejected");
+            Err(anyhow::anyhow!(
+                "mobile_reader_admission.rejected_by_policy:{event}"
+            ))
+        }
+    }
+}
 
 /// Read-only, source-neutral document state for a mobile Reader shell.
 ///
@@ -35,6 +70,7 @@ impl MobileReaderDocumentV1 {
     /// function performs no network or filesystem I/O and does not mutate the
     /// supplied source buffer.
     pub fn open(bytes: &[u8], environment: BoundedLayoutEnvironment) -> Result<Self> {
+        admit_mobile_pub_bytes_v1(bytes)?;
         Ok(Self {
             visual: open_mature_0x2c_geometry(bytes, environment)?,
         })
@@ -115,6 +151,25 @@ mod tests {
                 "mobile core manifest must not depend on {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn mobile_admission_rejects_non_cfb_before_viewer() {
+        let error = admit_mobile_pub_bytes_v1(b"not a compound file")
+            .expect_err("foreign bytes must fail structural admission");
+        assert!(
+            error
+                .to_string()
+                .starts_with("mobile_reader_admission.parse_failed")
+        );
+    }
+
+    #[test]
+    fn mobile_admission_policy_matches_ingress_limit() {
+        let policy = mobile_reader_admission_policy_v1();
+        assert_eq!(policy.max_file_bytes, MOBILE_READER_MAX_FILE_BYTES_V1);
+        assert!(policy.max_cfb_entries > 0);
+        assert!(policy.max_declared_stream_bytes > 0);
     }
 
     #[test]
