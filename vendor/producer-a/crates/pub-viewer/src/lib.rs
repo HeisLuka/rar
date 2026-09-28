@@ -793,7 +793,7 @@ fn viewer_document_from_pipeline(
 ) -> Result<ViewerDocument> {
     let graph = &pipeline.resolved.graph;
 
-    let effective_page_ids = &pipeline.source.customer_pages.page_ids;
+    let effective_page_ids = &pipeline.source.effective_pages.page_ids;
     let mut pages = Vec::with_capacity(effective_page_ids.len());
     for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
@@ -989,15 +989,20 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             ViewerDiagnosticSeverity::Info,
             "Multiple source page-extent records agree exactly; the Viewer uses their shared page size.",
         ),
-        CustomerPageProjectionApplied { .. } => (
-            "viewer.page_projection.customer_order",
+        ScenarioPageOrderObserved { .. } => (
+            "viewer.page_projection.scenario_order_observed",
             ViewerDiagnosticSeverity::Info,
-            "The Viewer is using a persisted customer-page order proven by matching page identities while preserving all recovered source pages internally.",
+            "A persisted scenario/design page-identity order was recovered. It is retained as evidence only and is not used to suppress physical pages.",
         ),
-        CustomerPageProjectionFallback { .. } => (
-            "viewer.page_projection.raw_fallback",
+        ScenarioPageOrderUnavailable { .. } => (
+            "viewer.page_projection.scenario_order_unavailable",
+            ViewerDiagnosticSeverity::Info,
+            "Scenario/design page-order metadata could not be resolved safely; it is not used for physical page filtering.",
+        ),
+        PageRoleClassificationUnresolved { .. } => (
+            "viewer.page_projection.roles_unresolved",
             ViewerDiagnosticSeverity::FidelityWarning,
-            "A customer-visible page order could not be proven for this file, so the Viewer is showing all recovered physical pages.",
+            "Generic customer/master/service page-role filtering is not proven for this file family, so the Viewer preserves all recovered physical PAGE records.",
         ),
         LinkedFrameNotMaterialized { .. } => (
             "viewer.text.link_target_missing",
