@@ -66,13 +66,14 @@ jobs:
       - name: Acquire pinned real PUB fixtures and probe exact image coverage
         run: |
           mkdir -p apps/chaptera-mobile-android/app/src/androidTest/assets
-          mkdir -p "$RUNNER_TEMP/mobile-image-probe"
-          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub --output apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub
-          echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub" | sha256sum --check
-          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub --output "$RUNNER_TEMP/mobile-image-probe/SampleBrochure.pub"
-          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/Simple.pub --output "$RUNNER_TEMP/mobile-image-probe/Simple.pub"
-          sha256sum "$RUNNER_TEMP/mobile-image-probe/"*.pub
-          cargo +1.94.1 run --quiet --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml --bin mobile-reader-image-probe --             apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub             "$RUNNER_TEMP/mobile-image-probe/SampleBrochure.pub"             "$RUNNER_TEMP/mobile-image-probe/Simple.pub"
+          ASSETS=apps/chaptera-mobile-android/app/src/androidTest/assets
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub --output "$ASSETS/SampleNewsletter.pub"
+          echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  $ASSETS/SampleNewsletter.pub" | sha256sum --check
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub --output "$ASSETS/SampleBrochure.pub"
+          echo "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87  $ASSETS/SampleBrochure.pub" | sha256sum --check
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/Simple.pub --output "$ASSETS/Simple.pub"
+          echo "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d  $ASSETS/Simple.pub" | sha256sum --check
+          cargo +1.94.1 run --quiet --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml --bin mobile-reader-image-probe -- "$ASSETS/SampleNewsletter.pub" "$ASSETS/SampleBrochure.pub" "$ASSETS/Simple.pub"
 
       - name: Build Android app and instrumentation APK
         working-directory: apps/chaptera-mobile-android
