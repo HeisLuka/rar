@@ -7,6 +7,7 @@ license.workspace=true
 
 [dependencies]
 anyhow.workspace=true
+chaptera-layout-projection={path="../../../../crates/chaptera-layout-projection"}
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
 pub-presentation-profile={path="../../../../crates/pub-presentation-profile",default-features=false}
