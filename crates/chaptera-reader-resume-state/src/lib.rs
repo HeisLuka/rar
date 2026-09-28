@@ -390,26 +390,17 @@ mod tests {
     #[test]
     fn observed_source_must_match_reference_hash_and_length() {
         let source = source("C:\\docs\\a.pub", 'a');
-        assert!(source.matches_observed(
-            "C:\\docs\\a.pub",
-            &"a".repeat(64),
-            123_456
-        ));
-        assert!(!source.matches_observed(
-            "C:\\docs\\a.pub",
-            &"b".repeat(64),
-            123_456
-        ));
-        assert!(!source.matches_observed(
-            "C:\\moved\\a.pub",
-            &"a".repeat(64),
-            123_456
-        ));
+        assert!(source.matches_observed("C:\\docs\\a.pub", &"a".repeat(64), 123_456));
+        assert!(!source.matches_observed("C:\\docs\\a.pub", &"b".repeat(64), 123_456));
+        assert!(!source.matches_observed("C:\\moved\\a.pub", &"a".repeat(64), 123_456));
     }
 
     #[test]
     fn corrupt_truncated_and_unknown_json_fail_closed() {
-        assert_eq!(decode_store(br#"{"schema_version":"#), Err(ResumeError::InvalidJson));
+        assert_eq!(
+            decode_store(br#"{"schema_version":"#),
+            Err(ResumeError::InvalidJson)
+        );
 
         let unknown = br#"{
           "schema_version":"chaptera.reader-resume.v1",
@@ -442,11 +433,7 @@ mod tests {
 
     #[test]
     fn invalid_zoom_and_noncanonical_hash_are_rejected() {
-        let mut invalid = checkpoint(
-            "session-a",
-            source("C:\\docs\\a.pub", 'a'),
-            0,
-        );
+        let mut invalid = checkpoint("session-a", source("C:\\docs\\a.pub", 'a'), 0);
         invalid.reading.zoom_milli = 99;
         assert_eq!(invalid.validate(), Err(ResumeError::InvalidZoom));
 
