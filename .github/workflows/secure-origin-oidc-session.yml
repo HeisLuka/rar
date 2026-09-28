@@ -1,0 +1,71 @@
+name: LOCAL-WEB-JOURNEY-01 secure-origin OIDC browser
+
+on:
+  pull_request:
+    paths:
+      - "tools/chaptera_local_oidc.py"
+      - "tools/run_secure_origin_oidc_acceptance.py"
+      - "tools/run_secure_origin_oidc_browser.mjs"
+      - "apps/chaptera-server/src/auth_http.rs"
+      - "apps/chaptera-server/src/auth_runtime.rs"
+      - "apps/chaptera-server/src/edge.rs"
+      - "deploy/caddy/Caddyfile.example"
+      - "deploy/config/chaptera.prod.example.toml"
+      - ".github/workflows/secure-origin-oidc-session.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  secure-origin-oidc-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate acceptance harness syntax
+        run: |
+          python -m py_compile tools/chaptera_local_oidc.py
+          python -m py_compile tools/run_secure_origin_oidc_acceptance.py
+          node --check tools/run_secure_origin_oidc_browser.mjs
+
+      - name: Verify Docker runtime
+        run: docker version
+
+      - name: Build canonical Chaptera server
+        run: cargo build -p chaptera-server
+
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Run secure-origin browser session acceptance
+        run: |
+          python tools/run_secure_origin_oidc_acceptance.py \
+            --binary target/debug/chaptera \
+            --browser-script tools/run_secure_origin_oidc_browser.mjs \
+            --caddy-image caddy:2.10.2-alpine
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secure-origin-oidc-session
+          path: target/secure-origin-oidc
+          if-no-files-found: warn
+          retention-days: 30
