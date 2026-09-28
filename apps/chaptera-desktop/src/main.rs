@@ -3987,7 +3987,7 @@ fn paint_page_thumbnail(
     rect: egui::Rect,
     visual: &ViewerGeometryDocument,
     editor: Option<&pub_editor::EditorSession>,
-    image_textures: &BTreeMap<String, egui::TextureHandle>,
+    image_textures: &BTreeMap<String, CachedImageTexture>,
     page_index: usize,
     selected: bool,
 ) {
@@ -4076,7 +4076,7 @@ fn paint_page_thumbnail(
             });
         if let Some(texture) = replacement_texture.or(source_texture) {
             content_painter.image(
-                texture.id(),
+                texture.texture.id(),
                 node_rect,
                 egui::Rect::from_min_max(
                     egui::pos2(0.0, 0.0),
