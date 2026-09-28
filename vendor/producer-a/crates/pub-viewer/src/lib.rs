@@ -20,9 +20,10 @@ use pub_layout::{
     project_bounded, resolve_bounded_geometry, resolve_bounded_text_flow,
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
+#[cfg(feature = "cmo-slot-compose")]
+use pub_model::{CanonicalId, RectEmu};
 use pub_model::{
-    Affine2D, CanonicalId, LengthEmu, NodeId, NodeKind, PageId, RectEmu, ResourceId, Sha256Digest,
-    StoryFrame, StoryId,
+    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
