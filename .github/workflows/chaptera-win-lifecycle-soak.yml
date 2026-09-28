@@ -119,6 +119,48 @@ jobs:
           "CHAPTERA_SOAK_SETUP_A=$setupA" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CHAPTERA_SOAK_SETUP_B=$setupB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Run installed restart + exclusive file-lock recovery matrix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $install = Start-Process -FilePath $env:CHAPTERA_SOAK_SETUP_A -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-"
+          ) -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "fault-matrix install A failed: $($install.ExitCode)" }
+
+          $external = Join-Path $env:RUNNER_TEMP "chaptera-fault-recovery-external-state.txt"
+          Set-Content -Encoding utf8 -Path $external -Value "must-survive-installed-fault-recovery"
+          $externalHash = (Get-FileHash $external -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          $env:CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT = Join-Path $env:LOCALAPPDATA "Programs\Chaptera PUB Reader"
+          $env:CHAPTERA_UPDATE_ACCEPT_PUB = $env:CHAPTERA_SOAK_PUB
+          $env:CHAPTERA_UPDATE_ACCEPT_EXTERNAL_STATE = $external
+
+          cargo test -p chaptera-update-orchestrator --test windows_product_acceptance real_installed_reader_process_restart_and_file_lock_recovery_matrix -- --exact --nocapture | Tee-Object -Variable faultLog | Out-Host
+          $cargoExit = $LASTEXITCODE
+          if ($cargoExit -ne 0) { throw "installed fault-recovery matrix failed: $cargoExit" }
+
+          $receiptLine = @($faultLog | Where-Object { $_ -like "CHAPTERA_INSTALLED_FAULT_RECOVERY_RECEIPT*" })
+          if ($receiptLine.Count -ne 1) { throw "fault-recovery receipt line missing or ambiguous" }
+
+          New-Item -ItemType Directory -Force -Path "target/lifecycle-soak" | Out-Null
+          [ordered]@{
+            schema_version = "chaptera.lifecycle-fault-recovery.v1"
+            source_commit = "${{ github.sha }}"
+            retained_tree_process_restart = "pass"
+            activated_candidate_process_restart = "pass"
+            exclusive_reader_file_lock = "pass"
+            fresh_engine_recovery = "pass"
+            final_reader_smoke = "pass"
+            source_pub_sha256 = (Get-FileHash $env:CHAPTERA_SOAK_PUB -Algorithm SHA256).Hash.ToLowerInvariant()
+            external_state_sha256 = $externalHash
+            note = "Process restart is modeled by dropping the updater engine and recovering with a fresh instance on the same Windows install root. This is not an OS reboot claim."
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "target/lifecycle-soak/fault-recovery.json"
+
       - name: Run lifecycle soak
         shell: pwsh
         run: |
