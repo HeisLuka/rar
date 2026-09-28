@@ -3483,23 +3483,31 @@ impl ViewerApp {
 
                 render_backend::paint_page_surface(&painter, page_rect);
 
-                for node in page_nodes.iter().copied() {
-                    let Some(render_node) = render_plan
-                        .nodes
-                        .iter()
-                        .find(|planned| planned.node_id == node.origin)
-                    else {
-                        continue;
+                for render_node in &render_plan.nodes {
+                    let projected = render_node.projected_scene_instance.as_ref();
+                    let move_admitted = projected.is_none_or(|instance| {
+                        admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode).admitted
+                    });
+                    let resize_admitted = projected.is_none_or(|instance| {
+                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode).admitted
+                    });
+                    let replace_image_admitted = projected.is_none_or(|instance| {
+                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage).admitted
+                    });
+                    let node_id = render_node.node_id;
+                    let node_bounds = if move_admitted && resize_admitted {
+                        next_canvas_resize
+                            .filter(|resize| resize.node_id() == node_id)
+                            .and_then(|resize| resize.preview_bounds())
+                            .or_else(|| {
+                                next_canvas_drag
+                                    .filter(|drag| drag.node_id() == node_id)
+                                    .map(|drag| drag.preview_bounds())
+                            })
+                            .unwrap_or(render_node.bounds)
+                    } else {
+                        render_node.bounds
                     };
-                    let node_bounds = next_canvas_resize
-                        .filter(|resize| resize.node_id() == node.origin)
-                        .and_then(|resize| resize.preview_bounds())
-                        .or_else(|| {
-                            next_canvas_drag
-                                .filter(|drag| drag.node_id() == node.origin)
-                                .map(|drag| drag.preview_bounds())
-                        })
-                        .unwrap_or(render_node.bounds);
                     let Some(node_rect) = render_backend::physical_rect_to_egui(
                         page_rect,
                         scene_scale,
@@ -3510,7 +3518,10 @@ impl ViewerApp {
                     ) else {
                         continue;
                     };
-                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+
+                    if projected.is_none()
+                        && let Some(instance_id) = hit_index.instance_for_node(node_id)
+                        && move_admitted
                         && movable_nodes.contains_key(instance_id)
                     {
                         let a11y = ui.interact(
@@ -3526,7 +3537,9 @@ impl ViewerApp {
                             )
                         });
                     }
-                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+                    if projected.is_none()
+                        && let Some(instance_id) = hit_index.instance_for_node(node_id)
+                        && resize_admitted
                         && resizable_nodes.contains_key(instance_id)
                     {
                         let a11y = ui.interact(
@@ -3542,11 +3555,15 @@ impl ViewerApp {
                             )
                         });
                     }
-                    let replacement_key = self
-                        .editor
-                        .as_ref()
-                        .and_then(|editor| editor.image_replacement_for(node.origin))
-                        .map(|sha256| format!("replacement:{:?}", sha256));
+
+                    let replacement_key = replace_image_admitted
+                        .then(|| {
+                            self.editor
+                                .as_ref()
+                                .and_then(|editor| editor.image_replacement_for(node_id))
+                                .map(|sha256| format!("replacement:{:?}", sha256))
+                        })
+                        .flatten();
                     let replacement_texture = replacement_key
                         .as_ref()
                         .and_then(|key| self.image_textures.get(key));
@@ -3585,9 +3602,9 @@ impl ViewerApp {
                                     PreviewTextMetricDiagnostic::from_executed_layout(
                                         page.index,
                                         page.id.as_canonical().to_string(),
-                                        node.origin.as_canonical().to_string(),
+                                        node_id.as_canonical().to_string(),
                                         fragment.story_id.as_canonical().to_string(),
-                                        node.bounds,
+                                        render_node.bounds,
                                         self.zoom,
                                         metrics,
                                     ),
@@ -3611,7 +3628,6 @@ impl ViewerApp {
                         );
                     }
                 }
-
                 if let Some(mode) = self.text_mode.as_ref()
                     && let Some(stop) = text_session::focus_caret(mode)
                     && stop.page_id == page_id_text
@@ -4123,15 +4139,10 @@ fn paint_page_thumbnail(
     let Some(page) = visual.document.pages.get(page_index) else {
         return;
     };
-    let Some(surface) = visual
-        .scene
-        .surfaces
-        .iter()
-        .find(|surface| surface.origin == page.id)
-    else {
+    let Ok(render_plan) = build_page_render_plan_v1(visual, page_index) else {
         return;
     };
-    if surface.size.width.get() <= 0 || surface.size.height.get() <= 0 {
+    if render_plan.page_size.width.get() <= 0 || render_plan.page_size.height.get() <= 0 {
         return;
     }
 
@@ -4152,20 +4163,13 @@ fn paint_page_thumbnail(
     );
 
     let content_painter = painter.with_clip_rect(page_rect);
-    let scale_x = page_rect.width() / surface.size.width.get() as f32;
-    let scale_y = page_rect.height() / surface.size.height.get() as f32;
-    let page_origin = page.id.into_canonical();
+    let scale_x = page_rect.width() / render_plan.page_size.width.get() as f32;
+    let scale_y = page_rect.height() / render_plan.page_size.height.get() as f32;
 
-    for node in visual
-        .scene
-        .nodes
-        .iter()
-        .filter(|node| node.parent_origin == page_origin)
-    {
+    for node in &render_plan.nodes {
         if node.bounds.width.get() <= 0 || node.bounds.height.get() <= 0 {
             continue;
         }
-
         let node_rect = egui::Rect::from_min_size(
             egui::pos2(
                 page_rect.left() + node.bounds.x.get() as f32 * scale_x,
@@ -4177,11 +4181,7 @@ fn paint_page_thumbnail(
             ),
         );
 
-        let node_paint = visual
-            .paints
-            .iter()
-            .find(|paint| paint.node_id == node.origin);
-        if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
+        if let Some(rgb) = node.solid_fill_rgb {
             content_painter.rect_filled(
                 node_rect,
                 0.0,
@@ -4189,20 +4189,23 @@ fn paint_page_thumbnail(
             );
         }
 
-        let replacement_key = editor
-            .and_then(|editor| editor.image_replacement_for(node.origin))
-            .map(|sha256| format!("replacement:{:?}", sha256));
+        let replace_image_admitted = node.projected_scene_instance.as_ref().is_none_or(|instance| {
+            admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage).admitted
+        });
+        let replacement_key = replace_image_admitted
+            .then(|| {
+                editor
+                    .and_then(|editor| editor.image_replacement_for(node.node_id))
+                    .map(|sha256| format!("replacement:{:?}", sha256))
+            })
+            .flatten();
         let replacement_texture = replacement_key
             .as_ref()
             .and_then(|key| image_textures.get(key));
-        let source_texture = visual
-            .images
-            .iter()
-            .find(|embedded| embedded.node_ids.contains(&node.origin))
-            .and_then(|embedded| {
-                let key = format!("{:?}", embedded.resource_id);
-                image_textures.get(&key)
-            });
+        let source_texture = node.image.as_ref().and_then(|image| {
+            let key = format!("{:?}", image.resource_id);
+            image_textures.get(&key)
+        });
         if let Some(texture) = replacement_texture.or(source_texture) {
             content_painter.image(
                 texture.texture.id(),
@@ -4212,10 +4215,7 @@ fn paint_page_thumbnail(
             );
         }
 
-        if let Some(fragment) = visual
-            .text_fragments
-            .iter()
-            .find(|fragment| fragment.frame_id == node.origin)
+        if let Some(fragment) = node.text.as_ref()
             && !fragment.text.is_empty()
             && node_rect.width() >= 4.0
             && node_rect.height() >= 4.0
@@ -4231,7 +4231,7 @@ fn paint_page_thumbnail(
             );
         }
 
-        if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
+        if let Some(line) = node.solid_line.as_ref() {
             content_painter.rect_stroke(
                 node_rect,
                 0.0,
@@ -4243,6 +4243,8 @@ fn paint_page_thumbnail(
             );
         }
     }
+
+    debug_assert_eq!(render_plan.page_id, page.id);
 }
 
 fn numeric_zoom_scene_scale(zoom: f32) -> Option<f32> {
@@ -4322,12 +4324,23 @@ mod tests {
     }
 
     #[test]
+    fn desktop_projected_nodes_use_scene_instance_mutation_admission() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("for render_node in &render_plan.nodes"));
+        assert!(source.contains("render_node.projected_scene_instance.as_ref()"));
+        assert!(source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode)"));
+        assert!(source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode)"));
+        assert!(source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage)"));
+    }
+
+    #[test]
     fn desktop_pages_surface_exposes_live_thumbnail_navigation() {
         let source = include_str!("main.rs");
         assert!(source.contains("Page {} thumbnail"));
         assert!(source.contains("paint_page_thumbnail"));
         assert!(source.contains("with_clip_rect(page_rect)"));
-        assert!(source.contains("text_fragments"));
+        assert!(source.contains("build_page_render_plan_v1(visual, page_index)"));
+        assert!(source.contains("for node in &render_plan.nodes"));
         assert!(source.contains("PageNavigated"));
     }
 
