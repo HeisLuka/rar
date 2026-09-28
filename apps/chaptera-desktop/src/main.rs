@@ -630,8 +630,8 @@ fn smoke_check(path: &Path) -> Result<(), String> {
 }
 
 fn smoke_check_bytes(bytes: &[u8]) -> Result<(), String> {
-    let visual =
-        diagnostic_sweep::open_for_product(bytes).map_err(|error| format!("open PUB bytes: {error}"))?;
+    let visual = diagnostic_sweep::open_for_product(bytes)
+        .map_err(|error| format!("open PUB bytes: {error}"))?;
 
     if visual.document.pages.is_empty() {
         return Err("document has no Viewer pages".to_owned());
