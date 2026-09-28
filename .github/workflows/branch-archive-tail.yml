@@ -1,0 +1,119 @@
+name: Parallel stale branch archival tail
+
+on:
+  pull_request:
+    paths:
+      - ".github/branch-cleanup/2026-09-29-stale-archive-tail.tsv"
+      - ".github/workflows/branch-archive-tail.yml"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  archive-tail:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Archive shard
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_HEAD: ${{ github.head_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SHARD: ${{ matrix.shard }}
+          MANIFEST: .github/branch-cleanup/2026-09-29-stale-archive-tail.tsv
+          TAG_PREFIX: archive/branches/2026-09-29
+        run: |
+          set -euo pipefail
+          git fetch --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+          mkdir -p "target/shard-$SHARD"
+          : > "target/shard-$SHARD/deleted.txt"
+          : > "target/shard-$SHARD/absent.txt"
+          : > "target/shard-$SHARD/changed.txt"
+          : > "target/shard-$SHARD/skipped.txt"
+          : > "target/shard-$SHARD/failed.txt"
+
+          gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == "'"$GH_REPO"'") | .head.ref' \
+            | sort -u > "target/shard-$SHARD/open-heads.txt"
+
+          idx=0
+          while IFS=$'\t' read -r branch expected_sha commit_date audit_age || [[ -n "${branch:-}" ]]; do
+            [[ -z "${branch:-}" || "$branch" == \#* ]] && continue
+            my_idx=$idx
+            idx=$((idx+1))
+            (( my_idx % 4 == SHARD )) || continue
+
+            if [[ "$branch" == "main" || "$branch" == "master" || "$branch" == "$DEFAULT_BRANCH" || "$branch" == "$CURRENT_HEAD" ]]; then
+              printf '%s\n' "$branch" >> "target/shard-$SHARD/failed.txt"
+              continue
+            fi
+            if grep -Fxq "$branch" "target/shard-$SHARD/open-heads.txt"; then
+              printf '%s\n' "$branch" >> "target/shard-$SHARD/skipped.txt"
+              continue
+            fi
+
+            remote_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1{print $1}')"
+            if [[ -z "$remote_sha" ]]; then
+              printf '%s\n' "$branch" >> "target/shard-$SHARD/absent.txt"
+              continue
+            fi
+            if [[ "$remote_sha" != "$expected_sha" ]]; then
+              printf '%s\t%s\t%s\n' "$branch" "$expected_sha" "$remote_sha" >> "target/shard-$SHARD/changed.txt"
+              continue
+            fi
+
+            tag="$TAG_PREFIX/$branch"
+            remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk 'NR==1{print $1}')"
+            if [[ -z "$remote_tag_sha" ]]; then
+              git tag -f "$tag" "$expected_sha"
+              if ! git push origin "refs/tags/$tag:refs/tags/$tag"; then
+                remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk 'NR==1{print $1}')"
+                if [[ "$remote_tag_sha" != "$expected_sha" ]]; then
+                  printf '%s\n' "$branch" >> "target/shard-$SHARD/failed.txt"
+                  continue
+                fi
+              fi
+            elif [[ "$remote_tag_sha" != "$expected_sha" ]]; then
+              printf '%s\n' "$branch" >> "target/shard-$SHARD/failed.txt"
+              continue
+            fi
+
+            verify_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk 'NR==1{print $1}')"
+            if [[ "$verify_tag_sha" != "$expected_sha" ]]; then
+              printf '%s\n' "$branch" >> "target/shard-$SHARD/failed.txt"
+              continue
+            fi
+
+            if git push origin --delete "$branch"; then
+              echo "ARCHIVED+DELETED $branch"
+              printf '%s\n' "$branch" >> "target/shard-$SHARD/deleted.txt"
+            else
+              remote_sha2="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1{print $1}')"
+              if [[ -z "$remote_sha2" ]]; then
+                printf '%s\n' "$branch" >> "target/shard-$SHARD/absent.txt"
+              else
+                printf '%s\n' "$branch" >> "target/shard-$SHARD/failed.txt"
+              fi
+            fi
+          done < "$MANIFEST"
+
+          if [[ -s "target/shard-$SHARD/failed.txt" ]]; then
+            cat "target/shard-$SHARD/failed.txt" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: branch-archive-tail-${{ matrix.shard }}
+          path: target/shard-${{ matrix.shard }}/
+          if-no-files-found: error
