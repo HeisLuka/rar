@@ -102,7 +102,7 @@ fn inspect(engine: &UpdateEngine) -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
+fn run() -> Result<(), String> {
 
     let args = env::args().collect::<Vec<_>>();
     if args.len() < 3 {
@@ -212,7 +212,11 @@ fn main() {
         _ => usage(),
     };
 
-    if let Err(error) = result {
+    result
+}
+
+fn main() {
+    if let Err(error) = run() {
         eprintln!("error={error}");
         std::process::exit(1);
     }
