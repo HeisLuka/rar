@@ -1,0 +1,45 @@
+# fresh-main replay proof after CreateTextBox merge
+name: Viewer Editor Created Node Scene Sync V1
+
+on:
+  push:
+    branches:
+      - viewer-editor-created-node-scene-sync-01
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "apps/chaptera-desktop/src/main.rs"
+      - ".github/workflows/viewer-editor-created-node-scene-sync-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  created-node-scene-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Format
+        run: |
+          cargo fmt --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml -- --check
+          cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml -- --check
+      - name: Viewer check
+        run: cargo check --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml --all-targets
+      - name: Viewer clippy
+        run: cargo clippy --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml --all-targets -- -D warnings
+      - name: Viewer lifecycle tests
+        run: |
+          cargo test --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml created_text_box_scene_sync_tracks_create_undo_redo_without_touching_baseline_nodes
+          cargo test --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml created_text_box_scene_sync_fails_closed_on_unproven_source_backed_node
+      - name: Desktop check
+        run: cargo check --manifest-path apps/chaptera-desktop/Cargo.toml --all-targets
