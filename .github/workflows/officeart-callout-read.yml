@@ -1,0 +1,31 @@
+name: OfficeArt callout raw observation
+
+on:
+  pull_request:
+    paths:
+      - "tools/officeart-callout-read/**"
+      - "vendor/producer-a/crates/pub-escher/**"
+      - "docs/officeart-callout-read-01.md"
+      - ".github/workflows/officeart-callout-read.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+      - name: Format
+        run: cargo fmt --manifest-path tools/officeart-callout-read/Cargo.toml --check
+      - name: Test source-free Callout observations
+        run: cargo test --manifest-path tools/officeart-callout-read/Cargo.toml
