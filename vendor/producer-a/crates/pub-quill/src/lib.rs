@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 mod mcld;
 mod story;
 mod tokn;
+mod typography;
 mod writer;
 
 pub use mcld::{
@@ -32,4 +33,10 @@ pub use tokn::{
     QuillToknChunk, QuillToknEffectiveToken, QuillToknProperty, QuillToknPropertyBlock,
     QuillToknTargetRecord, QuillToknTargetSection, QuillToknTargetSectionHeader, TOKN_PLC_TYPE,
     TOKN_PROPERTY_KIND, TOKN_PROPERTY_STATE, TOKN_PROPERTY_TEXT_LENGTH,
+};
+pub use typography::{
+    QUILL_TEXT_SIZE_EMU_PER_POINT, QuillEffectiveTypographyRun, QuillExplicitTypographyRun,
+    QuillParagraphSelectorSource, QuillTypographyCatalog, QuillTypographyRange,
+    QuillTypographyReadError, QuillTypographyStoryIntersection, QuillTypographyValueSource,
+    parse_bounded_typography,
 };
