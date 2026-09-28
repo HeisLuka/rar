@@ -128,6 +128,9 @@ jobs:
                   "physical_page_size_matches_reference": diff_page[
                       "physical_page_size_matches_reference"
                   ],
+                  "physical_page_size_delta": diff_page[
+                      "physical_page_size_delta"
+                  ],
                   "raster_size_match": visual["raster_size_match"],
                   "node_count": golden_page["node_count"],
                   "fill_node_count": golden_page["fill_node_count"],
@@ -197,6 +200,9 @@ jobs:
               "page_region_counts": [page["region_count"] for page in pages],
               "physical_size_matches": [
                   page["physical_page_size_matches_reference"] for page in pages
+              ],
+              "physical_size_delta_px": [
+                  page["physical_page_size_delta"] for page in pages
               ],
               "clipped_text_nodes": [
                   page["clipped_text_node_count"] for page in pages
