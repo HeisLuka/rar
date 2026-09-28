@@ -9,11 +9,11 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
-
-from chaptera_local_oidc import OidcFixture
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def run(
@@ -40,6 +40,57 @@ def http_code(url: str) -> int:
             return response.status
     except urllib.error.HTTPError as error:
         return error.code
+
+
+class OidcFixture:
+    def __enter__(self) -> "OidcFixture":
+        fixture = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def do_GET(self) -> None:
+                if self.path == "/.well-known/openid-configuration":
+                    body = json.dumps(
+                        {
+                            "issuer": fixture.issuer,
+                            "authorization_endpoint": fixture.issuer + "/authorize",
+                            "token_endpoint": fixture.issuer + "/token",
+                            "jwks_uri": fixture.issuer + "/jwks",
+                            "response_types_supported": ["code"],
+                            "subject_types_supported": ["public"],
+                            "id_token_signing_alg_values_supported": ["RS256"],
+                            "scopes_supported": ["openid"],
+                            "token_endpoint_auth_methods_supported": [
+                                "client_secret_basic"
+                            ],
+                        }
+                    ).encode("utf-8")
+                elif self.path == "/jwks":
+                    body = b'{"keys":[]}'
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        host, port = self.server.server_address
+        self.issuer = f"http://{host}:{port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
 
 
 def main() -> int:
