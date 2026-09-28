@@ -1,0 +1,29 @@
+name: Image Resource Density V1
+
+on:
+  pull_request:
+    paths:
+      - "services/editor-api/image_resource_density_v1.py"
+      - "services/editor-api/test_image_resource_density_v1.py"
+      - "services/editor-api/image_asset_intrinsic_v1.py"
+      - ".github/workflows/image-resource-density-v1.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run PNG/JPEG density metadata tests
+        working-directory: services/editor-api
+        run: python -m unittest -v test_image_resource_density_v1
