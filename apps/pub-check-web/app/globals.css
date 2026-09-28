@@ -306,3 +306,75 @@ a { color: inherit; }
   .footer { flex-direction: column; }
   .card { padding: 12px; border-radius: 20px; }
 }
+
+
+/* Regional landing controls and country accents */
+main[data-country="US"] { --green: #245c3b; --green-2: #eaf4ed; --green-3: #d6eadc; }
+main[data-country="GB"] { --green: #274d66; --green-2: #edf4f7; --green-3: #d7e6ed; }
+main[data-country="FR"] { --green: #315a8a; --green-2: #eef4fb; --green-3: #d8e5f5; }
+main[data-country="ES"] { --green: #8a5a08; --green-2: #fff7e8; --green-3: #f3e2b9; }
+main[data-country="IT"] { --green: #356849; --green-2: #edf7f0; --green-3: #d7eadc; }
+main[data-country="DE"] { --green: #54524d; --green-2: #f3f2ef; --green-3: #e2e0db; }
+
+.brandWrap { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.regionHint { color: var(--muted); font-size: 10px; letter-spacing: .03em; }
+
+.localeControls { display: flex; align-items: end; gap: 8px; }
+.localeControls label { display: grid; gap: 4px; text-align: left; }
+.localeControls label > span {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding-left: 3px;
+}
+.localeControls select {
+  min-height: 35px;
+  max-width: 155px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 30px 0 10px;
+  background: rgba(255,255,255,.82);
+  color: var(--ink);
+  outline: none;
+  cursor: pointer;
+}
+.localeControls select:focus { border-color: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 10%, transparent); }
+
+.marketStrip {
+  width: max-content;
+  max-width: 100%;
+  margin: 18px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255,255,255,.65);
+  color: var(--muted);
+  font-size: 11px;
+}
+.marketDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+main[data-locale="fr-FR"] .hero h1,
+main[data-locale="de-DE"] .hero h1 { max-width: 900px; font-size: clamp(38px, 5.4vw, 66px); }
+
+@media (max-width: 720px) {
+  .nav { align-items: flex-start; gap: 14px; }
+  .localeControls { display: grid; grid-template-columns: 1fr 1fr; width: min(330px, 68vw); }
+  .localeControls select { width: 100%; max-width: none; font-size: 12px; }
+  .regionHint { display: none; }
+}
+
+@media (max-width: 520px) {
+  .nav { flex-direction: column; }
+  .localeControls { width: 100%; }
+  .hero { padding-top: 36px; }
+}
