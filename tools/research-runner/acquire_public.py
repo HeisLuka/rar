@@ -26,6 +26,10 @@ PUB_TASK_RE = re.compile(r"^PUB-[A-Z0-9-]{2,64}$")
 RUN_RE = re.compile(r"^PUB-RUN-[0-9]{1,8}$")
 SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+SENSITIVE_QUERY_KEY_RE = re.compile(
+    r"(?:token|secret|password|passwd|credential|authorization|auth|signature|sig|api[_-]?key|access[_-]?key|x-amz-)",
+    re.IGNORECASE,
+)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -51,6 +55,9 @@ def validate_public_url(url: str, *, allow_local_http: bool = False) -> urllib.p
         fail("credentials in URL are forbidden")
     if not parsed.hostname:
         fail("URL hostname is required")
+    for key, _value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True):
+        if SENSITIVE_QUERY_KEY_RE.search(key):
+            fail(f"credential-like URL query parameter is forbidden: {key}")
     if allow_local_http and parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
         return parsed
     try:
