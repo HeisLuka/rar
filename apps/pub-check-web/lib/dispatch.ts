@@ -22,8 +22,6 @@ async function dispatchGitHub(checkId: string, origin: string) {
         ref,
         inputs: {
           check_id: checkId,
-          source_url: `${origin}/api/internal/source/${encodeURIComponent(checkId)}`,
-          result_url: `${origin}/api/internal/result/${encodeURIComponent(checkId)}`,
         },
       }),
     },
