@@ -17,6 +17,10 @@ pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
     Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
+use pub_presentation_profile::{
+    CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
+    carlton_admitted_carrier_page_seq_nums_v1, select_carlton_customer_page_seq_nums_v1,
+};
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -25,9 +29,9 @@ pub use pub_reader::{
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
-    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, build_failure_envelope,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
-    resolve_pub_source_graph,
+    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, analyze_mature_0x2c_page_roles,
+    build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
+    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -488,6 +492,26 @@ struct Mature0x2cPipeline {
     source_hash: Sha256Digest,
     source: PubSourceGraphBuild,
     resolved: PubResolvedGraphBuild,
+    page_selection: ViewerPageSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ViewerPageSelection {
+    page_ids: Vec<PageId>,
+    disposition: ViewerPageSelectionDisposition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ViewerPageSelectionDisposition {
+    GenericNoLoss,
+    FamilyProfileApplied {
+        profile_id: String,
+        raw_page_count: usize,
+        customer_page_count: usize,
+    },
+    FamilyProfileUnavailable {
+        reason: String,
+    },
 }
 
 /// Opens one mature 0x2C Publisher file into the read-only Viewer manifest.
@@ -779,12 +803,109 @@ fn build_mature_0x2c_pipeline(bytes: &[u8]) -> Result<Mature0x2cPipeline> {
         .context("build mature-0x2C PUB source graph for Viewer")?;
     let resolved =
         resolve_pub_source_graph(&source.graph).context("resolve PUB source graph for Viewer")?;
+    let page_selection = select_viewer_pages(bytes, source_hash, &source, &resolved);
 
     Ok(Mature0x2cPipeline {
         source_hash,
         source,
         resolved,
+        page_selection,
     })
+}
+
+fn select_viewer_pages(
+    bytes: &[u8],
+    source_hash: Sha256Digest,
+    source: &PubSourceGraphBuild,
+    resolved: &PubResolvedGraphBuild,
+) -> ViewerPageSelection {
+    let generic = || ViewerPageSelection {
+        page_ids: source.effective_pages.page_ids.clone(),
+        disposition: ViewerPageSelectionDisposition::GenericNoLoss,
+    };
+
+    let source_sha256 = source_hash.to_string();
+    let Some(carrier_page_seq_nums) = carlton_admitted_carrier_page_seq_nums_v1(&source_sha256)
+    else {
+        return generic();
+    };
+
+    let page_roles = match analyze_mature_0x2c_page_roles(Cursor::new(bytes)) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return ViewerPageSelection {
+                page_ids: source.effective_pages.page_ids.clone(),
+                disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                    reason: format!("page_role_evidence_unavailable:{error}"),
+                },
+            };
+        }
+    };
+
+    let input = CarltonPresentationProfileInputV1 {
+        schema_version: CARLTON_PRESENTATION_INPUT_SCHEMA_V1.to_owned(),
+        source_sha256,
+        pages: page_roles
+            .pages
+            .into_iter()
+            .map(|page| CarltonPageEvidenceV1 {
+                document_ordinal: page.document_ordinal,
+                contents_seq_num: page.contents_seq_num,
+                oid_dword0: page.oid_dword0,
+                oid_dword1: page.oid_dword1,
+                applied_master_seq_num: page.applied_master_seq_num,
+                shape_child_count: page.shape_child_count,
+            })
+            .collect(),
+        // The exact SHA admission binds this to the PlcCmob carrier evidence
+        // proven by CARLTON-PAGE-PROJECTION-01. Unknown hashes never reach here.
+        carrier_page_seq_nums: carrier_page_seq_nums.to_vec(),
+    };
+
+    let selection = match select_carlton_customer_page_seq_nums_v1(input) {
+        Ok(selection) => selection,
+        Err(error) => {
+            return ViewerPageSelection {
+                page_ids: source.effective_pages.page_ids.clone(),
+                disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                    reason: format!("family_profile_rejected:{error}"),
+                },
+            };
+        }
+    };
+
+    let mut page_ids = Vec::with_capacity(selection.customer_page_seq_nums.len());
+    for seq_num in &selection.customer_page_seq_nums {
+        let page_id = match derive_pub_page_id(&source_hash, *seq_num) {
+            Ok(page_id) => page_id,
+            Err(error) => {
+                return ViewerPageSelection {
+                    page_ids: source.effective_pages.page_ids.clone(),
+                    disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                        reason: format!("customer_page_identity_unavailable:{seq_num}:{error}"),
+                    },
+                };
+            }
+        };
+        if !resolved.graph.pages.contains_key(&page_id) {
+            return ViewerPageSelection {
+                page_ids: source.effective_pages.page_ids.clone(),
+                disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                    reason: format!("customer_page_missing_from_resolved_graph:{seq_num}"),
+                },
+            };
+        }
+        page_ids.push(page_id);
+    }
+
+    ViewerPageSelection {
+        page_ids,
+        disposition: ViewerPageSelectionDisposition::FamilyProfileApplied {
+            profile_id: selection.profile_id,
+            raw_page_count: selection.raw_page_count,
+            customer_page_count: selection.customer_page_seq_nums.len(),
+        },
+    }
 }
 
 fn viewer_document_from_pipeline(
@@ -793,7 +914,7 @@ fn viewer_document_from_pipeline(
 ) -> Result<ViewerDocument> {
     let graph = &pipeline.resolved.graph;
 
-    let effective_page_ids = &pipeline.source.effective_pages.page_ids;
+    let effective_page_ids = &pipeline.page_selection.page_ids;
     let mut pages = Vec::with_capacity(effective_page_ids.len());
     for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
@@ -831,6 +952,34 @@ fn viewer_document_from_pipeline(
                 .map(map_resolve_diagnostic),
         )
         .collect::<Vec<_>>();
+
+    match &pipeline.page_selection.disposition {
+        ViewerPageSelectionDisposition::GenericNoLoss => {}
+        ViewerPageSelectionDisposition::FamilyProfileApplied {
+            profile_id,
+            raw_page_count,
+            customer_page_count,
+        } => {
+            diagnostics
+                .retain(|diagnostic| diagnostic.code != "viewer.page_projection.roles_unresolved");
+            diagnostics.push(ViewerDiagnostic {
+                code: "viewer.page_projection.family_profile_applied".to_owned(),
+                severity: ViewerDiagnosticSeverity::Info,
+                message: format!(
+                    "Admitted family presentation profile {profile_id} selects {customer_page_count} customer pages from {raw_page_count} preserved raw PAGE records."
+                ),
+            });
+        }
+        ViewerPageSelectionDisposition::FamilyProfileUnavailable { reason } => {
+            diagnostics.push(ViewerDiagnostic {
+                code: "viewer.page_projection.family_profile_unavailable".to_owned(),
+                severity: ViewerDiagnosticSeverity::FidelityWarning,
+                message: format!(
+                    "An exact family presentation profile was recognized but could not be applied safely ({reason}); the Viewer preserves every recovered raw PAGE."
+                ),
+            });
+        }
+    }
     normalize_diagnostics(&mut diagnostics);
 
     Ok(ViewerDocument {

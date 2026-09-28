@@ -7,6 +7,7 @@ on:
       - "crates/pub-model/**"
       - "crates/pub-presentation-profile/**"
       - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
 
@@ -1438,6 +1439,101 @@ jobs:
               "December customer=5 master=263 carrier=279"
           )
           PY
+
+      - name: Emit Reader/Viewer presentation-consumer receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton/viewer-consumer
+
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt -- \
+            out/carlton/exact/March-2026.pub \
+            out/carlton/viewer-consumer/march.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt -- \
+            out/carlton/exact/December-2025.pub \
+            out/carlton/viewer-consumer/december.json
+
+          newsletter="$RUNNER_TEMP/SampleNewsletter.pub"
+          brochure="$RUNNER_TEMP/SampleBrochure.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$newsletter"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub" \
+            --output "$brochure"
+          test "$(sha256sum "$newsletter" | awk '{print $1}')" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          test "$(sha256sum "$brochure" | awk '{print $1}')" = "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87"
+
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt -- \
+            "$newsletter" \
+            out/carlton/viewer-consumer/samplenewsletter.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt -- \
+            "$brochure" \
+            out/carlton/viewer-consumer/samplebrochure.json
+
+      - name: Gate family presentation consumer and generic no-loss controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/viewer-consumer")
+          march = json.loads((root / "march.json").read_text())
+          december = json.loads((root / "december.json").read_text())
+          newsletter = json.loads((root / "samplenewsletter.json").read_text())
+          brochure = json.loads((root / "samplebrochure.json").read_text())
+
+          def codes(receipt):
+              return set(receipt["diagnostic_codes"])
+
+          assert march["viewer_page_count"] == 3, march
+          assert march["scene_surface_count"] == 3, march
+          assert march["viewer_page_indices"] == [1, 2, 3], march
+          assert "viewer.page_projection.family_profile_applied" in codes(march), march
+          assert "viewer.page_projection.roles_unresolved" not in codes(march), march
+          assert "viewer.page_projection.family_profile_unavailable" not in codes(march), march
+
+          assert december["viewer_page_count"] == 5, december
+          assert december["scene_surface_count"] == 5, december
+          assert december["viewer_page_indices"] == [1, 2, 3, 4, 5], december
+          assert "viewer.page_projection.family_profile_applied" in codes(december), december
+          assert "viewer.page_projection.roles_unresolved" not in codes(december), december
+          assert "viewer.page_projection.family_profile_unavailable" not in codes(december), december
+
+          assert newsletter["viewer_page_count"] == 8, newsletter
+          assert newsletter["scene_surface_count"] == 8, newsletter
+          assert "viewer.page_projection.roles_unresolved" in codes(newsletter), newsletter
+          assert "viewer.page_projection.family_profile_applied" not in codes(newsletter), newsletter
+
+          assert brochure["viewer_page_count"] == 6, brochure
+          assert brochure["scene_surface_count"] == 6, brochure
+          assert "viewer.page_projection.roles_unresolved" in codes(brochure), brochure
+          assert "viewer.page_projection.family_profile_applied" not in codes(brochure), brochure
+
+          print(
+              "CARLTON READER PRESENTATION CONSUMER PASS "
+              "March=3/3 December=5/5 generic Newsletter=8/8 Brochure=6/6"
+          )
+          PY
+
+      - name: Upload Reader/Viewer presentation-consumer receipts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-reader-presentation-consumer
+          path: out/carlton/viewer-consumer
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload exact runtime inputs
         uses: actions/upload-artifact@v4

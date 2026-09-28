@@ -9,6 +9,7 @@ license.workspace=true
 anyhow.workspace=true
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
+pub-presentation-profile={path="../../../../crates/pub-presentation-profile",default-features=false}
 pub-reader={path="../pub-reader"}
 serde.workspace=true
 serde_json.workspace=true
