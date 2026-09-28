@@ -1,0 +1,31 @@
+name: Chaptera state-transition fidelity
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/state-transition/**"
+      - "tools/compare_state_transition_receipts.py"
+      - "tools/test_compare_state_transition_receipts.py"
+      - "docs/chaptera-state-transition-fidelity-v1.md"
+      - ".github/workflows/state-transition-fidelity.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install jsonschema
+      - name: Validate state-transition comparator
+        working-directory: tools
+        run: python -m unittest -v test_compare_state_transition_receipts.py
