@@ -20,6 +20,7 @@ chaptera-update-orchestrator = { path = "../../crates/chaptera-update-orchestrat
 chaptera-update-handoff = { path = "../../crates/chaptera-update-handoff" }
 chaptera-suite-handoff = { path = "../../crates/chaptera-suite-handoff" }
 chaptera-scene-instance = { path = "../../crates/chaptera-scene-instance" }
+chaptera-canvas-creation-interaction = { path = "../../crates/chaptera-canvas-creation-interaction" }
 chaptera-viewer-render-plan = { path = "../../crates/chaptera-viewer-render-plan" }
 chaptera-desktop-fallback-font-resource = { path = "../../crates/chaptera-desktop-fallback-font-resource" }
 chaptera-image-decode-contract = { path = "../../crates/chaptera-image-decode-contract" }
@@ -31,6 +32,7 @@ eframe = { version = "=0.31.1", default-features = false, features = ["default_f
 pub-editor = { path = "../../vendor/producer-a/crates/pub-editor" }
 pub-export = { path = "../../vendor/producer-a/crates/pub-export" }
 pub-interaction = { path = "../../vendor/producer-a/crates/pub-interaction" }
+pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
 pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde.workspace = true
 serde_json.workspace = true
