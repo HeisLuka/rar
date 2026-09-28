@@ -8,6 +8,10 @@ on:
       - "crates/pub-presentation-profile/**"
       - "vendor/producer-a/crates/pub-reader/**"
       - "vendor/producer-a/crates/pub-viewer/**"
+      - "apps/chaptera-desktop/src/main.rs"
+      - "apps/chaptera-desktop/src/render_backend.rs"
+      - "tools/carlton_reader_visual_diff_v1.py"
+      - "tools/pdf_reference_diff_v1.py"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
 
@@ -1581,3 +1585,108 @@ jobs:
             out/carlton/exact/manifest.json
           if-no-files-found: warn
           retention-days: 1
+
+
+  reader-visual-golden:
+    name: Reader visual golden vs published March PDF
+    needs: acquire
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned visual-oracle dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir PyMuPDF==1.24.14 Pillow==10.4.0
+
+      - name: Download same-run exact Carlton inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: carlton-exact-pub-runtime-inputs
+          path: out/upstream-carlton
+
+      - name: Stage exact March PUB and acquire exact published PDF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "out/carlton-reader-visual"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          $pub = Get-ChildItem -Path "out/upstream-carlton" -Recurse -File -Filter "March-2026.pub" | Select-Object -First 1
+          if (-not $pub) { throw "same-run exact Carlton artifact did not contain March-2026.pub" }
+          $pubTarget = Join-Path $root "March-2026.pub"
+          Copy-Item $pub.FullName $pubTarget -Force
+          $pubHash = (Get-FileHash $pubTarget -Algorithm SHA256).Hash.ToLowerInvariant()
+          $pubSize = (Get-Item $pubTarget).Length
+          if ($pubHash -ne "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3") {
+            throw "March PUB SHA-256 drift: $pubHash"
+          }
+          if ($pubSize -ne 9580032) { throw "March PUB size drift: $pubSize" }
+
+          $pdfTarget = Join-Path $root "March-2026-published.pdf"
+          $expectedPdfHash = "c1288571ee8da91afa27ca5c49191aacefe82123df294c11f58ca047d0ced769"
+          $expectedPdfSize = 1108627
+          $fileId = "21dbc16e-9242-4ff1-8b3d-f7c5d0f0a50e"
+          $siteId = "1fd359a4-cb4e-412d-81a1-79f36166cafc"
+          $candidates = @(
+            "https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/21/$fileId",
+            "https://docs-cdn.schooljotter3.com/$siteId/$fileId/$fileId.pdf",
+            "https://docs-cdn.schooljotter3.com/$siteId/$fileId/March%202026.pdf"
+          )
+
+          $matched = $false
+          foreach ($uri in $candidates) {
+            try {
+              Remove-Item -Force $pdfTarget -ErrorAction SilentlyContinue
+              Invoke-WebRequest -Uri $uri -OutFile $pdfTarget -MaximumRedirection 5
+              $size = (Get-Item $pdfTarget).Length
+              $hash = (Get-FileHash $pdfTarget -Algorithm SHA256).Hash.ToLowerInvariant()
+              Write-Host "PDF candidate host=$(([uri]$uri).Host) size=$size sha256=$hash"
+              if ($size -eq $expectedPdfSize -and $hash -eq $expectedPdfHash) {
+                $matched = $true
+                break
+              }
+            } catch {
+              Write-Host "PDF candidate failed: $uri :: $($_.Exception.Message)"
+            }
+          }
+          if (-not $matched) {
+            throw "could not reacquire the exact school-published March PDF"
+          }
+
+      - name: Render three exact Reader customer pages at 144 DPI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:CHAPTERA_GOLDEN_CARLTON_MARCH = (Resolve-Path "out/carlton-reader-visual/March-2026.pub").Path
+          $env:CHAPTERA_GOLDEN_CARLTON_OUT = (Resolve-Path "out/carlton-reader-visual").Path
+          cargo test -p chaptera-desktop --features reader-only golden_carlton_march_reader_pages_use_current_product_paint_contract -- --ignored --nocapture
+
+      - name: Compare Reader page paint to school-published PDF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/carlton_reader_visual_diff_v1.py --reader-receipt out/carlton-reader-visual/carlton-march-reader-receipt.json --reference-pdf out/carlton-reader-visual/March-2026-published.pdf --reader-dir out/carlton-reader-visual --output out/carlton-reader-visual/carlton-reader-vs-published-pdf.json --reference-raster-dir out/carlton-reader-visual/reference-raster --diff-dir out/carlton-reader-visual/diff
+
+      - name: Print visual truth summary
+        shell: pwsh
+        run: |
+          $receipt = Get-Content -Raw "out/carlton-reader-visual/carlton-reader-vs-published-pdf.json" | ConvertFrom-Json
+          $receipt.summary | ConvertTo-Json -Depth 5
+          Write-Host "Visual equivalence claimed: $($receipt.comparison.visual_equivalence_claimed)"
+          Write-Host "Interpretation: $($receipt.comparison.interpretation)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: carlton-reader-vs-published-pdf
+          path: out/carlton-reader-visual/**
+          if-no-files-found: warn
+          retention-days: 30
