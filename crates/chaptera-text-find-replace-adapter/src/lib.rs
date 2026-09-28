@@ -8,8 +8,6 @@ use std::fmt;
 pub const TEXT_FIND_SNAPSHOT_VERSION_V1: &str = "chaptera.text-find-snapshot.v1";
 pub const TEXT_FIND_POLICY_VERSION_V1: &str = "chaptera.text-find-policy.v1";
 pub const STORY_FIND_REPLACE_PLAN_VERSION_V1: &str = "chaptera.story-find-replace-plan.v1";
-pub const TEXT_PROGRAMMATIC_JUMP_INTENT_VERSION_V1: &str =
-    "chaptera.text-programmatic-jump-intent.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextFindReplaceError {
