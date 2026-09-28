@@ -148,8 +148,10 @@ pub fn paint_document_node_foreground(
                 scene_scale,
                 text_clip_rect,
             ) {
-                let text_clipped =
-                    preview_text_height_is_clipped(metrics.galley_height_px, text_clip_rect.height());
+                let text_clipped = preview_text_height_is_clipped(
+                    metrics.galley_height_px,
+                    text_clip_rect.height(),
+                );
                 return NodePaintOutcome {
                     text_clipped,
                     text_metrics: Some(metrics),
@@ -158,12 +160,18 @@ pub fn paint_document_node_foreground(
         }
     }
 
-    let backend_fallback_reason = fragment.layout.as_ref().and_then(|layout| match &layout.disposition {
-        RenderTextLayoutDispositionV1::BackendFallback { reason } => Some(reason.code().to_owned()),
-        RenderTextLayoutDispositionV1::SharedResolved { .. } => {
-            Some("shared_layout_backend_execution_invalid".to_owned())
-        }
-    });
+    let backend_fallback_reason =
+        fragment
+            .layout
+            .as_ref()
+            .and_then(|layout| match &layout.disposition {
+                RenderTextLayoutDispositionV1::BackendFallback { reason } => {
+                    Some(reason.code().to_owned())
+                }
+                RenderTextLayoutDispositionV1::SharedResolved { .. } => {
+                    Some("shared_layout_backend_execution_invalid".to_owned())
+                }
+            });
 
     let (layout_job, usage) =
         layout_document_text(fragment, scene_scale, text_clip_rect.width().max(1.0_f32));
@@ -217,10 +225,7 @@ fn paint_shared_resolved_text(
     scene_scale: f32,
     clip_rect: egui::Rect,
 ) -> Option<TextPaintMetrics> {
-    if font_size_emu <= 0
-        || line_height_emu <= 0
-        || !scene_scale.is_finite()
-        || scene_scale <= 0.0
+    if font_size_emu <= 0 || line_height_emu <= 0 || !scene_scale.is_finite() || scene_scale <= 0.0
     {
         return None;
     }
