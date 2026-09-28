@@ -541,7 +541,7 @@ pub fn open_mature_0x2c_geometry(
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.visual.geometry_only".to_owned(),
             severity: ViewerDiagnosticSeverity::FidelityWarning,
-            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded semantic text, including explicit linked-frame chains with Viewer fallback metrics, exact embedded PNG/JPEG bytes, and complete explicit shape-local solid fill/line state when available. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
+            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded semantic text, including explicit linked-frame chains and admitted source font sizes (including bounded inheritance) through Viewer fallback font metrics, plus exact embedded PNG/JPEG bytes and complete explicit shape-local solid fill/line state when available. Other inherited/default styling beyond admitted font/size, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
                 .to_owned(),
         });
     }
@@ -578,7 +578,7 @@ fn viewer_fallback_flow_metrics_diagnostic() -> ViewerDiagnostic {
     ViewerDiagnostic {
         code: "viewer.text.fallback_flow_metrics".to_owned(),
         severity: ViewerDiagnosticSeverity::FidelityWarning,
-        message: "Visible text fragments use explicit Viewer fallback metrics for bounded frame flow. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
+        message: "Visible text fragments use Viewer fallback font metrics for bounded frame flow while admitted source font sizes may affect sizing. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
     }
 }
 
