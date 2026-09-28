@@ -195,8 +195,7 @@ impl ViewerGeometryDocument {
             .iter()
             .map(|page| page.id)
             .collect::<Vec<_>>();
-        let authoring =
-            bounded_authoring_slice_from_resolved_pages(graph, &effective_page_ids)?;
+        let authoring = bounded_authoring_slice_from_resolved_pages(graph, &effective_page_ids)?;
         let projection = project_bounded(authoring);
         let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
 
@@ -514,7 +513,11 @@ pub fn open_mature_0x2c_geometry(
 ) -> Result<ViewerGeometryDocument> {
     let pipeline = build_mature_0x2c_pipeline(bytes)?;
     let mut document = viewer_document_from_pipeline(bytes.len(), &pipeline)?;
-    let effective_page_ids = document.pages.iter().map(|page| page.id).collect::<Vec<_>>();
+    let effective_page_ids = document
+        .pages
+        .iter()
+        .map(|page| page.id)
+        .collect::<Vec<_>>();
     let authoring =
         bounded_authoring_slice_from_resolved_pages(&pipeline.resolved.graph, &effective_page_ids)?;
     let projection = project_bounded(authoring);
