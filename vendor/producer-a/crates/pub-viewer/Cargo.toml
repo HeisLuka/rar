@@ -6,6 +6,7 @@ rust-version.workspace=true
 license.workspace=true
 
 [dependencies]
+chaptera-layout-projection={path="../../../../crates/chaptera-layout-projection"}
 anyhow.workspace=true
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
