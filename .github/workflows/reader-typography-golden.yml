@@ -41,7 +41,7 @@ jobs:
           "CHAPTERA_GOLDEN_OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check bounded typography parser
-        run: cargo test -p pub-quill typography -- --nocapture
+        run: cargo test --manifest-path vendor/producer-a/crates/pub-quill/Cargo.toml typography -- --nocapture
 
       - name: Check shared render plan
         run: cargo test --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml
