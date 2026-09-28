@@ -21,7 +21,7 @@ const FBOLD_ID: u16 = 0x0202;
 const FBOLD_CS_ID: u16 = 0x0237;
 const FONT_INDEX_CONTAINER_ID: u16 = 0x0224;
 const TEXT_SIZE_ID: u16 = 0x020C;
-const PARAGRAPH_DEFAULT_CHAR_STYLE_ID: u16 = 0x0019;
+const PARAGRAPH_DEFAULT_CHAR_STYLE_ID: u16 = 0x0219;
 
 pub const QUILL_TEXT_SIZE_EMU_PER_POINT: u32 = 12_700;
 
@@ -1655,6 +1655,20 @@ mod tests {
         let mut non_exact = exact;
         non_exact.text_size_emu += 1;
         assert_eq!(non_exact.text_size_points_exact(), None);
+    }
+
+    #[test]
+    fn packed_fdpp_default_character_style_selector_uses_full_field_id() {
+        let bytes = [0x19, 0x22, 0x03, 0x00, 0x00, 0x00];
+        let mut unknown = BTreeSet::new();
+
+        let (selector, end) =
+            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("parse FDPP selector");
+        assert_eq!(selector.id, PARAGRAPH_DEFAULT_CHAR_STYLE_ID);
+        assert_eq!(selector.block_type, 0x20);
+        assert_eq!(selector.value, Some(3));
+        assert_eq!(end, bytes.len());
+        assert!(unknown.is_empty());
     }
 
     #[test]
