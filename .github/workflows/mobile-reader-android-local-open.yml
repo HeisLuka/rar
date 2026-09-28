@@ -65,6 +65,7 @@ jobs:
 
       - name: Acquire pinned real PUB fixtures
         run: |
+          # Full connected suite includes V0 + physical/perf instrumentation, so all three fixtures must be Android assets.
           mkdir -p apps/chaptera-mobile-android/app/src/androidTest/assets
           curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub --output apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub
           echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub" | sha256sum --check
