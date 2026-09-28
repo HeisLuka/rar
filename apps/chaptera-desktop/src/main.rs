@@ -7040,6 +7040,7 @@ mod tests {
         visual: ViewerGeometryDocument,
         page_index: usize,
         image_textures: BTreeMap<String, CachedImageTexture>,
+        texture_upload_enabled: bool,
         painted_text_nodes: usize,
         clipped_text_nodes: usize,
         source_typography_sections: usize,
@@ -7052,6 +7053,7 @@ mod tests {
                 visual,
                 page_index,
                 image_textures: BTreeMap::new(),
+                texture_upload_enabled: false,
                 painted_text_nodes: 0,
                 clipped_text_nodes: 0,
                 source_typography_sections: 0,
@@ -7059,7 +7061,15 @@ mod tests {
             }
         }
 
+        fn enable_texture_upload(&mut self) {
+            self.texture_upload_enabled = true;
+        }
+
         fn ensure_image_textures(&mut self, ctx: &egui::Context) {
+            if !self.texture_upload_enabled {
+                return;
+            }
+            let max_texture_side = ctx.input(|input| input.max_texture_side);
             for embedded in &self.visual.images {
                 let key = format!("{:?}", embedded.resource_id);
                 if self.image_textures.contains_key(&key) {
@@ -7077,6 +7087,11 @@ mod tests {
                         key, embedded.mime
                     )
                 });
+                let [width, height] = admitted.color_image.size;
+                assert!(
+                    width <= max_texture_side && height <= max_texture_side,
+                    "Carlton golden image {width}x{height} exceeds active egui texture limit {max_texture_side}"
+                );
                 let texture = ctx.load_texture(
                     format!("carlton-golden-{key}"),
                     admitted.color_image,
@@ -7212,6 +7227,12 @@ mod tests {
                         .expect("pinned Chaptera fallback font resource must validate");
                     GoldenPageOnlyApp::new(visual_for_app, page_index)
                 });
+            // Harness construction executes initial frames with RawInput's portable
+            // 2048px texture ceiling. Carlton contains a proven 2480x2835 image,
+            // so delay exact texture upload until the next frame after raising only
+            // this headless input capability; source pixels remain unmodified.
+            harness.input_mut().max_texture_side = Some(4096);
+            harness.state_mut().enable_texture_upload();
             harness.step();
 
             let image = harness
