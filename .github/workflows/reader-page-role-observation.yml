@@ -1,4 +1,4 @@
-# Exact-head product gate: Pgid consensus -> effective Viewer pages; raw fallback otherwise.
+# Exact-head guardrail: Pgid is scenario/design evidence only; generic Viewer preserves raw PAGE records.
 name: Reader PAGE role observation
 
 on:
@@ -158,7 +158,7 @@ jobs:
           cat "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplenewsletter.json"
           cat "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplebrochure.json"
 
-      - name: Gate Viewer customer-page projection
+      - name: Gate generic Viewer page preservation and scenario observation
         shell: python
         run: |
           import json
@@ -173,24 +173,29 @@ jobs:
               (root / "viewer-page-projection-samplebrochure.json").read_text(encoding="utf-8")
           )
 
-          if newsletter["viewer_page_count"] != 4:
-              raise SystemExit(f"SampleNewsletter Viewer page count: {newsletter['viewer_page_count']} != 4")
-          if newsletter["scene_surface_count"] != 4:
-              raise SystemExit(f"SampleNewsletter scene surface count: {newsletter['scene_surface_count']} != 4")
-          if newsletter["viewer_page_indices"] != [1, 2, 3, 4]:
+          if newsletter["viewer_page_count"] != 8:
+              raise SystemExit(f"SampleNewsletter generic Viewer must preserve 8 raw PAGE records, got {newsletter['viewer_page_count']}")
+          if newsletter["scene_surface_count"] != 8:
+              raise SystemExit(f"SampleNewsletter generic scene must preserve 8 raw PAGE surfaces, got {newsletter['scene_surface_count']}")
+          if newsletter["viewer_page_indices"] != list(range(1, 9)):
               raise SystemExit(f"SampleNewsletter Viewer page indices drifted: {newsletter['viewer_page_indices']!r}")
           newsletter_codes = set(newsletter["diagnostic_codes"])
-          if "viewer.page_projection.customer_order" not in newsletter_codes:
-              raise SystemExit("SampleNewsletter did not report applied customer-page authority")
-          if "viewer.page_projection.raw_fallback" in newsletter_codes:
-              raise SystemExit("SampleNewsletter unexpectedly fell back to raw PAGE order")
+          if "viewer.page_projection.scenario_order_observed" not in newsletter_codes:
+              raise SystemExit("SampleNewsletter should retain the proven Pgid scenario-order observation")
+          if "viewer.page_projection.roles_unresolved" not in newsletter_codes:
+              raise SystemExit("SampleNewsletter must state that generic physical page-role filtering is unresolved")
+          if "viewer.page_projection.customer_order" in newsletter_codes:
+              raise SystemExit("Pgid scenario order must not be promoted to customer-page authority")
 
           if brochure["viewer_page_count"] != 6:
-              raise SystemExit(f"SampleBrochure fail-open page count: {brochure['viewer_page_count']} != 6")
+              raise SystemExit(f"SampleBrochure generic Viewer must preserve 6 raw PAGE records, got {brochure['viewer_page_count']}")
           if brochure["scene_surface_count"] != 6:
-              raise SystemExit(f"SampleBrochure fail-open surface count: {brochure['scene_surface_count']} != 6")
-          if "viewer.page_projection.raw_fallback" not in set(brochure["diagnostic_codes"]):
-              raise SystemExit("SampleBrochure must expose explicit raw-page fallback diagnostic")
+              raise SystemExit(f"SampleBrochure generic scene must preserve 6 raw PAGE surfaces, got {brochure['scene_surface_count']}")
+          brochure_codes = set(brochure["diagnostic_codes"])
+          if "viewer.page_projection.roles_unresolved" not in brochure_codes:
+              raise SystemExit("SampleBrochure must state that generic physical page-role filtering is unresolved")
+          if "viewer.page_projection.scenario_order_observed" in brochure_codes:
+              raise SystemExit("SampleBrochure has no field0x06 PageList authority and must not invent one")
 
       - uses: actions/upload-artifact@v4
         with:
