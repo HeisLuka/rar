@@ -1354,8 +1354,8 @@ impl ViewerApp {
 
         let freshness = match fs::read(&path) {
             Ok(bytes) => {
-                let observed_len = u64::try_from(bytes.len())
-                    .expect("desktop source length must fit into u64");
+                let observed_len =
+                    u64::try_from(bytes.len()).expect("desktop source length must fit into u64");
                 if observed_len == expected_len && source_sha256(&bytes) == expected_hash {
                     SourceFreshness::Current
                 } else {
@@ -5442,7 +5442,10 @@ mod tests {
         fs::write(&path, after).expect("replace committed source fixture");
         app.revalidate_committed_source_now();
 
-        let committed = app.committed_source.as_ref().expect("committed source state");
+        let committed = app
+            .committed_source
+            .as_ref()
+            .expect("committed source state");
         assert_eq!(committed.generation, OpenGeneration(7));
         assert_eq!(committed.freshness, SourceFreshness::ReloadRequiredChanged);
         assert_eq!(app.source_path.as_ref(), Some(&path));
@@ -5533,7 +5536,10 @@ mod tests {
         assert_eq!(app.selected_page, 3);
         assert_eq!(app.search_query, "existing search state");
         assert_eq!(app.zoom, 1.75);
-        let committed = app.committed_source.as_ref().expect("committed A authority");
+        let committed = app
+            .committed_source
+            .as_ref()
+            .expect("committed A authority");
         assert_eq!(committed.generation, OpenGeneration(11));
         assert_eq!(committed.freshness, SourceFreshness::Current);
         let failure = app.load_error.as_ref().expect("replacement failure");
