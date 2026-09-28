@@ -49,11 +49,13 @@ pub use intake_protocol::{
     exact_file_intake_eligible, validate_intake_capability_request, validate_intake_receipt,
 };
 use pub_contents::{
+    BLOCK_TYPE_FIXED_8, BLOCK_TYPE_REFERENCE_U32, BLOCK_TYPE_U32,
     CONTENTS_RAW_TYPE_STORY_CATALOG, Contents0x2cChunk, Contents0x2cChunkReference,
     DOCUMENT_PAGE_LIST_ID, RawContentsBlock, RawContentsBlockBody, parse_0x2c_header,
     parse_confirmed_0x2c_chunk, parse_confirmed_0x2c_trailer_root, parse_confirmed_chunk_reference,
-    parse_confirmed_document_page_list, parse_confirmed_margins_page_extent,
-    parse_confirmed_mature_story_catalog,
+    parse_confirmed_controlling_page_list, parse_confirmed_document_page_list,
+    parse_confirmed_margins_page_extent,
+    parse_confirmed_mature_story_catalog, parse_confirmed_oid_identity_payload,
 };
 use pub_core::{RawSpan, StreamPath};
 use pub_escher::{
@@ -69,7 +71,10 @@ use pub_model::{
     SourceDerivedIdInput, SourceDescriptor, SourceGraph, SourceRef, SourceRole, Story, StoryId,
     derive_source_canonical_id,
 };
-use pub_quill::{QuillMcldReadError, parse_bounded_mcld, parse_confirmed_story_catalog};
+use pub_quill::{
+    QuillMcldReadError, QuillTypographyValueSource, parse_bounded_mcld,
+    parse_bounded_typography, parse_confirmed_story_catalog,
+};
 pub use resolve::{
     PUB_RESOLVER_VERSION_V1, PubResolveDiagnostic, PubResolvedGraph, PubResolvedGraphBuild,
     PubResolvedNodePayload, PubResolvedStoryFrame, resolve_pub_source_graph,
@@ -105,6 +110,7 @@ const RAW_TYPE_GROUP: u16 = 0x30;
 const RAW_TYPE_PAGE: u16 = 0x43;
 const RAW_TYPE_DOCUMENT: u16 = 0x44;
 const RAW_TYPE_MARGINS: u16 = 0x4C;
+const RAW_TYPE_CONTROLLING: u16 = 0x4D;
 const RAW_TYPE_PAGE_LIST_SPECIAL: u16 = 0x59;
 
 const OFFICEART_PROPERTY_ROTATION: u16 = 0x0004;
@@ -123,11 +129,95 @@ const ROLE_STORY: &str = "cdm.story";
 
 pub type PubSourceGraph = SourceGraph<PubNodePayload, (), (), (), String>;
 
+pub const PUB_PAGE_ROLE_OBSERVATION_SCHEMA_V1: &str =
+    "chaptera.pub-page-role-observation.v1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubPageRoleObservationReceipt {
+    pub schema: String,
+    pub document_page_list_entry_count: usize,
+    pub confirmed_page_count: usize,
+    pub special_entry_count: usize,
+    pub pages: Vec<PubPageRoleObservation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controlling: Vec<PubControllingObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubPageRoleObservation {
+    pub document_ordinal: usize,
+    pub contents_seq_num: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid_dword0: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid_dword1: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_master_seq_num: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pgt_type: Option<u32>,
+    pub child_raw_type_counts: BTreeMap<u16, usize>,
+    pub shape_child_count: usize,
+    pub group_child_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubControllingObservation {
+    pub contents_seq_num: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_seq_num: Option<u32>,
+    pub fully_decoded: bool,
+    pub fields: Vec<PubControllingFieldObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubControllingFieldObservation {
+    pub id: u16,
+    pub block_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_container_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pgids: Vec<[u32; 2]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PubCustomerPageProjectionAuthority {
+    RawDocumentPageList,
+    ControllingPgidConsensus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubCustomerPageProjection {
+    pub authority: PubCustomerPageProjectionAuthority,
+    pub page_ids: Vec<PageId>,
+    pub raw_page_count: usize,
+    pub evidence_list_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PubSourceGraphBuild {
     pub graph: PubSourceGraph,
+    pub customer_pages: PubCustomerPageProjection,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<PubBridgeDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typography_runs: Vec<PubTypographyRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubTypographyRun {
+    pub story_id: StoryId,
+    pub story_utf16_start: u32,
+    pub story_utf16_end: u32,
+    pub story_scalar_start: u32,
+    pub story_scalar_end: u32,
+    pub source_font_index: u32,
+    pub source_font_name: String,
+    pub text_size_emu: u32,
+    pub font_inherited: bool,
+    pub size_inherited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -325,6 +415,15 @@ pub enum PubBridgeDiagnostic {
         width_emu: u32,
         height_emu: u32,
     },
+    CustomerPageProjectionApplied {
+        raw_page_count: usize,
+        customer_page_count: usize,
+        evidence_list_count: usize,
+    },
+    CustomerPageProjectionFallback {
+        reason: String,
+        raw_page_count: usize,
+    },
     LinkedFrameNotMaterialized {
         seq_num: u32,
         target_seq_num: u32,
@@ -398,6 +497,201 @@ pub enum PubBridgeDiagnostic {
         layout_key: Option<u32>,
         reason: String,
     },
+    TypographyProjectionUnavailable {
+        reason: String,
+    },
+    TypographyUnknownFixedBlockTypes {
+        block_types: Vec<u8>,
+    },
+}
+
+/// Emits source-free PAGE-role evidence without classifying customer-visible pages.
+///
+/// Oid, applied-master state, PgtType and child inventory remain independent
+/// axes here. No single axis is promoted to a universal visible-page rule.
+pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
+    mut reader: R,
+) -> Result<PubPageRoleObservationReceipt> {
+    reader.seek(SeekFrom::Start(0))?;
+    let mut pub_bytes = Vec::new();
+    reader.read_to_end(&mut pub_bytes)?;
+
+    let contents =
+        pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), CONTENTS_STREAM_PATH)
+            .with_context(|| format!("read {CONTENTS_STREAM_PATH}"))?;
+    let contents_stream = StreamPath(CONTENTS_STREAM_PATH.into());
+    let header = parse_0x2c_header(contents_stream.clone(), &contents)
+        .context("parse mature-0x2C Contents header for PAGE-role observation")?;
+    let trailer = parse_confirmed_0x2c_trailer_root(&contents, &header)
+        .context("parse mature-0x2C Contents trailer for PAGE-role observation")?;
+    let references = build_reference_index(&contents, &trailer.directory)?;
+
+    let document_reference =
+        unique_reference_by_raw_type(&references, RAW_TYPE_DOCUMENT, "DOCUMENT")?;
+    let document_chunk =
+        chunk_for_reference(contents_stream.clone(), &contents, document_reference)?;
+    let page_list_block = unique_block(&document_chunk, DOCUMENT_PAGE_LIST_ID)?.clone();
+    let page_list = parse_confirmed_document_page_list(&contents, page_list_block)
+        .context("parse DOCUMENT PageList for PAGE-role observation")?;
+
+    let mut pages = Vec::new();
+    let mut special_entry_count = 0_usize;
+
+    for (document_ordinal, entry) in page_list.entries.iter().enumerate() {
+        let Some(reference) = references.get(&entry.handle) else {
+            continue;
+        };
+        match single_raw_type(reference) {
+            Some(RAW_TYPE_PAGE_LIST_SPECIAL) => {
+                special_entry_count += 1;
+                continue;
+            }
+            Some(RAW_TYPE_PAGE) => {}
+            _ => continue,
+        }
+
+        let chunk = chunk_for_reference(contents_stream.clone(), &contents, reference)?;
+        let mut oid = None;
+        let mut applied_master_seq_num = None;
+        let mut pgt_type = None;
+
+        for field in &chunk.fields {
+            match (field.id, field.block_type) {
+                (0x06, BLOCK_TYPE_FIXED_8) => {
+                    if oid.is_some() {
+                        bail!("PAGE {} repeats OplPd.Oid field0x06", entry.handle);
+                    }
+                    let parsed = parse_confirmed_oid_identity_payload(field.clone())
+                        .context("parse exact OplPd.Oid field0x06")?;
+                    oid = Some((parsed.dword0, parsed.dword1));
+                }
+                (0x0d, BLOCK_TYPE_REFERENCE_U32) => {
+                    if applied_master_seq_num.is_some() {
+                        bail!(
+                            "PAGE {} repeats OplPd.OhpdMaster field0x0D",
+                            entry.handle
+                        );
+                    }
+                    let RawContentsBlockBody::U32 { value, .. } = &field.body else {
+                        bail!("PAGE {} field0x0D has inconsistent body", entry.handle);
+                    };
+                    applied_master_seq_num = Some(*value);
+                }
+                (0x10, BLOCK_TYPE_U32) => {
+                    if pgt_type.is_some() {
+                        bail!("PAGE {} repeats OplPd.PgtType field0x10", entry.handle);
+                    }
+                    let RawContentsBlockBody::U32 { value, .. } = &field.body else {
+                        bail!("PAGE {} field0x10 has inconsistent body", entry.handle);
+                    };
+                    pgt_type = Some(*value);
+                }
+                _ => {}
+            }
+        }
+
+        let mut child_raw_type_counts = BTreeMap::<u16, usize>::new();
+        for child in references.values() {
+            if single_parent_seq(child) != Some(entry.handle) {
+                continue;
+            }
+            if let Some(raw_type) = single_raw_type(child) {
+                *child_raw_type_counts.entry(raw_type).or_insert(0) += 1;
+            }
+        }
+
+        pages.push(PubPageRoleObservation {
+            document_ordinal,
+            contents_seq_num: entry.handle,
+            oid_dword0: oid.map(|value| value.0),
+            oid_dword1: oid.map(|value| value.1),
+            applied_master_seq_num,
+            pgt_type,
+            shape_child_count: child_raw_type_counts
+                .get(&RAW_TYPE_SHAPE)
+                .copied()
+                .unwrap_or(0),
+            group_child_count: child_raw_type_counts
+                .get(&RAW_TYPE_GROUP)
+                .copied()
+                .unwrap_or(0),
+            child_raw_type_counts,
+        });
+    }
+
+
+    let mut controlling = references
+        .values()
+        .filter(|reference| single_raw_type(reference) == Some(RAW_TYPE_CONTROLLING))
+        .map(|reference| {
+            let chunk = chunk_for_reference(contents_stream.clone(), &contents, reference)?;
+            let fields = chunk
+                .fields
+                .iter()
+                .map(|field| {
+                    let (declared_length, observed_container_hex) = match &field.body {
+                        RawContentsBlockBody::Container {
+                            declared_length,
+                            content_source,
+                            ..
+                        } => {
+                            let observed = (field.id == 0x06)
+                                .then(|| raw_span_hex(&contents, content_source))
+                                .transpose()?;
+                            (Some(*declared_length), observed)
+                        }
+                        _ => (None, None),
+                    };
+                    let pgids = if field.id == 0x06 {
+                        parse_confirmed_controlling_page_list(&contents, field.clone())
+                            .context("parse OplControlling PageList/Pgid observation")?
+                            .entries
+                            .into_iter()
+                            .map(|entry| [entry.pgid.dword0, entry.pgid.dword1])
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    Ok(PubControllingFieldObservation {
+                        id: field.id,
+                        block_type: field.block_type,
+                        declared_length,
+                        observed_container_hex,
+                        pgids,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(PubControllingObservation {
+                contents_seq_num: seq_u32(reference.seq_num)?,
+                parent_seq_num: single_parent_seq(reference),
+                fully_decoded: chunk.is_fully_decoded(),
+                fields,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    controlling.sort_by_key(|item| item.contents_seq_num);
+
+    Ok(PubPageRoleObservationReceipt {
+        schema: PUB_PAGE_ROLE_OBSERVATION_SCHEMA_V1.to_owned(),
+        document_page_list_entry_count: page_list.entries.len(),
+        confirmed_page_count: pages.len(),
+        special_entry_count,
+        pages,
+        controlling,
+    })
+}
+
+fn raw_span_hex(bytes: &[u8], span: &pub_core::RawSpan) -> Result<String> {
+    let start = usize::try_from(span.offset).context("raw span offset does not fit usize")?;
+    let len = usize::try_from(span.len).context("raw span length does not fit usize")?;
+    let end = start
+        .checked_add(len)
+        .filter(|end| *end <= bytes.len())
+        .context("raw span is outside Contents")?;
+    Ok(bytes[start..end]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>())
 }
 
 /// Canonical source key for a physical mature-0x2C Contents directory slot.
@@ -1543,6 +1837,17 @@ pub fn build_mature_0x2c_from_streams(
         bail!("DOCUMENT PageList exposes no confirmed PAGE 0x43 entries");
     }
 
+    let (customer_pages, customer_page_diagnostic) = derive_customer_page_projection(
+        contents_stream.clone(),
+        contents,
+        &references,
+        &page_seq_to_id,
+        &document_pages,
+    );
+    if let Some(diagnostic) = customer_page_diagnostic {
+        diagnostics.push(diagnostic);
+    }
+
     let document = Document {
         id: document_id,
         format_origin: "pub".into(),
@@ -1557,6 +1862,31 @@ pub fn build_mature_0x2c_from_streams(
     let quill_stream = StreamPath(QUILL_STREAM_PATH.into());
     let quill_catalog = parse_confirmed_story_catalog(quill_stream.clone(), quill)
         .context("parse grounded Quill story catalog")?;
+    let typography_catalog = match parse_bounded_typography(quill, &quill_catalog) {
+        Ok(catalog) => {
+            let mut unknown = catalog.unknown_block_types_assumed_zero_length.clone();
+            unknown.extend(
+                catalog
+                    .inheritance_unknown_block_types_assumed_zero_length
+                    .iter()
+                    .copied(),
+            );
+            unknown.sort_unstable();
+            unknown.dedup();
+            if !unknown.is_empty() {
+                diagnostics.push(PubBridgeDiagnostic::TypographyUnknownFixedBlockTypes {
+                    block_types: unknown,
+                });
+            }
+            Some(catalog)
+        }
+        Err(error) => {
+            diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                reason: error.to_string(),
+            });
+            None
+        }
+    };
     let mcld = match parse_bounded_mcld(quill_stream, quill, &quill_catalog.descriptor_nodes) {
         Ok(mcld) => Some(mcld),
         Err(QuillMcldReadError::MissingMcldDescriptor) => None,
@@ -1615,6 +1945,89 @@ pub fn build_mature_0x2c_from_streams(
             },
         );
         story_by_syid.insert(syid, story_id);
+    }
+
+    let mut typography_runs = Vec::new();
+    if let Some(catalog) = typography_catalog {
+        if !catalog.effective_runs.is_empty() {
+            for run in catalog.effective_runs {
+                let syid = run.story_syid.0;
+                let Some(story_id) = story_by_syid.get(&syid).copied() else {
+                    diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                        reason: format!("effective typography references missing Story SYID {syid}"),
+                    });
+                    continue;
+                };
+                let Some(story) = graph.stories.get(&story_id) else {
+                    diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                        reason: format!("effective typography Story {story_id:?} is absent"),
+                    });
+                    continue;
+                };
+                let Some((story_scalar_start, story_scalar_end)) =
+                    utf16_range_to_scalar_range(&story.text, run.story_start_utf16, run.story_end_utf16)
+                else {
+                    diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                        reason: format!(
+                            "effective typography range {}..{} splits a UTF-16 scalar boundary for Story SYID {syid}",
+                            run.story_start_utf16, run.story_end_utf16
+                        ),
+                    });
+                    continue;
+                };
+                typography_runs.push(PubTypographyRun {
+                    story_id,
+                    story_utf16_start: run.story_start_utf16,
+                    story_utf16_end: run.story_end_utf16,
+                    story_scalar_start,
+                    story_scalar_end,
+                    source_font_index: run.font_index,
+                    source_font_name: run.font_name,
+                    text_size_emu: run.text_size_emu,
+                    font_inherited: run.font_source == QuillTypographyValueSource::InheritedStsh1,
+                    size_inherited: run.text_size_source == QuillTypographyValueSource::InheritedStsh1,
+                });
+            }
+        } else {
+            for run in catalog.explicit_runs {
+                let syid = run.story_syid.0;
+                let Some(story_id) = story_by_syid.get(&syid).copied() else {
+                    diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                        reason: format!("explicit typography references missing Story SYID {syid}"),
+                    });
+                    continue;
+                };
+                let Some(story) = graph.stories.get(&story_id) else {
+                    diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                        reason: format!("explicit typography Story {story_id:?} is absent"),
+                    });
+                    continue;
+                };
+                let Some((story_scalar_start, story_scalar_end)) =
+                    utf16_range_to_scalar_range(&story.text, run.story_start_utf16, run.story_end_utf16)
+                else {
+                    diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                        reason: format!(
+                            "explicit typography range {}..{} splits a UTF-16 scalar boundary for Story SYID {syid}",
+                            run.story_start_utf16, run.story_end_utf16
+                        ),
+                    });
+                    continue;
+                };
+                typography_runs.push(PubTypographyRun {
+                    story_id,
+                    story_utf16_start: run.story_start_utf16,
+                    story_utf16_end: run.story_end_utf16,
+                    story_scalar_start,
+                    story_scalar_end,
+                    source_font_index: run.font_index,
+                    source_font_name: run.font_name,
+                    text_size_emu: run.text_size_emu,
+                    font_inherited: false,
+                    size_inherited: false,
+                });
+            }
+        }
     }
 
     let escher_inventory = inspect_sp_containers(StreamPath(ESCHER_STREAM_PATH.into()), escher)
@@ -1859,7 +2272,198 @@ pub fn build_mature_0x2c_from_streams(
 
     add_missing_link_target_diagnostics(&graph, &mut diagnostics);
 
-    Ok(PubSourceGraphBuild { graph, diagnostics })
+    Ok(PubSourceGraphBuild {
+        graph,
+        customer_pages,
+        diagnostics,
+        typography_runs,
+    })
+}
+
+fn derive_customer_page_projection(
+    contents_stream: StreamPath,
+    contents: &[u8],
+    references: &BTreeMap<u32, Contents0x2cChunkReference>,
+    page_seq_to_id: &BTreeMap<u32, PageId>,
+    raw_page_ids: &[PageId],
+) -> (PubCustomerPageProjection, Option<PubBridgeDiagnostic>) {
+    let fallback = |reason: String| {
+        (
+            PubCustomerPageProjection {
+                authority: PubCustomerPageProjectionAuthority::RawDocumentPageList,
+                page_ids: raw_page_ids.to_vec(),
+                raw_page_count: raw_page_ids.len(),
+                evidence_list_count: 0,
+            },
+            Some(PubBridgeDiagnostic::CustomerPageProjectionFallback {
+                reason,
+                raw_page_count: raw_page_ids.len(),
+            }),
+        )
+    };
+
+    let mut pgid_lists = Vec::<Vec<(u32, u32)>>::new();
+    for reference in references
+        .values()
+        .filter(|reference| single_raw_type(reference) == Some(RAW_TYPE_CONTROLLING))
+    {
+        let chunk = match chunk_for_reference(contents_stream.clone(), contents, reference) {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                return fallback(format!("controlling_chunk_unavailable:{error}"));
+            }
+        };
+        let page_list_fields = chunk
+            .fields
+            .iter()
+            .filter(|field| field.id == pub_contents::CONTROLLING_PAGE_LIST_ID)
+            .cloned()
+            .collect::<Vec<_>>();
+        if page_list_fields.len() > 1 {
+            return fallback(format!(
+                "duplicate_controlling_page_list:seq={}",
+                reference.seq_num
+            ));
+        }
+        let Some(field) = page_list_fields.into_iter().next() else {
+            continue;
+        };
+        let parsed = match parse_confirmed_controlling_page_list(contents, field) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return fallback(format!(
+                    "controlling_page_list_invalid:seq={}:{}",
+                    reference.seq_num, error
+                ));
+            }
+        };
+        let pgids = parsed
+            .entries
+            .into_iter()
+            .map(|entry| (entry.pgid.dword0, entry.pgid.dword1))
+            .collect::<Vec<_>>();
+        if pgids.is_empty() {
+            return fallback(format!(
+                "controlling_page_list_empty:seq={}",
+                reference.seq_num
+            ));
+        }
+        pgid_lists.push(pgids);
+    }
+
+    let mut pages_by_oid = BTreeMap::<(u32, u32), Vec<PageId>>::new();
+    for (seq_num, page_id) in page_seq_to_id {
+        let Some(reference) = references.get(seq_num) else {
+            continue;
+        };
+        let chunk = match chunk_for_reference(contents_stream.clone(), contents, reference) {
+            Ok(chunk) => chunk,
+            Err(_) => continue,
+        };
+        let oid_fields = chunk
+            .fields
+            .iter()
+            .filter(|field| field.id == 0x06 && field.block_type == BLOCK_TYPE_FIXED_8)
+            .collect::<Vec<_>>();
+        if oid_fields.len() != 1 {
+            continue;
+        }
+        let Ok(oid) = parse_confirmed_oid_identity_payload(oid_fields[0].clone()) else {
+            continue;
+        };
+        pages_by_oid
+            .entry((oid.dword0, oid.dword1))
+            .or_default()
+            .push(*page_id);
+    }
+
+    let projected = match resolve_customer_page_ids_from_evidence(&pgid_lists, &pages_by_oid) {
+        Ok(projected) => projected,
+        Err(reason) => return fallback(reason),
+    };
+
+    (
+        PubCustomerPageProjection {
+            authority: PubCustomerPageProjectionAuthority::ControllingPgidConsensus,
+            page_ids: projected.clone(),
+            raw_page_count: raw_page_ids.len(),
+            evidence_list_count: pgid_lists.len(),
+        },
+        Some(PubBridgeDiagnostic::CustomerPageProjectionApplied {
+            raw_page_count: raw_page_ids.len(),
+            customer_page_count: projected.len(),
+            evidence_list_count: pgid_lists.len(),
+        }),
+    )
+}
+
+fn resolve_customer_page_ids_from_evidence(
+    pgid_lists: &[Vec<(u32, u32)>],
+    pages_by_oid: &BTreeMap<(u32, u32), Vec<PageId>>,
+) -> std::result::Result<Vec<PageId>, String> {
+    let Some(consensus) = pgid_lists.first() else {
+        return Err("no_controlling_page_list_authority".to_owned());
+    };
+    if consensus.is_empty() {
+        return Err("controlling_page_projection_empty".to_owned());
+    }
+    if pgid_lists.iter().skip(1).any(|candidate| candidate != consensus) {
+        return Err("controlling_page_lists_disagree".to_owned());
+    }
+
+    let mut projected = Vec::with_capacity(consensus.len());
+    let mut seen = BTreeSet::new();
+    for pgid in consensus {
+        let Some(matches) = pages_by_oid.get(pgid) else {
+            return Err(format!(
+                "pgid_has_no_page:{:08x}:{:08x}",
+                pgid.0, pgid.1
+            ));
+        };
+        if matches.len() != 1 {
+            return Err(format!(
+                "pgid_is_ambiguous:{:08x}:{:08x}:matches={}",
+                pgid.0,
+                pgid.1,
+                matches.len()
+            ));
+        }
+        let page_id = matches[0];
+        if !seen.insert(page_id) {
+            return Err("controlling_page_list_repeats_page".to_owned());
+        }
+        projected.push(page_id);
+    }
+
+    Ok(projected)
+}
+
+fn utf16_range_to_scalar_range(text: &str, start_utf16: u32, end_utf16: u32) -> Option<(u32, u32)> {
+    if start_utf16 > end_utf16 {
+        return None;
+    }
+
+    fn boundary(text: &str, target_utf16: u32) -> Option<u32> {
+        if target_utf16 == 0 {
+            return Some(0);
+        }
+
+        let mut utf16_cursor = 0_u32;
+        let mut scalar_cursor = 0_u32;
+        for scalar in text.chars() {
+            utf16_cursor = utf16_cursor.checked_add(scalar.len_utf16() as u32)?;
+            scalar_cursor = scalar_cursor.checked_add(1)?;
+            if utf16_cursor == target_utf16 {
+                return Some(scalar_cursor);
+            }
+            if utf16_cursor > target_utf16 {
+                return None;
+            }
+        }
+        (utf16_cursor == target_utf16).then_some(scalar_cursor)
+    }
+
+    Some((boundary(text, start_utf16)?, boundary(text, end_utf16)?))
 }
 
 fn build_reference_index(
@@ -2632,6 +3236,71 @@ mod tests {
         "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
             .parse()
             .expect("known SampleNewsletter SHA-256")
+    }
+
+    #[test]
+    fn typography_utf16_to_scalar_range_is_surrogate_safe() {
+        let text = "A😀B";
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 3), Some((1, 2)));
+        assert_eq!(utf16_range_to_scalar_range(text, 0, 4), Some((0, 3)));
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 2), None);
+        assert_eq!(utf16_range_to_scalar_range(text, 2, 3), None);
+        assert_eq!(utf16_range_to_scalar_range(text, 3, 1), None);
+    }
+
+    fn test_page_id(seed: u8) -> PageId {
+        PageId::from_canonical(CanonicalId::from_bytes([seed; 16]))
+    }
+
+    #[test]
+    fn customer_page_projection_uses_unanimous_pgid_order() {
+        let p0 = test_page_id(1);
+        let p1 = test_page_id(2);
+        let p2 = test_page_id(3);
+        let pgids = vec![
+            vec![(1, 0), (1, 1), (1, 2)],
+            vec![(1, 0), (1, 1), (1, 2)],
+        ];
+        let pages_by_oid = BTreeMap::from([
+            ((1, 0), vec![p0]),
+            ((1, 1), vec![p1]),
+            ((1, 2), vec![p2]),
+            ((2, 0), vec![test_page_id(9)]),
+        ]);
+
+        assert_eq!(
+            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap(),
+            vec![p0, p1, p2]
+        );
+    }
+
+    #[test]
+    fn customer_page_projection_rejects_disagreeing_authorities() {
+        let pgids = vec![vec![(1, 0), (1, 1)], vec![(1, 1), (1, 0)]];
+        let pages_by_oid = BTreeMap::from([
+            ((1, 0), vec![test_page_id(1)]),
+            ((1, 1), vec![test_page_id(2)]),
+        ]);
+
+        assert_eq!(
+            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap_err(),
+            "controlling_page_lists_disagree"
+        );
+    }
+
+    #[test]
+    fn customer_page_projection_rejects_ambiguous_page_oid() {
+        let pgids = vec![vec![(1, 0)]];
+        let pages_by_oid = BTreeMap::from([(
+            (1, 0),
+            vec![test_page_id(1), test_page_id(2)],
+        )]);
+
+        assert!(
+            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid)
+                .unwrap_err()
+                .starts_with("pgid_is_ambiguous:")
+        );
     }
 
     fn crop_test_span(offset: u64, len: u64) -> RawSpan {
