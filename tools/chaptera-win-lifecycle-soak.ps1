@@ -337,7 +337,7 @@ try {
             $env:CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT = $InstallRoot
             $env:CHAPTERA_UPDATE_ACCEPT_PUB = $Fixture
             $env:CHAPTERA_UPDATE_ACCEPT_EXTERNAL_STATE = $externalState
-            & cargo test -p chaptera-update-orchestrator --test windows_product_acceptance real_installed_reader_update_rollback_cycle -- --exact --nocapture
+            & cargo test -p chaptera-update-orchestrator --test windows_product_acceptance real_installed_reader_update_rollback_cycle -- --exact --nocapture | Out-Host
             $cargoExit = $LASTEXITCODE
             if ($cargoExit -ne 0) {
                 throw "real installed update/rollback acceptance failed with cargo exit $cargoExit"
