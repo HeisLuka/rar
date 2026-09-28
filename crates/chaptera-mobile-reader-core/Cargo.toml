@@ -11,7 +11,7 @@ chaptera-image-decode-contract = { path = "../chaptera-image-decode-contract" }
 chaptera-untrusted-pub-scan = { path = "../chaptera-untrusted-pub-scan" }
 chaptera-viewer-render-plan = { path = "../chaptera-viewer-render-plan" }
 pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
-pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
+pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer", features = ["cmo-projection"] }
 sha2 = "0.10"
 serde_json = "1"
 
