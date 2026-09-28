@@ -2161,6 +2161,20 @@ fn operation_summary(operation: &EditOperation) -> Value {
                 "after":rect_json(entry.after)
             })).collect::<Vec<_>>()
         }),
+        EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset,
+        } => json!({
+            "kind":"create_text_box",
+            "node_id":node_id.as_canonical().to_string(),
+            "story_id":story_id.as_canonical().to_string(),
+            "page_id":page_id.as_canonical().to_string(),
+            "bounds":rect_json(*bounds),
+            "text_preset":text_preset
+        }),
         EditOperation::CreateShape {
             node_id,
             page_id,
@@ -2322,6 +2336,48 @@ mod tests {
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0]["ok"], false);
         assert_eq!(responses[0]["error"]["code"], "invalid_json");
+    }
+
+    #[test]
+    fn create_text_box_operation_summary_is_explicit_and_stable() {
+        let node_id: pub_editor::NodeId =
+            serde_json::from_str("\"11111111-1111-1111-1111-111111111111\"").unwrap();
+        let story_id: pub_editor::StoryId =
+            serde_json::from_str("\"22222222-2222-2222-2222-222222222222\"").unwrap();
+        let page_id: pub_editor::PageId =
+            serde_json::from_str("\"33333333-3333-3333-3333-333333333333\"").unwrap();
+        let bounds = RectEmu::new(
+            LengthEmu::new(10),
+            LengthEmu::new(20),
+            LengthEmu::new(300),
+            LengthEmu::new(400),
+        );
+        let operation = EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset: pub_editor::AuthoringTextPresetV1 {
+                resource_id: "chaptera.desktop.fallback-font.ubuntu-light.v1".to_owned(),
+                font_fingerprint_sha256:
+                    "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70".to_owned(),
+                face_index: 0,
+                font_size_emu: LengthEmu::new(114_300),
+                line_height_emu: LengthEmu::new(142_875),
+            },
+        };
+
+        let summary = operation_summary(&operation);
+        assert_eq!(summary["kind"], "create_text_box");
+        assert_eq!(summary["node_id"], node_id.as_canonical().to_string());
+        assert_eq!(summary["story_id"], story_id.as_canonical().to_string());
+        assert_eq!(summary["page_id"], page_id.as_canonical().to_string());
+        assert_eq!(summary["bounds"]["x"], 10);
+        assert_eq!(summary["bounds"]["height"], 400);
+        assert_eq!(
+            summary["text_preset"]["resource_id"],
+            "chaptera.desktop.fallback-font.ubuntu-light.v1"
+        );
     }
 
     #[test]
