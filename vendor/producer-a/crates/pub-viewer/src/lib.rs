@@ -1494,6 +1494,44 @@ mod tests {
     }
 
     #[test]
+    fn presentation_selection_visual_apply_is_transactional_when_surface_is_missing() {
+        let document = presentation_document_fixture();
+        let source_hash = document.source.source_hash;
+        let page_two = PageId::from_canonical(id(2));
+        let page_three = PageId::from_canonical(id(3));
+        let mut visual = ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document,
+            scene: BoundedResolvedScene {
+                environment: viewer_geometry_environment_v0_1(),
+                surfaces: vec![pub_layout::ResolvedSurface {
+                    origin: page_two,
+                    size: Size2D::new(LengthEmu::new(1_000), LengthEmu::new(2_000)),
+                    bleed: None,
+                    margins: None,
+                }],
+                nodes: Vec::new(),
+                origin_mapping: Vec::new(),
+                diagnostics: Vec::new(),
+            },
+            paints: Vec::new(),
+            story_frames: Vec::new(),
+            text_fragments: Vec::new(),
+            typography_runs: Vec::new(),
+            images: Vec::new(),
+        };
+        let before = visual.clone();
+        let selection = ViewerPresentationSelection {
+            profile_id: "fixture/exact/v1".to_owned(),
+            source_hash,
+            page_ids: vec![page_three],
+        };
+
+        assert!(apply_viewer_presentation_selection(&mut visual, &selection).is_err());
+        assert_eq!(visual, before);
+    }
+
+    #[test]
     fn presentation_selection_fails_closed_on_identity_or_membership_drift() {
         let base = presentation_document_fixture();
 
