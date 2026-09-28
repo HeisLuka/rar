@@ -70,6 +70,8 @@ jobs:
           echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub" | sha256sum --check
           curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub --output apps/chaptera-mobile-android/app/src/androidTest/assets/SampleBrochure.pub
           echo "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87  apps/chaptera-mobile-android/app/src/androidTest/assets/SampleBrochure.pub" | sha256sum --check
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/Simple.pub --output apps/chaptera-mobile-android/app/src/androidTest/assets/Simple.pub
+          echo "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d  apps/chaptera-mobile-android/app/src/androidTest/assets/Simple.pub" | sha256sum --check
 
       - name: Build Android app and instrumentation APK
         working-directory: apps/chaptera-mobile-android
