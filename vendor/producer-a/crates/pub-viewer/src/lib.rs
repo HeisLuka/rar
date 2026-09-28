@@ -17,6 +17,10 @@ pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
     Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
+use pub_presentation_profile::{
+    CarltonPageEvidenceV1, CarltonPresentationError, build_admitted_carlton_presentation_manifest_v1,
+    is_admitted_carlton_source_v1,
+};
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -25,9 +29,9 @@ pub use pub_reader::{
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
-    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, build_failure_envelope,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
-    resolve_pub_source_graph,
+    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, analyze_mature_0x2c_page_roles,
+    build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
+    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -488,6 +492,13 @@ struct Mature0x2cPipeline {
     source_hash: Sha256Digest,
     source: PubSourceGraphBuild,
     resolved: PubResolvedGraphBuild,
+    family_page_projection: Option<ViewerFamilyPageProjection>,
+}
+
+#[derive(Debug, Clone)]
+struct ViewerFamilyPageProjection {
+    profile_id: String,
+    page_ids: Vec<PageId>,
 }
 
 /// Opens one mature 0x2C Publisher file into the read-only Viewer manifest.
@@ -779,12 +790,58 @@ fn build_mature_0x2c_pipeline(bytes: &[u8]) -> Result<Mature0x2cPipeline> {
         .context("build mature-0x2C PUB source graph for Viewer")?;
     let resolved =
         resolve_pub_source_graph(&source.graph).context("resolve PUB source graph for Viewer")?;
+    let family_page_projection = derive_family_page_projection(bytes, &source_hash)?;
 
     Ok(Mature0x2cPipeline {
         source_hash,
         source,
         resolved,
+        family_page_projection,
     })
+}
+
+fn derive_family_page_projection(
+    bytes: &[u8],
+    source_hash: &Sha256Digest,
+) -> Result<Option<ViewerFamilyPageProjection>> {
+    let source_hash_text = source_hash.to_string();
+    if !is_admitted_carlton_source_v1(&source_hash_text) {
+        return Ok(None);
+    }
+
+    let observation = analyze_mature_0x2c_page_roles(Cursor::new(bytes))
+        .context("analyze exact Carlton PAGE-role evidence for Viewer")?;
+    let pages = observation
+        .pages
+        .into_iter()
+        .map(|page| CarltonPageEvidenceV1 {
+            document_ordinal: page.document_ordinal,
+            contents_seq_num: page.contents_seq_num,
+            oid_dword0: page.oid_dword0,
+            oid_dword1: page.oid_dword1,
+            applied_master_seq_num: page.applied_master_seq_num,
+            shape_child_count: page.shape_child_count,
+        })
+        .collect::<Vec<_>>();
+
+    let manifest = build_admitted_carlton_presentation_manifest_v1(&source_hash_text, pages)
+        .map_err(|error| match error {
+            CarltonPresentationError::UnsupportedSourceHash => {
+                anyhow!("Carlton admission predicate/profile disagreement")
+            }
+            other => anyhow!("exact Carlton presentation profile rejected runtime evidence: {other}"),
+        })?;
+
+    let page_ids = manifest
+        .customer_page_seq_nums
+        .iter()
+        .map(|seq_num| derive_pub_page_id(source_hash, *seq_num))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(Some(ViewerFamilyPageProjection {
+        profile_id: manifest.profile_id,
+        page_ids,
+    }))
 }
 
 fn viewer_document_from_pipeline(
@@ -793,7 +850,11 @@ fn viewer_document_from_pipeline(
 ) -> Result<ViewerDocument> {
     let graph = &pipeline.resolved.graph;
 
-    let effective_page_ids = &pipeline.source.effective_pages.page_ids;
+    let effective_page_ids = pipeline
+        .family_page_projection
+        .as_ref()
+        .map(|projection| projection.page_ids.as_slice())
+        .unwrap_or(&pipeline.source.effective_pages.page_ids);
     let mut pages = Vec::with_capacity(effective_page_ids.len());
     for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
@@ -831,6 +892,17 @@ fn viewer_document_from_pipeline(
                 .map(map_resolve_diagnostic),
         )
         .collect::<Vec<_>>();
+    if let Some(projection) = &pipeline.family_page_projection {
+        diagnostics.retain(|diagnostic| diagnostic.code != "viewer.page_projection.roles_unresolved");
+        diagnostics.push(ViewerDiagnostic {
+            code: "viewer.page_projection.family_profile_applied".to_owned(),
+            severity: ViewerDiagnosticSeverity::Info,
+            message: format!(
+                "Applied admitted family presentation profile {} to customer navigation and layout surfaces while preserving raw source PAGE identities.",
+                projection.profile_id
+            ),
+        });
+    }
     normalize_diagnostics(&mut diagnostics);
 
     Ok(ViewerDocument {
