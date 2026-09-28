@@ -4351,15 +4351,12 @@ mod tests {
 
     #[test]
     fn projected_visual_identity_wins_mixed_topmost_hit_without_mutation_admission() {
-        let direct_node_id: pub_editor::NodeId = serde_json::from_value(serde_json::json!(
-            "11111111-1111-1111-1111-111111111111"
-        ))
-        .expect("direct NodeId fixture");
+        let direct_node_id: pub_editor::NodeId =
+            serde_json::from_value(serde_json::json!("11111111-1111-1111-1111-111111111111"))
+                .expect("direct NodeId fixture");
         let projected_origin_node_id: pub_editor::NodeId =
-            serde_json::from_value(serde_json::json!(
-                "22222222-2222-2222-2222-222222222222"
-            ))
-            .expect("projected origin NodeId fixture");
+            serde_json::from_value(serde_json::json!("22222222-2222-2222-2222-222222222222"))
+                .expect("projected origin NodeId fixture");
         let bounds = pub_editor::RectEmu::new(
             pub_editor::LengthEmu::new(10),
             pub_editor::LengthEmu::new(20),
