@@ -1,4 +1,4 @@
-use chaptera_text_input_adapter::domain::{edit_domain_id_v1, StoryEditDomainV1};
+use chaptera_text_input_adapter::domain::{StoryEditDomainV1, edit_domain_id_v1};
 use chaptera_text_input_adapter::ingress::normalize_external_text_v1;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -36,10 +36,7 @@ impl std::error::Error for TextFindReplaceError {}
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TextFindExtentV1 {
     FullEditableStory,
-    Range {
-        start_scalar: u32,
-        end_scalar: u32,
-    },
+    Range { start_scalar: u32, end_scalar: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,8 +105,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn scalar_len(text: &str) -> Result<u32, TextFindReplaceError> {
-    u32::try_from(text.chars().count())
-        .map_err(|_| TextFindReplaceError::new("scalar_overflow", "Story scalar length exceeds u32"))
+    u32::try_from(text.chars().count()).map_err(|_| {
+        TextFindReplaceError::new("scalar_overflow", "Story scalar length exceeds u32")
+    })
 }
 
 fn scalar_slice(text: &str, start_scalar: u32, end_scalar: u32) -> Option<&str> {
@@ -135,9 +133,7 @@ fn scalar_slice(text: &str, start_scalar: u32, end_scalar: u32) -> Option<&str> 
     text.get(start_byte..end_byte)
 }
 
-fn editable_bounds(
-    domain: &StoryEditDomainV1,
-) -> Result<(u32, u32), TextFindReplaceError> {
+fn editable_bounds(domain: &StoryEditDomainV1) -> Result<(u32, u32), TextFindReplaceError> {
     if domain.status != "known" {
         return Err(TextFindReplaceError::new(
             "edit_domain_unknown",
@@ -232,9 +228,9 @@ pub fn build_text_find_snapshot_v1(
     let mut matches = Vec::new();
     let mut cursor = extent_start;
     while cursor < extent_end {
-        let candidate_end = cursor
-            .checked_add(query_len)
-            .ok_or_else(|| TextFindReplaceError::new("scalar_overflow", "match boundary overflow"))?;
+        let candidate_end = cursor.checked_add(query_len).ok_or_else(|| {
+            TextFindReplaceError::new("scalar_overflow", "match boundary overflow")
+        })?;
         if candidate_end > extent_end {
             break;
         }
@@ -251,8 +247,9 @@ pub fn build_text_find_snapshot_v1(
                     )
                 })?
                 .to_owned();
-            let ordinal = u32::try_from(matches.len())
-                .map_err(|_| TextFindReplaceError::new("match_count_overflow", "too many matches"))?;
+            let ordinal = u32::try_from(matches.len()).map_err(|_| {
+                TextFindReplaceError::new("match_count_overflow", "too many matches")
+            })?;
             matches.push(TextFindMatchV1 {
                 ordinal,
                 start_scalar: cursor,
@@ -298,9 +295,7 @@ pub fn validate_text_find_snapshot_v1(
     }
     validate_story_against_domain(current_story_text, current_domain)?;
     let (editable_start, editable_end) = editable_bounds(current_domain)?;
-    if snapshot.extent_start_scalar < editable_start
-        || snapshot.extent_end_scalar > editable_end
-    {
+    if snapshot.extent_start_scalar < editable_start || snapshot.extent_end_scalar > editable_end {
         return Err(TextFindReplaceError::new(
             "find_snapshot_stale",
             "snapshot extent is no longer editable",
@@ -431,7 +426,8 @@ pub fn build_story_find_replace_plan_v1(
                     "selected match range is absent from current Story text",
                 )
             })?;
-        if current != item.matched_text || sha256_hex(current.as_bytes()) != item.matched_text_sha256
+        if current != item.matched_text
+            || sha256_hex(current.as_bytes()) != item.matched_text_sha256
         {
             return Err(TextFindReplaceError::new(
                 "find_snapshot_stale",
@@ -470,9 +466,7 @@ pub fn build_story_find_replace_plan_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chaptera_text_input_adapter::domain::{
-        derive_story_edit_domain_v1, StoryProvenanceV1,
-    };
+    use chaptera_text_input_adapter::domain::{StoryProvenanceV1, derive_story_edit_domain_v1};
 
     fn domain(text: &str) -> StoryEditDomainV1 {
         derive_story_edit_domain_v1("story:1", text, StoryProvenanceV1::ChapteraCreated).unwrap()
@@ -606,8 +600,8 @@ mod tests {
             "aa",
         )
         .unwrap();
-        let next =
-            navigate_text_find_snapshot_v1(&refreshed, TextFindDirectionV1::Next, 4, false).unwrap();
+        let next = navigate_text_find_snapshot_v1(&refreshed, TextFindDirectionV1::Next, 4, false)
+            .unwrap();
         assert_eq!((next.start_scalar, next.end_scalar), (5, 7));
     }
 
@@ -651,15 +645,8 @@ mod tests {
             "aa",
         )
         .unwrap();
-        let plan = build_story_find_replace_plan_v1(
-            &snapshot,
-            &[1, 0],
-            "rev:1",
-            text,
-            &d,
-            "",
-        )
-        .unwrap();
+        let plan =
+            build_story_find_replace_plan_v1(&snapshot, &[1, 0], "rev:1", text, &d, "").unwrap();
         assert_eq!(
             plan.edits
                 .iter()
@@ -667,7 +654,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(0, 0, 2), (1, 4, 6)]
         );
-        assert!(plan.edits.iter().all(|edit| edit.replacement_text.is_empty()));
+        assert!(
+            plan.edits
+                .iter()
+                .all(|edit| edit.replacement_text.is_empty())
+        );
     }
 
     #[test]
