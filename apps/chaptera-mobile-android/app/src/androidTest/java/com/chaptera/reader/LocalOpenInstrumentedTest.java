@@ -66,26 +66,36 @@ public final class LocalOpenInstrumentedTest {
         org.json.JSONObject receipt = new org.json.JSONObject(receiptWire);
         long sessionId = receipt.getLong("session_id");
         try {
-            String planWire = NativeReader.pageRenderPlanJson(sessionId, 0);
-            assertFalse("page render plan failed: " + planWire, planWire.startsWith("ERR:"));
-            org.json.JSONObject page = new org.json.JSONObject(planWire);
-            org.json.JSONArray nodes = page.getJSONArray("nodes");
-
+            int pageCount = receipt.getInt("page_count");
             boolean foundImage = false;
-            for (int i = 0; i < nodes.length(); i++) {
-                org.json.JSONObject image = nodes.getJSONObject(i).optJSONObject("image");
-                if (image == null) continue;
-                String resourceId = image.getString("resource_id");
-                byte[] encoded = NativeReader.imageResourceBytes(sessionId, resourceId);
-                assertTrue("embedded image bytes must be non-empty", encoded != null && encoded.length > 0);
-                assertTrue(
-                    "embedded image bytes must decode on Android",
-                    android.graphics.BitmapFactory.decodeByteArray(encoded, 0, encoded.length) != null
+
+            for (int pageIndex = 0; pageIndex < pageCount && !foundImage; pageIndex++) {
+                String planWire = NativeReader.pageRenderPlanJson(sessionId, pageIndex);
+                assertFalse(
+                    "page render plan failed at page " + (pageIndex + 1) + ": " + planWire,
+                    planWire.startsWith("ERR:")
                 );
-                foundImage = true;
-                break;
+                org.json.JSONObject page = new org.json.JSONObject(planWire);
+                org.json.JSONArray nodes = page.getJSONArray("nodes");
+
+                for (int i = 0; i < nodes.length(); i++) {
+                    org.json.JSONObject image = nodes.getJSONObject(i).optJSONObject("image");
+                    if (image == null) continue;
+                    String resourceId = image.getString("resource_id");
+                    byte[] encoded = NativeReader.imageResourceBytes(sessionId, resourceId);
+                    assertTrue("embedded image bytes must be non-empty", encoded != null && encoded.length > 0);
+                    assertTrue(
+                        "embedded image bytes must decode on Android",
+                        android.graphics.BitmapFactory.decodeByteArray(encoded, 0, encoded.length) != null
+                    );
+                    foundImage = true;
+                    break;
+                }
             }
-            assertTrue("real PUB fixture must expose at least one render-plan image", foundImage);
+            assertTrue(
+                "real PUB fixture must expose at least one render-plan image on some page",
+                foundImage
+            );
         } finally {
             NativeReader.closeSession(sessionId);
         }
