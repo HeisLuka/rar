@@ -1,0 +1,13 @@
+[package]
+name = "chaptera-desktop-selection-keyboard-routing"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+chaptera-canvas-creation-interaction = { path = "../chaptera-canvas-creation-interaction" }
+serde = { version = "1", features = ["derive"] }
+
+[workspace]
+resolver = "2"
