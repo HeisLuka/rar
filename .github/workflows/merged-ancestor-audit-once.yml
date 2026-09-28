@@ -1,0 +1,64 @@
+name: One-shot merged-ancestor branch audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/merged-ancestor-audit-once.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify remote branches already contained in main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CURRENT_HEAD: ${{ github.head_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+
+          gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == "'"$GH_REPO"'") | .head.ref' \
+            | sort -u > open-heads.txt
+
+          : > merged-ancestor.txt
+          while IFS= read -r ref; do
+            branch="${ref#refs/remotes/origin/}"
+            [[ "$branch" == "HEAD" ]] && continue
+            [[ "$branch" == "$DEFAULT_BRANCH" ]] && continue
+            [[ "$branch" == "$CURRENT_HEAD" ]] && continue
+            if grep -Fxq "$branch" open-heads.txt; then
+              continue
+            fi
+            if git merge-base --is-ancestor "$ref" "refs/remotes/origin/$DEFAULT_BRANCH"; then
+              printf '%s\n' "$branch" >> merged-ancestor.txt
+            fi
+          done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
+
+          sort -u -o merged-ancestor.txt merged-ancestor.txt
+          count="$(wc -l < merged-ancestor.txt | tr -d ' ')"
+          {
+            echo "### Merged-ancestor audit"
+            echo
+            echo "Safe-by-graph candidates: **$count**"
+            echo
+            echo "Every ref below has its current tip reachable from `$DEFAULT_BRANCH`, and no ref is a current open-PR head."
+            echo
+            echo '~~~text'
+            cat merged-ancestor.txt
+            echo '~~~'
+          } > comment.md
+          gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file comment.md
