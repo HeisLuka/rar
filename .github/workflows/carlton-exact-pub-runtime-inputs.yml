@@ -114,7 +114,7 @@ jobs:
               candidates = sorted(set(
                   match.group(0)
                   for match in re.finditer(
-                      r'[^"\\s]{0,120}(?:/api/|download|file)[^"\\s]{0,220}',
+                      r'[^"\s]{0,120}(?:/api/|download|file)[^"\s]{0,220}',
                       bundle.text,
                       flags=re.I,
                   )
@@ -142,7 +142,7 @@ jobs:
                   re.findall(r'from"[.]/([^"]+[.]js)"', main_text)
               )
               asset_refs.update(
-                  re.findall(r'import\\("[.]/([^"]+[.]js)"\\)', main_text)
+                  re.findall(r'import\("[.]/([^"]+[.]js)"\)', main_text)
               )
           chunk_findings = []
           total_js_bytes = 0
