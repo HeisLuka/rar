@@ -107,6 +107,7 @@ const RAW_TYPE_GROUP: u16 = 0x30;
 const RAW_TYPE_PAGE: u16 = 0x43;
 const RAW_TYPE_DOCUMENT: u16 = 0x44;
 const RAW_TYPE_MARGINS: u16 = 0x4C;
+const RAW_TYPE_CONTROLLING: u16 = 0x4D;
 const RAW_TYPE_PAGE_LIST_SPECIAL: u16 = 0x59;
 
 const OFFICEART_PROPERTY_ROTATION: u16 = 0x0004;
@@ -177,9 +178,25 @@ pub struct PubControllingFieldObservation {
     pub pgids: Vec<[u32; 2]>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PubCustomerPageProjectionAuthority {
+    RawDocumentPageList,
+    ControllingPgidConsensus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubCustomerPageProjection {
+    pub authority: PubCustomerPageProjectionAuthority,
+    pub page_ids: Vec<PageId>,
+    pub raw_page_count: usize,
+    pub evidence_list_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PubSourceGraphBuild {
     pub graph: PubSourceGraph,
+    pub customer_pages: PubCustomerPageProjection,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<PubBridgeDiagnostic>,
 }
@@ -379,6 +396,15 @@ pub enum PubBridgeDiagnostic {
         width_emu: u32,
         height_emu: u32,
     },
+    CustomerPageProjectionApplied {
+        raw_page_count: usize,
+        customer_page_count: usize,
+        evidence_list_count: usize,
+    },
+    CustomerPageProjectionFallback {
+        reason: String,
+        raw_page_count: usize,
+    },
     LinkedFrameNotMaterialized {
         seq_num: u32,
         target_seq_num: u32,
@@ -569,7 +595,6 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
     }
 
 
-    const RAW_TYPE_CONTROLLING: u16 = 0x4D;
     let mut controlling = references
         .values()
         .filter(|reference| single_raw_type(reference) == Some(RAW_TYPE_CONTROLLING))
@@ -1787,6 +1812,17 @@ pub fn build_mature_0x2c_from_streams(
         bail!("DOCUMENT PageList exposes no confirmed PAGE 0x43 entries");
     }
 
+    let (customer_pages, customer_page_diagnostic) = derive_customer_page_projection(
+        contents_stream.clone(),
+        contents,
+        &references,
+        &page_seq_to_id,
+        &document_pages,
+    );
+    if let Some(diagnostic) = customer_page_diagnostic {
+        diagnostics.push(diagnostic);
+    }
+
     let document = Document {
         id: document_id,
         format_origin: "pub".into(),
@@ -2103,7 +2139,161 @@ pub fn build_mature_0x2c_from_streams(
 
     add_missing_link_target_diagnostics(&graph, &mut diagnostics);
 
-    Ok(PubSourceGraphBuild { graph, diagnostics })
+    Ok(PubSourceGraphBuild {
+        graph,
+        customer_pages,
+        diagnostics,
+    })
+}
+
+fn derive_customer_page_projection(
+    contents_stream: StreamPath,
+    contents: &[u8],
+    references: &BTreeMap<u32, Contents0x2cChunkReference>,
+    page_seq_to_id: &BTreeMap<u32, PageId>,
+    raw_page_ids: &[PageId],
+) -> (PubCustomerPageProjection, Option<PubBridgeDiagnostic>) {
+    let fallback = |reason: String| {
+        (
+            PubCustomerPageProjection {
+                authority: PubCustomerPageProjectionAuthority::RawDocumentPageList,
+                page_ids: raw_page_ids.to_vec(),
+                raw_page_count: raw_page_ids.len(),
+                evidence_list_count: 0,
+            },
+            Some(PubBridgeDiagnostic::CustomerPageProjectionFallback {
+                reason,
+                raw_page_count: raw_page_ids.len(),
+            }),
+        )
+    };
+
+    let mut pgid_lists = Vec::<Vec<(u32, u32)>>::new();
+    for reference in references
+        .values()
+        .filter(|reference| single_raw_type(reference) == Some(RAW_TYPE_CONTROLLING))
+    {
+        let chunk = match chunk_for_reference(contents_stream.clone(), contents, reference) {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                return fallback(format!(
+                    "controlling_chunk_unavailable:{}",
+                    error
+                ));
+            }
+        };
+        let page_list_fields = chunk
+            .fields
+            .iter()
+            .filter(|field| field.id == pub_contents::CONTROLLING_PAGE_LIST_ID)
+            .cloned()
+            .collect::<Vec<_>>();
+        if page_list_fields.len() > 1 {
+            return fallback(format!(
+                "duplicate_controlling_page_list:seq={}",
+                reference.seq_num
+            ));
+        }
+        let Some(field) = page_list_fields.into_iter().next() else {
+            continue;
+        };
+        let parsed = match parse_confirmed_controlling_page_list(contents, field) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return fallback(format!(
+                    "controlling_page_list_invalid:seq={}:{}",
+                    reference.seq_num, error
+                ));
+            }
+        };
+        let pgids = parsed
+            .entries
+            .into_iter()
+            .map(|entry| (entry.pgid.dword0, entry.pgid.dword1))
+            .collect::<Vec<_>>();
+        if pgids.is_empty() {
+            return fallback(format!(
+                "controlling_page_list_empty:seq={}",
+                reference.seq_num
+            ));
+        }
+        pgid_lists.push(pgids);
+    }
+
+    let Some(consensus) = pgid_lists.first().cloned() else {
+        return fallback("no_controlling_page_list_authority".to_owned());
+    };
+    if pgid_lists.iter().skip(1).any(|candidate| *candidate != consensus) {
+        return fallback("controlling_page_lists_disagree".to_owned());
+    }
+
+    let mut pages_by_oid = BTreeMap::<(u32, u32), Vec<PageId>>::new();
+    for (seq_num, page_id) in page_seq_to_id {
+        let Some(reference) = references.get(seq_num) else {
+            continue;
+        };
+        let chunk = match chunk_for_reference(contents_stream.clone(), contents, reference) {
+            Ok(chunk) => chunk,
+            Err(_) => continue,
+        };
+        let oid_fields = chunk
+            .fields
+            .iter()
+            .filter(|field| field.id == 0x06 && field.block_type == BLOCK_TYPE_FIXED_8)
+            .collect::<Vec<_>>();
+        if oid_fields.len() != 1 {
+            continue;
+        }
+        let Ok(oid) = parse_confirmed_oid_identity_payload(oid_fields[0].clone()) else {
+            continue;
+        };
+        pages_by_oid
+            .entry((oid.dword0, oid.dword1))
+            .or_default()
+            .push(*page_id);
+    }
+
+    let mut projected = Vec::with_capacity(consensus.len());
+    let mut seen = BTreeSet::new();
+    for pgid in &consensus {
+        let Some(matches) = pages_by_oid.get(pgid) else {
+            return fallback(format!(
+                "pgid_has_no_page:{:08x}:{:08x}",
+                pgid.0, pgid.1
+            ));
+        };
+        if matches.len() != 1 {
+            return fallback(format!(
+                "pgid_is_ambiguous:{:08x}:{:08x}:matches={}",
+                pgid.0,
+                pgid.1,
+                matches.len()
+            ));
+        }
+        let page_id = matches[0];
+        if !seen.insert(page_id) {
+            return fallback("controlling_page_list_repeats_page".to_owned());
+        }
+        projected.push(page_id);
+    }
+
+    if projected.is_empty() {
+        return fallback("controlling_page_projection_empty".to_owned());
+    }
+
+    (
+        PubCustomerPageProjection {
+            authority: PubCustomerPageProjectionAuthority::ControllingPgidConsensus,
+            page_ids: projected.clone(),
+            raw_page_count: raw_page_ids.len(),
+            evidence_list_count: pgid_lists.len(),
+        },
+        Some(PubBridgeDiagnostic::CustomerPageProjectionApplied {
+            raw_page_count: raw_page_ids.len(),
+            customer_page_count: projected.len(),
+            evidence_list_count: pgid_lists.len(),
+        }),
+    )
 }
 
 fn build_reference_index(
