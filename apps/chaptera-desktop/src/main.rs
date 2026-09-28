@@ -7089,8 +7089,8 @@ mod tests {
         // Fixture-only crosswalk: raw Viewer Page 2 is Publisher customer page 1 for this exact pinned SHA.
         // This must never be reused as generic PAGE-role logic.
         let page_offset = 1_usize;
-        let plan =
-            build_page_render_plan_v1(&visual, page_offset).expect("reference customer page 1 shared render plan");
+        let plan = build_page_render_plan_v1(&visual, page_offset)
+            .expect("reference customer page 1 shared render plan");
         let typography_sections = plan
             .nodes
             .iter()
