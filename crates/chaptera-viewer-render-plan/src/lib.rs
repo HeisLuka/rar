@@ -53,6 +53,18 @@ pub struct RenderTextFragmentV1 {
     pub scalar_end: u32,
     pub text: String,
     pub line_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typography: Vec<RenderTypographyRunV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderTypographyRunV1 {
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+    pub source_font_name: String,
+    pub text_size_emu: u32,
+    pub font_inherited: bool,
+    pub size_inherited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,12 +127,44 @@ pub fn build_page_render_plan_v1(
                 .text_fragments
                 .iter()
                 .find(|fragment| fragment.frame_id == node.origin)
-                .map(|fragment| RenderTextFragmentV1 {
-                    story_id: fragment.story_id,
-                    scalar_start: fragment.scalar_start,
-                    scalar_end: fragment.scalar_end,
-                    text: fragment.text.clone(),
-                    line_count: fragment.line_count,
+                .map(|fragment| {
+                    let current_story_text = visual
+                        .document
+                        .stories
+                        .iter()
+                        .find(|story| story.id == fragment.story_id)
+                        .map(|story| story.text.as_str());
+                    let mut typography = visual
+                        .typography_runs
+                        .iter()
+                        .filter(|run| run.story_id == fragment.story_id)
+                        .filter(|run| {
+                            current_story_text
+                                .is_some_and(|text| run.applies_to_story_text(text))
+                        })
+                        .filter_map(|run| {
+                            let scalar_start = run.scalar_start.max(fragment.scalar_start);
+                            let scalar_end = run.scalar_end.min(fragment.scalar_end);
+                            (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
+                                scalar_start,
+                                scalar_end,
+                                source_font_name: run.source_font_name.clone(),
+                                text_size_emu: run.text_size_emu,
+                                font_inherited: run.font_inherited,
+                                size_inherited: run.size_inherited,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    typography.sort_by_key(|run| (run.scalar_start, run.scalar_end, run.text_size_emu));
+
+                    RenderTextFragmentV1 {
+                        story_id: fragment.story_id,
+                        scalar_start: fragment.scalar_start,
+                        scalar_end: fragment.scalar_end,
+                        text: fragment.text.clone(),
+                        line_count: fragment.line_count,
+                        typography,
+                    }
                 });
 
             NodeRenderPlanV1 {
@@ -157,7 +201,7 @@ mod tests {
     use pub_model::{Affine2D, CanonicalId, LengthEmu, RectEmu, Sha256Digest, Size2D};
     use pub_viewer::{
         ViewerDocument, ViewerEmbeddedImage, ViewerNodePaint, ViewerPage, ViewerSolidLine,
-        ViewerSource, ViewerTextFragment,
+        ViewerSource, ViewerTextFragment, ViewerTypographyRun, viewer_story_text_sha256,
     };
 
     fn canonical(byte: u8) -> CanonicalId {
@@ -187,7 +231,10 @@ mod tests {
                     width_emu: 1000,
                     height_emu: 2000,
                 }],
-                stories: Vec::new(),
+                stories: vec![pub_viewer::ViewerStory {
+                    id: story_id,
+                    text: "hello".into(),
+                }],
                 diagnostics: Vec::new(),
             },
             scene: BoundedResolvedScene {
@@ -233,6 +280,16 @@ mod tests {
                 text: "hello".into(),
                 line_count: 1,
             }],
+            typography_runs: vec![ViewerTypographyRun {
+                story_id,
+                scalar_start: 0,
+                scalar_end: 2,
+                source_font_name: "Source Font".into(),
+                text_size_emu: 24 * 12_700,
+                font_inherited: false,
+                size_inherited: true,
+                source_story_text_sha256: viewer_story_text_sha256("hello"),
+            }],
             images: vec![ViewerEmbeddedImage {
                 resource_id,
                 mime: "image/png".into(),
@@ -263,6 +320,12 @@ mod tests {
             node.text.as_ref().map(|text| text.text.as_str()),
             Some("hello")
         );
+        let typography = &node.text.as_ref().expect("text").typography;
+        assert_eq!(typography.len(), 1);
+        assert_eq!(typography[0].scalar_start, 0);
+        assert_eq!(typography[0].scalar_end, 2);
+        assert_eq!(typography[0].text_size_emu, 24 * 12_700);
+        assert!(typography[0].size_inherited);
     }
 
     #[test]
