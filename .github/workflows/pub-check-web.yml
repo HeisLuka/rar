@@ -4,14 +4,16 @@ on:
   pull_request:
     paths:
       - "apps/pub-check-web/**"
+      - "tools/pub-check-cli/**"
       - ".github/workflows/pub-check-web.yml"
+      - ".github/workflows/pub-check-worker.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  web:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,10 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/pub-check-web/package-lock.json
       - name: Install
-        run: npm install --package-lock-only && npm ci
+        run: npm install
       - name: Typecheck
         run: npm run typecheck
       - name: Build
@@ -33,3 +33,15 @@ jobs:
           BLOB_READ_WRITE_TOKEN: vercel_blob_rw_test_placeholder
           CHECKER_ADMIN_TOKEN: checker_admin_test_placeholder
           CRON_SECRET: cron_test_placeholder
+
+  checker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+      - name: Format
+        run: cargo fmt --manifest-path tools/pub-check-cli/Cargo.toml --check
+      - name: Test bounded checker
+        run: cargo test --manifest-path tools/pub-check-cli/Cargo.toml
