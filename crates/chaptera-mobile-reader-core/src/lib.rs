@@ -81,15 +81,17 @@ fn mobile_failure_diagnostic_json_with_policy(
             && bytes.starts_with(CFB_MAGIC_V1));
 
     if bypass_shared_classifier {
+        let status = match &admission.status {
+            PubScanStatusV1::RejectedByPolicy => "rejected_by_policy",
+            PubScanStatusV1::ParseFailed => "parse_failed",
+            PubScanStatusV1::AcceptedCfb => "accepted_cfb",
+        };
+        let security_event = admission.security_event.as_deref().unwrap_or("none");
         return serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": MOBILE_ADMISSION_FAILURE_SCHEMA_V1,
             "admission": {
-                "status": match admission.status {
-                    PubScanStatusV1::RejectedByPolicy => "rejected_by_policy",
-                    PubScanStatusV1::ParseFailed => "parse_failed",
-                    PubScanStatusV1::AcceptedCfb => "accepted_cfb",
-                },
-                "security_event": admission.security_event.as_deref().unwrap_or("none"),
+                "status": status,
+                "security_event": security_event,
             },
             "contains_document_bytes": false,
             "contains_recovered_document_text": false,
