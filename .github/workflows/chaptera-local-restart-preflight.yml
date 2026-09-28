@@ -24,4 +24,27 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & ./tools/chaptera-local-restart-preflight.ps1 -Mode SelfTest -StateRoot (Join-Path $env:RUNNER_TEMP "chaptera-restart-preflight")
+          & ./tools/chaptera-local-restart-preflight.ps1 -Mode SelfTest -StateRoot (Join-Path $env:RUNNER_TEMP "chaptera-restart-preflight-selftest")
+
+      - name: Prove default Prepare defers reboot safely
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-restart-preflight-deferred"
+          & ./tools/chaptera-local-restart-preflight.ps1 -Mode Prepare -StateRoot $root
+          $receipt = Get-Content -Raw (Join-Path $root "receipt.json") | ConvertFrom-Json
+          if ($receipt.status -ne "REBOOT_DEFERRED_SAFETY") {
+            throw "default Prepare did not defer reboot safely: $($receipt.status)"
+          }
+          if ($receipt.real_reboot_observed) {
+            throw "deferred Prepare falsely claimed a real reboot"
+          }
+          if (-not $receipt.reboot_deferred_for_safety) {
+            throw "deferred Prepare receipt lost safety marker"
+          }
+          & schtasks.exe /Query /TN "Chaptera Dogfood Restart Resume" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            throw "resume task survived deferred safety cleanup"
+          }
+          $global:LASTEXITCODE = 0
+          Write-Host "CHAPTERA_RESTART_PREFLIGHT_DEFERRED_SAFETY PASS"
