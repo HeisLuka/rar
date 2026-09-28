@@ -1,9 +1,6 @@
-use pub_model::{
-    Sha256Digest, SourceDerivedIdInput, derive_source_canonical_id,
-};
+use pub_model::{Sha256Digest, SourceDerivedIdInput, derive_source_canonical_id};
 use root_pub_model::{
-    derive_pub_node_id_v1 as derive_root_node_id,
-    derive_pub_page_id_v1 as derive_root_page_id,
+    derive_pub_node_id_v1 as derive_root_node_id, derive_pub_page_id_v1 as derive_root_page_id,
     derive_pub_story_id_v1 as derive_root_story_id,
 };
 
@@ -30,8 +27,7 @@ fn carlton_projection_ids_match_root_and_active_vendor_contracts() {
     // customer PAGEs 266/361/406 and target frames
     // Qsid49->seq369, Qsid120->seq402, Qsid216->seq435, Qsid218->seq437.
     for page_seq in [266_u32, 361, 406] {
-        let root = derive_root_page_id(CARLTON_MARCH_SHA256, page_seq)
-            .expect("root PageId");
+        let root = derive_root_page_id(CARLTON_MARCH_SHA256, page_seq).expect("root PageId");
         let vendor = vendor_id(
             CARLTON_MARCH_SHA256,
             format!("contents/0x2c/seq/{page_seq}"),
@@ -41,8 +37,7 @@ fn carlton_projection_ids_match_root_and_active_vendor_contracts() {
     }
 
     for frame_seq in [369_u32, 402, 435, 437] {
-        let root = derive_root_node_id(CARLTON_MARCH_SHA256, frame_seq)
-            .expect("root frame NodeId");
+        let root = derive_root_node_id(CARLTON_MARCH_SHA256, frame_seq).expect("root frame NodeId");
         let vendor = vendor_id(
             CARLTON_MARCH_SHA256,
             format!("contents/0x2c/seq/{frame_seq}"),
@@ -52,8 +47,7 @@ fn carlton_projection_ids_match_root_and_active_vendor_contracts() {
     }
 
     for qsid in [49_u32, 120, 216, 218] {
-        let root = derive_root_story_id(CARLTON_MARCH_SHA256, qsid)
-            .expect("root target StoryId");
+        let root = derive_root_story_id(CARLTON_MARCH_SHA256, qsid).expect("root target StoryId");
         let vendor = vendor_id(
             CARLTON_MARCH_SHA256,
             format!("quill/syid/{qsid}"),
