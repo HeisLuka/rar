@@ -7074,6 +7074,7 @@ mod tests {
         clipped_text_nodes: usize,
         source_typography_sections: usize,
         fallback_typography_sections: usize,
+        projected_text_metrics: BTreeMap<String, render_backend::TextPaintMetrics>,
     }
 
     impl GoldenPageOnlyApp {
@@ -7087,6 +7088,7 @@ mod tests {
                 clipped_text_nodes: 0,
                 source_typography_sections: 0,
                 fallback_typography_sections: 0,
+                projected_text_metrics: BTreeMap::new(),
             }
         }
 
@@ -7147,6 +7149,7 @@ mod tests {
             self.clipped_text_nodes = 0;
             self.source_typography_sections = 0;
             self.fallback_typography_sections = 0;
+            self.projected_text_metrics.clear();
 
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
@@ -7183,6 +7186,10 @@ mod tests {
                             scene_scale,
                         );
                         if let Some(metrics) = outcome.text_metrics {
+                            if let Some(instance) = node.projected_scene_instance.as_ref() {
+                                self.projected_text_metrics
+                                    .insert(instance.instance_id.clone(), metrics.clone());
+                            }
                             self.painted_text_nodes += 1;
                             self.source_typography_sections += metrics.source_typography_sections;
                             self.fallback_typography_sections += metrics.fallback_sections;
@@ -7335,6 +7342,61 @@ mod tests {
             assert_eq!(image.width(), width_px, "golden raster width drift");
             assert_eq!(image.height(), height_px, "golden raster height drift");
             let executed = harness.state();
+            let projected_instance_receipts = plan
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    let instance = node.projected_scene_instance.as_ref()?;
+                    let viewer_projected = visual
+                        .projected_instances
+                        .iter()
+                        .find(|projected| {
+                            projected.scene_instance.instance_id == instance.instance_id
+                        })
+                        .expect("render-plan projected instance must come from Viewer adapter");
+                    let target_frame = visual
+                        .scene
+                        .nodes
+                        .iter()
+                        .find(|candidate| candidate.origin == viewer_projected.target_frame_node_id)
+                        .expect("projected target frame remains in resolved customer scene");
+                    Some(serde_json::json!({
+                        "instance_id": instance.instance_id,
+                        "origin_node_id": instance.origin_node_id,
+                        "target_frame_node_id": viewer_projected
+                            .target_frame_node_id
+                            .as_canonical()
+                            .to_string(),
+                        "cmo_slot_index": instance.cmo_slot_index,
+                        "cmo_scalar_index": instance.cmo_scalar_index,
+                        "story_authority_present": instance.story_authority_id.is_some(),
+                        "target_frame_bounds_emu": [
+                            target_frame.bounds.x.get(),
+                            target_frame.bounds.y.get(),
+                            target_frame.bounds.width.get(),
+                            target_frame.bounds.height.get(),
+                        ],
+                        "projected_bounds_emu": [
+                            node.bounds.x.get(),
+                            node.bounds.y.get(),
+                            node.bounds.width.get(),
+                            node.bounds.height.get(),
+                        ],
+                        "carrier_extent_emu": [
+                            node.bounds.width.get(),
+                            node.bounds.height.get(),
+                        ],
+                        "text_scalar_count": node
+                            .text
+                            .as_ref()
+                            .map(|text| text.text.chars().count())
+                            .unwrap_or(0),
+                        "executed_text_metrics": executed
+                            .projected_text_metrics
+                            .get(&instance.instance_id),
+                    }))
+                })
+                .collect::<Vec<_>>();
             let filename = format!("carlton-march-reader-page-{:03}.png", page_index + 1);
             image
                 .save(output_dir.join(&filename))
@@ -7355,6 +7417,7 @@ mod tests {
                 "raster_height_px": height_px,
                 "node_count": plan.nodes.len(),
                 "projected_scene_instance_count": projected_node_count,
+                "projected_instances": projected_instance_receipts,
                 "fill_node_count": plan.nodes.iter().filter(|node| node.solid_fill_rgb.is_some()).count(),
                 "line_node_count": plan.nodes.iter().filter(|node| node.solid_line.is_some()).count(),
                 "image_node_count": plan.nodes.iter().filter(|node| node.image.is_some()).count(),
