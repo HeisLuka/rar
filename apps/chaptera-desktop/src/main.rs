@@ -147,7 +147,6 @@ impl PreviewTextMetricDiagnostic {
     }
 }
 
-
 #[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
@@ -3558,8 +3557,7 @@ impl ViewerApp {
                             egui::Stroke::new(2.0_f32, egui::Color32::RED),
                             egui::StrokeKind::Inside,
                         );
-                        let marker_center =
-                            node_rect.right_top() + egui::vec2(7.0_f32, -7.0_f32);
+                        let marker_center = node_rect.right_top() + egui::vec2(7.0_f32, -7.0_f32);
                         painter.circle_filled(marker_center, 5.0_f32, egui::Color32::RED);
                         painter.text(
                             marker_center,
@@ -7030,8 +7028,7 @@ mod tests {
             "current main source authority proves 106 product-safe SampleNewsletter effective typography runs; Reader/Viewer projection must preserve them 1:1"
         );
         assert_eq!(
-            inherited_typography_run_count,
-            88,
+            inherited_typography_run_count, 88,
             "current main source authority proves 88 explicit-FDPP-selector inherited SampleNewsletter runs; projection must not drop inheritance provenance"
         );
         assert!(
