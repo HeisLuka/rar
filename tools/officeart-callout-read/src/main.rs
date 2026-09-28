@@ -253,6 +253,12 @@ mod tests {
         let mut fopt_payload = Vec::new();
         fopt_payload.extend_from_slice(&opid.to_le_bytes());
         fopt_payload.extend_from_slice(&op.to_le_bytes());
+        if opid & 0x8000 != 0 {
+            fopt_payload.resize(
+                fopt_payload.len() + usize::try_from(op).expect("complex payload length"),
+                0,
+            );
+        }
         let fopt = header((1 << 4) | 0x3, pub_escher::OFFICE_ART_FOPT, &fopt_payload);
         let sp = header(0x000f, pub_escher::OFFICE_ART_SP_CONTAINER, &fopt);
         inspect(StreamPath("/Escher/EscherStm".to_owned()), &sp)
