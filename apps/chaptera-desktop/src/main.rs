@@ -2656,6 +2656,45 @@ impl ViewerApp {
         }
     }
 
+    fn enter_canvas_text_mode_at_pointer(
+        &mut self,
+        story_id: pub_editor::StoryId,
+        frame_id: pub_editor::NodeId,
+        page_id: &str,
+        point: pub_interaction::DocumentPoint,
+    ) {
+        let outcome = self
+            .editor
+            .as_ref()
+            .ok_or_else(|| "Editor session is unavailable.".to_owned())
+            .and_then(|editor| {
+                text_session::enter_pointer_text_mode(
+                    editor,
+                    story_id,
+                    frame_id,
+                    page_id,
+                    point.x.get(),
+                    point.y.get(),
+                )
+            });
+        match outcome {
+            Ok(mode) => {
+                self.text_mode = Some(mode);
+                self.canvas_drag = None;
+                self.canvas_resize = None;
+                self.edit_status = Some(
+                    "Text editing activated from an admitted interior canvas click."
+                        .to_owned(),
+                );
+            }
+            Err(error) => {
+                self.edit_status = Some(format!(
+                    "Interior click kept object selection because no canonical text caret was admitted: {error}"
+                ));
+            }
+        }
+    }
+
     fn exit_canvas_text_mode(&mut self, trigger: &str) {
         let Some(mode) = self.text_mode.as_ref() else {
             return;
@@ -3065,6 +3104,12 @@ impl ViewerApp {
         let mut resize_commit = None;
         let mut resize_error = None;
         let mut edit_text_request: Option<(pub_editor::StoryId, pub_editor::NodeId)> = None;
+        let mut text_activation_request: Option<(
+            pub_editor::StoryId,
+            pub_editor::NodeId,
+            String,
+            pub_interaction::DocumentPoint,
+        )> = None;
         let mut text_pointer_request: Option<(String, pub_interaction::DocumentPoint)> = None;
         let mut text_exit_request = false;
         let hit_index = SceneHitTestIndex::new(
@@ -3363,8 +3408,34 @@ impl ViewerApp {
                                 canvas_hit = None;
                             }
                         }
+                    } else if let Some(hit) = topmost {
+                        canvas_hit = Some(hit.instance_id.clone());
+                        let strictly_inside = hit.bounds.right().is_some_and(|right| {
+                            hit.bounds.bottom().is_some_and(|bottom| {
+                                point.x.get() > hit.bounds.x.get()
+                                    && point.x.get() < right.get()
+                                    && point.y.get() > hit.bounds.y.get()
+                                    && point.y.get() < bottom.get()
+                            })
+                        });
+                        if strictly_inside
+                            && let Some(fragment) = visual
+                                .text_fragments
+                                .iter()
+                                .find(|fragment| fragment.frame_id == hit.node_id)
+                            && self.editor.as_ref().is_some_and(|editor| {
+                                editor.can_replace_story_text(fragment.story_id).is_ok()
+                            })
+                        {
+                            text_activation_request = Some((
+                                fragment.story_id,
+                                hit.node_id,
+                                page_id_text.clone(),
+                                point,
+                            ));
+                        }
                     } else {
-                        canvas_hit = topmost.map(|hit| hit.instance_id.clone());
+                        canvas_hit = None;
                     }
                 }
 
@@ -3600,6 +3671,9 @@ impl ViewerApp {
 
         if text_exit_request {
             self.exit_canvas_text_mode("canvas_non_text_click");
+        }
+        if let Some((story_id, frame_id, page_id, point)) = text_activation_request {
+            self.enter_canvas_text_mode_at_pointer(story_id, frame_id, &page_id, point);
         }
         if let Some((page_id, point)) = text_pointer_request {
             self.reposition_canvas_text_caret(&page_id, point);
