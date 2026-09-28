@@ -1,0 +1,37 @@
+# Authoring branch GC batch — 2026-09-28
+# Vetted: merged PR heads or explicitly superseded closed PR heads.
+# Runtime GC still skips any currently open PR head.
+
+authoring-delete-node-01-fresh-main-v2
+authoring-create-shape-runtime-v1
+authoring-hyperlink-v1-fresh-main
+authoring-delete-textbox-01-fresh
+authoring-resize-nodes-runtime-v1
+authoring-move-nodes-runtime-v2
+authoring-resize-nodes-01-fresh-main
+authoring-textframe-break-link-v5
+authoring-created-story-edit-01
+authoring-create-textbox-01-fresh
+authoring-table-grid-01
+authoring-paragraph-align-export-v3
+feat/authoring-fragment-set-v2
+feature/authoring-rotate-nodes-quarter-01
+feat/authoring-overset-state-v1
+
+authoring-textframe-break-link-v4
+authoring-textframe-break-link-v3
+authoring-page-size-v1
+authoring-textframe-break-link-v2
+authoring-paragraph-align-export-v2
+feature/authoring-table-cell-paint-01-v2
+feature/authoring-textframe-break-link-01
+feature/authoring-table-cell-paint-01
+
+# Previous cleanup machinery / execution branches.
+ops/branch-gc-safe-20260928
+ops/branch-gc-kick-20260928
+ops/branch-gc-pr-trigger-20260928
+ops/branch-gc-exec-20260928
+ops/remove-branch-gc-20260928
+ops/reusable-branch-gc-01
+ops/editor-branch-gc-20260928
