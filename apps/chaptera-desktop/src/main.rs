@@ -7424,7 +7424,7 @@ mod tests {
                 .expect("accepted TextBox enters direct text mode");
             assert_eq!(mode.story_id, story_id);
             assert_eq!(mode.frame_id, node_id);
-            assert_eq!(mode.selection.focus_scalar, 0);
+            assert_eq!(mode.session.selection.focus_scalar, 0);
             assert_eq!(app.canvas_tool_state.active_tool, select_tool_v1());
             assert!(app.canvas_box_draw.is_none());
             (node_id, story_id)
