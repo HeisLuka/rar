@@ -55,7 +55,7 @@ fn main() {
     let snapshot = layout_copy_ledger_snapshot_v1();
 
     println!(
-        "{{"scenario":"geometry_only_reflow","lines":{},"prepared_units_clone_bytes":{},"prepared_units_clone_instances":{}}}",
+        r#"{{"scenario":"geometry_only_reflow","lines":{},"prepared_units_clone_bytes":{},"prepared_units_clone_instances":{}}}"#,
         flow.lines.len(),
         snapshot.prepared_units_clone_bytes,
         snapshot.prepared_units_clone_instances,
