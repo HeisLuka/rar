@@ -1,0 +1,57 @@
+name: LOCAL-OIDC-PROVIDER-01
+
+on:
+  pull_request:
+    paths:
+      - "tools/chaptera_local_oidc.py"
+      - "tools/run_cloud_config_receipt.py"
+      - "tools/run_local_oidc_login_receipt.py"
+      - "tools/run_local_full_stack.py"
+      - "apps/chaptera-server/src/auth_http.rs"
+      - "apps/chaptera-server/src/auth_runtime.rs"
+      - "apps/chaptera-server/src/oidc_authn.rs"
+      - "deploy/config/chaptera.prod.example.toml"
+      - ".github/workflows/local-oidc-provider-01.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  oidc-provider-and-real-login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - name: Check Python harness syntax
+        run: |
+          python -m py_compile tools/chaptera_local_oidc.py
+          python -m py_compile tools/run_cloud_config_receipt.py
+          python -m py_compile tools/run_local_oidc_login_receipt.py
+          python -m py_compile tools/run_local_full_stack.py
+      - name: Build canonical Chaptera server
+        run: cargo build -p chaptera-server
+      - name: Preserve existing configured runtime receipt
+        run: |
+          python tools/run_cloud_config_receipt.py \
+            --binary target/debug/chaptera \
+            --example-config deploy/config/chaptera.prod.example.toml \
+            --out .chaptera-oidc/config-receipt
+      - name: Exercise real Authorization Code + PKCE login
+        run: |
+          python tools/run_local_oidc_login_receipt.py \
+            --binary target/debug/chaptera \
+            --example-config deploy/config/chaptera.prod.example.toml \
+            --out .chaptera-oidc/login-receipt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-oidc-provider-01-receipts
+          path: .chaptera-oidc
+          if-no-files-found: error
+          include-hidden-files: true
