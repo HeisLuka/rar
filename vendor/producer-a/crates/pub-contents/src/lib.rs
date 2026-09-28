@@ -5,6 +5,7 @@ use std::fmt;
 mod block;
 mod cells;
 mod chunk;
+mod controlling;
 mod directory;
 mod document;
 mod document_write;
@@ -37,6 +38,11 @@ pub use cells::{
     ObservedCellScalar, parse_confirmed_mature_cells,
 };
 pub use chunk::{ChunkReadError, Contents0x2cChunk, parse_confirmed_0x2c_chunk};
+pub use controlling::{
+    CONTROLLING_PAGE_LIST_ENTRY_ID, CONTROLLING_PAGE_LIST_ID, CONTROLLING_PAGE_LIST_PGID_ID,
+    ControllingPageList, ControllingPageListEntry, ControllingPageListReadError,
+    parse_confirmed_controlling_page_list,
+};
 pub use directory::{
     Contents0x2cDirectory, Contents0x2cDirectorySlot, DirectoryReadError,
     parse_confirmed_0x2c_directory,
