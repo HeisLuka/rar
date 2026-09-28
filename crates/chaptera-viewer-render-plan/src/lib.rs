@@ -253,43 +253,40 @@ pub fn build_page_render_plan_v1(
                 .text_fragments
                 .iter()
                 .find(|fragment| fragment.frame_id == node.origin)
-                .map(|fragment| {
-                    let rendered = RenderTextFragmentV1 {
-                        story_id: fragment.story_id,
-                        scalar_start: fragment.scalar_start,
-                        scalar_end: fragment.scalar_end,
-                        text: fragment.text.clone(),
-                        line_count: fragment.line_count,
-                        typography: visual
-                            .typography_runs
-                            .iter()
-                            .filter(|run| run.story_id == fragment.story_id)
-                            .filter(|run| {
-                                run.applies_to_story_text(
-                                    visual
-                                        .document
-                                        .stories
-                                        .iter()
-                                        .find(|story| story.id == fragment.story_id)
-                                        .map(|story| story.text.as_str())
-                                        .unwrap_or_default(),
-                                )
+                .map(|fragment| RenderTextFragmentV1 {
+                    story_id: fragment.story_id,
+                    scalar_start: fragment.scalar_start,
+                    scalar_end: fragment.scalar_end,
+                    text: fragment.text.clone(),
+                    line_count: fragment.line_count,
+                    typography: visual
+                        .typography_runs
+                        .iter()
+                        .filter(|run| run.story_id == fragment.story_id)
+                        .filter(|run| {
+                            run.applies_to_story_text(
+                                visual
+                                    .document
+                                    .stories
+                                    .iter()
+                                    .find(|story| story.id == fragment.story_id)
+                                    .map(|story| story.text.as_str())
+                                    .unwrap_or_default(),
+                            )
+                        })
+                        .filter_map(|run| {
+                            let scalar_start = run.scalar_start.max(fragment.scalar_start);
+                            let scalar_end = run.scalar_end.min(fragment.scalar_end);
+                            (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
+                                scalar_start,
+                                scalar_end,
+                                source_font_name: run.source_font_name.clone(),
+                                text_size_emu: run.text_size_emu,
+                                font_inherited: run.font_inherited,
+                                size_inherited: run.size_inherited,
                             })
-                            .filter_map(|run| {
-                                let scalar_start = run.scalar_start.max(fragment.scalar_start);
-                                let scalar_end = run.scalar_end.min(fragment.scalar_end);
-                                (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
-                                    scalar_start,
-                                    scalar_end,
-                                    source_font_name: run.source_font_name.clone(),
-                                    text_size_emu: run.text_size_emu,
-                                    font_inherited: run.font_inherited,
-                                    size_inherited: run.size_inherited,
-                                })
-                            })
-                            .collect(),
-                    };
-                    rendered
+                        })
+                        .collect(),
                 });
             #[cfg(feature = "projected-scene-instances")]
             {
