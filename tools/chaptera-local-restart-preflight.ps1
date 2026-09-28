@@ -253,13 +253,22 @@ function Complete-Resume([switch]$SameBootSelfTest) {
     }
 
     $bootAfter = Get-BootIdentity
-    $bootChanged = $bootAfter -ne $state.boot_before_utc
+    $observedBootChange = $bootAfter -ne $state.boot_before_utc
 
-    if (-not $bootChanged -and -not $SameBootSelfTest) {
-        throw "resume invoked but Windows reboot was not observed"
+    if ($SameBootSelfTest) {
+        # Hosted/self-test mode is intentionally incapable of proving reboot.
+        # Even if the platform reports a changed boot-time representation, do
+        # not upgrade this receipt into a real-reboot claim.
+        $bootChanged = $false
+        $status = "SELFTEST_PASS"
+    } else {
+        $bootChanged = $observedBootChange
+        if (-not $bootChanged) {
+            throw "resume invoked but Windows reboot was not observed"
+        }
+        $status = "PASS"
     }
 
-    $status = if ($bootChanged) { "PASS" } else { "SELFTEST_PASS" }
     $receipt = [ordered]@{
         schema_version = $Schema
         run_id = $state.run_id
@@ -275,6 +284,7 @@ function Complete-Resume([switch]$SameBootSelfTest) {
         real_reboot_observed = $bootChanged
         reboot_deferred_for_safety = $false
         boot_identity_changed = $bootChanged
+        observed_boot_identity_change = $observedBootChange
     }
     Write-DurableJson $ReceiptPath $receipt
     Write-Event "resume_detected" @{
