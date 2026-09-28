@@ -1,0 +1,33 @@
+name: Carlton Cmo identity bridge V1
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-viewer/Cargo.toml"
+      - "vendor/producer-a/crates/pub-viewer/tests/projection_identity_bridge.rs"
+      - ".github/workflows/carlton-cmo-identity-bridge-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  identity-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+      - name: Format exact bridge test
+        run: cargo fmt --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml -- --check
+      - name: Check exact bridge test target
+        run: cargo check --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml --test projection_identity_bridge
+      - name: Run exact Carlton identity bridge
+        run: cargo test --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml --test projection_identity_bridge -- --nocapture
