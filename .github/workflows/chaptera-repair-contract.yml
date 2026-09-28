@@ -1,0 +1,25 @@
+name: Chaptera repair contract
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-repair-contract/**"
+      - ".github/workflows/chaptera-repair-contract.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: chaptera-repair-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - run: cargo test --manifest-path crates/chaptera-repair-contract/Cargo.toml
