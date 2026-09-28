@@ -1,12 +1,10 @@
-use chaptera_update_candidate::{
-    extract_verified_reader_candidate, verify_candidate_tree,
-};
+use chaptera_update_candidate::{extract_verified_reader_candidate, verify_candidate_tree};
 use chaptera_update_trust::VerifiedPayloadReceipt;
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Write};
 use tempfile::tempdir;
-use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
@@ -45,10 +43,7 @@ fn receipt(payload: &[u8], installed_tree_bytes: u64) -> VerifiedPayloadReceipt 
 fn extracts_only_the_canonical_reader_tree_and_reverifies_it() {
     let exe = b"MZ-reader-v2";
     let readme = b"chaptera.reader-portable-readme.v1";
-    let payload = make_zip(&[
-        ("Chaptera-Reader.exe", exe),
-        ("README.md", readme),
-    ]);
+    let payload = make_zip(&[("Chaptera-Reader.exe", exe), ("README.md", readme)]);
     let temp = tempdir().unwrap();
     let root = temp.path().join("candidate");
 
@@ -76,49 +71,48 @@ fn rejects_extra_entry_and_tree_size_mismatch() {
         ("evil.dll", b"evil"),
     ]);
     let temp = tempdir().unwrap();
-    assert!(extract_verified_reader_candidate(
-        &extra,
-        &receipt(&extra, (exe.len() + readme.len() + 4) as u64),
-        &temp.path().join("extra"),
-    )
-    .is_err());
+    assert!(
+        extract_verified_reader_candidate(
+            &extra,
+            &receipt(&extra, (exe.len() + readme.len() + 4) as u64),
+            &temp.path().join("extra"),
+        )
+        .is_err()
+    );
 
-    let valid = make_zip(&[
-        ("Chaptera-Reader.exe", exe),
-        ("README.md", readme),
-    ]);
-    assert!(extract_verified_reader_candidate(
-        &valid,
-        &receipt(&valid, 1),
-        &temp.path().join("wrong-size"),
-    )
-    .is_err());
+    let valid = make_zip(&[("Chaptera-Reader.exe", exe), ("README.md", readme)]);
+    assert!(
+        extract_verified_reader_candidate(
+            &valid,
+            &receipt(&valid, 1),
+            &temp.path().join("wrong-size"),
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn rejects_duplicate_and_nested_entries() {
     let exe = b"MZ-reader-v2";
     let readme = b"chaptera.reader-portable-readme.v1";
-    let duplicate = make_zip(&[
-        ("Chaptera-Reader.exe", exe),
-        ("Chaptera-Reader.exe", exe),
-    ]);
+    let duplicate = make_zip(&[("Chaptera-Reader.exe", exe), ("Chaptera-Reader.exe", exe)]);
     let temp = tempdir().unwrap();
-    assert!(extract_verified_reader_candidate(
-        &duplicate,
-        &receipt(&duplicate, (exe.len() * 2) as u64),
-        &temp.path().join("duplicate"),
-    )
-    .is_err());
+    assert!(
+        extract_verified_reader_candidate(
+            &duplicate,
+            &receipt(&duplicate, (exe.len() * 2) as u64),
+            &temp.path().join("duplicate"),
+        )
+        .is_err()
+    );
 
-    let nested = make_zip(&[
-        ("Chaptera-Reader.exe", exe),
-        ("../README.md", readme),
-    ]);
-    assert!(extract_verified_reader_candidate(
-        &nested,
-        &receipt(&nested, (exe.len() + readme.len()) as u64),
-        &temp.path().join("nested"),
-    )
-    .is_err());
+    let nested = make_zip(&[("Chaptera-Reader.exe", exe), ("../README.md", readme)]);
+    assert!(
+        extract_verified_reader_candidate(
+            &nested,
+            &receipt(&nested, (exe.len() + readme.len()) as u64),
+            &temp.path().join("nested"),
+        )
+        .is_err()
+    );
 }
