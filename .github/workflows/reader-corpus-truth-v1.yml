@@ -71,3 +71,65 @@ jobs:
           name: chaptera-reader-corpus-truth-v1
           path: target/reader-corpus-truth-v1/
           if-no-files-found: error
+
+  package-corpus-bytes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download and verify pinned public PUB corpus
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import shutil
+          import urllib.parse
+          import urllib.request
+
+          manifest_path = pathlib.Path("tools/reader_corpus_manifest_v1.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          root = pathlib.Path("target/reader-corpus-bytes-v1")
+          corpus = root / "corpus"
+          corpus.mkdir(parents=True, exist_ok=True)
+
+          base = manifest["upstream"]["base_url"].rstrip("/")
+          for entry in manifest["fixtures"]:
+              name = entry["name"]
+              url = base + "/" + urllib.parse.quote(name)
+              with urllib.request.urlopen(url, timeout=60) as response:
+                  data = response.read()
+              sha = hashlib.sha256(data).hexdigest()
+              if sha != entry["sha256"]:
+                  raise SystemExit(f"{name}: sha256 mismatch {sha} != {entry['sha256']}")
+              if len(data) != entry["byte_len"]:
+                  raise SystemExit(f"{name}: byte length mismatch {len(data)} != {entry['byte_len']}")
+              (corpus / name).write_bytes(data)
+              print(f"OK {name} {len(data)} {sha}")
+
+          shutil.copy2(manifest_path, root / "reader_corpus_manifest_v1.json")
+          readme = """Chaptera Mobile Reader test corpus
+
+Source: Apache POI test-data/publisher
+Pinned commit: 942d95d85b15d0dfdb3bc9ba1b4f273f277757c8
+Selection: the 22-file Chaptera Reader corpus truth V1 manifest.
+Each file was SHA-256 and byte-length verified during packaging.
+
+This corpus intentionally includes ordinary documents, generation/version counterparts,
+hyperlink-range controls, complex brochure/newsletter samples, and one minimized fuzz case.
+Some inputs are expected to be unsupported/open-failed and are useful negative tests.
+"""
+          (root / "README.txt").write_text(readme, encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-reader-corpus-bytes-v1
+          path: target/reader-corpus-bytes-v1/
+          if-no-files-found: error
