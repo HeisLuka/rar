@@ -2161,6 +2161,20 @@ fn operation_summary(operation: &EditOperation) -> Value {
                 "after":rect_json(entry.after)
             })).collect::<Vec<_>>()
         }),
+        EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset,
+        } => json!({
+            "kind":"create_text_box",
+            "node_id":node_id.as_canonical().to_string(),
+            "story_id":story_id.as_canonical().to_string(),
+            "page_id":page_id.as_canonical().to_string(),
+            "bounds":rect_json(*bounds),
+            "text_preset":text_preset
+        }),
         EditOperation::CreateShape {
             node_id,
             page_id,
