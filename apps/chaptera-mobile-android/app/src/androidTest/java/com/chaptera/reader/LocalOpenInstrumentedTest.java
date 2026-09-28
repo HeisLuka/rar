@@ -101,6 +101,25 @@ public final class LocalOpenInstrumentedTest {
     }
 
     @Test
+    public void rejectedStructuralInputDoesNotPoisonLaterRealPubOpen() throws Exception {
+        byte[] rejected = "not a compound file".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String rejectedWire = NativeReader.openSessionJson(rejected);
+        assertTrue(
+            "malformed CFB must be rejected before Viewer open: " + rejectedWire,
+            rejectedWire.startsWith("ERR:OPEN:mobile_reader_admission.parse_failed")
+        );
+
+        byte[] fixture = readAsset("SampleNewsletter.pub");
+        String acceptedWire = NativeReader.openSessionJson(fixture);
+        assertFalse(
+            "later real PUB must still open after a rejected input: " + acceptedWire,
+            acceptedWire.startsWith("ERR:")
+        );
+        org.json.JSONObject receipt = new org.json.JSONObject(acceptedWire);
+        NativeReader.closeSession(receipt.getLong("session_id"));
+    }
+
+    @Test
     public void nonPubContentUriReturnsBoundedLocalFailure() throws Exception {
         byte[] bytes = "not a publisher document".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Uri uri = insertDownload("not-pub.bin", "application/octet-stream", bytes);
