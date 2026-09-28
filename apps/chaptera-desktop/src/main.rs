@@ -7362,7 +7362,9 @@ mod tests {
         );
 
         let mut page_receipts = Vec::new();
-        for page_index in 0..visual.document.pages.len() {
+        for (page_index, expected_projected_node_count) in
+            projected_page_counts.iter().copied().enumerate()
+        {
             let plan = build_page_render_plan_v1(&visual, page_index)
                 .expect("current Reader page render plan");
             let projected_node_count = plan
@@ -7371,7 +7373,7 @@ mod tests {
                 .filter(|node| node.projected_scene_instance.is_some())
                 .count();
             assert_eq!(
-                projected_node_count, projected_page_counts[page_index],
+                projected_node_count, expected_projected_node_count,
                 "render-plan projected instance count must match canonical Viewer adapter"
             );
             assert!(
