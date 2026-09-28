@@ -25,6 +25,12 @@ pub struct NodeRenderPlanV1 {
     pub bounds: RectEmu,
     pub transform: Affine2D,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_kind: Option<String>,
+    #[serde(default)]
+    pub projected_read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solid_fill_rgb: Option<[u8; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solid_line: Option<RenderSolidLineV1>,
@@ -105,84 +111,40 @@ pub fn build_page_render_plan_v1(
         .ok_or(RenderPlanErrorV1::PageSurfaceMissing { page_id: page.id })?;
 
     let parent_origin = page.id.into_canonical();
-    let nodes = visual
+    let mut nodes = Vec::new();
+    for node in visual
         .scene
         .nodes
         .iter()
         .filter(|node| node.parent_origin == parent_origin)
-        .map(|node| {
-            let paint = visual
-                .paints
-                .iter()
-                .find(|paint| paint.node_id == node.origin);
-            let image = visual
-                .images
-                .iter()
-                .find(|image| image.node_ids.contains(&node.origin))
-                .map(|image| RenderImageRefV1 {
-                    resource_id: image.resource_id,
-                    mime: image.mime.clone(),
-                });
-            let text = visual
-                .text_fragments
-                .iter()
-                .find(|fragment| fragment.frame_id == node.origin)
-                .map(|fragment| {
-                    let current_story_text = visual
-                        .document
-                        .stories
-                        .iter()
-                        .find(|story| story.id == fragment.story_id)
-                        .map(|story| story.text.as_str());
-                    let mut typography = visual
-                        .typography_runs
-                        .iter()
-                        .filter(|run| run.story_id == fragment.story_id)
-                        .filter(|run| {
-                            current_story_text
-                                .is_some_and(|text| run.applies_to_story_text(text))
-                        })
-                        .filter_map(|run| {
-                            let scalar_start = run.scalar_start.max(fragment.scalar_start);
-                            let scalar_end = run.scalar_end.min(fragment.scalar_end);
-                            (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
-                                scalar_start,
-                                scalar_end,
-                                source_font_name: run.source_font_name.clone(),
-                                text_size_emu: run.text_size_emu,
-                                font_inherited: run.font_inherited,
-                                size_inherited: run.size_inherited,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    typography.sort_by_key(|run| (run.scalar_start, run.scalar_end, run.text_size_emu));
+    {
+        nodes.push(render_node_plan_v1(
+            visual,
+            node.origin,
+            node.bounds,
+            node.transform.clone(),
+            None,
+            None,
+            false,
+        ));
 
-                    RenderTextFragmentV1 {
-                        story_id: fragment.story_id,
-                        scalar_start: fragment.scalar_start,
-                        scalar_end: fragment.scalar_end,
-                        text: fragment.text.clone(),
-                        line_count: fragment.line_count,
-                        typography,
-                    }
-                });
-
-            NodeRenderPlanV1 {
-                node_id: node.origin,
-                bounds: node.bounds,
-                transform: node.transform.clone(),
-                solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
-                solid_line: paint
-                    .and_then(|paint| paint.solid_line.as_ref())
-                    .map(|line| RenderSolidLineV1 {
-                        rgb: line.rgb,
-                        width_emu: line.width_emu,
-                    }),
-                image,
-                text,
-            }
-        })
-        .collect();
+        // Projected Cmo instances are anchored after their target StoryFrame in
+        // paint order. They keep carrier origin for paint/text/resource lookup,
+        // but preserve separate read-only instance identity for product layers.
+        for instance in visual.projected_instances.iter().filter(|instance| {
+            instance.target_page_id == page.id && instance.target_frame_node_id == node.origin
+        }) {
+            nodes.push(render_node_plan_v1(
+                visual,
+                instance.origin_node_id,
+                instance.bounds,
+                instance.transform.clone(),
+                Some(instance.instance_id.clone()),
+                Some(instance.projection_kind.clone()),
+                instance.read_only,
+            ));
+        }
+    }
 
     Ok(PageRenderPlanV1 {
         schema_version: PAGE_RENDER_PLAN_SCHEMA_V1.to_owned(),
@@ -190,6 +152,89 @@ pub fn build_page_render_plan_v1(
         page_size: surface.size,
         nodes,
     })
+}
+
+fn render_node_plan_v1(
+    visual: &ViewerGeometryDocument,
+    node_id: NodeId,
+    bounds: RectEmu,
+    transform: Affine2D,
+    instance_id: Option<String>,
+    projection_kind: Option<String>,
+    projected_read_only: bool,
+) -> NodeRenderPlanV1 {
+    let paint = visual
+        .paints
+        .iter()
+        .find(|paint| paint.node_id == node_id);
+    let image = visual
+        .images
+        .iter()
+        .find(|image| image.node_ids.contains(&node_id))
+        .map(|image| RenderImageRefV1 {
+            resource_id: image.resource_id,
+            mime: image.mime.clone(),
+        });
+    let text = visual
+        .text_fragments
+        .iter()
+        .find(|fragment| fragment.frame_id == node_id)
+        .map(|fragment| {
+            let current_story_text = visual
+                .document
+                .stories
+                .iter()
+                .find(|story| story.id == fragment.story_id)
+                .map(|story| story.text.as_str());
+            let mut typography = visual
+                .typography_runs
+                .iter()
+                .filter(|run| run.story_id == fragment.story_id)
+                .filter(|run| {
+                    current_story_text.is_some_and(|text| run.applies_to_story_text(text))
+                })
+                .filter_map(|run| {
+                    let scalar_start = run.scalar_start.max(fragment.scalar_start);
+                    let scalar_end = run.scalar_end.min(fragment.scalar_end);
+                    (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
+                        scalar_start,
+                        scalar_end,
+                        source_font_name: run.source_font_name.clone(),
+                        text_size_emu: run.text_size_emu,
+                        font_inherited: run.font_inherited,
+                        size_inherited: run.size_inherited,
+                    })
+                })
+                .collect::<Vec<_>>();
+            typography.sort_by_key(|run| (run.scalar_start, run.scalar_end, run.text_size_emu));
+
+            RenderTextFragmentV1 {
+                story_id: fragment.story_id,
+                scalar_start: fragment.scalar_start,
+                scalar_end: fragment.scalar_end,
+                text: fragment.text.clone(),
+                line_count: fragment.line_count,
+                typography,
+            }
+        });
+
+    NodeRenderPlanV1 {
+        node_id,
+        bounds,
+        transform,
+        instance_id,
+        projection_kind,
+        projected_read_only,
+        solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
+        solid_line: paint
+            .and_then(|paint| paint.solid_line.as_ref())
+            .map(|line| RenderSolidLineV1 {
+                rgb: line.rgb,
+                width_emu: line.width_emu,
+            }),
+        image,
+        text,
+    }
 }
 
 #[cfg(test)]
@@ -296,6 +341,7 @@ mod tests {
                 node_ids: vec![node_id],
                 bytes: vec![0x89, b'P', b'N', b'G'],
             }],
+            projected_instances: Vec::new(),
         }
     }
 
@@ -307,6 +353,9 @@ mod tests {
         assert_eq!(plan.schema_version, PAGE_RENDER_PLAN_SCHEMA_V1);
         assert_eq!(plan.nodes.len(), 1);
         let node = &plan.nodes[0];
+        assert!(node.instance_id.is_none());
+        assert!(node.projection_kind.is_none());
+        assert!(!node.projected_read_only);
         assert_eq!(node.solid_fill_rgb, Some([1, 2, 3]));
         assert_eq!(
             node.solid_line.as_ref().map(|line| line.rgb),
@@ -326,6 +375,51 @@ mod tests {
         assert_eq!(typography[0].scalar_end, 2);
         assert_eq!(typography[0].text_size_emu, 24 * 12_700);
         assert!(typography[0].size_inherited);
+    }
+
+    #[test]
+    fn projected_cmo_instance_keeps_identity_and_reuses_carrier_paint() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let carrier = visual.scene.nodes[0].origin;
+        let target_frame = visual.scene.nodes[0].origin;
+        visual.projected_instances.push(pub_viewer::ViewerProjectedInstance {
+            instance_id: "scene:cmo-story-slot:test".into(),
+            projection_kind: "cmo_story_slot".into(),
+            origin_node_id: carrier,
+            target_page_id: page_id,
+            bounds: RectEmu::new(
+                LengthEmu::new(50),
+                LengthEmu::new(60),
+                LengthEmu::new(70),
+                LengthEmu::new(80),
+            ),
+            transform: Affine2D::identity(),
+            read_only: true,
+            target_story_id: StoryId::from_canonical(canonical(3)),
+            target_frame_node_id: target_frame,
+            carrier_story_id: Some(StoryId::from_canonical(canonical(3))),
+            slot_index: 0,
+            scalar_index: 0,
+            source_order: 0,
+            cmo_id: 7,
+        });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        assert_eq!(plan.nodes.len(), 2);
+        let projected = &plan.nodes[1];
+        assert_eq!(projected.node_id, carrier);
+        assert_eq!(
+            projected.instance_id.as_deref(),
+            Some("scene:cmo-story-slot:test")
+        );
+        assert_eq!(projected.projection_kind.as_deref(), Some("cmo_story_slot"));
+        assert!(projected.projected_read_only);
+        assert_eq!(projected.solid_fill_rgb, Some([1, 2, 3]));
+        assert_eq!(
+            projected.text.as_ref().map(|text| text.text.as_str()),
+            Some("hello")
+        );
     }
 
     #[test]
