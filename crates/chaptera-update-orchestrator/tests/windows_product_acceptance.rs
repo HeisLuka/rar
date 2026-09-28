@@ -1,4 +1,4 @@
-use chaptera_update_engine::RecoveryOutcome;
+use chaptera_update_engine::{RecoveryOutcome, UpdateEngine};
 use chaptera_update_orchestrator::{ApplyOutcome, UpdateHooks, UpdateOrchestrator};
 use chaptera_update_trust::{
     ChapteraReleaseSemantics, InstalledUpdateContext, UpdateMode, INSTALL_LAYOUT_EPOCH,
@@ -6,8 +6,12 @@ use chaptera_update_trust::{
 };
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use tempfile::tempdir;
 
 #[derive(Default)]
@@ -302,4 +306,159 @@ fn real_installed_reader_update_rollback_cycle() {
     run_real_reader_smoke(&current, &fixture).unwrap();
     assert_eq!(fs::read(&fixture).unwrap(), original_pub);
     assert_eq!(fs::read(&external_state).unwrap(), original_external);
+}
+
+
+#[cfg(windows)]
+#[test]
+fn real_installed_reader_process_restart_and_file_lock_recovery_matrix() {
+    let Some(root) = std::env::var_os("CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT").map(PathBuf::from) else {
+        eprintln!("installed fault-recovery acceptance skipped: CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT unset");
+        return;
+    };
+    let fixture = PathBuf::from(
+        std::env::var_os("CHAPTERA_UPDATE_ACCEPT_PUB")
+            .expect("CHAPTERA_UPDATE_ACCEPT_PUB must accompany install root"),
+    );
+    let external_state = PathBuf::from(
+        std::env::var_os("CHAPTERA_UPDATE_ACCEPT_EXTERNAL_STATE")
+            .expect("CHAPTERA_UPDATE_ACCEPT_EXTERNAL_STATE must accompany install root"),
+    );
+
+    let current = root.join("current");
+    assert!(current.join("chaptera-reader.exe").is_file());
+    let original_tree = snapshot_tree(&current);
+    let original_pub = fs::read(&fixture).unwrap();
+    let original_external = fs::read(&external_state).unwrap();
+    run_real_reader_smoke(&current, &fixture).unwrap();
+
+    let temp = tempdir().unwrap();
+
+    // Simulate process death after the previous tree was durably retained but
+    // before candidate activation. Recovery is performed by a fresh engine
+    // instance, which represents the next updater process.
+    let candidate_retained = temp.path().join("candidate-retained");
+    copy_tree(&current, &candidate_retained);
+    fs::write(candidate_retained.join("acceptance-version.txt"), b"retained-fault").unwrap();
+
+    {
+        let engine = UpdateEngine::new(&root);
+        engine
+            .begin_verified_candidate(
+                "installed-fault-after-retain",
+                "0.2.0-retain-fault",
+                &candidate_retained,
+                Path::new("chaptera-reader.exe"),
+            )
+            .unwrap();
+        engine.retain_previous().unwrap();
+        assert!(!current.exists());
+        // Drop without recovery: this is the simulated crashed updater.
+    }
+
+    let restarted = UpdateEngine::new(&root);
+    assert_eq!(
+        restarted.recover().unwrap(),
+        RecoveryOutcome::UnconfirmedCandidateRolledBack
+    );
+    assert_eq!(
+        snapshot_tree(&current),
+        original_tree,
+        "fresh process must restore byte-identical A after retained-tree crash"
+    );
+    restarted.cleanup_orphaned_transactions().unwrap();
+    run_real_reader_smoke(&current, &fixture).unwrap();
+
+    // Simulate process death after candidate activation but before durable
+    // confirmation. A fresh process must reject the unconfirmed candidate and
+    // restore the predecessor exactly.
+    let candidate_activated = temp.path().join("candidate-activated");
+    copy_tree(&current, &candidate_activated);
+    fs::write(
+        candidate_activated.join("acceptance-version.txt"),
+        b"activated-fault",
+    )
+    .unwrap();
+
+    {
+        let engine = UpdateEngine::new(&root);
+        engine
+            .begin_verified_candidate(
+                "installed-fault-after-activate",
+                "0.2.0-activate-fault",
+                &candidate_activated,
+                Path::new("chaptera-reader.exe"),
+            )
+            .unwrap();
+        engine.retain_previous().unwrap();
+        engine.activate_candidate().unwrap();
+        assert_eq!(
+            fs::read(current.join("acceptance-version.txt")).unwrap(),
+            b"activated-fault"
+        );
+        // Drop without confirm/recover.
+    }
+
+    let restarted = UpdateEngine::new(&root);
+    assert_eq!(
+        restarted.recover().unwrap(),
+        RecoveryOutcome::UnconfirmedCandidateRolledBack
+    );
+    assert_eq!(
+        snapshot_tree(&current),
+        original_tree,
+        "fresh process must restore byte-identical A after activation crash"
+    );
+    restarted.cleanup_orphaned_transactions().unwrap();
+    run_real_reader_smoke(&current, &fixture).unwrap();
+
+    // Hold the installed executable with Windows share mode 0. Candidate
+    // preparation must fail rather than mutating current behind the live lock.
+    // Once the file handle disappears, a fresh engine owns recovery.
+    let candidate_locked = temp.path().join("candidate-locked");
+    copy_tree(&current, &candidate_locked);
+    fs::write(candidate_locked.join("acceptance-version.txt"), b"locked-fault").unwrap();
+
+    let reader = current.join("chaptera-reader.exe");
+    let exclusive_reader = OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&reader)
+        .expect("exclusive installed Reader handle");
+
+    let engine = UpdateEngine::new(&root);
+    let error = engine
+        .begin_verified_candidate(
+            "installed-fault-reader-lock",
+            "0.2.0-lock-fault",
+            &candidate_locked,
+            Path::new("chaptera-reader.exe"),
+        )
+        .expect_err("exclusive Reader lock must fail candidate preparation");
+    assert!(
+        error.to_string().contains("I/O error"),
+        "unexpected locked-file error: {error}"
+    );
+    drop(exclusive_reader);
+    drop(engine);
+
+    let restarted = UpdateEngine::new(&root);
+    assert_eq!(
+        restarted.recover().unwrap(),
+        RecoveryOutcome::PreparedTransactionAborted
+    );
+    assert_eq!(
+        snapshot_tree(&current),
+        original_tree,
+        "locked preparation recovery must leave installed A byte-identical"
+    );
+    restarted.cleanup_orphaned_transactions().unwrap();
+
+    run_real_reader_smoke(&current, &fixture).unwrap();
+    assert_eq!(fs::read(&fixture).unwrap(), original_pub);
+    assert_eq!(fs::read(&external_state).unwrap(), original_external);
+
+    println!(
+        "CHAPTERA_INSTALLED_FAULT_RECOVERY_RECEIPT retained_restart=pass activated_restart=pass exclusive_reader_lock=pass final_reader_smoke=pass source_pub_unchanged=true external_state_unchanged=true"
+    );
 }
