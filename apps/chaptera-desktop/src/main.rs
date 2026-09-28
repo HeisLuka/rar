@@ -7052,6 +7052,7 @@ mod tests {
         visual: ViewerGeometryDocument,
         page_index: usize,
         image_textures: BTreeMap<String, CachedImageTexture>,
+        clipped_node_ids: Vec<String>,
     }
 
     impl CarltonReaderGoldenPageApp {
@@ -7091,12 +7092,14 @@ mod tests {
                 visual,
                 page_index,
                 image_textures,
+                clipped_node_ids: Vec::new(),
             }
         }
     }
 
     impl eframe::App for CarltonReaderGoldenPageApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.clipped_node_ids.clear();
             let page = self
                 .visual
                 .document
@@ -7175,6 +7178,8 @@ mod tests {
                     scene_scale,
                 );
                 if paint_outcome.text_clipped {
+                    self.clipped_node_ids
+                        .push(node.origin.as_canonical().to_string());
                     painter.rect_stroke(
                         node_rect,
                         0,
@@ -7267,19 +7272,7 @@ mod tests {
             let page = &visual.document.pages[page_index];
             let render_plan = build_page_render_plan_v1(&visual, page_index)
                 .expect("Carlton page render plan for receipt");
-            let clipped_nodes = render_plan
-                .nodes
-                .iter()
-                .filter_map(|node| {
-                    let text = node.text.as_ref()?;
-                    let metrics = render_backend::measure_document_text(
-                        text,
-                        node.bounds,
-                        CARLTON_VISUAL_GOLDEN_DPI / EMU_PER_INCH,
-                    )?;
-                    metrics.clipped.then_some(node.node_id.as_canonical().to_string())
-                })
-                .collect::<Vec<_>>();
+            let clipped_nodes = harness.state().clipped_node_ids.clone();
 
             page_receipts.push(serde_json::json!({
                 "reader_page_number": page_index + 1,
