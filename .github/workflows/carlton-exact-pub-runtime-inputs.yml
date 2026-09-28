@@ -81,23 +81,46 @@ jobs:
           raw = response.text
           (DISC / "latest-letters.html").write_text(raw, encoding="utf-8")
 
-          # Capture the current public frontend bundle's route vocabulary so a stale
-          # SSR presign can be replaced by the live file API instead of blind retries.
-          bundle_match = re.search(r'<script[^>]+src="(main-[^"]+\.js)"', raw)
-          if bundle_match:
-              bundle_url = requests.compat.urljoin(PAGE, bundle_match.group(1))
+          # Capture the public frontend route vocabulary. The document declares
+          # <base href="/">, so resolve Angular bundles through that base exactly as
+          # a browser does instead of relative to /parents/latest-letters.
+          script_srcs = re.findall(r'<script[^>]+src="([^"]+)"', raw, flags=re.I)
+          base_match = re.search(r'<base[^>]+href="([^"]+)"', raw, flags=re.I)
+          base_href = base_match.group(1) if base_match else "/"
+          document_base = requests.compat.urljoin(response.url, base_href)
+          main_src = next((src for src in script_srcs if re.search(r'(^|/)main-[^/]+[.]js$', src)), None)
+          frontend_diag = {
+              "response_url": response.url,
+              "base_href": base_href,
+              "document_base": document_base,
+              "script_srcs": script_srcs,
+              "main_src": main_src,
+          }
+          (DISC / "frontend-scripts.json").write_text(
+              json.dumps(frontend_diag, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if main_src:
+              bundle_url = requests.compat.urljoin(document_base, main_src)
               bundle = session.get(bundle_url, timeout=30)
+              frontend_diag["bundle_url"] = bundle_url
+              frontend_diag["bundle_status"] = bundle.status_code
+              (DISC / "frontend-scripts.json").write_text(
+                  json.dumps(frontend_diag, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
               bundle.raise_for_status()
+              (DISC / "school-jotter-main.js").write_bytes(bundle.content)
               candidates = sorted(set(
                   match.group(0)
                   for match in re.finditer(
-                      r'[^"]{0,100}(?:/api/|download|file)[^"]{0,180}',
+                      r'[^"\\s]{0,120}(?:/api/|download|file)[^"\\s]{0,220}',
                       bundle.text,
                       flags=re.I,
                   )
               ))
               (DISC / "frontend-route-candidates.txt").write_text(
-                  "\n".join(candidates[:2000]) + "\n",
+                  "\n".join(candidates[:4000]) + "\n",
                   encoding="utf-8",
               )
 
