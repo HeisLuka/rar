@@ -727,7 +727,6 @@ struct CachedPageFrameWork {
     page_index: usize,
     render_plan: PageRenderPlanV1,
     hit_index: SceneHitTestIndex,
-    render_node_by_id: BTreeMap<pub_editor::NodeId, usize>,
     movable_nodes: BTreeMap<String, (pub_editor::NodeId, pub_editor::RectEmu)>,
     resizable_nodes: BTreeMap<String, (pub_editor::NodeId, pub_editor::RectEmu)>,
 }
@@ -3512,73 +3511,83 @@ impl ViewerApp {
             .ok_or_else(|| "Selected page is unavailable.".to_owned())?;
         let render_plan =
             build_page_render_plan_v1(visual, page_index).map_err(|error| error.to_string())?;
-        let render_node_by_id = render_plan
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(index, node)| (node.node_id, index))
-            .collect::<BTreeMap<_, _>>();
-        let page_origin = page.id.into_canonical();
         let page_id_text = page.id.as_canonical().to_string();
 
         let mut hit_entries = Vec::new();
         let mut movable_nodes = BTreeMap::new();
         let mut resizable_nodes = BTreeMap::new();
 
-        if let Some(editor) = self.editor.as_ref() {
-            for (paint_order, node) in visual
-                .scene
-                .nodes
-                .iter()
-                .filter(|node| node.parent_origin == page_origin)
-                .enumerate()
-            {
-                let Some(instance) = direct_scene_instance(editor, &page_id_text, node.origin)
-                else {
-                    continue;
-                };
-                let instance_id = instance.instance_id.clone();
-                let origin_node_id = node.origin.as_canonical().to_string();
+        for (paint_order, render_node) in render_plan.nodes.iter().enumerate() {
+            let projected = render_node.projected_scene_instance.as_ref();
+            let instance = match projected {
+                Some(instance) => instance.clone(),
+                None => {
+                    let Some(editor) = self.editor.as_ref() else {
+                        continue;
+                    };
+                    let Some(instance) =
+                        direct_scene_instance(editor, &page_id_text, render_node.node_id)
+                    else {
+                        continue;
+                    };
+                    instance
+                }
+            };
+            let instance_id = instance.instance_id.clone();
 
-                if let Some(authored_node) = editor.graph().nodes.get(&node.origin) {
-                    let bounds = authored_node.header.bounds;
-                    let move_admission =
-                        admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
-                    if move_admission.admitted
-                        && move_admission.origin_node_id.as_deref() == Some(origin_node_id.as_str())
-                        && editor
-                            .can_move_node_to(node.origin, bounds.x, bounds.y)
-                            .is_ok()
-                    {
-                        movable_nodes.insert(instance_id.clone(), (node.origin, bounds));
-                    }
+            if projected.is_none() {
+                if let Some(editor) = self.editor.as_ref() {
+                    if let Some(authored_node) = editor.graph().nodes.get(&render_node.node_id) {
+                        let bounds = authored_node.header.bounds;
+                        let origin_node_id = render_node.node_id.as_canonical().to_string();
 
-                    let resize_admission =
-                        admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
-                    if resize_admission.admitted
-                        && resize_admission.origin_node_id.as_deref()
-                            == Some(origin_node_id.as_str())
-                        && editor.can_resize_node(node.origin).is_ok()
-                    {
-                        resizable_nodes.insert(instance_id.clone(), (node.origin, bounds));
+                        let move_admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode);
+                        if move_admission.admitted
+                            && move_admission.origin_node_id.as_deref()
+                                == Some(origin_node_id.as_str())
+                            && editor
+                                .can_move_node_to(render_node.node_id, bounds.x, bounds.y)
+                                .is_ok()
+                        {
+                            movable_nodes
+                                .insert(instance_id.clone(), (render_node.node_id, bounds));
+                        }
+
+                        let resize_admission =
+                            admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode);
+                        if resize_admission.admitted
+                            && resize_admission.origin_node_id.as_deref()
+                                == Some(origin_node_id.as_str())
+                            && editor.can_resize_node(render_node.node_id).is_ok()
+                        {
+                            resizable_nodes
+                                .insert(instance_id.clone(), (render_node.node_id, bounds));
+                        }
                     }
                 }
-
-                hit_entries.push(SceneHitEntry {
-                    instance_id,
-                    node_id: node.origin,
-                    bounds: node.bounds,
-                    z_order: 0,
-                    paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
-                });
+            } else {
+                debug_assert!(
+                    !admit_object_mutation_v1(&instance, ObjectMutationKindV1::MoveNode).admitted
+                );
+                debug_assert!(
+                    !admit_object_mutation_v1(&instance, ObjectMutationKindV1::ResizeNode).admitted
+                );
             }
+
+            hit_entries.push(SceneHitEntry {
+                instance_id,
+                node_id: render_node.node_id,
+                bounds: render_node.bounds,
+                z_order: 0,
+                paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+            });
         }
 
         Ok(CachedPageFrameWork {
             page_index,
             render_plan,
             hit_index: SceneHitTestIndex::new(hit_entries),
-            render_node_by_id,
             movable_nodes,
             resizable_nodes,
         })
@@ -4002,23 +4011,22 @@ impl ViewerApp {
 
                 render_backend::paint_page_surface(&painter, page_rect);
 
-                for node in page_nodes.iter().copied() {
-                    let Some(render_node) = frame_work
-                        .render_node_by_id
-                        .get(&node.origin)
-                        .and_then(|index| render_plan.nodes.get(*index))
-                    else {
-                        continue;
+                for render_node in &render_plan.nodes {
+                    let projected = render_node.projected_scene_instance.as_ref();
+                    let node_id = render_node.node_id;
+                    let node_bounds = if projected.is_none() {
+                        next_canvas_resize
+                            .filter(|resize| resize.node_id() == node_id)
+                            .and_then(|resize| resize.preview_bounds())
+                            .or_else(|| {
+                                next_canvas_drag
+                                    .filter(|drag| drag.node_id() == node_id)
+                                    .map(|drag| drag.preview_bounds())
+                            })
+                            .unwrap_or(render_node.bounds)
+                    } else {
+                        render_node.bounds
                     };
-                    let node_bounds = next_canvas_resize
-                        .filter(|resize| resize.node_id() == node.origin)
-                        .and_then(|resize| resize.preview_bounds())
-                        .or_else(|| {
-                            next_canvas_drag
-                                .filter(|drag| drag.node_id() == node.origin)
-                                .map(|drag| drag.preview_bounds())
-                        })
-                        .unwrap_or(render_node.bounds);
                     let Some(node_rect) = render_backend::physical_rect_to_egui(
                         page_rect,
                         scene_scale,
@@ -4029,7 +4037,9 @@ impl ViewerApp {
                     ) else {
                         continue;
                     };
-                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+
+                    if projected.is_none()
+                        && let Some(instance_id) = hit_index.instance_for_node(node_id)
                         && movable_nodes.contains_key(instance_id)
                     {
                         let a11y = ui.interact(
@@ -4045,7 +4055,8 @@ impl ViewerApp {
                             )
                         });
                     }
-                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
+                    if projected.is_none()
+                        && let Some(instance_id) = hit_index.instance_for_node(node_id)
                         && resizable_nodes.contains_key(instance_id)
                     {
                         let a11y = ui.interact(
@@ -4061,11 +4072,19 @@ impl ViewerApp {
                             )
                         });
                     }
-                    let replacement_key = self
-                        .editor
-                        .as_ref()
-                        .and_then(|editor| editor.image_replacement_for(node.origin))
-                        .map(|sha256| format!("replacement:{:?}", sha256));
+
+                    let replace_image_admitted = projected.is_none_or(|instance| {
+                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage)
+                            .admitted
+                    });
+                    let replacement_key = replace_image_admitted
+                        .then(|| {
+                            self.editor
+                                .as_ref()
+                                .and_then(|editor| editor.image_replacement_for(node_id))
+                                .map(|sha256| format!("replacement:{:?}", sha256))
+                        })
+                        .flatten();
                     let replacement_texture = replacement_key
                         .as_ref()
                         .and_then(|key| self.image_textures.get(key));
@@ -4104,9 +4123,9 @@ impl ViewerApp {
                                     PreviewTextMetricDiagnostic::from_executed_layout(
                                         page.index,
                                         page.id.as_canonical().to_string(),
-                                        node.origin.as_canonical().to_string(),
+                                        node_id.as_canonical().to_string(),
                                         fragment.story_id.as_canonical().to_string(),
-                                        node.bounds,
+                                        render_node.bounds,
                                         self.zoom,
                                         metrics,
                                     ),
@@ -4662,15 +4681,10 @@ fn paint_page_thumbnail(
     let Some(page) = visual.document.pages.get(page_index) else {
         return;
     };
-    let Some(surface) = visual
-        .scene
-        .surfaces
-        .iter()
-        .find(|surface| surface.origin == page.id)
-    else {
+    let Ok(render_plan) = build_page_render_plan_v1(visual, page_index) else {
         return;
     };
-    if surface.size.width.get() <= 0 || surface.size.height.get() <= 0 {
+    if render_plan.page_size.width.get() <= 0 || render_plan.page_size.height.get() <= 0 {
         return;
     }
 
@@ -4691,20 +4705,13 @@ fn paint_page_thumbnail(
     );
 
     let content_painter = painter.with_clip_rect(page_rect);
-    let scale_x = page_rect.width() / surface.size.width.get() as f32;
-    let scale_y = page_rect.height() / surface.size.height.get() as f32;
-    let page_origin = page.id.into_canonical();
+    let scale_x = page_rect.width() / render_plan.page_size.width.get() as f32;
+    let scale_y = page_rect.height() / render_plan.page_size.height.get() as f32;
 
-    for node in visual
-        .scene
-        .nodes
-        .iter()
-        .filter(|node| node.parent_origin == page_origin)
-    {
+    for node in &render_plan.nodes {
         if node.bounds.width.get() <= 0 || node.bounds.height.get() <= 0 {
             continue;
         }
-
         let node_rect = egui::Rect::from_min_size(
             egui::pos2(
                 page_rect.left() + node.bounds.x.get() as f32 * scale_x,
@@ -4716,11 +4723,7 @@ fn paint_page_thumbnail(
             ),
         );
 
-        let node_paint = visual
-            .paints
-            .iter()
-            .find(|paint| paint.node_id == node.origin);
-        if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
+        if let Some(rgb) = node.solid_fill_rgb {
             content_painter.rect_filled(
                 node_rect,
                 0.0,
@@ -4728,20 +4731,26 @@ fn paint_page_thumbnail(
             );
         }
 
-        let replacement_key = editor
-            .and_then(|editor| editor.image_replacement_for(node.origin))
-            .map(|sha256| format!("replacement:{:?}", sha256));
+        let replace_image_admitted =
+            node.projected_scene_instance
+                .as_ref()
+                .is_none_or(|instance| {
+                    admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage).admitted
+                });
+        let replacement_key = replace_image_admitted
+            .then(|| {
+                editor
+                    .and_then(|editor| editor.image_replacement_for(node.node_id))
+                    .map(|sha256| format!("replacement:{:?}", sha256))
+            })
+            .flatten();
         let replacement_texture = replacement_key
             .as_ref()
             .and_then(|key| image_textures.get(key));
-        let source_texture = visual
-            .images
-            .iter()
-            .find(|embedded| embedded.node_ids.contains(&node.origin))
-            .and_then(|embedded| {
-                let key = format!("{:?}", embedded.resource_id);
-                image_textures.get(&key)
-            });
+        let source_texture = node.image.as_ref().and_then(|image| {
+            let key = format!("{:?}", image.resource_id);
+            image_textures.get(&key)
+        });
         if let Some(texture) = replacement_texture.or(source_texture) {
             content_painter.image(
                 texture.texture.id(),
@@ -4751,10 +4760,7 @@ fn paint_page_thumbnail(
             );
         }
 
-        if let Some(fragment) = visual
-            .text_fragments
-            .iter()
-            .find(|fragment| fragment.frame_id == node.origin)
+        if let Some(fragment) = node.text.as_ref()
             && !fragment.text.is_empty()
             && node_rect.width() >= 4.0
             && node_rect.height() >= 4.0
@@ -4770,7 +4776,7 @@ fn paint_page_thumbnail(
             );
         }
 
-        if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
+        if let Some(line) = node.solid_line.as_ref() {
             content_painter.rect_stroke(
                 node_rect,
                 0.0,
@@ -4782,6 +4788,8 @@ fn paint_page_thumbnail(
             );
         }
     }
+
+    debug_assert_eq!(render_plan.page_id, page.id);
 }
 
 fn numeric_zoom_scene_scale(zoom: f32) -> Option<f32> {
@@ -4891,12 +4899,108 @@ mod tests {
     }
 
     #[test]
+    fn desktop_projected_nodes_use_scene_instance_mutation_admission() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("for render_node in &render_plan.nodes"));
+        assert!(source.contains("render_node.projected_scene_instance.as_ref()"));
+        assert!(source.contains("Some(instance) => instance.instance_id.clone()"));
+        assert!(source.contains("SceneHitTestIndex::new("));
+        assert!(
+            source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode)")
+        );
+        assert!(
+            source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode)")
+        );
+        assert!(
+            source
+                .contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage)")
+        );
+    }
+
+    #[test]
+    fn projected_visual_identity_wins_mixed_topmost_hit_without_mutation_admission() {
+        let direct_node_id: pub_editor::NodeId =
+            serde_json::from_value(serde_json::json!("11111111-1111-1111-1111-111111111111"))
+                .expect("direct NodeId fixture");
+        let projected_origin_node_id: pub_editor::NodeId =
+            serde_json::from_value(serde_json::json!("22222222-2222-2222-2222-222222222222"))
+                .expect("projected origin NodeId fixture");
+        let bounds = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(10),
+            pub_editor::LengthEmu::new(20),
+            pub_editor::LengthEmu::new(100),
+            pub_editor::LengthEmu::new(80),
+        );
+        let projected_instance = SceneInstanceV1 {
+            schema_version: chaptera_scene_instance::SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:projected-hit-fixture".to_owned(),
+            projection_kind: chaptera_scene_instance::SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: projected_origin_node_id.as_canonical().to_string(),
+            target_page_id: "33333333-3333-3333-3333-333333333333".to_owned(),
+            source_parent_origin: None,
+            story_authority_id: None,
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+
+        let hit_index = SceneHitTestIndex::new(vec![
+            SceneHitEntry {
+                instance_id: "sha256:direct-hit-fixture".to_owned(),
+                node_id: direct_node_id,
+                bounds,
+                z_order: 0,
+                paint_order: 0,
+            },
+            SceneHitEntry {
+                instance_id: projected_instance.instance_id.clone(),
+                node_id: projected_origin_node_id,
+                bounds,
+                z_order: 0,
+                paint_order: 1,
+            },
+        ]);
+        let point = pub_interaction::DocumentPoint::new(
+            pub_editor::LengthEmu::new(50),
+            pub_editor::LengthEmu::new(50),
+        );
+        let top = hit_index.topmost_at(point).expect("overlapping visual hit");
+        assert_eq!(
+            top.instance_id.as_str(),
+            projected_instance.instance_id.as_str()
+        );
+        assert_eq!(top.node_id, projected_origin_node_id);
+        assert_eq!(
+            hit_index.node_for_instance(&projected_instance.instance_id),
+            Some(projected_origin_node_id)
+        );
+
+        for mutation in [
+            ObjectMutationKindV1::MoveNode,
+            ObjectMutationKindV1::ResizeNode,
+            ObjectMutationKindV1::ReplaceImage,
+        ] {
+            let admission = admit_object_mutation_v1(&projected_instance, mutation);
+            assert!(!admission.admitted);
+            assert_eq!(
+                admission.origin_node_id.as_deref(),
+                None,
+                "read-only projected instances must not expose an authored origin for mutation"
+            );
+            assert_eq!(
+                admission.reason, "cmo_story_slot_object_read_only",
+                "Cmo projection must remain explicitly read-only"
+            );
+        }
+    }
+
+    #[test]
     fn desktop_pages_surface_exposes_live_thumbnail_navigation() {
         let source = include_str!("main.rs");
         assert!(source.contains("Page {} thumbnail"));
         assert!(source.contains("paint_page_thumbnail"));
         assert!(source.contains("with_clip_rect(page_rect)"));
-        assert!(source.contains("text_fragments"));
+        assert!(source.contains("build_page_render_plan_v1(visual, page_index)"));
+        assert!(source.contains("for node in &render_plan.nodes"));
         assert!(source.contains("PageNavigated"));
     }
 
@@ -7709,6 +7813,7 @@ mod tests {
         clipped_text_nodes: usize,
         source_typography_sections: usize,
         fallback_typography_sections: usize,
+        projected_text_metrics: BTreeMap<String, render_backend::TextPaintMetrics>,
     }
 
     impl GoldenPageOnlyApp {
@@ -7722,6 +7827,7 @@ mod tests {
                 clipped_text_nodes: 0,
                 source_typography_sections: 0,
                 fallback_typography_sections: 0,
+                projected_text_metrics: BTreeMap::new(),
             }
         }
 
@@ -7782,6 +7888,7 @@ mod tests {
             self.clipped_text_nodes = 0;
             self.source_typography_sections = 0;
             self.fallback_typography_sections = 0;
+            self.projected_text_metrics.clear();
 
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
@@ -7818,6 +7925,10 @@ mod tests {
                             scene_scale,
                         );
                         if let Some(metrics) = outcome.text_metrics {
+                            if let Some(instance) = node.projected_scene_instance.as_ref() {
+                                self.projected_text_metrics
+                                    .insert(instance.instance_id.clone(), metrics.clone());
+                            }
                             self.painted_text_nodes += 1;
                             self.source_typography_sections += metrics.source_typography_sections;
                             self.fallback_typography_sections += metrics.fallback_sections;
@@ -7868,11 +7979,78 @@ mod tests {
             ),
             "exact Carlton family presentation profile must be active before visual rendering"
         );
+        assert_eq!(
+            visual.projected_instances.len(),
+            4,
+            "exact March must admit exactly four visible canonical Cmo scene instances"
+        );
+        let projected_instance_ids = visual
+            .projected_instances
+            .iter()
+            .map(|projected| projected.scene_instance.instance_id.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            projected_instance_ids.len(),
+            4,
+            "canonical projected SceneInstance identities must be distinct"
+        );
+        assert!(visual.projected_instances.iter().all(|projected| {
+            projected.scene_instance.projection_kind
+                == chaptera_scene_instance::SceneProjectionKindV1::CmoStorySlot
+        }));
+        let direct_scene_origins = visual
+            .scene
+            .nodes
+            .iter()
+            .map(|node| node.origin.as_canonical().to_string())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            visual.projected_instances.iter().all(|projected| {
+                !direct_scene_origins.contains(&projected.scene_instance.origin_node_id)
+            }),
+            "projected Cmo carriers must not be reparented into direct customer scene nodes"
+        );
+        let projected_page_counts = visual
+            .document
+            .pages
+            .iter()
+            .map(|page| {
+                let page_id = page.id.as_canonical().to_string();
+                visual
+                    .projected_instances
+                    .iter()
+                    .filter(|projected| projected.scene_instance.target_page_id == page_id)
+                    .count()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            projected_page_counts,
+            vec![1, 2, 1],
+            "exact March projected Cmo distribution must stay 1/2/1"
+        );
 
         let mut page_receipts = Vec::new();
-        for page_index in 0..visual.document.pages.len() {
+        for (page_index, expected_projected_node_count) in
+            projected_page_counts.iter().copied().enumerate()
+        {
             let plan = build_page_render_plan_v1(&visual, page_index)
                 .expect("current Reader page render plan");
+            let projected_node_count = plan
+                .nodes
+                .iter()
+                .filter(|node| node.projected_scene_instance.is_some())
+                .count();
+            assert_eq!(
+                projected_node_count, expected_projected_node_count,
+                "render-plan projected instance count must match canonical Viewer adapter"
+            );
+            assert!(
+                plan.nodes
+                    .iter()
+                    .filter_map(|node| node.text.as_ref())
+                    .all(|fragment| !fragment.text.contains('\u{FFFC}')),
+                "admitted projected object markers must not paint as U+FFFC missing-glyph boxes"
+            );
             let width_px = ((plan.page_size.width.get() as f64 * RASTER_DPI / EMU_PER_INCH)
                 .round()
                 .max(1.0)) as u32;
@@ -7905,6 +8083,63 @@ mod tests {
             assert_eq!(image.width(), width_px, "golden raster width drift");
             assert_eq!(image.height(), height_px, "golden raster height drift");
             let executed = harness.state();
+            let projected_instance_receipts = plan
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    let instance = node.projected_scene_instance.as_ref()?;
+                    let viewer_projected = visual
+                        .projected_instances
+                        .iter()
+                        .find(|projected| {
+                            projected.scene_instance.instance_id == instance.instance_id
+                        })
+                        .expect("render-plan projected instance must come from Viewer adapter");
+                    let target_frame = visual
+                        .scene
+                        .nodes
+                        .iter()
+                        .find(|candidate| candidate.origin == viewer_projected.target_frame_node_id)
+                        .expect("projected target frame remains in resolved customer scene");
+                    Some(serde_json::json!({
+                        "instance_id": instance.instance_id,
+                        "origin_node_id": instance.origin_node_id,
+                        "target_frame_node_id": viewer_projected
+                            .target_frame_node_id
+                            .as_canonical()
+                            .to_string(),
+                        "cmo_slot_index": instance.cmo_slot_index,
+                        "cmo_scalar_index": instance.cmo_scalar_index,
+                        "target_frame_paint_scalar_end": viewer_projected
+                            .target_frame_paint_scalar_end,
+                        "story_authority_present": instance.story_authority_id.is_some(),
+                        "target_frame_bounds_emu": [
+                            target_frame.bounds.x.get(),
+                            target_frame.bounds.y.get(),
+                            target_frame.bounds.width.get(),
+                            target_frame.bounds.height.get(),
+                        ],
+                        "projected_bounds_emu": [
+                            node.bounds.x.get(),
+                            node.bounds.y.get(),
+                            node.bounds.width.get(),
+                            node.bounds.height.get(),
+                        ],
+                        "carrier_extent_emu": [
+                            node.bounds.width.get(),
+                            node.bounds.height.get(),
+                        ],
+                        "text_scalar_count": node
+                            .text
+                            .as_ref()
+                            .map(|text| text.text.chars().count())
+                            .unwrap_or(0),
+                        "executed_text_metrics": executed
+                            .projected_text_metrics
+                            .get(&instance.instance_id),
+                    }))
+                })
+                .collect::<Vec<_>>();
             let filename = format!("carlton-march-reader-page-{:03}.png", page_index + 1);
             image
                 .save(output_dir.join(&filename))
@@ -7924,6 +8159,8 @@ mod tests {
                 "raster_width_px": width_px,
                 "raster_height_px": height_px,
                 "node_count": plan.nodes.len(),
+                "projected_scene_instance_count": projected_node_count,
+                "projected_instances": projected_instance_receipts,
                 "fill_node_count": plan.nodes.iter().filter(|node| node.solid_fill_rgb.is_some()).count(),
                 "line_node_count": plan.nodes.iter().filter(|node| node.solid_line.is_some()).count(),
                 "image_node_count": plan.nodes.iter().filter(|node| node.image.is_some()).count(),
@@ -7956,6 +8193,8 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic.code.clone())
                 .collect::<Vec<_>>(),
+            "projected_scene_instance_ids": projected_instance_ids,
+            "projected_page_counts": projected_page_counts,
             "pages": page_receipts,
         });
         fs::write(
