@@ -2169,9 +2169,7 @@ impl ViewerApp {
         self.project_status = Some("Editor project has unsaved changes.".to_owned());
         self.edit_status = Some(match text_projection_refresh {
             Ok(()) => status.to_owned(),
-            Err(error) => format!(
-                "{status} Viewer text projection refresh failed closed: {error}"
-            ),
+            Err(error) => format!("{status} Viewer text projection refresh failed closed: {error}"),
         });
     }
 
@@ -3987,7 +3985,7 @@ fn paint_page_thumbnail(
     rect: egui::Rect,
     visual: &ViewerGeometryDocument,
     editor: Option<&pub_editor::EditorSession>,
-    image_textures: &BTreeMap<String, egui::TextureHandle>,
+    image_textures: &BTreeMap<String, CachedImageTexture>,
     page_index: usize,
     selected: bool,
 ) {
@@ -4076,12 +4074,9 @@ fn paint_page_thumbnail(
             });
         if let Some(texture) = replacement_texture.or(source_texture) {
             content_painter.image(
-                texture.id(),
+                texture.texture.id(),
                 node_rect,
-                egui::Rect::from_min_max(
-                    egui::pos2(0.0, 0.0),
-                    egui::pos2(1.0, 1.0),
-                ),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
         }
@@ -6921,8 +6916,7 @@ mod tests {
         let bytes = fs::read(&fixture).expect("read pinned SampleNewsletter");
         let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(
-            source_sha256,
-            "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+            source_sha256, "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
             "golden fixture identity drifted"
         );
 
@@ -6937,16 +6931,16 @@ mod tests {
             "golden fixture should exercise admitted inherited typography"
         );
         assert!(
-            visual.typography_runs.iter().any(|run| {
-                run.source_font_name == "Rockwell Condensed"
-                    && run.text_size_emu == 24 * 12_700
-            }),
+            visual
+                .typography_runs
+                .iter()
+                .any(|run| run.source_font_name == "Rockwell Condensed" && run.text_size_emu == 24 * 12_700),
             "proven Rockwell Condensed 24pt anchor must reach Viewer"
         );
 
         let page_offset = 1_usize;
-        let plan = build_page_render_plan_v1(&visual, page_offset)
-            .expect("page 2 shared render plan");
+        let plan =
+            build_page_render_plan_v1(&visual, page_offset).expect("page 2 shared render plan");
         let typography_sections = plan
             .nodes
             .iter()
@@ -6973,7 +6967,9 @@ mod tests {
             });
         harness.step();
 
-        let image = harness.render().expect("headless Reader render must succeed");
+        let image = harness
+            .render()
+            .expect("headless Reader render must succeed");
         let png_path = output_dir.join("samplenewsletter-page-002-reader.png");
         image.save(&png_path).expect("write Reader golden PNG");
 
