@@ -1,3 +1,4 @@
+#[cfg(feature = "canonical-page-ids")]
 use pub_model::derive_pub_page_id_v1;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -75,6 +76,16 @@ pub struct CarltonPresentationInvariantsV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarltonPresentationSelectionV1 {
+    pub profile_id: String,
+    pub source_sha256: String,
+    pub raw_page_count: usize,
+    pub customer_page_seq_nums: Vec<u32>,
+    pub master_page_seq_nums: Vec<u32>,
+    pub carrier_page_seq_nums: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CarltonPresentationManifestV1 {
     pub schema_version: String,
     pub profile_id: String,
@@ -108,6 +119,10 @@ pub enum CarltonPresentationError {
     UnknownCarrierPage(u32),
     CarrierCustomerOverlap(u32),
     CarrierMasterOverlap(u32),
+    CarrierEvidenceMismatch {
+        expected: Vec<u32>,
+        observed: Vec<u32>,
+    },
     CustomerMissingExpectedMaster {
         page_seq_num: u32,
         expected_master: u32,
@@ -170,6 +185,10 @@ impl fmt::Display for CarltonPresentationError {
                     "Carlton Cmo carrier PAGE {value} is also the master PAGE"
                 )
             }
+            Self::CarrierEvidenceMismatch { expected, observed } => write!(
+                f,
+                "Carlton carrier PAGE evidence mismatch: expected {expected:?}, observed {observed:?}"
+            ),
             Self::CustomerMissingExpectedMaster {
                 page_seq_num,
                 expected_master,
@@ -191,6 +210,7 @@ impl Error for CarltonPresentationError {}
 struct AdmittedProfile {
     profile_id: &'static str,
     expected_customer_count: usize,
+    carrier_page_seq_nums: &'static [u32],
 }
 
 fn admitted_profile(source_sha256: &str) -> Result<AdmittedProfile, CarltonPresentationError> {
@@ -198,18 +218,38 @@ fn admitted_profile(source_sha256: &str) -> Result<AdmittedProfile, CarltonPrese
         MARCH_2026_SHA256 => Ok(AdmittedProfile {
             profile_id: "carlton-school-jotter/march-2026/v1",
             expected_customer_count: 3,
+            carrier_page_seq_nums: &[279],
         }),
         DECEMBER_2025_SHA256 => Ok(AdmittedProfile {
             profile_id: "carlton-school-jotter/december-2025/v1",
             expected_customer_count: 5,
+            carrier_page_seq_nums: &[279],
         }),
         _ => Err(CarltonPresentationError::UnsupportedSourceHash),
     }
 }
 
-pub fn build_carlton_presentation_manifest_v1(
+/// Returns the previously proven PlcCmob carrier PAGE set for one exact admitted
+/// Carlton family control. Unknown source hashes are not Carlton-admitted.
+pub fn carlton_admitted_carrier_page_seq_nums_v1(
+    source_sha256: &str,
+) -> Option<&'static [u32]> {
+    admitted_profile(source_sha256)
+        .ok()
+        .map(|profile| profile.carrier_page_seq_nums)
+}
+
+struct ValidatedCarltonPresentation {
+    input: CarltonPresentationProfileInputV1,
+    profile: AdmittedProfile,
+    customer_seq_nums: Vec<u32>,
+    master_seq: u32,
+    carrier_set: BTreeSet<u32>,
+}
+
+fn validate_carlton_presentation_v1(
     mut input: CarltonPresentationProfileInputV1,
-) -> Result<CarltonPresentationManifestV1, CarltonPresentationError> {
+) -> Result<ValidatedCarltonPresentation, CarltonPresentationError> {
     if input.schema_version != CARLTON_PRESENTATION_INPUT_SCHEMA_V1 {
         return Err(CarltonPresentationError::SchemaVersionMismatch);
     }
@@ -272,17 +312,28 @@ pub fn build_carlton_presentation_manifest_v1(
     }
 
     let mut carrier_set = BTreeSet::new();
-    for seq_num in input.carrier_page_seq_nums {
-        if !pages_by_seq.contains_key(&seq_num) {
-            return Err(CarltonPresentationError::UnknownCarrierPage(seq_num));
+    for seq_num in &input.carrier_page_seq_nums {
+        if !pages_by_seq.contains_key(seq_num) {
+            return Err(CarltonPresentationError::UnknownCarrierPage(*seq_num));
         }
-        if customer_set.contains(&seq_num) {
-            return Err(CarltonPresentationError::CarrierCustomerOverlap(seq_num));
+        if customer_set.contains(seq_num) {
+            return Err(CarltonPresentationError::CarrierCustomerOverlap(*seq_num));
         }
-        if seq_num == master_seq {
-            return Err(CarltonPresentationError::CarrierMasterOverlap(seq_num));
+        if *seq_num == master_seq {
+            return Err(CarltonPresentationError::CarrierMasterOverlap(*seq_num));
         }
-        carrier_set.insert(seq_num);
+        carrier_set.insert(*seq_num);
+    }
+    let expected_carrier_set = profile
+        .carrier_page_seq_nums
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if carrier_set != expected_carrier_set {
+        return Err(CarltonPresentationError::CarrierEvidenceMismatch {
+            expected: expected_carrier_set.into_iter().collect(),
+            observed: carrier_set.into_iter().collect(),
+        });
     }
 
     for seq_num in &customer_seq_nums {
@@ -294,6 +345,45 @@ pub fn build_carlton_presentation_manifest_v1(
             });
         }
     }
+
+    Ok(ValidatedCarltonPresentation {
+        input,
+        profile,
+        customer_seq_nums,
+        master_seq,
+        carrier_set,
+    })
+}
+
+/// Applies the exact Carlton family admission and PAGE-role law without
+/// materializing any model-specific PageId type. This is the product-consumer
+/// seam for Reader/Viewer implementations that own a different canonical model
+/// crate but share the same source identity contract.
+pub fn select_carlton_customer_page_seq_nums_v1(
+    input: CarltonPresentationProfileInputV1,
+) -> Result<CarltonPresentationSelectionV1, CarltonPresentationError> {
+    let validated = validate_carlton_presentation_v1(input)?;
+    Ok(CarltonPresentationSelectionV1 {
+        profile_id: validated.profile.profile_id.to_owned(),
+        source_sha256: validated.input.source_sha256,
+        raw_page_count: validated.input.pages.len(),
+        customer_page_seq_nums: validated.customer_seq_nums,
+        master_page_seq_nums: vec![validated.master_seq],
+        carrier_page_seq_nums: validated.carrier_set.into_iter().collect(),
+    })
+}
+
+#[cfg(feature = "canonical-page-ids")]
+pub fn build_carlton_presentation_manifest_v1(
+    input: CarltonPresentationProfileInputV1,
+) -> Result<CarltonPresentationManifestV1, CarltonPresentationError> {
+    let validated = validate_carlton_presentation_v1(input)?;
+    let input = validated.input;
+    let profile = validated.profile;
+    let customer_seq_nums = validated.customer_seq_nums;
+    let master_seq = validated.master_seq;
+    let carrier_set = validated.carrier_set;
+    let customer_set = customer_seq_nums.iter().copied().collect::<BTreeSet<_>>();
 
     let page_id = |seq_num: u32| {
         derive_pub_page_id_v1(&input.source_sha256, seq_num).map_err(|_| {
@@ -492,6 +582,29 @@ mod tests {
             Err(CarltonPresentationError::CustomerCountMismatch {
                 expected: 3,
                 observed: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn source_neutral_selection_preserves_exact_family_customer_order() {
+        let selection = select_carlton_customer_page_seq_nums_v1(march_input()).unwrap();
+        assert_eq!(selection.profile_id, "carlton-school-jotter/march-2026/v1");
+        assert_eq!(selection.raw_page_count, 8);
+        assert_eq!(selection.customer_page_seq_nums, vec![266, 361, 406]);
+        assert_eq!(selection.master_page_seq_nums, vec![263]);
+        assert_eq!(selection.carrier_page_seq_nums, vec![279]);
+    }
+
+    #[test]
+    fn exact_profile_rejects_carrier_evidence_drift() {
+        let mut input = march_input();
+        input.carrier_page_seq_nums.clear();
+        assert_eq!(
+            select_carlton_customer_page_seq_nums_v1(input),
+            Err(CarltonPresentationError::CarrierEvidenceMismatch {
+                expected: vec![279],
+                observed: vec![],
             })
         );
     }
