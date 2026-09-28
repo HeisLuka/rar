@@ -4,5 +4,8 @@
     <item name="reader_viewer_diagnostics" type="id" />
     <item name="reader_previous_page" type="id" />\n    <item name="reader_page_jump" type="id" />\n    <item name="reader_page_go" type="id" />
     <item name="reader_next_page" type="id" />
+    <item name="reader_retry" type="id" />
+    <item name="reader_choose_another" type="id" />
+    <item name="reader_failure_diagnostics" type="id" />
     <item name="reader_canvas" type="id" />
 </resources>
