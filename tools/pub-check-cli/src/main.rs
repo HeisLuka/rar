@@ -1,7 +1,7 @@
 use pub_contents::ContentsFamily;
 use pub_viewer::{
-    FailureIntakeClass, ViewerDiagnosticSeverity, ViewerFidelityStatus,
-    classify_failure_candidate, open_mature_0x2c,
+    FailureIntakeClass, ViewerDiagnosticSeverity, ViewerFidelityStatus, classify_failure_candidate,
+    open_mature_0x2c,
 };
 use serde::Serialize;
 use std::{env, fs, path::PathBuf, process::ExitCode};
@@ -191,7 +191,8 @@ fn run() -> Result<(), String> {
         return Err("usage: chaptera-pub-check FILE".to_owned());
     }
 
-    let bytes = fs::read(&path).map_err(|_| "checker could not read the admitted file".to_owned())?;
+    let bytes =
+        fs::read(&path).map_err(|_| "checker could not read the admitted file".to_owned())?;
     let result = inspect(&bytes);
     let json = serde_json::to_string(&result)
         .map_err(|_| "checker could not serialize the compatibility receipt".to_owned())?;
