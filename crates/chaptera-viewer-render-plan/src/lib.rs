@@ -254,7 +254,7 @@ pub fn build_page_render_plan_v1(
                 .iter()
                 .find(|fragment| fragment.frame_id == node.origin)
                 .map(|fragment| {
-                    let mut rendered = RenderTextFragmentV1 {
+                    let rendered = RenderTextFragmentV1 {
                         story_id: fragment.story_id,
                         scalar_start: fragment.scalar_start,
                         scalar_end: fragment.scalar_end,
