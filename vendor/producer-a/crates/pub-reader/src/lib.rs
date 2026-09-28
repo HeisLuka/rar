@@ -183,23 +183,24 @@ pub struct PubControllingFieldObservation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PubCustomerPageProjectionAuthority {
+pub enum PubEffectivePageProjectionAuthority {
     RawDocumentPageList,
-    ControllingPgidConsensus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PubCustomerPageProjection {
-    pub authority: PubCustomerPageProjectionAuthority,
+pub struct PubEffectivePageProjection {
+    pub authority: PubEffectivePageProjectionAuthority,
     pub page_ids: Vec<PageId>,
     pub raw_page_count: usize,
-    pub evidence_list_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed_scenario_page_ids: Vec<PageId>,
+    pub scenario_evidence_list_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PubSourceGraphBuild {
     pub graph: PubSourceGraph,
-    pub customer_pages: PubCustomerPageProjection,
+    pub effective_pages: PubEffectivePageProjection,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<PubBridgeDiagnostic>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -415,13 +416,16 @@ pub enum PubBridgeDiagnostic {
         width_emu: u32,
         height_emu: u32,
     },
-    CustomerPageProjectionApplied {
+    ScenarioPageOrderObserved {
         raw_page_count: usize,
-        customer_page_count: usize,
+        scenario_page_count: usize,
         evidence_list_count: usize,
     },
-    CustomerPageProjectionFallback {
+    ScenarioPageOrderUnavailable {
         reason: String,
+        raw_page_count: usize,
+    },
+    PageRoleClassificationUnresolved {
         raw_page_count: usize,
     },
     LinkedFrameNotMaterialized {
@@ -1837,16 +1841,14 @@ pub fn build_mature_0x2c_from_streams(
         bail!("DOCUMENT PageList exposes no confirmed PAGE 0x43 entries");
     }
 
-    let (customer_pages, customer_page_diagnostic) = derive_customer_page_projection(
+    let (effective_pages, page_projection_diagnostics) = derive_effective_page_projection(
         contents_stream.clone(),
         contents,
         &references,
         &page_seq_to_id,
         &document_pages,
     );
-    if let Some(diagnostic) = customer_page_diagnostic {
-        diagnostics.push(diagnostic);
-    }
+    diagnostics.extend(page_projection_diagnostics);
 
     let document = Document {
         id: document_id,
@@ -2274,35 +2276,25 @@ pub fn build_mature_0x2c_from_streams(
 
     Ok(PubSourceGraphBuild {
         graph,
-        customer_pages,
+        effective_pages,
         diagnostics,
         typography_runs,
     })
 }
 
-fn derive_customer_page_projection(
+fn derive_effective_page_projection(
     contents_stream: StreamPath,
     contents: &[u8],
     references: &BTreeMap<u32, Contents0x2cChunkReference>,
     page_seq_to_id: &BTreeMap<u32, PageId>,
     raw_page_ids: &[PageId],
-) -> (PubCustomerPageProjection, Option<PubBridgeDiagnostic>) {
-    let fallback = |reason: String| {
-        (
-            PubCustomerPageProjection {
-                authority: PubCustomerPageProjectionAuthority::RawDocumentPageList,
-                page_ids: raw_page_ids.to_vec(),
-                raw_page_count: raw_page_ids.len(),
-                evidence_list_count: 0,
-            },
-            Some(PubBridgeDiagnostic::CustomerPageProjectionFallback {
-                reason,
-                raw_page_count: raw_page_ids.len(),
-            }),
-        )
-    };
+) -> (PubEffectivePageProjection, Vec<PubBridgeDiagnostic>) {
+    let mut diagnostics = vec![PubBridgeDiagnostic::PageRoleClassificationUnresolved {
+        raw_page_count: raw_page_ids.len(),
+    }];
 
     let mut pgid_lists = Vec::<Vec<(u32, u32)>>::new();
+    let mut observed_page_list = false;
     for reference in references
         .values()
         .filter(|reference| single_raw_type(reference) == Some(RAW_TYPE_CONTROLLING))
@@ -2310,7 +2302,14 @@ fn derive_customer_page_projection(
         let chunk = match chunk_for_reference(contents_stream.clone(), contents, reference) {
             Ok(chunk) => chunk,
             Err(error) => {
-                return fallback(format!("controlling_chunk_unavailable:{error}"));
+                diagnostics.push(PubBridgeDiagnostic::ScenarioPageOrderUnavailable {
+                    reason: format!("controlling_chunk_unavailable:{error}"),
+                    raw_page_count: raw_page_ids.len(),
+                });
+                return (
+                    build_effective_page_projection(raw_page_ids, Vec::new(), 0),
+                    diagnostics,
+                );
             }
         };
         let page_list_fields = chunk
@@ -2320,21 +2319,36 @@ fn derive_customer_page_projection(
             .cloned()
             .collect::<Vec<_>>();
         if page_list_fields.len() > 1 {
-            return fallback(format!(
-                "duplicate_controlling_page_list:seq={}",
-                reference.seq_num
-            ));
+            diagnostics.push(PubBridgeDiagnostic::ScenarioPageOrderUnavailable {
+                reason: format!(
+                    "duplicate_controlling_page_list:seq={}",
+                    reference.seq_num
+                ),
+                raw_page_count: raw_page_ids.len(),
+            });
+            return (
+                build_effective_page_projection(raw_page_ids, Vec::new(), 0),
+                diagnostics,
+            );
         }
         let Some(field) = page_list_fields.into_iter().next() else {
             continue;
         };
+        observed_page_list = true;
         let parsed = match parse_confirmed_controlling_page_list(contents, field) {
             Ok(parsed) => parsed,
             Err(error) => {
-                return fallback(format!(
-                    "controlling_page_list_invalid:seq={}:{}",
-                    reference.seq_num, error
-                ));
+                diagnostics.push(PubBridgeDiagnostic::ScenarioPageOrderUnavailable {
+                    reason: format!(
+                        "controlling_page_list_invalid:seq={}:{}",
+                        reference.seq_num, error
+                    ),
+                    raw_page_count: raw_page_ids.len(),
+                });
+                return (
+                    build_effective_page_projection(raw_page_ids, Vec::new(), 0),
+                    diagnostics,
+                );
             }
         };
         let pgids = parsed
@@ -2343,10 +2357,17 @@ fn derive_customer_page_projection(
             .map(|entry| (entry.pgid.dword0, entry.pgid.dword1))
             .collect::<Vec<_>>();
         if pgids.is_empty() {
-            return fallback(format!(
-                "controlling_page_list_empty:seq={}",
-                reference.seq_num
-            ));
+            diagnostics.push(PubBridgeDiagnostic::ScenarioPageOrderUnavailable {
+                reason: format!(
+                    "controlling_page_list_empty:seq={}",
+                    reference.seq_num
+                ),
+                raw_page_count: raw_page_ids.len(),
+            });
+            return (
+                build_effective_page_projection(raw_page_ids, Vec::new(), 0),
+                diagnostics,
+            );
         }
         pgid_lists.push(pgids);
     }
@@ -2377,35 +2398,62 @@ fn derive_customer_page_projection(
             .push(*page_id);
     }
 
-    let projected = match resolve_customer_page_ids_from_evidence(&pgid_lists, &pages_by_oid) {
-        Ok(projected) => projected,
-        Err(reason) => return fallback(reason),
-    };
+    let observed_scenario_page_ids =
+        match resolve_scenario_page_ids_from_evidence(&pgid_lists, &pages_by_oid) {
+            Ok(projected) => {
+                diagnostics.push(PubBridgeDiagnostic::ScenarioPageOrderObserved {
+                    raw_page_count: raw_page_ids.len(),
+                    scenario_page_count: projected.len(),
+                    evidence_list_count: pgid_lists.len(),
+                });
+                projected
+            }
+            Err(reason) if observed_page_list => {
+                diagnostics.push(PubBridgeDiagnostic::ScenarioPageOrderUnavailable {
+                    reason,
+                    raw_page_count: raw_page_ids.len(),
+                });
+                Vec::new()
+            }
+            Err(_) => Vec::new(),
+        };
 
     (
-        PubCustomerPageProjection {
-            authority: PubCustomerPageProjectionAuthority::ControllingPgidConsensus,
-            page_ids: projected.clone(),
-            raw_page_count: raw_page_ids.len(),
-            evidence_list_count: pgid_lists.len(),
-        },
-        Some(PubBridgeDiagnostic::CustomerPageProjectionApplied {
-            raw_page_count: raw_page_ids.len(),
-            customer_page_count: projected.len(),
-            evidence_list_count: pgid_lists.len(),
-        }),
+        build_effective_page_projection(
+            raw_page_ids,
+            observed_scenario_page_ids,
+            pgid_lists.len(),
+        ),
+        diagnostics,
     )
 }
 
-fn resolve_customer_page_ids_from_evidence(
+fn build_effective_page_projection(
+    raw_page_ids: &[PageId],
+    observed_scenario_page_ids: Vec<PageId>,
+    scenario_evidence_list_count: usize,
+) -> PubEffectivePageProjection {
+    // Pgid is scenario/design identity evidence, not generic physical visible-page authority.
+    // Native Page.Duplicate/Pages.Add can create persisted visible pages without OplControlling/Pgid,
+    // so generic Reader must not suppress any raw PAGE from this observation alone.
+    PubEffectivePageProjection {
+        authority: PubEffectivePageProjectionAuthority::RawDocumentPageList,
+        page_ids: raw_page_ids.to_vec(),
+        raw_page_count: raw_page_ids.len(),
+        observed_scenario_page_ids,
+        scenario_evidence_list_count,
+    }
+}
+
+fn resolve_scenario_page_ids_from_evidence(
     pgid_lists: &[Vec<(u32, u32)>],
     pages_by_oid: &BTreeMap<(u32, u32), Vec<PageId>>,
 ) -> std::result::Result<Vec<PageId>, String> {
     let Some(consensus) = pgid_lists.first() else {
-        return Err("no_controlling_page_list_authority".to_owned());
+        return Err("no_controlling_page_list_observation".to_owned());
     };
     if consensus.is_empty() {
-        return Err("controlling_page_projection_empty".to_owned());
+        return Err("controlling_scenario_page_projection_empty".to_owned());
     }
     if pgid_lists.iter().skip(1).any(|candidate| candidate != consensus) {
         return Err("controlling_page_lists_disagree".to_owned());
@@ -3253,7 +3301,7 @@ mod tests {
     }
 
     #[test]
-    fn customer_page_projection_uses_unanimous_pgid_order() {
+    fn scenario_page_observation_uses_unanimous_pgid_order() {
         let p0 = test_page_id(1);
         let p1 = test_page_id(2);
         let p2 = test_page_id(3);
@@ -3269,13 +3317,36 @@ mod tests {
         ]);
 
         assert_eq!(
-            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap(),
+            resolve_scenario_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap(),
             vec![p0, p1, p2]
         );
     }
 
     #[test]
-    fn customer_page_projection_rejects_disagreeing_authorities() {
+    fn effective_page_projection_never_drops_raw_page_missing_from_scenario_order() {
+        let p0 = test_page_id(1);
+        let p1 = test_page_id(2);
+        let newly_created_visible_page = test_page_id(3);
+        let effective = build_effective_page_projection(
+            &[p0, p1, newly_created_visible_page],
+            vec![p0, p1],
+            2,
+        );
+
+        assert_eq!(
+            effective.authority,
+            PubEffectivePageProjectionAuthority::RawDocumentPageList
+        );
+        assert_eq!(
+            effective.page_ids,
+            vec![p0, p1, newly_created_visible_page],
+            "scenario Pgid evidence must never suppress a raw page; native Publisher can create visible pages without OplControlling/Pgid"
+        );
+        assert_eq!(effective.observed_scenario_page_ids, vec![p0, p1]);
+    }
+
+    #[test]
+    fn scenario_page_observation_rejects_disagreeing_lists() {
         let pgids = vec![vec![(1, 0), (1, 1)], vec![(1, 1), (1, 0)]];
         let pages_by_oid = BTreeMap::from([
             ((1, 0), vec![test_page_id(1)]),
@@ -3283,13 +3354,13 @@ mod tests {
         ]);
 
         assert_eq!(
-            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap_err(),
+            resolve_scenario_page_ids_from_evidence(&pgids, &pages_by_oid).unwrap_err(),
             "controlling_page_lists_disagree"
         );
     }
 
     #[test]
-    fn customer_page_projection_rejects_ambiguous_page_oid() {
+    fn scenario_page_observation_rejects_ambiguous_page_oid() {
         let pgids = vec![vec![(1, 0)]];
         let pages_by_oid = BTreeMap::from([(
             (1, 0),
@@ -3297,7 +3368,7 @@ mod tests {
         )]);
 
         assert!(
-            resolve_customer_page_ids_from_evidence(&pgids, &pages_by_oid)
+            resolve_scenario_page_ids_from_evidence(&pgids, &pages_by_oid)
                 .unwrap_err()
                 .starts_with("pgid_is_ambiguous:")
         );
