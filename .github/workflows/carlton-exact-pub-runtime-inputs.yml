@@ -91,7 +91,7 @@ jobs:
               candidates = sorted(set(
                   match.group(0)
                   for match in re.finditer(
-                      r'[^"\\']{0,100}(?:/api/|download|file)[^"\\']{0,180}',
+                      r'[^"]{0,100}(?:/api/|download|file)[^"]{0,180}',
                       bundle.text,
                       flags=re.I,
                   )
