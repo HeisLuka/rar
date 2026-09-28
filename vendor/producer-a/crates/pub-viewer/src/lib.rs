@@ -567,17 +567,19 @@ pub fn apply_viewer_presentation_selection(
     visual: &mut ViewerGeometryDocument,
     selection: &ViewerPresentationSelection,
 ) -> Result<()> {
+    let mut selected_document = visual.document.clone();
     let selected_page_ids =
-        apply_presentation_selection_to_document(&mut visual.document, selection)?;
+        apply_presentation_selection_to_document(&mut selected_document, selection)?;
     let selected_origins = selected_page_ids
         .iter()
         .map(|page_id| page_id.into_canonical())
         .collect::<BTreeSet<CanonicalId>>();
 
-    let old_surfaces = std::mem::take(&mut visual.scene.surfaces);
     let mut selected_surfaces = Vec::with_capacity(selected_page_ids.len());
     for page_id in &selected_page_ids {
-        let surface = old_surfaces
+        let surface = visual
+            .scene
+            .surfaces
             .iter()
             .find(|surface| surface.origin == *page_id)
             .cloned()
@@ -589,6 +591,11 @@ pub fn apply_viewer_presentation_selection(
             })?;
         selected_surfaces.push(surface);
     }
+
+    // Commit only after every source identity, page membership and resolved
+    // surface has been validated. A rejected presentation selection must leave
+    // the existing Viewer state untouched.
+    visual.document = selected_document;
     visual.scene.surfaces = selected_surfaces;
 
     visual
