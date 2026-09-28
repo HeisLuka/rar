@@ -222,7 +222,7 @@ pub fn build_page_render_plan_v1(
         .iter()
         .filter(|node| node.parent_origin == parent_origin)
         .map(|node| {
-            let text = visual
+            let mut text = visual
                 .text_fragments
                 .iter()
                 .find(|fragment| fragment.frame_id == node.origin)
@@ -262,16 +262,29 @@ pub fn build_page_render_plan_v1(
                             })
                             .collect(),
                     };
-                    #[cfg(feature = "projected-scene-instances")]
-                    if visual.projected_instances.iter().any(|projected| {
-                        projected.scene_instance.target_page_id
-                            == page.id.as_canonical().to_string()
-                            && projected.target_frame_node_id == node.origin
-                    }) {
-                        rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
-                    }
                     rendered
                 });
+            #[cfg(feature = "projected-scene-instances")]
+            {
+                let projected_for_frame = visual.projected_instances.iter().filter(|projected| {
+                    projected.scene_instance.target_page_id
+                        == page.id.as_canonical().to_string()
+                        && projected.target_frame_node_id == node.origin
+                });
+                let mut has_projection = false;
+                let mut text_fully_covered = false;
+                for projected in projected_for_frame {
+                    has_projection = true;
+                    text_fully_covered |= projected.target_frame_text_fully_covered;
+                }
+                if text_fully_covered {
+                    text = None;
+                } else if has_projection
+                    && let Some(rendered) = text.as_mut()
+                {
+                    rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
+                }
+            }
             let paint = visual
                 .paints
                 .iter()
@@ -530,6 +543,7 @@ mod tests {
             .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
                 scene_instance: instance.clone(),
                 target_frame_node_id: origin_node_id,
+                target_frame_text_fully_covered: false,
                 bounds: RectEmu::new(
                     LengthEmu::new(50),
                     LengthEmu::new(60),
@@ -582,6 +596,7 @@ mod tests {
             .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
                 scene_instance: instance,
                 target_frame_node_id: frame_id,
+                target_frame_text_fully_covered: false,
                 bounds: visual.scene.nodes[0].bounds,
                 transform: Affine2D::identity(),
             });
@@ -596,6 +611,56 @@ mod tests {
         assert!(!rendered.contains('\u{FFFC}'));
         assert_eq!(rendered.chars().count(), source.chars().count());
         assert!(rendered.ends_with("am."));
+    }
+
+    #[cfg(feature = "projected-scene-instances")]
+    #[test]
+    fn proven_carrier_coverage_suppresses_direct_target_text_without_mutating_story() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let frame_id = visual.scene.nodes[0].origin;
+        let story_id = visual.document.stories[0].id;
+        let source = "\u{FFFC}\r\u{FFFC}tail";
+        visual.document.stories[0].text = source.to_owned();
+        visual.text_fragments[0].text = source.to_owned();
+        visual.text_fragments[0].scalar_end =
+            u32::try_from(source.chars().count()).expect("bounded fixture");
+
+        let instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:covered-target-text-fixture".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: frame_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: Some(story_id.as_canonical().to_string()),
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+        visual
+            .projected_instances
+            .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
+                scene_instance: instance,
+                target_frame_node_id: frame_id,
+                target_frame_text_fully_covered: true,
+                bounds: visual.scene.nodes[0].bounds,
+                transform: Affine2D::identity(),
+            });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        let direct = plan
+            .nodes
+            .iter()
+            .find(|node| node.projected_scene_instance.is_none() && node.node_id == frame_id)
+            .expect("direct frame");
+        assert!(
+            direct.text.is_none(),
+            "fully covered direct target text must not be painted twice"
+        );
+        assert_eq!(
+            visual.document.stories[0].text, source,
+            "paint suppression must not mutate canonical Viewer Story text"
+        );
     }
 
     #[test]
