@@ -2339,6 +2339,46 @@ mod tests {
     }
 
     #[test]
+    fn create_text_box_operation_summary_is_explicit_and_stable() {
+        let node_id = pub_editor::NodeId::from_canonical(pub_editor::CanonicalId::from_bytes([0x11; 16]));
+        let story_id = pub_editor::StoryId::from_canonical(pub_editor::CanonicalId::from_bytes([0x22; 16]));
+        let page_id = pub_editor::PageId::from_canonical(pub_editor::CanonicalId::from_bytes([0x33; 16]));
+        let bounds = RectEmu::new(
+            LengthEmu::new(10),
+            LengthEmu::new(20),
+            LengthEmu::new(300),
+            LengthEmu::new(400),
+        );
+        let operation = EditOperation::CreateTextBox {
+            node_id,
+            story_id,
+            page_id,
+            bounds,
+            text_preset: pub_editor::AuthoringTextPresetV1 {
+                resource_id: "chaptera.desktop.fallback-font.ubuntu-light.v1".to_owned(),
+                font_fingerprint_sha256:
+                    "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70"
+                        .to_owned(),
+                face_index: 0,
+                font_size_emu: LengthEmu::new(114_300),
+                line_height_emu: LengthEmu::new(142_875),
+            },
+        };
+
+        let summary = operation_summary(&operation);
+        assert_eq!(summary["kind"], "create_text_box");
+        assert_eq!(summary["node_id"], node_id.as_canonical().to_string());
+        assert_eq!(summary["story_id"], story_id.as_canonical().to_string());
+        assert_eq!(summary["page_id"], page_id.as_canonical().to_string());
+        assert_eq!(summary["bounds"]["x"], 10);
+        assert_eq!(summary["bounds"]["height"], 400);
+        assert_eq!(
+            summary["text_preset"]["resource_id"],
+            "chaptera.desktop.fallback-font.ubuntu-light.v1"
+        );
+    }
+
+    #[test]
     fn protocol_describe_is_available_before_open() {
         let mut server = AgentServer::default();
         let responses = server.handle_line(r#"{"request_id":"r1","command":"protocol.describe"}"#);
