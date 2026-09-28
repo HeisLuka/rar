@@ -231,9 +231,7 @@ fn admitted_profile(source_sha256: &str) -> Result<AdmittedProfile, CarltonPrese
 
 /// Returns the previously proven PlcCmob carrier PAGE set for one exact admitted
 /// Carlton family control. Unknown source hashes are not Carlton-admitted.
-pub fn carlton_admitted_carrier_page_seq_nums_v1(
-    source_sha256: &str,
-) -> Option<&'static [u32]> {
+pub fn carlton_admitted_carrier_page_seq_nums_v1(source_sha256: &str) -> Option<&'static [u32]> {
     admitted_profile(source_sha256)
         .ok()
         .map(|profile| profile.carrier_page_seq_nums)
