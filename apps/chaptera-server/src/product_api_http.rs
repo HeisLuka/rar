@@ -17,6 +17,7 @@ use chaptera_cdm_model::{
     derive_authoring_revision_id_v1,
 };
 use pub_editor::{EditOperation, LengthEmu, NodeId, Sha256Digest, open_mature_0x2c_editor};
+use pub_reader::PubResolvedGraph;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -105,6 +106,7 @@ struct CurrentDocumentResponse {
     canonical_revision_schema_version: String,
     canonical_authoring_revision_id: String,
     project: pub_editor::EditorProject,
+    authoring_graph: PubResolvedGraph,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,9 +186,33 @@ async fn current_document(
     let head = current_head(&state.revisions, &source).await?;
     let materialized = state
         .materializer
-        .materialize(&source.tenant_id, &document_id, &head.revision_id)
+        .materialize_state(&source.tenant_id, &document_id, &head.revision_id)
         .await
         .map_err(ProductApiError::Materializer)?;
+
+    let source_hash = Sha256Digest::from_str(&source.source_sha256).map_err(|_| {
+        ProductApiError::internal(
+            "source_hash_invalid",
+            "durable source authority contains an invalid SHA-256 identity",
+        )
+    })?;
+    let mut session =
+        open_mature_0x2c_editor(&materialized.source_bytes, source_hash).map_err(|error| {
+            ProductApiError::internal(
+                "editor_source_unsupported",
+                format!("canonical editor could not open durable source: {error}"),
+            )
+        })?;
+    session
+        .apply_project(&materialized.receipt.project)
+        .map_err(|error| {
+            ProductApiError::internal(
+                "editor_replay_failed",
+                format!("canonical editor could not replay exact current revision: {error}"),
+            )
+        })?;
+    let authoring_graph = session.graph().clone();
+    let receipt = materialized.receipt;
 
     Ok(Json(CurrentDocumentResponse {
         protocol_version: CURRENT_DOCUMENT_V1,
@@ -194,9 +220,10 @@ async fn current_document(
         source_hash: source.source_sha256,
         revision_id: head.revision_id,
         revision_cursor: head.cursor,
-        canonical_revision_schema_version: materialized.canonical_revision_schema_version,
-        canonical_authoring_revision_id: materialized.canonical_authoring_revision_id,
-        project: materialized.project,
+        canonical_revision_schema_version: receipt.canonical_revision_schema_version,
+        canonical_authoring_revision_id: receipt.canonical_authoring_revision_id,
+        project: receipt.project,
+        authoring_graph,
     }))
 }
 
@@ -1032,17 +1059,19 @@ mod tests {
 
         let source_digest = Sha256Digest::from_str(&source_sha256).unwrap();
         let session = open_mature_0x2c_editor(&source_bytes, source_digest).unwrap();
-        let (node_id, x_emu, y_emu) = session
+        let (node_id, before_x_emu, before_y_emu, x_emu, y_emu) = session
             .graph()
             .nodes
             .iter()
             .find_map(|(node_id, node)| {
-                let x = node.header.bounds.x.get().checked_add(9_525)?;
-                let y = node.header.bounds.y.get().checked_add(9_525)?;
+                let before_x = node.header.bounds.x.get();
+                let before_y = node.header.bounds.y.get();
+                let x = before_x.checked_add(9_525)?;
+                let y = before_y.checked_add(9_525)?;
                 session
                     .can_move_node_to(*node_id, LengthEmu::new(x), LengthEmu::new(y))
                     .ok()
-                    .map(|_| (*node_id, x, y))
+                    .map(|_| (*node_id, before_x, before_y, x, y))
             })
             .expect("Sample3 must contain one movable canonical node");
         let node_id = serde_json::to_value(node_id)
@@ -1050,6 +1079,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+        let opened_node = &opened["authoring_graph"]["nodes"][node_id.as_str()];
+        assert_eq!(opened_node["header"]["bounds"]["x"], before_x_emu);
+        assert_eq!(opened_node["header"]["bounds"]["y"], before_y_emu);
 
         let body = json!({
             "protocol_version": COMMIT_REQUEST_V1,
@@ -1141,6 +1173,9 @@ mod tests {
         assert_eq!(reopened.status(), StatusCode::OK);
         let reopened = json_body(reopened).await;
         assert_eq!(reopened["revision_id"], child_revision);
+        let reopened_node = &reopened["authoring_graph"]["nodes"][node_id.as_str()];
+        assert_eq!(reopened_node["header"]["bounds"]["x"], x_emu);
+        assert_eq!(reopened_node["header"]["bounds"]["y"], y_emu);
 
         pool.close().await;
         authn.close().await;
