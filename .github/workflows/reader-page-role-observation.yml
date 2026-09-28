@@ -1,0 +1,204 @@
+# Exact-head guardrail: Pgid is scenario/design evidence only; generic Viewer preserves raw PAGE records.
+name: Reader PAGE role observation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "crates/pub-model/**"
+      - ".github/workflows/reader-page-role-observation.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  samplenewsletter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire pinned SampleNewsletter
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$fixture"
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          expected="6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          test "$actual" = "$expected"
+          out="$RUNNER_TEMP/reader-page-role"
+          mkdir -p "$out"
+          echo "CHAPTERA_PAGE_ROLE_FIXTURE=$fixture" >> "$GITHUB_ENV"
+          echo "CHAPTERA_PAGE_ROLE_OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Check pub-reader
+        run: cargo check --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml --all-targets
+
+      - name: Emit physical PAGE observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_FIXTURE" "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role.json"
+
+      - name: Compare Pgid scenario observation to pinned Publisher reference subset
+        shell: python
+        env:
+          SOURCE_SHA256: 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CHAPTERA_PAGE_ROLE_OUT"])
+          physical = json.loads((root / "physical-page-role.json").read_text(encoding="utf-8"))
+          actual = [page["contents_seq_num"] for page in physical["pages"]]
+          expected_raw = [263, 266, 323, 352, 381, 269, 273, 277]
+          if actual != expected_raw:
+              raise SystemExit(f"raw PAGE order drifted: {actual!r}")
+
+          customer_reference = [266, 323, 352, 381]
+          publisher_reference_customer_oid_order = [
+              [page["oid_dword0"], page["oid_dword1"]]
+              for page in physical["pages"]
+              if page["contents_seq_num"] in customer_reference
+          ]
+          decoded_scenario_page_lists = [
+              field["pgids"]
+              for controlling in physical.get("controlling", [])
+              for field in controlling.get("fields", [])
+              if field["id"] == 6
+          ]
+          if not decoded_scenario_page_lists:
+              raise SystemExit("SampleNewsletter has no decoded OplControlling PageList")
+          for index, pgids in enumerate(decoded_scenario_page_lists):
+              if pgids != publisher_reference_customer_oid_order:
+                  raise SystemExit(
+                      f"OplControlling PageList[{index}] disagrees with Publisher customer Oid order: "
+                      f"{pgids!r} != {publisher_reference_customer_oid_order!r}"
+                  )
+
+          comparison = {
+              "schema": "chaptera.reader-page-role-reference.v1",
+              "source_sha256": os.environ["SOURCE_SHA256"],
+              "raw_page_seq_nums": actual,
+              "publisher_reference_customer_seq_nums": customer_reference,
+              "publisher_reference_basis": "recorded same-source side-by-side Publisher page crosswalk",
+              "publisher_reference_customer_oid_order": publisher_reference_customer_oid_order,
+              "decoded_oplcontrolling_page_lists": decoded_scenario_page_lists,
+              "pgid_matches_publisher_reference_customer_subset": True,
+              "classification_promoted": False,
+              "pages": [
+                  {
+                      **page,
+                      "publisher_reference_customer": page["contents_seq_num"] in customer_reference,
+                  }
+                  for page in physical["pages"]
+              ],
+          }
+          target = root / "samplenewsletter-page-role-reference.json"
+          target.write_text(json.dumps(comparison, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(target.read_text(encoding="utf-8"))
+
+      - name: Acquire pinned SampleBrochure control
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleBrochure.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub" \
+            --output "$fixture"
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          expected="ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87"
+          test "$actual" = "$expected"
+          echo "CHAPTERA_PAGE_ROLE_BROCHURE=$fixture" >> "$GITHUB_ENV"
+
+      - name: Emit independent SampleBrochure PAGE observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_BROCHURE" \
+            "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role-samplebrochure.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role-samplebrochure.json"
+
+      - name: Emit current Viewer page projection receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_FIXTURE" \
+            "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplenewsletter.json"
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_BROCHURE" \
+            "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplebrochure.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplenewsletter.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplebrochure.json"
+
+      - name: Gate generic Viewer page preservation and scenario observation
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CHAPTERA_PAGE_ROLE_OUT"])
+          newsletter = json.loads(
+              (root / "viewer-page-projection-samplenewsletter.json").read_text(encoding="utf-8")
+          )
+          brochure = json.loads(
+              (root / "viewer-page-projection-samplebrochure.json").read_text(encoding="utf-8")
+          )
+
+          if newsletter["viewer_page_count"] != 8:
+              raise SystemExit(f"SampleNewsletter generic Viewer must preserve 8 raw PAGE records, got {newsletter['viewer_page_count']}")
+          if newsletter["scene_surface_count"] != 8:
+              raise SystemExit(f"SampleNewsletter generic scene must preserve 8 raw PAGE surfaces, got {newsletter['scene_surface_count']}")
+          if newsletter["viewer_page_indices"] != list(range(1, 9)):
+              raise SystemExit(f"SampleNewsletter Viewer page indices drifted: {newsletter['viewer_page_indices']!r}")
+          newsletter_codes = set(newsletter["diagnostic_codes"])
+          if "viewer.page_projection.scenario_order_observed" not in newsletter_codes:
+              raise SystemExit("SampleNewsletter should retain the proven Pgid scenario-order observation")
+          if "viewer.page_projection.roles_unresolved" not in newsletter_codes:
+              raise SystemExit("SampleNewsletter must state that generic physical page-role filtering is unresolved")
+          if "viewer.page_projection.customer_order" in newsletter_codes:
+              raise SystemExit("Pgid scenario order must not be promoted to customer-page authority")
+
+          if brochure["viewer_page_count"] != 6:
+              raise SystemExit(f"SampleBrochure generic Viewer must preserve 6 raw PAGE records, got {brochure['viewer_page_count']}")
+          if brochure["scene_surface_count"] != 6:
+              raise SystemExit(f"SampleBrochure generic scene must preserve 6 raw PAGE surfaces, got {brochure['scene_surface_count']}")
+          brochure_codes = set(brochure["diagnostic_codes"])
+          if "viewer.page_projection.roles_unresolved" not in brochure_codes:
+              raise SystemExit("SampleBrochure must state that generic physical page-role filtering is unresolved")
+          if "viewer.page_projection.scenario_order_observed" in brochure_codes:
+              raise SystemExit("SampleBrochure has no field0x06 PageList authority and must not invent one")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reader-page-role-samplenewsletter
+          path: ${{ env.CHAPTERA_PAGE_ROLE_OUT }}
+          if-no-files-found: error

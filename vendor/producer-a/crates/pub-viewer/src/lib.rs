@@ -189,7 +189,13 @@ impl ViewerGeometryDocument {
             ));
         }
 
-        let authoring = bounded_authoring_slice_from_resolved(graph)?;
+        let effective_page_ids = self
+            .document
+            .pages
+            .iter()
+            .map(|page| page.id)
+            .collect::<Vec<_>>();
+        let authoring = bounded_authoring_slice_from_resolved_pages(graph, &effective_page_ids)?;
         let projection = project_bounded(authoring);
         let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
 
@@ -507,7 +513,13 @@ pub fn open_mature_0x2c_geometry(
 ) -> Result<ViewerGeometryDocument> {
     let pipeline = build_mature_0x2c_pipeline(bytes)?;
     let mut document = viewer_document_from_pipeline(bytes.len(), &pipeline)?;
-    let authoring = bounded_authoring_slice_from_resolved(&pipeline.resolved.graph)?;
+    let effective_page_ids = document
+        .pages
+        .iter()
+        .map(|page| page.id)
+        .collect::<Vec<_>>();
+    let authoring =
+        bounded_authoring_slice_from_resolved_pages(&pipeline.resolved.graph, &effective_page_ids)?;
     let projection = project_bounded(authoring);
 
     document
@@ -781,8 +793,9 @@ fn viewer_document_from_pipeline(
 ) -> Result<ViewerDocument> {
     let graph = &pipeline.resolved.graph;
 
-    let mut pages = Vec::with_capacity(graph.document.pages.len());
-    for (zero_based, page_id) in graph.document.pages.iter().enumerate() {
+    let effective_page_ids = &pipeline.source.effective_pages.page_ids;
+    let mut pages = Vec::with_capacity(effective_page_ids.len());
+    for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
             .pages
             .get(page_id)
@@ -842,9 +855,14 @@ fn viewer_document_from_pipeline(
 pub fn bounded_authoring_slice_from_resolved(
     graph: &PubResolvedGraph,
 ) -> Result<BoundedAuthoringSlice> {
-    let pages = graph
-        .document
-        .pages
+    bounded_authoring_slice_from_resolved_pages(graph, &graph.document.pages)
+}
+
+fn bounded_authoring_slice_from_resolved_pages(
+    graph: &PubResolvedGraph,
+    page_ids: &[PageId],
+) -> Result<BoundedAuthoringSlice> {
+    let pages = page_ids
         .iter()
         .map(|page_id| {
             graph
@@ -855,9 +873,15 @@ pub fn bounded_authoring_slice_from_resolved(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let page_origins = page_ids
+        .iter()
+        .map(|page_id| page_id.into_canonical())
+        .collect::<BTreeSet<_>>();
+
     let node_geometry = graph
         .nodes
         .values()
+        .filter(|node| page_origins.contains(&node.header.parent_id))
         .map(|node| BoundedNodeGeometryInput {
             node_id: node.header.id,
             parent_origin: node.header.parent_id,
@@ -871,6 +895,7 @@ pub fn bounded_authoring_slice_from_resolved(
     let story_frames = graph
         .nodes
         .values()
+        .filter(|node| page_origins.contains(&node.header.parent_id))
         .filter_map(|node| {
             let frame = node.payload.story_frame.as_ref()?;
             let story_id = frame.story_id?;
@@ -963,6 +988,21 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             "viewer.page_extent.equivalent_source_records",
             ViewerDiagnosticSeverity::Info,
             "Multiple source page-extent records agree exactly; the Viewer uses their shared page size.",
+        ),
+        ScenarioPageOrderObserved { .. } => (
+            "viewer.page_projection.scenario_order_observed",
+            ViewerDiagnosticSeverity::Info,
+            "A persisted scenario/design page-identity order was recovered. It is retained as evidence only and is not used to suppress physical pages.",
+        ),
+        ScenarioPageOrderUnavailable { .. } => (
+            "viewer.page_projection.scenario_order_unavailable",
+            ViewerDiagnosticSeverity::Info,
+            "Scenario/design page-order metadata could not be resolved safely; it is not used for physical page filtering.",
+        ),
+        PageRoleClassificationUnresolved { .. } => (
+            "viewer.page_projection.roles_unresolved",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "Generic customer/master/service page-role filtering is not proven for this file family, so the Viewer preserves all recovered physical PAGE records.",
         ),
         LinkedFrameNotMaterialized { .. } => (
             "viewer.text.link_target_missing",
@@ -1384,6 +1424,7 @@ mod tests {
             paints: Vec::new(),
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
+            typography_runs: Vec::new(),
             images: Vec::new(),
         };
 
@@ -1530,6 +1571,7 @@ mod tests {
             paints: Vec::new(),
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
+            typography_runs: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.scene.nodes.clone();
@@ -1935,7 +1977,12 @@ mod tests {
                     source_hash,
                     byte_len: 1,
                 },
-                pages: Vec::new(),
+                pages: vec![ViewerPage {
+                    index: 1,
+                    id: page_id,
+                    width_emu: graph.pages[&page_id].size.width.get(),
+                    height_emu: graph.pages[&page_id].size.height.get(),
+                }],
                 stories: vec![ViewerStory {
                     id: story_id,
                     text: graph.stories[&story_id].text.clone(),
@@ -1984,6 +2031,7 @@ mod tests {
     #[test]
     fn viewer_text_projection_refresh_reflows_same_explicit_linked_chain() {
         let mut graph = linked_resolved_graph_fixture("ABCDEFGHI");
+        let page_id = graph.document.pages[0];
         let story_id = *graph.stories.keys().next().expect("fixture story");
         let projection =
             project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
@@ -2031,7 +2079,12 @@ mod tests {
                     source_hash,
                     byte_len: 1,
                 },
-                pages: Vec::new(),
+                pages: vec![ViewerPage {
+                    index: 1,
+                    id: page_id,
+                    width_emu: graph.pages[&page_id].size.width.get(),
+                    height_emu: graph.pages[&page_id].size.height.get(),
+                }],
                 stories: vec![ViewerStory {
                     id: story_id,
                     text: "ABCDEFGHI".to_owned(),

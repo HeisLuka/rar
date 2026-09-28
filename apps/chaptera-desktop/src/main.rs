@@ -146,6 +146,7 @@ impl PreviewTextMetricDiagnostic {
         }
     }
 }
+
 #[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
@@ -7037,7 +7038,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
-    fn golden_sample_newsletter_reader_page_2_uses_shared_typography_render_plan() {
+    fn golden_sample_newsletter_reference_customer_page_1_uses_shared_typography_render_plan() {
         use egui_kittest::Harness;
         use sha2::{Digest, Sha256};
 
@@ -7085,9 +7086,11 @@ mod tests {
             "proven Rockwell Condensed 24pt anchor must reach Viewer"
         );
 
+        // Fixture-only crosswalk: raw Viewer Page 2 is Publisher customer page 1 for this exact pinned SHA.
+        // This must never be reused as generic PAGE-role logic.
         let page_offset = 1_usize;
-        let plan =
-            build_page_render_plan_v1(&visual, page_offset).expect("page 2 shared render plan");
+        let plan = build_page_render_plan_v1(&visual, page_offset)
+            .expect("reference customer page 1 shared render plan");
         let typography_sections = plan
             .nodes
             .iter()
@@ -7117,19 +7120,22 @@ mod tests {
         let image = harness
             .render()
             .expect("headless Reader render must succeed");
-        let png_path = output_dir.join("samplenewsletter-page-002-reader.png");
+        let png_path = output_dir.join("samplenewsletter-reference-customer-page-001-reader.png");
         image.save(&png_path).expect("write Reader golden PNG");
 
         let receipt = serde_json::json!({
-            "schema": "chaptera.reader-golden-samplenewsletter.v2",
+            "schema": "chaptera.reader-golden-samplenewsletter.v3",
             "source_sha256": source_sha256,
-            "page_number": 2,
+            "viewer_page_number": 2,
+            "publisher_reference_customer_page_number": 1,
+            "page_selection_basis": "pinned_same_source_crosswalk_only",
+            "generic_page_role_claimed": false,
             "typography_run_count": visual.typography_runs.len(),
             "inherited_typography_run_count": inherited_typography_run_count,
             "render_plan_typography_sections": typography_sections,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
-            "png": "samplenewsletter-page-002-reader.png"
+            "png": "samplenewsletter-reference-customer-page-001-reader.png"
         });
         fs::write(
             output_dir.join("samplenewsletter-reader-receipt.json"),
