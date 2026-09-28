@@ -145,6 +145,7 @@ jobs:
                   re.findall(r'import\("[.]/([^"]+[.]js)"\)', main_text)
               )
           chunk_findings = []
+          api_base_candidates = set()
           total_js_bytes = 0
           for asset_ref in sorted(asset_refs):
               asset_name = asset_ref.rsplit("/", 1)[-1]
@@ -164,6 +165,12 @@ jobs:
                   raise SystemExit("frontend diagnostics exceeded 10 MB JS ceiling")
               (js_dir / asset_name).write_bytes(asset_response.content)
               text_body = asset_response.text
+              api_base_candidates.update(
+                  re.findall(
+                      r'ApiConnectorConfig:\\{DB_URL:"(https://[^"]+)"',
+                      text_body,
+                  )
+              )
               contexts = []
               for needle in [
                   "DB_URL",
@@ -185,6 +192,30 @@ jobs:
                   })
           (DISC / "frontend-api-config-candidates.json").write_text(
               json.dumps(chunk_findings, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if len(api_base_candidates) != 1:
+              raise SystemExit(
+                  f"public API base is not uniquely grounded: {sorted(api_base_candidates)}"
+              )
+          api_base = next(iter(api_base_candidates)).rstrip("/")
+
+          tenant_match = re.search(
+              r'"TENANT_DOMAIN":\\{"id":"([^"]+)"',
+              raw,
+          )
+          if not tenant_match:
+              raise SystemExit("TENANT_DOMAIN.id missing from public hydration state")
+          tenant_id = tenant_match.group(1)
+          (DISC / "frontend-public-api.json").write_text(
+              json.dumps(
+                  {
+                      "api_base": api_base,
+                      "tenant_id": tenant_id,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
               encoding="utf-8",
           )
 
@@ -237,11 +268,14 @@ jobs:
               # Public UI resource refresh. The shipped client explicitly admits
               # /api/resources/{id}; use it only to refresh the ephemeral origin.
               # Immutable file identity/size/SHA gates below remain authoritative.
-              resource_url = requests.compat.urljoin(PAGE, f"/api/resources/{resource_id}")
+              resource_url = f"{api_base}/resources/{resource_id}"
               api_response = session.get(
                   resource_url,
                   timeout=30,
-                  headers={"Accept": "application/json"},
+                  headers={
+                      "Accept": "application/json",
+                      "X-Tenant": tenant_id,
+                  },
               )
               api_diag = {
                   "public_name": public_name,
