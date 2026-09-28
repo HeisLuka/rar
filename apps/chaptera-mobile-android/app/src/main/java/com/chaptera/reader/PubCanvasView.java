@@ -266,6 +266,30 @@ final class PubCanvasView extends View {
         }
     }
 
+    void restoreViewport(float zoom, float panX, float panY) {
+        this.userScale = clamp(zoom, 0.5f, 8f);
+        this.panX = panX;
+        this.panY = panY;
+        invalidate();
+    }
+
+    float getZoom() {
+        return userScale;
+    }
+
+    float getPanXOffset() {
+        return panX;
+    }
+
+    float getPanYOffset() {
+        return panY;
+    }
+
+    void applyScaleFactor(float factor) {
+        userScale = clamp(userScale * factor, 0.5f, 8f);
+        invalidate();
+    }
+
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
     }
