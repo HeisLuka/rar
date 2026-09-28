@@ -133,13 +133,15 @@ jobs:
 
               window = raw[max(0, idx - 600): min(len(raw), idx + 14000)]
 
-              file_match = re.search(
-                  r'"file":\{"id":"([^"]+)","name":"' + re.escape(public_name) + r'"',
+              resource_match = re.search(
+                  r'\{"id":"([^"]+)","file":\{"id":"([^"]+)","name":"'
+                  + re.escape(public_name)
+                  + r'"',
                   window,
               )
-              if not file_match:
-                  raise SystemExit(f"{public_name}: file id not found")
-              file_id = file_match.group(1)
+              if not resource_match:
+                  raise SystemExit(f"{public_name}: resource/file ids not found")
+              resource_id, file_id = resource_match.groups()
               if file_id != spec["expected_id"]:
                   raise SystemExit(
                       f"{public_name}: file id drift {file_id} != {spec['expected_id']}"
@@ -165,10 +167,75 @@ jobs:
               )
               if not origin_match:
                   raise SystemExit(f"{public_name}: signed origin URL missing")
-              origin = json.loads('"' + origin_match.group(1) + '"')
+              hydration_origin = json.loads('"' + origin_match.group(1) + '"')
+              origin = hydration_origin
+
+              # Public UI resource refresh. The shipped client explicitly admits
+              # /api/resources/{id}; use it only to refresh the ephemeral origin.
+              # Immutable file identity/size/SHA gates below remain authoritative.
+              resource_url = requests.compat.urljoin(PAGE, f"/api/resources/{resource_id}")
+              api_response = session.get(
+                  resource_url,
+                  timeout=30,
+                  headers={"Accept": "application/json"},
+              )
+              api_diag = {
+                  "public_name": public_name,
+                  "resource_id": resource_id,
+                  "file_id": file_id,
+                  "resource_url": resource_url,
+                  "status": api_response.status_code,
+              }
+              if api_response.ok:
+                  try:
+                      api_payload = api_response.json()
+                  except ValueError:
+                      api_payload = None
+
+                  def find_file(node):
+                      if isinstance(node, dict):
+                          if (
+                              node.get("id") == file_id
+                              and node.get("name") == public_name
+                              and isinstance(node.get("url"), dict)
+                              and isinstance(node["url"].get("origin"), str)
+                          ):
+                              return node
+                          for value in node.values():
+                              found_node = find_file(value)
+                              if found_node is not None:
+                                  return found_node
+                      elif isinstance(node, list):
+                          for value in node:
+                              found_node = find_file(value)
+                              if found_node is not None:
+                                  return found_node
+                      return None
+
+                  refreshed_file = find_file(api_payload)
+                  if refreshed_file is not None:
+                      refreshed_size = refreshed_file.get("size")
+                      if refreshed_size != spec["size"]:
+                          raise SystemExit(
+                              f"{public_name}: refreshed size drift "
+                              f"{refreshed_size} != {spec['size']}"
+                          )
+                      origin = refreshed_file["url"]["origin"]
+                      api_diag["refreshed_origin"] = True
+                  else:
+                      api_diag["refreshed_origin"] = False
+              else:
+                  api_diag["refreshed_origin"] = False
+
+              (DISC / f"{spec['artifact_name']}.resource-api.json").write_text(
+                  json.dumps(api_diag, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
 
               print(
-                  f"{public_name}: id={file_id} declared_size={declared_size} "
+                  f"{public_name}: resource={resource_id} id={file_id} "
+                  f"declared_size={declared_size} "
+                  f"resource_api={api_response.status_code} "
                   f"origin_host={requests.utils.urlparse(origin).hostname}"
               )
 
