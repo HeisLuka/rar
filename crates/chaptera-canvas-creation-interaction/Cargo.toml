@@ -1,0 +1,12 @@
+[package]
+name = "chaptera-canvas-creation-interaction"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[workspace]
+resolver = "2"
