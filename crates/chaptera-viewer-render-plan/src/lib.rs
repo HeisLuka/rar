@@ -207,10 +207,14 @@ pub fn build_page_render_plan_v1(
         })
         .collect::<Vec<_>>();
 
+    // Insert projected visuals directly after their target frame in reverse
+    // source order. Reversing the insertion walk preserves the canonical slot
+    // order while avoiding a second z-order authority.
     for instance in visual
         .projected_instances
         .iter()
         .filter(|instance| instance.target_page_id == page.id)
+        .rev()
     {
         let paint = visual
             .paints
@@ -261,7 +265,7 @@ pub fn build_page_render_plan_v1(
             })
         });
 
-        nodes.push(NodeRenderPlanV1 {
+        let projected_node = NodeRenderPlanV1 {
             node_id: instance.origin_node_id,
             scene_instance_id: Some(instance.instance_id.clone()),
             projection_kind: Some(instance.projection_kind),
@@ -276,7 +280,16 @@ pub fn build_page_render_plan_v1(
                 }),
             image,
             text,
-        });
+        };
+
+        let insert_at = nodes
+            .iter()
+            .position(|node| {
+                node.scene_instance_id.is_none() && node.node_id == instance.target_frame_node_id
+            })
+            .map(|index| index + 1)
+            .unwrap_or(nodes.len());
+        nodes.insert(insert_at, projected_node);
     }
 
     Ok(PageRenderPlanV1 {
@@ -469,6 +482,41 @@ mod tests {
         assert_eq!(
             rendered,
             &suppress_projected_object_marker_glyphs(source)
+        );
+    }
+
+    #[test]
+    fn projected_instance_is_painted_immediately_after_its_target_frame() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let target_node_id = visual.scene.nodes[0].origin;
+        let target_story_id = visual.document.stories[0].id;
+        visual.projected_instances.push(pub_viewer::ViewerProjectedNodeInstance {
+            instance_id: "scene:cmo-story-slot:order-test".to_owned(),
+            projection_kind: pub_viewer::ViewerProjectionKind::CmoStorySlot,
+            origin_node_id: target_node_id,
+            target_page_id: page_id,
+            target_story_id,
+            target_frame_node_id: target_node_id,
+            scalar_index: 0,
+            source_order: 0,
+            cmo_id: 7,
+            carrier_story_id: None,
+            bounds: RectEmu::new(
+                LengthEmu::new(50),
+                LengthEmu::new(60),
+                LengthEmu::new(70),
+                LengthEmu::new(80),
+            ),
+            transform: Affine2D::identity(),
+        });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        assert_eq!(plan.nodes.len(), 2);
+        assert!(plan.nodes[0].scene_instance_id.is_none());
+        assert_eq!(
+            plan.nodes[1].scene_instance_id.as_deref(),
+            Some("scene:cmo-story-slot:order-test")
         );
     }
 
