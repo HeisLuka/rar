@@ -167,7 +167,7 @@ jobs:
               text_body = asset_response.text
               api_base_candidates.update(
                   re.findall(
-                      r'ApiConnectorConfig:\\{DB_URL:"(https://[^"]+)"',
+                      r'ApiConnectorConfig:\{DB_URL:"(https://[^"]+)"',
                       text_body,
                   )
               )
@@ -201,7 +201,7 @@ jobs:
           api_base = next(iter(api_base_candidates)).rstrip("/")
 
           tenant_match = re.search(
-              r'"TENANT_DOMAIN":\\{"id":"([^"]+)"',
+              r'"TENANT_DOMAIN":\{"id":"([^"]+)"',
               raw,
           )
           if not tenant_match:
