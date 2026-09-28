@@ -137,6 +137,7 @@ impl EditorSession {
                 | EditOperation::MoveNodes { .. }
                 | EditOperation::ResizeNode { .. }
                 | EditOperation::ResizeNodes { .. }
+                | EditOperation::CreateTextBox { .. }
                 | EditOperation::CreateShape { .. } => {}
             }
         }
@@ -230,6 +231,7 @@ impl EditorSession {
                 | EditOperation::MoveNodes { .. }
                 | EditOperation::ResizeNode { .. }
                 | EditOperation::ResizeNodes { .. }
+                | EditOperation::CreateTextBox { .. }
                 | EditOperation::CreateShape { .. } => {
                     requirements.extend(operation.persistence_requirements());
                 }
