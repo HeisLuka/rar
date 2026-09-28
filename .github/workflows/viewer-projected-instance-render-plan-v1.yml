@@ -1,0 +1,24 @@
+name: Viewer projected instance render-plan V1
+
+on:
+  pull_request:
+    paths:
+      - 'vendor/producer-a/crates/pub-viewer/**'
+      - 'crates/chaptera-viewer-render-plan/**'
+      - '.github/workflows/viewer-projected-instance-render-plan-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  projected-instance-render-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run exact projected-instance render-plan contract
+        run: |
+          set -euo pipefail
+          cargo test -p chaptera-viewer-render-plan projected_instance_keeps_visual_identity_separate_from_semantic_origin -- --exact
