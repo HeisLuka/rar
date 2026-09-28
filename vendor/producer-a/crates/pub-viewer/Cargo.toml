@@ -10,6 +10,7 @@ anyhow.workspace=true
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
 pub-reader={path="../pub-reader"}
+pub-presentation-profile={path="../../../../crates/pub-presentation-profile"}
 serde.workspace=true
 serde_json.workspace=true
 sha2.workspace=true
