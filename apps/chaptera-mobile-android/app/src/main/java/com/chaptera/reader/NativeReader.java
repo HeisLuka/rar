@@ -10,7 +10,7 @@ final class NativeReader {
     static native String openLocalPubJson(byte[] bytes);
     static native String openSessionJson(byte[] bytes);
     static native String pageRenderPlanJson(long sessionId, long pageIndex);
-    static native byte[] imageResourceBytes(long sessionId, String resourceKey);
+    static native byte[] imageResourceArgb8(long sessionId, String resourceKey);
     static native void closeSession(long sessionId);
     static native String failureDiagnosticJson(byte[] bytes);
 }
