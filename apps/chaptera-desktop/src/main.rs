@@ -103,9 +103,64 @@ enum ViewerLoadFailureKind {
 #[derive(Debug, Clone)]
 struct ViewerLoadFailure {
     kind: ViewerLoadFailureKind,
+    attempted_path: Option<PathBuf>,
     message: String,
     classification: Option<FailureIntakeClassification>,
     diagnostic_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenGeneration(u64);
+
+#[derive(Debug, Default)]
+struct OpenStateAuthority {
+    next_generation: u64,
+    active_generation: Option<OpenGeneration>,
+}
+
+impl OpenStateAuthority {
+    fn begin_attempt(&mut self) -> OpenGeneration {
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("desktop open generation exhausted");
+        let generation = OpenGeneration(self.next_generation);
+        self.active_generation = Some(generation);
+        generation
+    }
+
+    fn commit_if_current(&mut self, generation: OpenGeneration) -> bool {
+        if self.active_generation != Some(generation) {
+            return false;
+        }
+        self.active_generation = None;
+        true
+    }
+
+    fn finish_without_commit_if_current(&mut self, generation: OpenGeneration) -> bool {
+        if self.active_generation != Some(generation) {
+            return false;
+        }
+        self.active_generation = None;
+        true
+    }
+}
+
+struct PreparedDocumentOpen {
+    source_path: PathBuf,
+    visual: ViewerGeometryDocument,
+    editor: Option<pub_editor::EditorSession>,
+    editor_load_error: Option<String>,
+    project_status: Option<String>,
+}
+
+fn dropped_file_candidate(paths: &[Option<PathBuf>]) -> Result<Option<PathBuf>, &'static str> {
+    match paths {
+        [] => Ok(None),
+        [Some(path)] => Ok(Some(path.clone())),
+        [None] => Err("Dropped item has no local filesystem path."),
+        _ => Err("Drop exactly one PUB file at a time; no file was opened."),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -648,6 +703,7 @@ struct CachedImageTexture {
 
 struct ViewerApp {
     source_path: Option<PathBuf>,
+    open_state: OpenStateAuthority,
     visual: Option<ViewerGeometryDocument>,
     selected_page: usize,
     canvas_selection: SceneSelectionState,
@@ -701,6 +757,7 @@ impl ViewerApp {
     ) -> Self {
         let mut app = Self {
             source_path: None,
+            open_state: OpenStateAuthority::default(),
             visual: None,
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
@@ -989,6 +1046,7 @@ impl ViewerApp {
         {
             self.load_error = Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::FileAccess,
+                attempted_path: None,
                 message:
                     "The native Open dialog is currently provided by the Windows Reader build; drag and drop a PUB file on this platform."
                         .to_owned(),
@@ -998,11 +1056,76 @@ impl ViewerApp {
         }
     }
 
-    fn load_path(&mut self, path: PathBuf) {
-        self.supporter_value
-            .observe(supporter::ValueEvent::WorkflowFailed);
-        self.source_path = Some(path.clone());
-        self.visual = None;
+    fn prepare_document_open(path: PathBuf) -> Result<PreparedDocumentOpen, ViewerLoadFailure> {
+        let bytes = fs::read(&path).map_err(|error| ViewerLoadFailure {
+            kind: ViewerLoadFailureKind::FileAccess,
+            attempted_path: Some(path.clone()),
+            message: format!("Could not read {}: {error}", path.display()),
+            classification: None,
+            diagnostic_json: None,
+        })?;
+
+        let visual =
+            diagnostic_sweep::open_for_product(&bytes).map_err(|error| ViewerLoadFailure {
+                kind: ViewerLoadFailureKind::Unsupported,
+                attempted_path: Some(path.clone()),
+                message: format!("Could not open {}: {error:#}", path.display()),
+                classification: Some(classify_failure_candidate(&bytes)),
+                diagnostic_json: pub_viewer::local_failure_diagnostic_json(&bytes).ok(),
+            })?;
+
+        let (editor, editor_load_error, project_status) = if reader_only_mode() {
+            (None, None, None)
+        } else {
+            let source_hash = visual.document.source.source_hash;
+            match pub_editor::open_mature_0x2c_editor(&bytes, source_hash) {
+                Ok(mut editor) => {
+                    let project_status = match load_editor_project_sidecar(&path, &mut editor) {
+                        Ok(Some((sidecar, operation_count))) => Some(format!(
+                            "Loaded editor project {} with {operation_count} operations.",
+                            sidecar.display()
+                        )),
+                        Ok(None) => None,
+                        Err(error) => Some(format!("Editor project was not applied: {error}")),
+                    };
+                    (Some(editor), None, project_status)
+                }
+                Err(error) => (None, Some(error.to_string()), None),
+            }
+        };
+
+        Ok(PreparedDocumentOpen {
+            source_path: path,
+            visual,
+            editor,
+            editor_load_error,
+            project_status,
+        })
+    }
+
+    fn commit_prepared_document_open(&mut self, prepared: PreparedDocumentOpen) {
+        let PreparedDocumentOpen {
+            source_path,
+            visual,
+            editor,
+            editor_load_error,
+            project_status,
+        } = prepared;
+
+        let supporter_status = match visual.document.fidelity_status() {
+            ViewerFidelityStatus::Supported => supporter::OpenStatus::Supported,
+            ViewerFidelityStatus::Partial => supporter::OpenStatus::Partial,
+            ViewerFidelityStatus::Unsupported => supporter::OpenStatus::Unsupported,
+        };
+        let supporter_page_count = visual.document.pages.len();
+        let supporter_text_searchable = visual
+            .document
+            .stories
+            .iter()
+            .any(|story| !story.text.is_empty());
+
+        self.source_path = Some(source_path);
+        self.visual = Some(visual);
         self.selected_page = 0;
         self.canvas_selection.clear();
         self.canvas_drag = None;
@@ -1017,14 +1140,14 @@ impl ViewerApp {
         self.selected_search_result = None;
         self.image_textures.clear();
         self.image_decode_diagnostics.clear();
-        self.editor = None;
-        self.editor_load_error = None;
+        self.editor = editor;
+        self.editor_load_error = editor_load_error;
         self.edit_buffer.clear();
         self.edit_status = None;
         self.selected_table_cell_index = None;
         self.table_cell_buffer.clear();
         self.export_preview = None;
-        self.project_status = None;
+        self.project_status = project_status;
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
         self.preview_text_diagnostics.clear();
@@ -1034,89 +1157,44 @@ impl ViewerApp {
         self.exact_file_consent_status = None;
         self.show_diagnostics = false;
 
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                self.load_error = Some(ViewerLoadFailure {
-                    kind: ViewerLoadFailureKind::FileAccess,
-                    message: format!("Could not read {}: {error}", path.display()),
-                    classification: None,
-                    diagnostic_json: None,
-                });
-                return;
-            }
-        };
+        self.supporter_value
+            .observe(supporter::ValueEvent::DocumentOpened {
+                status: supporter_status,
+                page_count: supporter_page_count,
+                text_searchable: supporter_text_searchable,
+                initial_page: 0,
+            });
 
-        match diagnostic_sweep::open_for_product(&bytes) {
-            Ok(visual) => {
-                let supporter_status = match visual.document.fidelity_status() {
-                    ViewerFidelityStatus::Supported => supporter::OpenStatus::Supported,
-                    ViewerFidelityStatus::Partial => supporter::OpenStatus::Partial,
-                    ViewerFidelityStatus::Unsupported => supporter::OpenStatus::Unsupported,
-                };
-                let supporter_page_count = visual.document.pages.len();
-                let supporter_text_searchable = visual
-                    .document
-                    .stories
-                    .iter()
-                    .any(|story| !story.text.is_empty());
+        if let Err(error) = self.sync_visual_stories_from_editor() {
+            self.edit_status = Some(format!(
+                "Viewer text projection refresh failed closed: {error}"
+            ));
+        }
+        if let Err(error) = self.sync_visual_created_text_boxes_from_editor() {
+            self.edit_status = Some(format!(
+                "Viewer created TextBox scene sync failed closed: {error}"
+            ));
+        }
+        self.sync_visual_geometry_from_editor();
+    }
 
-                self.supporter_value
-                    .observe(supporter::ValueEvent::DocumentOpened {
-                        status: supporter_status,
-                        page_count: supporter_page_count,
-                        text_searchable: supporter_text_searchable,
-                        initial_page: 0,
-                    });
+    fn load_path(&mut self, path: PathBuf) {
+        self.supporter_value
+            .observe(supporter::ValueEvent::WorkflowFailed);
+        let generation = self.open_state.begin_attempt();
 
-                let editor = if reader_only_mode() {
-                    None
-                } else {
-                    let source_hash = visual.document.source.source_hash;
-                    match pub_editor::open_mature_0x2c_editor(&bytes, source_hash) {
-                        Ok(mut editor) => {
-                            match load_editor_project_sidecar(&path, &mut editor) {
-                                Ok(Some((sidecar, operation_count))) => {
-                                    self.project_status = Some(format!(
-                                        "Loaded editor project {} with {operation_count} operations.",
-                                        sidecar.display()
-                                    ));
-                                }
-                                Ok(None) => {}
-                                Err(error) => {
-                                    self.project_status =
-                                        Some(format!("Editor project was not applied: {error}"));
-                                }
-                            }
-                            Some(editor)
-                        }
-                        Err(error) => {
-                            self.editor_load_error = Some(error.to_string());
-                            None
-                        }
-                    }
-                };
-                self.visual = Some(visual);
-                self.editor = editor;
-                if let Err(error) = self.sync_visual_stories_from_editor() {
-                    self.edit_status = Some(format!(
-                        "Viewer text projection refresh failed closed: {error}"
-                    ));
+        match Self::prepare_document_open(path) {
+            Ok(prepared) => {
+                if self.open_state.commit_if_current(generation) {
+                    self.commit_prepared_document_open(prepared);
                 }
-                if let Err(error) = self.sync_visual_created_text_boxes_from_editor() {
-                    self.edit_status = Some(format!(
-                        "Viewer created TextBox scene sync failed closed: {error}"
-                    ));
-                }
-                self.sync_visual_geometry_from_editor();
             }
             Err(error) => {
-                self.load_error = Some(ViewerLoadFailure {
-                    kind: ViewerLoadFailureKind::Unsupported,
-                    message: format!("Could not open {}: {error:#}", path.display()),
-                    classification: Some(classify_failure_candidate(&bytes)),
-                    diagnostic_json: pub_viewer::local_failure_diagnostic_json(&bytes).ok(),
-                });
+                if self.open_state.finish_without_commit_if_current(generation) {
+                    self.load_error = Some(error);
+                    self.exact_file_consent_open = false;
+                    self.exact_file_consent_status = None;
+                }
             }
         }
     }
@@ -1564,25 +1642,28 @@ impl ViewerApp {
     }
 
     fn accept_dropped_file(&mut self, ctx: &egui::Context) {
-        let dropped = ctx.input(|input| {
+        let dropped_paths = ctx.input(|input| {
             input
                 .raw
                 .dropped_files
                 .iter()
-                .find_map(|file| file.path.clone())
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>()
         });
 
-        if let Some(path) = dropped {
-            self.load_path(path);
-        } else {
-            let dropped_without_path = ctx.input(|input| !input.raw.dropped_files.is_empty());
-            if dropped_without_path {
+        match dropped_file_candidate(&dropped_paths) {
+            Ok(Some(path)) => self.load_path(path),
+            Ok(None) => {}
+            Err(message) => {
                 self.load_error = Some(ViewerLoadFailure {
                     kind: ViewerLoadFailureKind::FileAccess,
-                    message: "Dropped item has no local filesystem path.".to_owned(),
+                    attempted_path: None,
+                    message: message.to_owned(),
                     classification: None,
                     diagnostic_json: None,
                 });
+                self.exact_file_consent_open = false;
+                self.exact_file_consent_status = None;
             }
         }
     }
@@ -2238,8 +2319,9 @@ impl ViewerApp {
         }
 
         let filename = self
-            .source_path
-            .as_deref()
+            .load_error
+            .as_ref()
+            .and_then(|failure| failure.attempted_path.as_deref())
             .and_then(Path::file_name)
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "(filename unavailable)".to_owned());
@@ -4905,6 +4987,87 @@ mod tests {
     }
 
     #[test]
+    fn open_generation_rejects_superseded_completion() {
+        let mut authority = OpenStateAuthority::default();
+        let generation_a = authority.begin_attempt();
+        let generation_b = authority.begin_attempt();
+
+        assert!(
+            !authority.commit_if_current(generation_a),
+            "late A completion must not publish after B supersedes it"
+        );
+        assert!(
+            authority.commit_if_current(generation_b),
+            "current B completion must retain commit authority"
+        );
+    }
+
+    #[test]
+    fn finished_attempt_cannot_commit_later() {
+        let mut authority = OpenStateAuthority::default();
+        let generation = authority.begin_attempt();
+
+        assert!(authority.finish_without_commit_if_current(generation));
+        assert!(
+            !authority.commit_if_current(generation),
+            "cancelled/failed work must lose publication authority"
+        );
+    }
+
+    #[test]
+    fn multi_file_drop_is_explicitly_ambiguous() {
+        let a = Some(PathBuf::from("a.pub"));
+        let b = Some(PathBuf::from("b.pub"));
+
+        assert_eq!(
+            dropped_file_candidate(&[a, b]),
+            Err("Drop exactly one PUB file at a time; no file was opened.")
+        );
+        assert_eq!(
+            dropped_file_candidate(&[Some(PathBuf::from("only.pub"))]),
+            Ok(Some(PathBuf::from("only.pub")))
+        );
+    }
+
+    #[test]
+    fn failed_replacement_open_preserves_committed_state_and_source_bytes() {
+        let replacement = std::env::temp_dir().join(format!(
+            "chaptera-open-state-invalid-replacement-{}.pub",
+            std::process::id()
+        ));
+        let replacement_bytes = b"<html>not a Publisher document</html>";
+        fs::write(&replacement, replacement_bytes).expect("write invalid replacement fixture");
+
+        let committed_path = PathBuf::from("already-open.pub");
+        let mut app = ViewerApp::new(None);
+        app.source_path = Some(committed_path.clone());
+        app.selected_page = 3;
+        app.search_query = "existing search state".to_owned();
+        app.zoom = 1.75;
+
+        app.load_path(replacement.clone());
+
+        assert_eq!(
+            app.source_path.as_ref(),
+            Some(&committed_path),
+            "failed B must not evict committed A"
+        );
+        assert_eq!(app.selected_page, 3);
+        assert_eq!(app.search_query, "existing search state");
+        assert_eq!(app.zoom, 1.75);
+        let failure = app.load_error.as_ref().expect("replacement failure");
+        assert_eq!(failure.kind, ViewerLoadFailureKind::Unsupported);
+        assert_eq!(failure.attempted_path.as_ref(), Some(&replacement));
+        assert_eq!(
+            fs::read(&replacement).expect("re-read invalid replacement"),
+            replacement_bytes,
+            "open attempt must not mutate source bytes"
+        );
+
+        let _ = fs::remove_file(replacement);
+    }
+
+    #[test]
     fn geometry_warning_names_unpainted_content() {
         for term in ["text", "images", "effects", "transforms"] {
             assert!(GEOMETRY_WARNING.contains(term));
@@ -4915,6 +5078,7 @@ mod tests {
     fn unsupported_open_failure_has_unsupported_fidelity_state() {
         let app = ViewerApp {
             source_path: None,
+            open_state: OpenStateAuthority::default(),
             visual: None,
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
@@ -4926,6 +5090,7 @@ mod tests {
             zoom_mode: CanvasZoomMode::FitPage,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::Unsupported,
+                attempted_path: None,
                 message: "unsupported".to_owned(),
                 classification: Some(classify_failure_candidate(b"<html>not pub</html>")),
                 diagnostic_json: None,
@@ -4971,6 +5136,7 @@ mod tests {
     fn file_access_failure_does_not_claim_document_is_unsupported() {
         let app = ViewerApp {
             source_path: None,
+            open_state: OpenStateAuthority::default(),
             visual: None,
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
@@ -4982,6 +5148,7 @@ mod tests {
             zoom_mode: CanvasZoomMode::FitPage,
             load_error: Some(ViewerLoadFailure {
                 kind: ViewerLoadFailureKind::FileAccess,
+                attempted_path: None,
                 message: "permission denied".to_owned(),
                 classification: None,
                 diagnostic_json: None,
@@ -5242,6 +5409,7 @@ mod tests {
 
         let mut app = ViewerApp {
             source_path: Some(PathBuf::from("SampleNewsletter.pub")),
+            open_state: OpenStateAuthority::default(),
             visual: Some(visual),
             selected_page: 0,
             canvas_selection: SceneSelectionState::default(),
