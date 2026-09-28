@@ -55,7 +55,7 @@ fn run() -> Result<(), String> {
     let snapshot = editor_copy_ledger_snapshot_v1();
 
     println!(
-        "{{"scenario":"replace_image_export","export_bytes":{},"replacement_image_clone_bytes":{},"replacement_image_clone_instances":{},"editable_serialization_bytes":{},"editable_serialization_instances":{}}}",
+        r#"{{"scenario":"replace_image_export","export_bytes":{},"replacement_image_clone_bytes":{},"replacement_image_clone_instances":{},"editable_serialization_bytes":{},"editable_serialization_instances":{}}}"#,
         export.bytes.len(),
         snapshot.replacement_image_clone_bytes,
         snapshot.replacement_image_clone_instances,
