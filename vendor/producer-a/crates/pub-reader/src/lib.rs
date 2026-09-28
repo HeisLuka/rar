@@ -53,7 +53,8 @@ use pub_contents::{
     CONTENTS_RAW_TYPE_STORY_CATALOG, Contents0x2cChunk, Contents0x2cChunkReference,
     DOCUMENT_PAGE_LIST_ID, RawContentsBlock, RawContentsBlockBody, parse_0x2c_header,
     parse_confirmed_0x2c_chunk, parse_confirmed_0x2c_trailer_root, parse_confirmed_chunk_reference,
-    parse_confirmed_document_page_list, parse_confirmed_margins_page_extent,
+    parse_confirmed_controlling_page_list, parse_confirmed_document_page_list,
+    parse_confirmed_margins_page_extent,
     parse_confirmed_mature_story_catalog, parse_confirmed_oid_identity_payload,
 };
 use pub_core::{RawSpan, StreamPath};
@@ -172,6 +173,8 @@ pub struct PubControllingFieldObservation {
     pub declared_length: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_container_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pgids: Vec<[u32; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -589,11 +592,22 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
                         }
                         _ => (None, None),
                     };
+                    let pgids = if field.id == 0x06 {
+                        parse_confirmed_controlling_page_list(&contents, field.clone())
+                            .context("parse OplControlling PageList/Pgid observation")?
+                            .entries
+                            .into_iter()
+                            .map(|entry| [entry.pgid.dword0, entry.pgid.dword1])
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
                     Ok(PubControllingFieldObservation {
                         id: field.id,
                         block_type: field.block_type,
                         declared_length,
                         observed_container_hex,
+                        pgids,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
