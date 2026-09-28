@@ -12,8 +12,8 @@ mod image_decode_adapter;
 #[allow(dead_code)]
 mod locale;
 mod product_smoke;
-mod render_backend;
 mod reader_product_ui;
+mod render_backend;
 #[allow(dead_code)]
 mod supporter;
 #[allow(dead_code)]
@@ -1236,7 +1236,10 @@ impl ViewerApp {
                     ui.close_menu();
                 }
                 if ui
-                    .add_enabled(self.visual.is_some(), egui::Button::new("Fidelity & diagnostics…"))
+                    .add_enabled(
+                        self.visual.is_some(),
+                        egui::Button::new("Fidelity & diagnostics…"),
+                    )
                     .clicked()
                 {
                     self.show_diagnostics = true;
@@ -1422,11 +1425,10 @@ impl ViewerApp {
                         self.canvas_selection.clear();
                         self.canvas_drag = None;
                         self.canvas_resize = None;
-                        self.supporter_value.observe(
-                            supporter::ValueEvent::PageNavigated {
+                        self.supporter_value
+                            .observe(supporter::ValueEvent::PageNavigated {
                                 page_index: self.selected_page,
-                            },
-                        );
+                            });
                     }
 
                     if page_count > 0 {
@@ -1446,41 +1448,37 @@ impl ViewerApp {
                         self.canvas_selection.clear();
                         self.canvas_drag = None;
                         self.canvas_resize = None;
-                        self.supporter_value.observe(
-                            supporter::ValueEvent::PageNavigated {
+                        self.supporter_value
+                            .observe(supporter::ValueEvent::PageNavigated {
                                 page_index: self.selected_page,
+                            });
+                    }
+                });
+
+                columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.zoom_mode == CanvasZoomMode::Percent {
+                        let mut zoom_percent = self.zoom * 100.0;
+                        let slider = ui.add(
+                            egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
+                                .suffix("%")
+                                .show_value(true),
+                        );
+                        if slider.changed() {
+                            self.zoom =
+                                (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                        }
+                    } else {
+                        reader_product_ui::muted(
+                            ui,
+                            match self.zoom_mode {
+                                CanvasZoomMode::FitPage => "Fit Page",
+                                CanvasZoomMode::PageWidth => "Fit Width",
+                                CanvasZoomMode::FitSelection => "Fit Selection",
+                                CanvasZoomMode::Percent => unreachable!(),
                             },
                         );
                     }
                 });
-
-                columns[2].with_layout(
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        if self.zoom_mode == CanvasZoomMode::Percent {
-                            let mut zoom_percent = self.zoom * 100.0;
-                            let slider = ui.add(
-                                egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
-                                    .suffix("%")
-                                    .show_value(true),
-                            );
-                            if slider.changed() {
-                                self.zoom =
-                                    (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
-                            }
-                        } else {
-                            reader_product_ui::muted(
-                                ui,
-                                match self.zoom_mode {
-                                    CanvasZoomMode::FitPage => "Fit Page",
-                                    CanvasZoomMode::PageWidth => "Fit Width",
-                                    CanvasZoomMode::FitSelection => "Fit Selection",
-                                    CanvasZoomMode::Percent => unreachable!(),
-                                },
-                            );
-                        }
-                    },
-                );
             });
             return;
         }
@@ -3387,54 +3385,56 @@ impl ViewerApp {
 
         if !reader_only_mode() {
             ui.horizontal_wrapped(|ui| {
-            ui.label("Zoom");
+                ui.label("Zoom");
 
-            if self.zoom_mode == CanvasZoomMode::Percent {
-                let mut zoom_percent = self.zoom * 100.0;
-                let slider = ui.add(
-                    egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
-                        .suffix("%")
-                        .show_value(true),
-                );
-                if slider.changed() {
-                    self.zoom = (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                if self.zoom_mode == CanvasZoomMode::Percent {
+                    let mut zoom_percent = self.zoom * 100.0;
+                    let slider = ui.add(
+                        egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
+                            .suffix("%")
+                            .show_value(true),
+                    );
+                    if slider.changed() {
+                        self.zoom =
+                            (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                    }
+                } else {
+                    ui.label("Fit mode");
                 }
-            } else {
-                ui.label("Fit mode");
-            }
 
-            if ui
-                .selectable_label(
-                    self.zoom_mode == CanvasZoomMode::Percent && (self.zoom - 1.0).abs() < 0.001,
-                    "100%",
-                )
-                .clicked()
-            {
-                self.zoom = 1.0;
-                self.zoom_mode = CanvasZoomMode::Percent;
-            }
-            if ui
-                .selectable_label(self.zoom_mode == CanvasZoomMode::FitPage, "Fit Page")
-                .clicked()
-            {
-                self.zoom_mode = CanvasZoomMode::FitPage;
-            }
-            if ui
-                .selectable_label(self.zoom_mode == CanvasZoomMode::PageWidth, "Page Width")
-                .clicked()
-            {
-                self.zoom_mode = CanvasZoomMode::PageWidth;
-            }
-            let fit_selection = ui.add_enabled(
-                self.canvas_selection.primary().is_some(),
-                egui::SelectableLabel::new(
-                    self.zoom_mode == CanvasZoomMode::FitSelection,
-                    "Fit Selection",
-                ),
-            );
-            if fit_selection.clicked() {
-                self.zoom_mode = CanvasZoomMode::FitSelection;
-            }
+                if ui
+                    .selectable_label(
+                        self.zoom_mode == CanvasZoomMode::Percent
+                            && (self.zoom - 1.0).abs() < 0.001,
+                        "100%",
+                    )
+                    .clicked()
+                {
+                    self.zoom = 1.0;
+                    self.zoom_mode = CanvasZoomMode::Percent;
+                }
+                if ui
+                    .selectable_label(self.zoom_mode == CanvasZoomMode::FitPage, "Fit Page")
+                    .clicked()
+                {
+                    self.zoom_mode = CanvasZoomMode::FitPage;
+                }
+                if ui
+                    .selectable_label(self.zoom_mode == CanvasZoomMode::PageWidth, "Page Width")
+                    .clicked()
+                {
+                    self.zoom_mode = CanvasZoomMode::PageWidth;
+                }
+                let fit_selection = ui.add_enabled(
+                    self.canvas_selection.primary().is_some(),
+                    egui::SelectableLabel::new(
+                        self.zoom_mode == CanvasZoomMode::FitSelection,
+                        "Fit Selection",
+                    ),
+                );
+                if fit_selection.clicked() {
+                    self.zoom_mode = CanvasZoomMode::FitSelection;
+                }
             });
             ui.separator();
         }
