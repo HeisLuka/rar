@@ -13,9 +13,14 @@ use pub_layout::{
     BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, ResolvedPhysicalNode,
     project_bounded, resolve_bounded_geometry, resolve_bounded_text_flow,
 };
+#[cfg(feature = "cmo-projection")]
+use chaptera_layout_projection::{
+    CarrierExtentV1, CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1,
+};
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
-    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+    Affine2D, CanonicalId, LengthEmu, NodeId, NodeKind, PageId, RectEmu, ResourceId, Sha256Digest,
+    StoryFrame, StoryId,
 };
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
@@ -33,9 +38,11 @@ use pub_reader::{
     build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
     build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
+#[cfg(feature = "cmo-projection")]
+use pub_reader::build_mature_0x2c_cmo_projection_bridge_v1;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 pub const VIEWER_DOCUMENT_SCHEMA_V0_1: &str = "0.1";
@@ -170,6 +177,8 @@ pub struct ViewerGeometryDocument {
     pub typography_runs: Vec<ViewerTypographyRun>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projected_instances: Vec<ViewerProjectedInstance>,
 }
 
 impl ViewerGeometryDocument {
@@ -201,7 +210,7 @@ impl ViewerGeometryDocument {
             .collect::<Vec<_>>();
         let authoring = bounded_authoring_slice_from_resolved_pages(graph, &effective_page_ids)?;
         let projection = project_bounded(authoring);
-        let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
+        let (mut text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
 
         let stories = graph
             .stories
@@ -211,7 +220,7 @@ impl ViewerGeometryDocument {
                 text: story.text.clone(),
             })
             .collect::<Vec<_>>();
-        let story_frames = projection
+        let mut story_frames = projection
             .story_frames
             .iter()
             .map(|frame| ViewerStoryFrame {
@@ -396,6 +405,25 @@ pub struct ViewerTextFragment {
     pub scalar_end: u32,
     pub text: String,
     pub line_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerProjectedInstance {
+    pub instance_id: String,
+    pub projection_kind: String,
+    pub origin_node_id: NodeId,
+    pub target_page_id: PageId,
+    pub bounds: RectEmu,
+    pub transform: Affine2D,
+    pub read_only: bool,
+    pub target_story_id: StoryId,
+    pub target_frame_node_id: NodeId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_story_id: Option<StoryId>,
+    pub slot_index: usize,
+    pub scalar_index: u32,
+    pub source_order: usize,
+    pub cmo_id: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -692,6 +720,29 @@ pub fn open_mature_0x2c_geometry(
         anyhow!("Viewer geometry resolution blocked by layout projection errors: {codes}")
     })?;
 
+    let mut projected_instances = Vec::new();
+    #[cfg(feature = "cmo-projection")]
+    if matches!(
+        pipeline.page_selection.disposition,
+        ViewerPageSelectionDisposition::FamilyProfileApplied { .. }
+    ) {
+        match materialize_viewer_cmo_projection_v1(bytes, &pipeline) {
+            Ok(materialized) => {
+                projected_instances = materialized.instances;
+                story_frames.extend(materialized.story_frames);
+                text_fragments.extend(materialized.text_fragments);
+                document.diagnostics.extend(materialized.diagnostics);
+            }
+            Err(error) => document.diagnostics.push(ViewerDiagnostic {
+                code: "viewer.cmo_projection.unavailable".to_owned(),
+                severity: ViewerDiagnosticSeverity::FidelityWarning,
+                message: format!(
+                    "Admitted family Cmo authority could not be materialized safely: {error}"
+                ),
+            }),
+        }
+    }
+
     document.diagnostics.extend(
         scene
             .diagnostics
@@ -719,6 +770,386 @@ pub fn open_mature_0x2c_geometry(
         text_fragments,
         typography_runs,
         images,
+        projected_instances,
+    })
+}
+
+#[cfg(feature = "cmo-projection")]
+struct ViewerCmoMaterializationV1 {
+    instances: Vec<ViewerProjectedInstance>,
+    story_frames: Vec<ViewerStoryFrame>,
+    text_fragments: Vec<ViewerTextFragment>,
+    diagnostics: Vec<ViewerDiagnostic>,
+}
+
+#[cfg(feature = "cmo-projection")]
+fn canonical_from_bridge_id(value: &str, label: &str) -> Result<CanonicalId> {
+    value
+        .parse()
+        .map_err(|error| anyhow!("{label} is not a canonical id: {error:?}"))
+}
+
+#[cfg(feature = "cmo-projection")]
+fn materialize_viewer_cmo_projection_v1(
+    bytes: &[u8],
+    pipeline: &Mature0x2cPipeline,
+) -> Result<ViewerCmoMaterializationV1> {
+    let bridge = build_mature_0x2c_cmo_projection_bridge_v1(
+        bytes,
+        pipeline.source_hash,
+        &pipeline.source.graph,
+        &pipeline.resolved.graph,
+    )
+    .context("build active Reader Cmo authority bridge")?;
+    if !bridge.active_graph_identity_parity {
+        return Err(anyhow!("Cmo authority bridge did not prove active graph identity parity"));
+    }
+
+    let graph = &pipeline.resolved.graph;
+    let context = &bridge.output.context;
+    let target_story_ids = context
+        .cmo_relations
+        .iter()
+        .map(|relation| relation.target_story_id.clone())
+        .collect::<BTreeSet<_>>();
+    let page_by_canonical = graph
+        .pages
+        .values()
+        .map(|page| (page.id.into_canonical(), page.id))
+        .collect::<BTreeMap<_, _>>();
+    let effective_pages = pipeline
+        .page_selection
+        .page_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    let mut diagnostics = Vec::new();
+    let mut grouped = BTreeMap::<(u32, String, String), Vec<_>>::new();
+    let mut unresolved_frame_relations = 0usize;
+    for relation in context.cmo_relations.iter().cloned() {
+        let Some(frame_id) = relation.target_frame_node_id.clone() else {
+            unresolved_frame_relations += 1;
+            continue;
+        };
+        grouped
+            .entry((
+                relation.target_qsid,
+                relation.target_story_id.clone(),
+                frame_id,
+            ))
+            .or_default()
+            .push(relation);
+    }
+
+    let mut instances = Vec::new();
+    let mut instance_ids = BTreeSet::new();
+    let mut visible_carrier_nodes = BTreeSet::new();
+    let mut lower_bound_targets = 0usize;
+    let mut withheld_nonzero_slots = 0usize;
+    let mut overset_targets = 0usize;
+
+    for ((target_qsid, target_story_text, target_frame_text), relations) in grouped {
+        let target_story_id = StoryId::from_canonical(canonical_from_bridge_id(
+            &target_story_text,
+            "Cmo target StoryId",
+        )?);
+        let target_frame_node_id = NodeId::from_canonical(canonical_from_bridge_id(
+            &target_frame_text,
+            "Cmo target frame NodeId",
+        )?);
+        let story = graph
+            .stories
+            .get(&target_story_id)
+            .ok_or_else(|| anyhow!("Cmo target Story missing from active graph"))?;
+        let target_frame = graph
+            .nodes
+            .get(&target_frame_node_id)
+            .ok_or_else(|| anyhow!("Cmo target frame missing from active graph"))?;
+        if target_frame
+            .payload
+            .story_frame
+            .as_ref()
+            .and_then(|frame| frame.story_id)
+            != Some(target_story_id)
+        {
+            return Err(anyhow!("Cmo target frame/Story ownership mismatch"));
+        }
+        let target_page_id = *page_by_canonical
+            .get(&target_frame.header.parent_id)
+            .ok_or_else(|| anyhow!("Cmo target frame parent is not a canonical page"))?;
+        if !effective_pages.contains(&target_page_id) {
+            continue;
+        }
+
+        let frame_count = graph
+            .nodes
+            .values()
+            .filter(|node| {
+                node.payload
+                    .story_frame
+                    .as_ref()
+                    .and_then(|frame| frame.story_id)
+                    == Some(target_story_id)
+            })
+            .count();
+        let frame_count = u32::try_from(frame_count).context("Cmo target frame count exceeds u32")?;
+
+        let object_marker_scalars = story
+            .text
+            .chars()
+            .enumerate()
+            .filter_map(|(index, ch)| {
+                (ch == '￼')
+                    .then(|| u32::try_from(index).context("Cmo marker scalar exceeds u32"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let has_non_marker_text = story
+            .text
+            .chars()
+            .any(|ch| ch != '￼' && !ch.is_whitespace());
+        if has_non_marker_text {
+            lower_bound_targets += 1;
+        }
+
+        let mut carrier_extents = Vec::with_capacity(relations.len());
+        for relation in &relations {
+            let carrier_node_id = NodeId::from_canonical(canonical_from_bridge_id(
+                &relation.carrier_node_id,
+                "Cmo carrier NodeId",
+            )?);
+            let carrier = graph
+                .nodes
+                .get(&carrier_node_id)
+                .ok_or_else(|| anyhow!("Cmo carrier missing from active graph"))?;
+            carrier_extents.push(CarrierExtentV1 {
+                carrier_node_id: relation.carrier_node_id.clone(),
+                width_emu: carrier.header.bounds.width.get(),
+                height_emu: carrier.header.bounds.height.get(),
+                nested_cmo: relation
+                    .carrier_story_id
+                    .as_ref()
+                    .is_some_and(|story_id| target_story_ids.contains(story_id)),
+            });
+        }
+
+        let output = resolve_cmo_slot_flow_v1(
+            context,
+            &CmoStorySlotFlowInputV1 {
+                target_qsid,
+                target_page_id: target_page_id.as_canonical().to_string(),
+                target_story_id: target_story_text.clone(),
+                target_frame_node_id: target_frame_text.clone(),
+                frame_count,
+                host_width_emu: target_frame.header.bounds.width.get(),
+                host_height_emu: target_frame.header.bounds.height.get(),
+                object_marker_scalars,
+                // The active Viewer does not yet expose shaped per-line scalar
+                // coverage to this seam. Empty lines therefore mean lower-bound
+                // slot flow. Only scalar-0 visible slots are admitted below.
+                text_lines: Vec::new(),
+                carrier_extents,
+            },
+        )
+        .map_err(|error| anyhow!("canonical Cmo slot-flow rejected target {target_qsid}: {error}"))?;
+
+        if output.overset.story_overset {
+            overset_targets += 1;
+        }
+
+        for slot in output.visible_slots {
+            // Without shaped interleave, a slot after any Story scalar would need
+            // preceding line metrics. Scalar zero has no preceding text by
+            // construction, so it is the only exact placement admitted here.
+            if slot.scalar_index != 0 {
+                withheld_nonzero_slots += 1;
+                continue;
+            }
+
+            let carrier_node_id = NodeId::from_canonical(canonical_from_bridge_id(
+                &slot.carrier_node_id,
+                "visible Cmo carrier NodeId",
+            )?);
+            let carrier_story_id = slot
+                .carrier_story_id
+                .as_deref()
+                .map(|value| {
+                    canonical_from_bridge_id(value, "visible Cmo carrier StoryId")
+                        .map(StoryId::from_canonical)
+                })
+                .transpose()?;
+            let x = target_frame
+                .header
+                .bounds
+                .x
+                .get()
+                .checked_add(slot.resolved_x_emu)
+                .ok_or_else(|| anyhow!("projected Cmo x overflow"))?;
+            let y = target_frame
+                .header
+                .bounds
+                .y
+                .get()
+                .checked_add(slot.resolved_y_emu)
+                .ok_or_else(|| anyhow!("projected Cmo y overflow"))?;
+            if !instance_ids.insert(slot.instance_id.clone()) {
+                return Err(anyhow!("duplicate projected Cmo instance identity"));
+            }
+
+            visible_carrier_nodes.insert(carrier_node_id);
+            instances.push(ViewerProjectedInstance {
+                instance_id: slot.instance_id,
+                projection_kind: "cmo_story_slot".to_owned(),
+                origin_node_id: carrier_node_id,
+                target_page_id,
+                bounds: RectEmu::new(
+                    LengthEmu::new(x),
+                    LengthEmu::new(y),
+                    LengthEmu::new(slot.resolved_width_emu),
+                    LengthEmu::new(slot.resolved_height_emu),
+                ),
+                transform: Affine2D::identity(),
+                read_only: true,
+                target_story_id,
+                target_frame_node_id,
+                carrier_story_id,
+                slot_index: slot.slot_index,
+                scalar_index: slot.scalar_index,
+                source_order: slot.source_order,
+                cmo_id: slot.cmo_id,
+            });
+        }
+    }
+
+    // Resolve carrier text through the existing Viewer fallback-flow authority
+    // on the carriers' original pages, then attach only fragments belonging to
+    // actually visible projected carrier origins. Raw carrier PAGE surfaces are
+    // never added to the customer scene.
+    let mut carrier_pages = BTreeSet::new();
+    for node_id in &visible_carrier_nodes {
+        let node = graph
+            .nodes
+            .get(node_id)
+            .ok_or_else(|| anyhow!("visible Cmo carrier disappeared from active graph"))?;
+        let page_id = *page_by_canonical
+            .get(&node.header.parent_id)
+            .ok_or_else(|| anyhow!("visible Cmo carrier parent is not a canonical page"))?;
+        carrier_pages.insert(page_id);
+    }
+
+    let mut story_frames = Vec::new();
+    let mut text_fragments = Vec::new();
+    for page_id in carrier_pages {
+        let carrier_authoring =
+            bounded_authoring_slice_from_resolved_pages(graph, &[page_id])?;
+        let carrier_projection = project_bounded(carrier_authoring);
+        let (carrier_fragments, _) = resolve_viewer_text_fragments(&carrier_projection)?;
+        text_fragments.extend(
+            carrier_fragments
+                .into_iter()
+                .filter(|fragment| visible_carrier_nodes.contains(&fragment.frame_id)),
+        );
+        story_frames.extend(
+            carrier_projection
+                .story_frames
+                .iter()
+                .filter(|frame| visible_carrier_nodes.contains(&frame.frame_origin))
+                .map(|frame| ViewerStoryFrame {
+                    story_id: frame.story_origin,
+                    frame_id: frame.frame_origin,
+                    ordinal: frame.ordinal,
+                }),
+        );
+    }
+
+    text_fragments.sort_by_key(|fragment| {
+        (fragment.story_id, fragment.scalar_start, fragment.frame_id)
+    });
+    text_fragments.dedup_by(|left, right| {
+        left.story_id == right.story_id
+            && left.frame_id == right.frame_id
+            && left.scalar_start == right.scalar_start
+            && left.scalar_end == right.scalar_end
+    });
+    story_frames.sort_by_key(|frame| (frame.story_id, frame.ordinal, frame.frame_id));
+    story_frames.dedup();
+
+    let carrier_text_frames = text_fragments
+        .iter()
+        .map(|fragment| fragment.frame_id)
+        .collect::<BTreeSet<_>>();
+    let missing_carrier_text = instances
+        .iter()
+        .filter(|instance| instance.carrier_story_id.is_some())
+        .filter(|instance| !carrier_text_frames.contains(&instance.origin_node_id))
+        .count();
+
+    instances.sort_by(|left, right| {
+        (
+            left.target_page_id,
+            left.target_story_id,
+            left.scalar_index,
+            left.instance_id.as_str(),
+        )
+            .cmp(&(
+                right.target_page_id,
+                right.target_story_id,
+                right.scalar_index,
+                right.instance_id.as_str(),
+            ))
+    });
+
+    diagnostics.push(ViewerDiagnostic {
+        code: "viewer.cmo_projection.materialized".to_owned(),
+        severity: ViewerDiagnosticSeverity::Info,
+        message: format!(
+            "{} read-only Cmo Story-slot instance(s) were materialized through the canonical slot-flow authority.",
+            instances.len()
+        ),
+    });
+    if unresolved_frame_relations > 0 {
+        diagnostics.push(ViewerDiagnostic {
+            code: "viewer.cmo_projection.target_frame_unresolved".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: format!(
+                "{unresolved_frame_relations} admitted Cmo relation(s) have no unique target frame and remain withheld."
+            ),
+        });
+    }
+    if lower_bound_targets > 0 || withheld_nonzero_slots > 0 {
+        diagnostics.push(ViewerDiagnostic {
+            code: "viewer.cmo_projection.lower_bound_flow".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: format!(
+                "Cmo placement is currently a scalar-0 lower bound for {lower_bound_targets} target(s); {withheld_nonzero_slots} later visible slot(s) were withheld until shaped scalar-line interleave reaches the Viewer seam."
+            ),
+        });
+    }
+    if overset_targets > 0 {
+        diagnostics.push(ViewerDiagnostic {
+            code: "viewer.cmo_projection.overset".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: format!(
+                "{overset_targets} Cmo target(s) hit canonical first-nonfit overset; later slots were not skipped into view."
+            ),
+        });
+    }
+    if missing_carrier_text > 0 {
+        diagnostics.push(ViewerDiagnostic {
+            code: "viewer.cmo_projection.carrier_text_unavailable".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: format!(
+                "{missing_carrier_text} visible Cmo carrier instance(s) have no bounded Viewer text fragment; geometry/paint remain available without invented text."
+            ),
+        });
+    }
+
+    Ok(ViewerCmoMaterializationV1 {
+        instances,
+        story_frames,
+        text_fragments,
+        diagnostics,
     })
 }
 
@@ -1575,6 +2006,7 @@ mod tests {
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
             images: Vec::new(),
+            projected_instances: Vec::new(),
         };
 
         let page_id = graph.document.pages[0];
@@ -1722,6 +2154,7 @@ mod tests {
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
             images: Vec::new(),
+            projected_instances: Vec::new(),
         };
         let before = visual.scene.nodes.clone();
 
@@ -2144,6 +2577,7 @@ mod tests {
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
             images: Vec::new(),
+            projected_instances: Vec::new(),
         };
 
         graph
@@ -2246,6 +2680,7 @@ mod tests {
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
             images: Vec::new(),
+            projected_instances: Vec::new(),
         };
 
         graph
@@ -2309,6 +2744,7 @@ mod tests {
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
             images: Vec::new(),
+            projected_instances: Vec::new(),
         };
         let before = visual.clone();
         visual.document.source.source_hash = Sha256Digest::from_bytes([0xCD; 32]);
