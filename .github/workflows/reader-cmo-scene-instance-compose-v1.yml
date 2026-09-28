@@ -1,6 +1,6 @@
 name: Reader canonical Cmo scene-instance compose V1
 
-# Final current-main sync after updater lint closures; no runtime or acceptance semantics.
+# Owner recovery after branch-ref reset; no runtime or acceptance semantics.
 
 on:
   pull_request:
