@@ -2677,8 +2677,9 @@ impl ViewerApp {
                 self.text_mode = Some(mode);
                 self.canvas_drag = None;
                 self.canvas_resize = None;
-                self.edit_status =
-                    Some("Text editing activated from an admitted interior canvas click.".to_owned());
+                self.edit_status = Some(
+                    "Text editing activated from an admitted interior canvas click.".to_owned(),
+                );
             }
             Err(error) => {
                 self.edit_status = Some(format!(
