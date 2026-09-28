@@ -139,7 +139,10 @@ jobs:
           if (DISC / "school-jotter-main.js").exists():
               main_text = (DISC / "school-jotter-main.js").read_text(encoding="utf-8")
               asset_refs.update(
-                  re.findall(r'(?:from|import\\()["\'](?:[.]/)?([^"\']+[.]js)', main_text)
+                  re.findall(r'from"[.]/([^"]+[.]js)"', main_text)
+              )
+              asset_refs.update(
+                  re.findall(r'import\\("[.]/([^"]+[.]js)"\\)', main_text)
               )
           chunk_findings = []
           total_js_bytes = 0
