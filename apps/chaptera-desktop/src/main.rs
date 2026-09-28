@@ -7139,7 +7139,6 @@ mod tests {
         .expect("write golden receipt");
     }
 
-
     #[test]
     fn source_path_argument_is_optional() {
         let path = std::path::Path::new("example.pub");
