@@ -2214,12 +2214,11 @@ impl ViewerApp {
             let _ = cancel_box_draw_v1(draw);
         }
         if let Some(gesture) = self.canvas_tool_state.active_gesture.as_ref()
-            && let Ok(transition) =
-                chaptera_canvas_creation_interaction::cancel_pointer_gesture_v1(
-                    &self.canvas_tool_state,
-                    &textbox_create_tool_v1(),
-                    &gesture.token,
-                )
+            && let Ok(transition) = chaptera_canvas_creation_interaction::cancel_pointer_gesture_v1(
+                &self.canvas_tool_state,
+                &textbox_create_tool_v1(),
+                &gesture.token,
+            )
         {
             self.canvas_tool_state = transition.state;
         }
