@@ -187,7 +187,13 @@ def main() -> int:
 
     TARGET.mkdir(parents=True, exist_ok=True)
     caddy_config = render_caddy()
-    subprocess.run(\n        ["docker", "rm", "-f", CONTAINER_NAME],\n        cwd=ROOT,\n        capture_output=True,\n        text=True,\n        check=False,\n    )
+    subprocess.run(
+        ["docker", "rm", "-f", CONTAINER_NAME],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     server: subprocess.Popen[str] | None = None
     caddy: subprocess.Popen[str] | None = None
@@ -315,7 +321,13 @@ def main() -> int:
                     )
     finally:
         terminate(server)
-        subprocess.run(\n        ["docker", "rm", "-f", CONTAINER_NAME],\n        cwd=ROOT,\n        capture_output=True,\n        text=True,\n        check=False,\n    )
+        subprocess.run(
+            ["docker", "rm", "-f", CONTAINER_NAME],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         terminate(caddy)
         if server_handle is not None:
             server_handle.close()
