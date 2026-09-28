@@ -719,8 +719,9 @@ fn viewer_document_from_pipeline(
 ) -> Result<ViewerDocument> {
     let graph = &pipeline.resolved.graph;
 
-    let mut pages = Vec::with_capacity(graph.document.pages.len());
-    for (zero_based, page_id) in graph.document.pages.iter().enumerate() {
+    let effective_page_ids = &pipeline.source.customer_pages.page_ids;
+    let mut pages = Vec::with_capacity(effective_page_ids.len());
+    for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
             .pages
             .get(page_id)
@@ -901,6 +902,16 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             "viewer.page_extent.equivalent_source_records",
             ViewerDiagnosticSeverity::Info,
             "Multiple source page-extent records agree exactly; the Viewer uses their shared page size.",
+        ),
+        CustomerPageProjectionApplied { .. } => (
+            "viewer.page_projection.customer_order",
+            ViewerDiagnosticSeverity::Info,
+            "The Viewer is using a persisted customer-page order proven by matching page identities while preserving all recovered source pages internally.",
+        ),
+        CustomerPageProjectionFallback { .. } => (
+            "viewer.page_projection.raw_fallback",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "A customer-visible page order could not be proven for this file, so the Viewer is showing all recovered physical pages.",
         ),
         LinkedFrameNotMaterialized { .. } => (
             "viewer.text.link_target_missing",
