@@ -90,7 +90,7 @@ enum CanvasZoomMode {
     FitSelection,
 }
 
-const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Proven source font sizes, including bounded FDPP→STSH1 inheritance where admitted, affect text sizing through the shared render plan; the current renderer still uses Chaptera's pinned fallback font face rather than claiming source-font availability. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact font metrics/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Proven source font sizes, including bounded FDPP→STSH1 inheritance where admitted, affect text sizing through the shared render plan; the current renderer still uses Chaptera's pinned fallback font face rather than claiming source-font availability. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Other inherited/default styling beyond admitted font/size, Publisher-exact font metrics/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
