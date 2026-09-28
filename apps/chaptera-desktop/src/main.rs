@@ -350,22 +350,21 @@ fn main() -> eframe::Result<()> {
             std::process::exit(2);
         }
 
-        let reader_supported = smoke_check(&source).is_ok();
-        let rescue_eligible = if reader_supported {
-            false
-        } else {
-            fs::read(&source)
-                .ok()
-                .map(|bytes| {
-                    matches!(
-                        classify_failure_candidate(&bytes).class,
-                        FailureIntakeClass::PubDamaged
-                    )
-                })
-                .unwrap_or(false)
+        let admitted = match chaptera_suite_handoff::AdmittedSource::open(&source) {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
         };
-        match chaptera_suite_handoff::create_reader_handoff(
-            &source,
+        let reader_supported = smoke_check_bytes(admitted.bytes()).is_ok();
+        let rescue_eligible = !reader_supported
+            && matches!(
+                classify_failure_candidate(admitted.bytes()).class,
+                FailureIntakeClass::PubDamaged
+            );
+        match chaptera_suite_handoff::create_reader_handoff_from_admitted(
+            &admitted,
             &target,
             reader_supported,
             rescue_eligible,
@@ -415,7 +414,7 @@ fn main() -> eframe::Result<()> {
             chaptera_suite_handoff::EDITOR_PRODUCT_ID,
         )
         .and_then(|validated| {
-            let admitted = smoke_check(validated.source_path()).is_ok();
+            let admitted = smoke_check_bytes(validated.source_bytes()).is_ok();
             chaptera_suite_handoff::finish_acceptance(validated, admitted)
         })
         .and_then(|receipt| {
@@ -626,9 +625,13 @@ fn run_reader_update_control(_request_path: &Path) -> Result<(), String> {
 }
 
 fn smoke_check(path: &Path) -> Result<(), String> {
-    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    let visual = diagnostic_sweep::open_for_product(&bytes)
-        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    let admitted = chaptera_suite_handoff::AdmittedSource::open(path)?;
+    smoke_check_bytes(admitted.bytes())
+}
+
+fn smoke_check_bytes(bytes: &[u8]) -> Result<(), String> {
+    let visual =
+        diagnostic_sweep::open_for_product(bytes).map_err(|error| format!("open PUB bytes: {error}"))?;
 
     if visual.document.pages.is_empty() {
         return Err("document has no Viewer pages".to_owned());
