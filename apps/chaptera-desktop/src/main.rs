@@ -239,7 +239,8 @@ impl SceneHitTestIndex {
     }
 
     fn node_for_instance(&self, instance_id: &str) -> Option<pub_editor::NodeId> {
-        self.entry_for_instance(instance_id).map(|entry| entry.node_id)
+        self.entry_for_instance(instance_id)
+            .map(|entry| entry.node_id)
     }
 
     fn instance_for_node(&self, node_id: pub_editor::NodeId) -> Option<&str> {
@@ -1036,6 +1037,7 @@ impl ViewerApp {
         self.visual = None;
         self.selected_page = 0;
         self.page_frame_cache.clear();
+        self.page_frame_cache_builds = 0;
         self.canvas_selection.clear();
         self.canvas_drag = None;
         self.canvas_resize = None;
@@ -1689,6 +1691,10 @@ impl ViewerApp {
             ));
             ui.label(format!("Bytes: {}", source.byte_len));
             ui.label(format!("Scene nodes: {}", visual.scene.nodes.len()));
+            ui.label(format!(
+                "Page frame cache builds: {}",
+                self.page_frame_cache_builds
+            ));
             ui.label(format!(
                 "Engine: {}",
                 visual.scene.environment.engine_revision
@@ -4352,9 +4358,9 @@ mod tests {
 
     #[test]
     fn scene_hit_index_builds_stable_bidirectional_lookup_once() {
-        use pub_model::{CanonicalId, NodeId};
-
-        let node_id = NodeId::from_canonical(CanonicalId::from_bytes([0x22; 16]));
+        let node_id: pub_editor::NodeId =
+            serde_json::from_str("\"22222222-2222-2222-2222-222222222222\"")
+                .expect("canonical NodeId");
         let instance_id = "sha256:test-instance".to_owned();
         let bounds = pub_editor::RectEmu::new(
             pub_editor::LengthEmu::new(10),
@@ -4373,7 +4379,9 @@ mod tests {
         assert_eq!(index.node_for_instance(&instance_id), Some(node_id));
         assert_eq!(index.instance_for_node(node_id), Some(instance_id.as_str()));
         assert_eq!(
-            index.entry_for_instance(&instance_id).map(|entry| entry.bounds),
+            index
+                .entry_for_instance(&instance_id)
+                .map(|entry| entry.bounds),
             Some(bounds)
         );
     }
