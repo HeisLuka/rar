@@ -1263,8 +1263,7 @@ fn extract_primary_font_index(
 fn decode_quill_style_tag(raw_tag: [u8; 2]) -> (u16, u8) {
     let raw_type = raw_tag[1];
     if raw_type & 0x07 == OPL_CHP_EXTENDED_HIGH_BITS {
-        let field_id =
-            u16::from(raw_tag[0]) | (u16::from(raw_type & 0x07) << 8);
+        let field_id = u16::from(raw_tag[0]) | (u16::from(raw_type & 0x07) << 8);
         (field_id, raw_type & 0xF8)
     } else {
         (u16::from(raw_tag[0]), raw_type)
