@@ -103,3 +103,4 @@ fix/cloud-runtime-no-auto-schema-v1
 ops/authoring-branch-gc-20260928
 rescue-cloud-async-runtime-279-v3
 task/cloud-edge-01
+# GC trigger wave 2: 2026-09-29; vetted manifest unchanged
