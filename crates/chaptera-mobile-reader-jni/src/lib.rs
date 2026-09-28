@@ -259,7 +259,7 @@ pub extern "system" fn Java_com_chaptera_reader_NativeReader_failureDiagnosticJs
         Ok(bytes) => bytes,
         Err(error) => return java_string(env, &format!("ERR:JNI_BYTES:{error}")),
     };
-    match chaptera_mobile_reader_core::local_failure_diagnostic_json(&bytes) {
+    match chaptera_mobile_reader_core::mobile_failure_diagnostic_json(&bytes) {
         Ok(json) => java_string(env, &json),
         Err(error) => java_string(env, &format!("ERR:DIAGNOSTIC:{error}")),
     }
