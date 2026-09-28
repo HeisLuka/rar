@@ -14,6 +14,7 @@ import html
 import os
 import pathlib
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -23,8 +24,17 @@ import webbrowser
 
 from run_cloud_config_receipt import OidcFixture
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-STATE = ROOT / ".chaptera-local"
+DEV_ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(os.environ.get("CHAPTERA_LOCAL_RUNTIME_ROOT", DEV_ROOT)).resolve()
+PACKAGED = os.environ.get("CHAPTERA_LOCAL_PACKAGED") == "1" or (
+    (ROOT / "BUILD.json").is_file() and (ROOT / "bin" / "chaptera.exe").is_file()
+)
+if os.environ.get("CHAPTERA_LOCAL_STATE_ROOT"):
+    STATE = pathlib.Path(os.environ["CHAPTERA_LOCAL_STATE_ROOT"]).resolve()
+elif PACKAGED and os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+    STATE = pathlib.Path(os.environ["LOCALAPPDATA"]) / "Chaptera" / "Local"
+else:
+    STATE = ROOT / ".chaptera-local"
 LOGS = STATE / "logs"
 CONFIG = STATE / "chaptera.local.toml"
 DATABASE = STATE / "chaptera.sqlite"
@@ -52,6 +62,17 @@ def http_code(url: str) -> int | None:
         return None
 
 
+def require_loopback_ports_available(ports: tuple[int, ...]) -> None:
+    for port in ports:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError as error:
+                raise RuntimeError(
+                    f"required local port 127.0.0.1:{port} is unavailable: {error}"
+                ) from error
+
+
 def tail(path: pathlib.Path, count: int = 80) -> str:
     if not path.exists():
         return "(log file does not exist)"
@@ -59,7 +80,7 @@ def tail(path: pathlib.Path, count: int = 80) -> str:
     return "\n".join(lines[-count:])
 
 
-def open_failure_page(message: str) -> None:
+def open_failure_page(message: str, *, launch_browser: bool = True) -> None:
     STATE.mkdir(parents=True, exist_ok=True)
     page = STATE / "startup-error.html"
     body = f"""<!doctype html><meta charset="utf-8"><title>Chaptera Local — startup error">
@@ -69,9 +90,10 @@ def open_failure_page(message: str) -> None:
 <h2>server.log</h2><pre>{html.escape(tail(SERVER_LOG))}</pre>
 <h2>worker.log</h2><pre>{html.escape(tail(WORKER_LOG))}</pre>
 <h2>editor-service.log</h2><pre>{html.escape(tail(EDITOR_LOG))}</pre>
-<p>Файлы логов: <code>.chaptera-local/logs/</code></p>"""
+<p>Файлы логов: <code>{html.escape(str(LOGS))}</code></p>"""
     page.write_text(body, encoding="utf-8")
-    webbrowser.open(page.resolve().as_uri())
+    if launch_browser:
+        webbrowser.open(page.resolve().as_uri())
 
 
 def render_config(issuer: str) -> None:
@@ -117,6 +139,9 @@ def main() -> int:
             "AWS_SECRET_ACCESS_KEY": "chaptera-local",
             "AWS_REGION": "us-east-1",
             "AWS_EC2_METADATA_DISABLED": "true",
+            "CHAPTERA_LOCAL_RUNTIME_ROOT": str(ROOT),
+            "CHAPTERA_LOCAL_STATE_ROOT": str(STATE),
+            "CHAPTERA_LOCAL_PACKAGED": "1" if PACKAGED else "0",
         }
     )
 
@@ -128,11 +153,16 @@ def main() -> int:
     editor_handle = None
 
     try:
-        if not args.skip_build:
+        if PACKAGED:
+            require_loopback_ports_available((18082, 18765, 18083))
+        if not args.skip_build and not PACKAGED:
             run_checked(["cargo", "build", "-p", "chaptera-server"], env)
-        binary = ROOT / "target/debug/chaptera"
-        if os.name == "nt":
-            binary = binary.with_suffix(".exe")
+        if PACKAGED:
+            binary = ROOT / "bin" / ("chaptera.exe" if os.name == "nt" else "chaptera")
+        else:
+            binary = ROOT / "target/debug/chaptera"
+            if os.name == "nt":
+                binary = binary.with_suffix(".exe")
         if not binary.exists():
             raise RuntimeError(f"Chaptera binary not found: {binary}")
 
@@ -163,9 +193,15 @@ def main() -> int:
             ready = None
             while time.monotonic() < deadline:
                 if server.poll() is not None:
-                    raise RuntimeError(f"server exited during startup with code {server.returncode}")
+                    raise RuntimeError(
+                        f"server exited during startup with code {server.returncode}\n"
+                        f"--- server.log ---\n{tail(SERVER_LOG)}"
+                    )
                 if worker.poll() is not None:
-                    raise RuntimeError(f"worker exited during startup with code {worker.returncode}")
+                    raise RuntimeError(
+                        f"worker exited during startup with code {worker.returncode}\n"
+                        f"--- worker.log ---\n{tail(WORKER_LOG)}"
+                    )
                 ready = http_code(URL + "/ready")
                 if ready == 200:
                     break
@@ -174,8 +210,16 @@ def main() -> int:
                 raise RuntimeError(f"runtime did not reach /ready=200 (last status: {ready})")
 
             editor_handle = EDITOR_LOG.open("w", encoding="utf-8")
+            editor_launcher = (
+                ROOT / "launcher/run_local_real_editor.py"
+                if PACKAGED
+                else ROOT / "tools/run_local_real_editor.py"
+            )
+            editor_command = [sys.executable, str(editor_launcher)]
+            if args.smoke:
+                editor_command.append("--smoke")
             editor = subprocess.Popen(
-                [sys.executable, "tools/run_local_real_editor.py"],
+                editor_command,
                 cwd=ROOT,
                 env=env,
                 stdout=editor_handle,
@@ -198,26 +242,18 @@ def main() -> int:
                 if dashboard.status != 200:
                     raise RuntimeError(f"local dashboard returned {dashboard.status}")
 
-                editor_deadline = time.monotonic() + 240
-                editor_ready = None
-                while time.monotonic() < editor_deadline:
-                    if editor.poll() is not None:
-                        raise RuntimeError(
-                            f"local editor exited during startup with code {editor.returncode}; "
-                            f"see {EDITOR_LOG}"
-                        )
-                    editor_ready = http_code("http://127.0.0.1:18765/health")
-                    editor_page = http_code(
-                        "http://127.0.0.1:18083/apps/web/local-editor.html"
-                    )
-                    if editor_ready == 200 and editor_page == 200:
-                        break
-                    time.sleep(0.5)
-                if editor_ready != 200 or editor_page != 200:
+                try:
+                    editor_returncode = editor.wait(timeout=240)
+                except subprocess.TimeoutExpired as error:
                     raise RuntimeError(
-                        "local editor did not become browser-ready "
-                        f"(api={editor_ready}, page={editor_page}); see {EDITOR_LOG}"
+                        f"local editor smoke did not finish; see {EDITOR_LOG}"
+                    ) from error
+                if editor_returncode != 0:
+                    raise RuntimeError(
+                        f"local editor smoke failed with code {editor_returncode}\n"
+                        f"--- editor-service.log ---\n{tail(EDITOR_LOG)}"
                     )
+                editor = None
                 return 0
 
             while True:
@@ -237,7 +273,7 @@ def main() -> int:
         return 0
     except Exception as error:
         print(f"Chaptera Local failed: {error}", file=sys.stderr)
-        open_failure_page(str(error))
+        open_failure_page(str(error), launch_browser=not args.no_browser)
         return 1
     finally:
         for proc in (editor, worker, server):
