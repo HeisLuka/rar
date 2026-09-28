@@ -151,13 +151,31 @@ fn projected_text(
         return Ok(None);
     };
     let scalar_end = u32::try_from(story.text.chars().count()).unwrap_or(u32::MAX);
+    let typography = visual
+        .typography_runs
+        .iter()
+        .filter(|run| run.story_id == story_id)
+        .filter(|run| run.applies_to_story_text(&story.text))
+        .filter_map(|run| {
+            let scalar_start = run.scalar_start.min(scalar_end);
+            let scalar_end = run.scalar_end.min(scalar_end);
+            (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
+                scalar_start,
+                scalar_end,
+                source_font_name: run.source_font_name.clone(),
+                text_size_emu: run.text_size_emu,
+                font_inherited: run.font_inherited,
+                size_inherited: run.size_inherited,
+            })
+        })
+        .collect();
     Ok(Some(RenderTextFragmentV1 {
         story_id,
         scalar_start: 0,
         scalar_end,
         text: story.text.clone(),
         line_count: 0,
-        typography: Vec::new(),
+        typography,
     }))
 }
 
