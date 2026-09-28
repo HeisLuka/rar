@@ -8,6 +8,12 @@
 //! part of the Viewer contract.
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(feature = "cmo-slot-compose")]
+use chaptera_layout_projection::{
+    CarrierExtentV1, CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1,
+};
+#[cfg(feature = "cmo-slot-compose")]
+use chaptera_scene_instance::{SceneInstanceV1, SceneProjectionKindV1, cmo_story_slot_instance_v1};
 use pub_layout::{
     BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
     BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, ResolvedPhysicalNode,
@@ -17,10 +23,14 @@ pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
     Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
+#[cfg(feature = "cmo-slot-compose")]
+use pub_model::{CanonicalId, RectEmu};
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
     carlton_admitted_carrier_page_seq_nums_v1, select_carlton_customer_page_seq_nums_v1,
 };
+#[cfg(feature = "cmo-slot-compose")]
+use pub_reader::build_mature_0x2c_cmo_projection_bridge_v1;
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -45,6 +55,8 @@ pub const VIEWER_FAILURE_REPORT_SCHEMA_V0_1: &str = "chaptera-viewer-failure-rep
 pub const VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1: &str = "viewer-fallback-text-metrics-v0.1";
 const VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1: i64 = 57_150;
 const VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1: i64 = 142_875;
+#[cfg(feature = "cmo-slot-compose")]
+const CARLTON_MARCH_PRESENTATION_PROFILE_V1: &str = "carlton-school-jotter/march-2026/v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerFailureDiagnosticReport {
@@ -155,6 +167,22 @@ impl ViewerDocument {
 /// source-free physical geometry produced by the existing layout boundary. It
 /// intentionally does not claim that text, images, fill/line, or effects have
 /// been painted yet.
+#[cfg(feature = "cmo-slot-compose")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerProjectedSceneInstanceV1 {
+    /// Canonical visual identity/projection semantics from chaptera-scene-instance.
+    pub scene_instance: SceneInstanceV1,
+    /// Paint placement metadata only; not an identity authority.
+    pub target_frame_node_id: NodeId,
+    /// Story-global direct-paint cutoff from native Cmo slot-flow.
+    /// Scalars at or after this authoritative first-nonfitting boundary remain
+    /// canonical source text but are overset and must not paint in the target frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_frame_paint_scalar_end: Option<u32>,
+    pub bounds: RectEmu,
+    pub transform: Affine2D,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerGeometryDocument {
     pub schema_version: String,
@@ -168,6 +196,9 @@ pub struct ViewerGeometryDocument {
     pub text_fragments: Vec<ViewerTextFragment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typography_runs: Vec<ViewerTypographyRun>,
+    #[cfg(feature = "cmo-slot-compose")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projected_instances: Vec<ViewerProjectedSceneInstanceV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
@@ -700,6 +731,33 @@ pub fn open_mature_0x2c_geometry(
             .map(map_scene_diagnostic),
     );
 
+    #[cfg(feature = "cmo-slot-compose")]
+    let projected_instances = match project_carlton_march_cmo_instances(bytes, &pipeline, &scene) {
+        Ok(instances) => {
+            if !instances.is_empty() {
+                document.diagnostics.push(ViewerDiagnostic {
+                    code: "viewer.cmo.slot_projection_applied".to_owned(),
+                    severity: ViewerDiagnosticSeverity::Info,
+                    message: format!(
+                        "{} canonical read-only Cmo SceneInstanceV1 projection(s) admitted.",
+                        instances.len()
+                    ),
+                });
+            }
+            instances
+        }
+        Err(error) => {
+            document.diagnostics.push(ViewerDiagnostic {
+                code: "viewer.cmo.slot_projection_unavailable".to_owned(),
+                severity: ViewerDiagnosticSeverity::FidelityWarning,
+                message: format!(
+                    "Canonical Cmo SceneInstance projection rejected ({error}); source truth preserved."
+                ),
+            });
+            Vec::new()
+        }
+    };
+
     if !scene.nodes.is_empty() {
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.visual.geometry_only".to_owned(),
@@ -718,6 +776,8 @@ pub fn open_mature_0x2c_geometry(
         story_frames,
         text_fragments,
         typography_runs,
+        #[cfg(feature = "cmo-slot-compose")]
+        projected_instances,
         images,
     })
 }
@@ -1293,6 +1353,394 @@ fn map_projection_diagnostic(diagnostic: &ProjectionDiagnostic) -> ViewerDiagnos
     }
 }
 
+#[cfg(feature = "cmo-slot-compose")]
+fn parse_projected_node_id(value: &str, label: &str) -> Result<NodeId> {
+    let canonical = value
+        .parse::<CanonicalId>()
+        .with_context(|| format!("{label} is not a canonical UUID: {value}"))?;
+    Ok(NodeId::from_canonical(canonical))
+}
+
+#[cfg(feature = "cmo-slot-compose")]
+fn parse_projected_story_id(value: &str, label: &str) -> Result<StoryId> {
+    let canonical = value
+        .parse::<CanonicalId>()
+        .with_context(|| format!("{label} is not a canonical UUID: {value}"))?;
+    Ok(StoryId::from_canonical(canonical))
+}
+
+#[cfg(feature = "cmo-slot-compose")]
+fn page_for_resolved_node(graph: &PubResolvedGraph, node_id: NodeId) -> Result<PageId> {
+    let mut current = graph
+        .nodes
+        .get(&node_id)
+        .with_context(|| {
+            format!(
+                "projected target frame {} is absent",
+                node_id.as_canonical()
+            )
+        })?
+        .header
+        .parent_id;
+    let mut seen = BTreeSet::new();
+
+    loop {
+        if !seen.insert(current) {
+            return Err(anyhow!(
+                "projected target ancestry contains a cycle at {current}"
+            ));
+        }
+
+        let page_id = PageId::from_canonical(current);
+        if graph.pages.contains_key(&page_id) {
+            return Ok(page_id);
+        }
+
+        let parent_node_id = NodeId::from_canonical(current);
+        let parent = graph.nodes.get(&parent_node_id).with_context(|| {
+            format!(
+                "projected target ancestry {} is neither a page nor a resolved node",
+                current
+            )
+        })?;
+        current = parent.header.parent_id;
+    }
+}
+
+#[cfg(feature = "cmo-slot-compose")]
+fn project_carlton_march_cmo_instances(
+    bytes: &[u8],
+    pipeline: &Mature0x2cPipeline,
+    scene: &BoundedResolvedScene,
+) -> Result<Vec<ViewerProjectedSceneInstanceV1>> {
+    let ViewerPageSelectionDisposition::FamilyProfileApplied { profile_id, .. } =
+        &pipeline.page_selection.disposition
+    else {
+        return Ok(Vec::new());
+    };
+    if profile_id != CARLTON_MARCH_PRESENTATION_PROFILE_V1 {
+        return Ok(Vec::new());
+    }
+
+    let bridge = build_mature_0x2c_cmo_projection_bridge_v1(
+        bytes,
+        pipeline.source_hash,
+        &pipeline.source.graph,
+        &pipeline.resolved.graph,
+    )
+    .context("build active Reader Cmo authority bridge for Carlton March")?;
+    if !bridge.active_graph_identity_parity {
+        return Err(anyhow!(
+            "active Reader Cmo bridge did not prove identity parity"
+        ));
+    }
+
+    let graph = &pipeline.resolved.graph;
+    let context = &bridge.output.context;
+    let target_qsids = context
+        .cmo_relations
+        .iter()
+        .map(|relation| relation.target_qsid)
+        .collect::<BTreeSet<_>>();
+    let expected_target_qsids = BTreeSet::from([49_u32, 120, 216, 218]);
+    if target_qsids != expected_target_qsids {
+        return Err(anyhow!(
+            "exact Carlton March Cmo target set changed: expected {:?}, got {:?}",
+            expected_target_qsids,
+            target_qsids
+        ));
+    }
+    let mut projected = Vec::new();
+
+    for target_qsid in target_qsids {
+        let relations = context
+            .cmo_relations
+            .iter()
+            .filter(|relation| relation.target_qsid == target_qsid)
+            .collect::<Vec<_>>();
+        let first = relations
+            .first()
+            .copied()
+            .with_context(|| format!("Cmo target Qsid {target_qsid} has no relations"))?;
+
+        if relations.iter().any(|relation| {
+            relation.target_story_id != first.target_story_id
+                || relation.target_frame_node_id != first.target_frame_node_id
+        }) {
+            return Err(anyhow!(
+                "Cmo target Qsid {target_qsid} has inconsistent Story/frame authority"
+            ));
+        }
+
+        let target_story_id =
+            parse_projected_story_id(&first.target_story_id, "Cmo target_story_id")?;
+        let target_frame_text = first
+            .target_frame_node_id
+            .as_deref()
+            .with_context(|| format!("Cmo target Qsid {target_qsid} has no unique target frame"))?;
+        let target_frame_node_id =
+            parse_projected_node_id(target_frame_text, "Cmo target_frame_node_id")?;
+        let target_frame = graph.nodes.get(&target_frame_node_id).with_context(|| {
+            format!("Cmo target Qsid {target_qsid} frame is absent from resolved graph")
+        })?;
+        let target_frame_story = target_frame
+            .payload
+            .story_frame
+            .as_ref()
+            .and_then(|frame| frame.story_id)
+            .with_context(|| {
+                format!("Cmo target Qsid {target_qsid} frame has no Story identity")
+            })?;
+        if target_frame_story != target_story_id {
+            return Err(anyhow!(
+                "Cmo target Qsid {target_qsid} frame/Story identity mismatch"
+            ));
+        }
+
+        let target_page_id = page_for_resolved_node(graph, target_frame_node_id)?;
+        if !pipeline.page_selection.page_ids.contains(&target_page_id) {
+            return Err(anyhow!(
+                "Cmo target Qsid {target_qsid} resolves outside the admitted customer-page set"
+            ));
+        }
+
+        let target_scene_node = scene
+            .nodes
+            .iter()
+            .find(|node| node.origin == target_frame_node_id)
+            .with_context(|| {
+                format!("Cmo target Qsid {target_qsid} frame is absent from resolved Viewer scene")
+            })?;
+        let target_story = graph.stories.get(&target_story_id).with_context(|| {
+            format!("Cmo target Qsid {target_qsid} Story is absent from resolved graph")
+        })?;
+        let object_marker_scalars = target_story
+            .text
+            .chars()
+            .enumerate()
+            .filter_map(|(index, ch)| {
+                (ch == '\u{FFFC}')
+                    .then(|| u32::try_from(index).context("Cmo marker scalar exceeds u32"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let expected_markers: &[u32] = match target_qsid {
+            120 | 216 | 218 => &[0],
+            49 => &[0, 3, 5, 7, 9, 11],
+            _ => unreachable!("exact target set checked above"),
+        };
+        if object_marker_scalars != expected_markers {
+            return Err(anyhow!(
+                "exact Carlton March Cmo markers changed for Qsid {target_qsid}: expected {expected_markers:?}, got {object_marker_scalars:?}"
+            ));
+        }
+
+        let frame_count = graph
+            .nodes
+            .values()
+            .filter(|node| {
+                node.payload
+                    .story_frame
+                    .as_ref()
+                    .and_then(|frame| frame.story_id)
+                    == Some(target_story_id)
+            })
+            .count();
+        let frame_count =
+            u32::try_from(frame_count).context("Cmo target frame count exceeds u32")?;
+
+        let carrier_extents = relations
+            .iter()
+            .map(|relation| {
+                let carrier_node_id =
+                    parse_projected_node_id(&relation.carrier_node_id, "Cmo carrier_node_id")?;
+                let carrier = graph.nodes.get(&carrier_node_id).with_context(|| {
+                    format!(
+                        "Cmo carrier Ohpo {} is absent from resolved graph",
+                        relation.carrier_ohpo
+                    )
+                })?;
+                let nested_cmo = relation.carrier_story_id.as_ref().is_some_and(|story_id| {
+                    context
+                        .cmo_relations
+                        .iter()
+                        .any(|candidate| candidate.target_story_id == *story_id)
+                });
+                Ok(CarrierExtentV1 {
+                    carrier_node_id: relation.carrier_node_id.clone(),
+                    width_emu: carrier.header.bounds.width.get(),
+                    height_emu: carrier.header.bounds.height.get(),
+                    nested_cmo,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Exact March target Stories start with the semantic object marker. For
+        // the three one-slot targets there is no preceding visible text. For
+        // Qsid49 the already-proven second carrier fails both width and height
+        // even under the zero-inter-slot-text lower bound, so an empty line set
+        // cannot expose a later slot incorrectly. This is deliberately scoped
+        // to the exact admitted March profile, not a generic Cmo text-flow law.
+        let output = resolve_cmo_slot_flow_v1(
+            context,
+            &CmoStorySlotFlowInputV1 {
+                target_qsid,
+                target_page_id: target_page_id.as_canonical().to_string(),
+                target_story_id: target_story_id.as_canonical().to_string(),
+                target_frame_node_id: target_frame_node_id.as_canonical().to_string(),
+                frame_count,
+                host_width_emu: target_scene_node.bounds.width.get(),
+                host_height_emu: target_scene_node.bounds.height.get(),
+                object_marker_scalars,
+                text_lines: Vec::new(),
+                carrier_extents,
+            },
+        )
+        .with_context(|| format!("resolve Carlton March Cmo target Qsid {target_qsid}"))?;
+
+        let expected_visible_cmo_ids: &[u32] = match target_qsid {
+            218 => &[1],
+            120 => &[6],
+            216 => &[5],
+            49 => &[7],
+            _ => unreachable!("exact target set checked above"),
+        };
+        let visible_cmo_ids = output
+            .visible_slots
+            .iter()
+            .map(|slot| slot.cmo_id)
+            .collect::<Vec<_>>();
+        if visible_cmo_ids != expected_visible_cmo_ids {
+            return Err(anyhow!(
+                "exact Carlton March visible Cmo prefix changed for Qsid {target_qsid}: expected {expected_visible_cmo_ids:?}, got {visible_cmo_ids:?}"
+            ));
+        }
+        if output.scaling_applied || output.skip_to_fit || output.carrier_reparent_count != 0 {
+            return Err(anyhow!(
+                "exact Carlton March Cmo slot-flow violated no-scale/no-skip/no-reparent law for Qsid {target_qsid}"
+            ));
+        }
+        if target_qsid == 49
+            && (!output.overset.story_overset
+                || output.overset.first_nonfitting_slot_index != Some(1)
+                || output.overset.first_nonfitting_scalar_index != Some(3))
+        {
+            return Err(anyhow!(
+                "exact Carlton March q49 first-nonfit discriminator changed: {:?}",
+                output.overset
+            ));
+        }
+        if target_qsid != 49 && output.overset.story_overset {
+            return Err(anyhow!(
+                "exact Carlton March single-slot target Qsid {target_qsid} unexpectedly overset"
+            ));
+        }
+
+        let target_story_scalar_count = u32::try_from(target_story.text.chars().count())
+            .context("Cmo target Story scalar count exceeds u32")?;
+        let target_frame_paint_scalar_end = output.overset.first_nonfitting_scalar_index;
+        if target_frame_paint_scalar_end.is_some_and(|value| value > target_story_scalar_count) {
+            return Err(anyhow!(
+                "exact Carlton March target Qsid {target_qsid} overset scalar exceeds Story length"
+            ));
+        }
+
+        for slot in output.visible_slots {
+            let origin_node_id =
+                parse_projected_node_id(&slot.carrier_node_id, "visible Cmo carrier_node_id")?;
+            let carrier = graph.nodes.get(&origin_node_id).with_context(|| {
+                format!("visible Cmo carrier {} is absent", slot.carrier_node_id)
+            })?;
+            let carrier_story_id = slot
+                .carrier_story_id
+                .as_deref()
+                .map(|value| parse_projected_story_id(value, "visible Cmo carrier_story_id"))
+                .transpose()?;
+            if let Some(story_id) = carrier_story_id
+                && !graph.stories.contains_key(&story_id)
+            {
+                return Err(anyhow!(
+                    "visible Cmo carrier Story {} is absent",
+                    story_id.as_canonical()
+                ));
+            }
+
+            let x = target_scene_node
+                .bounds
+                .x
+                .get()
+                .checked_add(slot.resolved_x_emu)
+                .context("Cmo projected x overflow")?;
+            let y = target_scene_node
+                .bounds
+                .y
+                .get()
+                .checked_add(slot.resolved_y_emu)
+                .context("Cmo projected y overflow")?;
+            let bounds = RectEmu::new(
+                LengthEmu::new(x),
+                LengthEmu::new(y),
+                LengthEmu::new(slot.resolved_width_emu),
+                LengthEmu::new(slot.resolved_height_emu),
+            );
+
+            let relation = relations.get(slot.slot_index).copied().with_context(|| {
+                format!(
+                    "visible Cmo slot {} has no canonical relation",
+                    slot.slot_index
+                )
+            })?;
+            let scene_instance = cmo_story_slot_instance_v1(
+                relation,
+                &target_page_id.as_canonical().to_string(),
+                slot.slot_index,
+                slot.scalar_index,
+            )
+            .context("derive canonical Cmo SceneInstanceV1")?;
+            if scene_instance.instance_id != slot.instance_id
+                || scene_instance.projection_kind != SceneProjectionKindV1::CmoStorySlot
+                || scene_instance.origin_node_id != slot.carrier_node_id
+                || scene_instance.story_authority_id != slot.carrier_story_id
+            {
+                return Err(anyhow!(
+                    "slot-flow / SceneInstance authority mismatch for Qsid {target_qsid} slot {}",
+                    slot.slot_index
+                ));
+            }
+
+            projected.push(ViewerProjectedSceneInstanceV1 {
+                scene_instance,
+                target_frame_node_id,
+                target_frame_paint_scalar_end,
+                bounds,
+                transform: carrier.header.transform.clone(),
+            });
+        }
+    }
+
+    projected.sort_by(|left, right| {
+        (
+            left.scene_instance.target_page_id.as_str(),
+            left.scene_instance.cmo_scalar_index,
+            left.scene_instance.instance_id.as_str(),
+        )
+            .cmp(&(
+                right.scene_instance.target_page_id.as_str(),
+                right.scene_instance.cmo_scalar_index,
+                right.scene_instance.instance_id.as_str(),
+            ))
+    });
+
+    if projected.len() != 4 {
+        return Err(anyhow!(
+            "exact Carlton March Cmo projection expected 4 visible slot instances, got {}",
+            projected.len()
+        ));
+    }
+
+    Ok(projected)
+}
+
 fn map_scene_diagnostic(diagnostic: &ResolveDiagnostic) -> ViewerDiagnostic {
     let (code, message) = match diagnostic.code.as_str() {
         "story_text_layout_not_implemented" => (
@@ -1574,6 +2022,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            #[cfg(feature = "cmo-slot-compose")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -1721,6 +2171,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            #[cfg(feature = "cmo-slot-compose")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.scene.nodes.clone();
@@ -2143,6 +2595,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
+            #[cfg(feature = "cmo-slot-compose")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2245,6 +2699,8 @@ mod tests {
             story_frames: initial_frames.clone(),
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
+            #[cfg(feature = "cmo-slot-compose")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2308,6 +2764,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            #[cfg(feature = "cmo-slot-compose")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.clone();
