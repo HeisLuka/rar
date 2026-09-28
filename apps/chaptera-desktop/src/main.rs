@@ -7204,11 +7204,58 @@ mod tests {
             ),
             "exact Carlton family presentation profile must be active before visual rendering"
         );
+        assert_eq!(
+            visual.projected_instances.len(),
+            4,
+            "exact Carlton March must expose four bounded visible Cmo slot instances"
+        );
+        assert!(
+            visual.document.diagnostics.iter().any(
+                |diagnostic| diagnostic.code == "viewer.cmo.slot_projection_applied"
+            ),
+            "exact Carlton March must admit the Cmo Story-slot projection"
+        );
+        assert!(
+            visual
+                .projected_instances
+                .iter()
+                .all(|instance| matches!(
+                    instance.projection_kind,
+                    pub_viewer::ViewerProjectionKind::CmoStorySlot
+                )),
+            "Carlton projected instances must retain typed Cmo Story-slot provenance"
+        );
+        assert!(
+            visual.projected_instances.iter().all(|instance| {
+                visual
+                    .scene
+                    .nodes
+                    .iter()
+                    .all(|node| node.origin != instance.origin_node_id)
+            }),
+            "read-only Cmo slot instances must not become direct mutable scene nodes"
+        );
 
         let mut page_receipts = Vec::new();
         for page_index in 0..visual.document.pages.len() {
             let plan = build_page_render_plan_v1(&visual, page_index)
                 .expect("current Reader page render plan");
+            let expected_projected_slots = [1_usize, 2, 1][page_index];
+            assert_eq!(
+                plan.nodes
+                    .iter()
+                    .filter(|node| node.scene_instance_id.is_some())
+                    .count(),
+                expected_projected_slots,
+                "Carlton page must paint the exact bounded projected-slot count"
+            );
+            assert!(
+                plan.nodes
+                    .iter()
+                    .filter_map(|node| node.text.as_ref())
+                    .all(|fragment| !fragment.text.contains('\u{FFFC}')),
+                "semantic Cmo object markers must not escape into painted text"
+            );
             let width_px = ((plan.page_size.width.get() as f64 * RASTER_DPI / EMU_PER_INCH)
                 .round()
                 .max(1.0)) as u32;
