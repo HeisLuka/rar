@@ -2340,9 +2340,12 @@ mod tests {
 
     #[test]
     fn create_text_box_operation_summary_is_explicit_and_stable() {
-        let node_id = pub_editor::NodeId::from_canonical(pub_editor::CanonicalId::from_bytes([0x11; 16]));
-        let story_id = pub_editor::StoryId::from_canonical(pub_editor::CanonicalId::from_bytes([0x22; 16]));
-        let page_id = pub_editor::PageId::from_canonical(pub_editor::CanonicalId::from_bytes([0x33; 16]));
+        let node_id: pub_editor::NodeId =
+            serde_json::from_str("\"11111111-1111-1111-1111-111111111111\"").unwrap();
+        let story_id: pub_editor::StoryId =
+            serde_json::from_str("\"22222222-2222-2222-2222-222222222222\"").unwrap();
+        let page_id: pub_editor::PageId =
+            serde_json::from_str("\"33333333-3333-3333-3333-333333333333\"").unwrap();
         let bounds = RectEmu::new(
             LengthEmu::new(10),
             LengthEmu::new(20),
