@@ -73,7 +73,36 @@ jobs:
           echo "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87  $ASSETS/SampleBrochure.pub" | sha256sum --check
           curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/Simple.pub --output "$ASSETS/Simple.pub"
           echo "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d  $ASSETS/Simple.pub" | sha256sum --check
-          cargo +1.94.1 run --quiet --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml --bin mobile-reader-image-probe -- "$ASSETS/SampleNewsletter.pub" "$ASSETS/SampleBrochure.pub" "$ASSETS/Simple.pub"
+          PROBE="$RUNNER_TEMP/mobile-reader-image-probe.txt"
+          cargo +1.94.1 run --quiet --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml --bin mobile-reader-image-probe -- "$ASSETS/SampleNewsletter.pub" "$ASSETS/SampleBrochure.pub" "$ASSETS/Simple.pub" | tee "$PROBE"
+          python - "$PROBE" <<'PY'
+          import pathlib
+          import sys
+
+          lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+
+          def row_for(name):
+              for line in lines:
+                  if line.startswith("MOBILE_IMAGE_PROBE\t") and f"path=" in line and name in line:
+                      fields = {}
+                      for part in line.split("\t")[1:]:
+                          key, value = part.split("=", 1)
+                          fields[key] = value
+                      return fields
+              raise SystemExit(f"missing mobile probe row for {name}")
+
+          expected_pages = {
+              "SampleNewsletter.pub": 4,
+              "SampleBrochure.pub": 2,
+          }
+          for name, expected in expected_pages.items():
+              row = row_for(name)
+              actual = int(row["pages"])
+              if actual != expected:
+                  raise SystemExit(
+                      f"{name}: mobile Reader must expose {expected} exact Publisher-backed pages, got {actual}"
+                  )
+          PY
 
       - name: Build Android app and instrumentation APK
         working-directory: apps/chaptera-mobile-android
