@@ -7040,6 +7040,10 @@ mod tests {
         visual: ViewerGeometryDocument,
         page_index: usize,
         image_textures: BTreeMap<String, CachedImageTexture>,
+        painted_text_nodes: usize,
+        clipped_text_nodes: usize,
+        source_typography_sections: usize,
+        fallback_typography_sections: usize,
     }
 
     impl GoldenPageOnlyApp {
@@ -7048,6 +7052,10 @@ mod tests {
                 visual,
                 page_index,
                 image_textures: BTreeMap::new(),
+                painted_text_nodes: 0,
+                clipped_text_nodes: 0,
+                source_typography_sections: 0,
+                fallback_typography_sections: 0,
             }
         }
 
@@ -7091,6 +7099,10 @@ mod tests {
             let render_plan = build_page_render_plan_v1(&self.visual, self.page_index)
                 .expect("clean golden page render plan");
             let scene_scale = 144.0_f32 / 914_400.0_f32;
+            self.painted_text_nodes = 0;
+            self.clipped_text_nodes = 0;
+            self.source_typography_sections = 0;
+            self.fallback_typography_sections = 0;
 
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
@@ -7120,12 +7132,20 @@ mod tests {
                             node_rect,
                             texture.map(|cached| cached.texture.id()),
                         );
-                        let _ = render_backend::paint_document_node_foreground(
+                        let outcome = render_backend::paint_document_node_foreground(
                             &painter,
                             node,
                             node_rect,
                             scene_scale,
                         );
+                        if let Some(metrics) = outcome.text_metrics {
+                            self.painted_text_nodes += 1;
+                            self.source_typography_sections += metrics.source_typography_sections;
+                            self.fallback_typography_sections += metrics.fallback_sections;
+                            if outcome.text_clipped {
+                                self.clipped_text_nodes += 1;
+                            }
+                        }
                     }
                 });
         }
@@ -7198,6 +7218,7 @@ mod tests {
                 .expect("headless clean Reader page render must succeed");
             assert_eq!(image.width(), width_px, "golden raster width drift");
             assert_eq!(image.height(), height_px, "golden raster height drift");
+            let executed = harness.state();
             let filename = format!("carlton-march-reader-page-{:03}.png", page_index + 1);
             image
                 .save(output_dir.join(&filename))
@@ -7217,7 +7238,15 @@ mod tests {
                 "raster_width_px": width_px,
                 "raster_height_px": height_px,
                 "node_count": plan.nodes.len(),
+                "fill_node_count": plan.nodes.iter().filter(|node| node.solid_fill_rgb.is_some()).count(),
+                "line_node_count": plan.nodes.iter().filter(|node| node.solid_line.is_some()).count(),
+                "image_node_count": plan.nodes.iter().filter(|node| node.image.is_some()).count(),
+                "text_node_count": plan.nodes.iter().filter(|node| node.text.is_some()).count(),
                 "typography_sections": typography_sections,
+                "executed_text_node_count": executed.painted_text_nodes,
+                "executed_source_typography_sections": executed.source_typography_sections,
+                "executed_fallback_typography_sections": executed.fallback_typography_sections,
+                "clipped_text_node_count": executed.clipped_text_nodes,
                 "png": filename,
             }));
         }
@@ -7235,6 +7264,12 @@ mod tests {
             "family_profile_applied": true,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
+            "viewer_diagnostic_codes": visual
+                .document
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.clone())
+                .collect::<Vec<_>>(),
             "pages": page_receipts,
         });
         fs::write(
