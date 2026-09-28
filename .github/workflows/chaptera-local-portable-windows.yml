@@ -87,6 +87,16 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Resolve Visual Studio dumpbin
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path "${env:ProgramFiles(x86)}" "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin -or -not (Test-Path $dumpbin)) { throw "dumpbin.exe not found through vswhere" }
+          "CHAPTERA_DUMPBIN=$dumpbin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Using dumpbin: $dumpbin"
+
       - name: Check package scripts
         run: |
           python -m py_compile tools/run_local_full_stack.py
@@ -127,10 +137,9 @@ jobs:
       - name: Inspect packaged executable imports
         shell: pwsh
         run: |
-          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $dumpbin) { throw "dumpbin.exe not found" }
-          & $dumpbin /dependents target/release/chaptera.exe | Set-Content -Encoding ascii dist/chaptera.dependents.txt
-          & $dumpbin /dependents vendor/producer-a/target/release/chaptera-producer-a.exe | Set-Content -Encoding ascii dist/producer-a.dependents.txt
+          if (-not $env:CHAPTERA_DUMPBIN -or -not (Test-Path $env:CHAPTERA_DUMPBIN)) { throw "resolved dumpbin path is unavailable" }
+          & $env:CHAPTERA_DUMPBIN /dependents target/release/chaptera.exe | Set-Content -Encoding ascii dist/chaptera.dependents.txt
+          & $env:CHAPTERA_DUMPBIN /dependents vendor/producer-a/target/release/chaptera-producer-a.exe | Set-Content -Encoding ascii dist/producer-a.dependents.txt
           foreach ($receipt in @("dist/chaptera.dependents.txt","dist/producer-a.dependents.txt")) {
             $dynamicMsvc = Select-String -Path $receipt -Pattern "VCRUNTIME[0-9_]*[.]dll|MSVCP[0-9_]*[.]dll"
             if ($dynamicMsvc) {
@@ -215,16 +224,22 @@ jobs:
         shell: pwsh
         run: |
           $env:LOCALAPPDATA = $env:CHAPTERA_TEST_STATE
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
-          if (Get-Command python -ErrorAction SilentlyContinue) { throw "system python unexpectedly visible" }
-          if (Get-Command py -ErrorAction SilentlyContinue) { throw "py launcher unexpectedly visible" }
-          if (Get-Command cargo -ErrorAction SilentlyContinue) { throw "cargo unexpectedly visible" }
-          if (Get-Command rustc -ErrorAction SilentlyContinue) { throw "rustc unexpectedly visible" }
+          $poison = Join-Path $env:RUNNER_TEMP "chaptera-forbidden-runtime-shims"
+          New-Item -ItemType Directory -Force -Path $poison | Out-Null
+          foreach ($name in @("py","python","python3","pip","pip3","cargo","rustc")) {
+            @("@echo off","echo forbidden runtime command invoked: $name 1>&2","exit /b 97") |
+              Set-Content -Encoding ascii (Join-Path $poison "$name.cmd")
+          }
+          $env:PATH = "$poison;$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
           $cmd = Join-Path $env:SystemRoot "System32\cmd.exe"
           $launcher = Join-Path $env:CHAPTERA_CLEAN_ROOT "Start-Chaptera-Local.cmd"
           $quoted = [char]34 + $launcher + [char]34
           $arguments = "/d /c call $quoted --no-browser --smoke"
-          $process = Start-Process -FilePath $cmd -ArgumentList $arguments -Wait -PassThru
+          $stdout = Join-Path $env:RUNNER_TEMP "chaptera-portable-smoke.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "chaptera-portable-smoke.stderr.log"
+          $process = Start-Process -FilePath $cmd -ArgumentList $arguments -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
           if ($process.ExitCode -ne 0) { throw "portable full-stack smoke failed: $($process.ExitCode)" }
 
       - name: Prove packaged MoveNode Scene Undo path
@@ -261,8 +276,8 @@ jobs:
           @{
             schema_version = "chaptera.local-portable-clean-smoke.v1"
             no_checkout = $true
-            system_python_hidden = $true
-            cargo_hidden = $true
+            system_python_not_required = $true
+            forbidden_runtime_commands_poisoned = $true
             package_manifest_zip_verified = $true
             internal_sha256sums_verified = $true
             package_tree_unchanged = $true
