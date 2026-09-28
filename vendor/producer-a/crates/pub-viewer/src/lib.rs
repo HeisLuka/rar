@@ -10,11 +10,13 @@
 use anyhow::{Context, Result, anyhow};
 use pub_layout::{
     BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
-    BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, project_bounded,
-    resolve_bounded_geometry, resolve_bounded_text_flow,
+    BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, ResolvedPhysicalNode,
+    project_bounded, resolve_bounded_geometry, resolve_bounded_text_flow,
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
-use pub_model::{LengthEmu, NodeId, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId};
+use pub_model::{
+    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+};
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
@@ -29,14 +31,14 @@ use pub_reader::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::io::Cursor;
 
 pub const VIEWER_DOCUMENT_SCHEMA_V0_1: &str = "0.1";
 pub const VIEWER_GEOMETRY_SCHEMA_V0_1: &str = "0.1";
 
 pub const VIEWER_FAILURE_REPORT_SCHEMA_V0_1: &str = "chaptera-viewer-failure-report/v0.1";
-pub const VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1: &str =
-    "viewer-fallback-text-metrics-v0.1";
+pub const VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1: &str = "viewer-fallback-text-metrics-v0.1";
 const VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1: i64 = 57_150;
 const VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1: i64 = 142_875;
 
@@ -187,8 +189,7 @@ impl ViewerGeometryDocument {
 
         let authoring = bounded_authoring_slice_from_resolved(graph)?;
         let projection = project_bounded(authoring);
-        let (text_fragments, text_flow_diagnostics) =
-            resolve_viewer_text_fragments(&projection)?;
+        let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
 
         let stories = graph
             .stories
@@ -209,9 +210,8 @@ impl ViewerGeometryDocument {
             .collect::<Vec<_>>();
 
         let mut diagnostics = self.document.diagnostics.clone();
-        diagnostics.retain(|diagnostic| {
-            !is_refreshable_text_flow_diagnostic(diagnostic.code.as_str())
-        });
+        diagnostics
+            .retain(|diagnostic| !is_refreshable_text_flow_diagnostic(diagnostic.code.as_str()));
         diagnostics.extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
         if !text_fragments.is_empty() {
             diagnostics.push(viewer_fallback_flow_metrics_diagnostic());
@@ -223,6 +223,134 @@ impl ViewerGeometryDocument {
         self.text_fragments = text_fragments;
         self.document.diagnostics = diagnostics;
         Ok(())
+    }
+    /// Synchronizes the bounded author-created direct page-local TextFrame class
+    /// into the current Viewer scene without rebuilding or deleting unrelated
+    /// projected/inherited scene instances.
+    ///
+    /// The active IDs must come from a higher-layer durable creation proof
+    /// (currently applied CreateTextBox operations). The previous IDs are
+    /// transient product state used only to remove this same managed class on
+    /// Undo/reopen; they are never treated as authoring truth.
+    pub fn sync_editor_created_text_box_scene_nodes(
+        &mut self,
+        graph: &PubResolvedGraph,
+        active_node_ids: &[NodeId],
+        previously_synced_node_ids: &BTreeSet<NodeId>,
+    ) -> Result<BTreeSet<NodeId>> {
+        if graph.source.source_hash != self.document.source.source_hash
+            || graph.document.source_hash != self.document.source.source_hash
+        {
+            return Err(anyhow!(
+                "Viewer created-node scene sync rejected a resolved graph with different source identity"
+            ));
+        }
+
+        let mut seen = BTreeSet::new();
+        for node_id in active_node_ids {
+            if !seen.insert(*node_id) {
+                return Err(anyhow!(
+                    "Viewer created-node scene sync received duplicate NodeId {}",
+                    node_id.as_canonical()
+                ));
+            }
+        }
+
+        let surface_ids = self
+            .scene
+            .surfaces
+            .iter()
+            .map(|surface| surface.origin.into_canonical())
+            .collect::<BTreeSet<_>>();
+
+        let mut next_nodes = self
+            .scene
+            .nodes
+            .iter()
+            .filter(|node| !previously_synced_node_ids.contains(&node.origin))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for node_id in active_node_ids {
+            let node = graph.nodes.get(node_id).ok_or_else(|| {
+                anyhow!(
+                    "Viewer created-node scene sync missing current graph node {}",
+                    node_id.as_canonical()
+                )
+            })?;
+            if node.kind != NodeKind::TextFrame
+                || !node.header.source_refs.is_empty()
+                || node.header.transform != Affine2D::identity()
+                || node.header.bounds.width.get() <= 0
+                || node.header.bounds.height.get() <= 0
+                || node.header.bounds.right().is_none()
+                || node.header.bounds.bottom().is_none()
+            {
+                return Err(anyhow!(
+                    "Viewer created-node scene sync rejected unsupported TextFrame {}",
+                    node_id.as_canonical()
+                ));
+            }
+            if !surface_ids.contains(&node.header.parent_id) {
+                return Err(anyhow!(
+                    "Viewer created-node scene sync rejected non-page parent for {}",
+                    node_id.as_canonical()
+                ));
+            }
+            let parent_page = graph
+                .pages
+                .values()
+                .find(|page| page.id.as_canonical() == &node.header.parent_id)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Viewer created-node scene sync could not resolve parent page for {}",
+                        node_id.as_canonical()
+                    )
+                })?;
+            if !parent_page.children.contains(node_id) {
+                return Err(anyhow!(
+                    "Viewer created-node scene sync rejected missing page-child membership for {}",
+                    node_id.as_canonical()
+                ));
+            }
+            let story_id = node
+                .payload
+                .story_frame
+                .as_ref()
+                .and_then(|frame| frame.story_id)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Viewer created-node scene sync requires one StoryFrame owner for {}",
+                        node_id.as_canonical()
+                    )
+                })?;
+            if !graph.stories.contains_key(&story_id) {
+                return Err(anyhow!(
+                    "Viewer created-node scene sync missing Story {} for TextFrame {}",
+                    story_id.as_canonical(),
+                    node_id.as_canonical()
+                ));
+            }
+            if next_nodes
+                .iter()
+                .any(|scene_node| scene_node.origin == *node_id)
+            {
+                return Err(anyhow!(
+                    "Viewer created-node scene sync collided with an unrelated scene node {}",
+                    node_id.as_canonical()
+                ));
+            }
+
+            next_nodes.push(ResolvedPhysicalNode {
+                origin: *node_id,
+                parent_origin: node.header.parent_id,
+                bounds: node.header.bounds,
+                transform: node.header.transform.clone(),
+            });
+        }
+
+        self.scene.nodes = next_nodes;
+        Ok(seen)
     }
 }
 
@@ -402,8 +530,7 @@ pub fn open_mature_0x2c_geometry(
         })
         .collect::<Vec<_>>();
 
-    let (text_fragments, text_flow_diagnostics) =
-        resolve_viewer_text_fragments(&projection)?;
+    let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
     document
         .diagnostics
         .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
@@ -535,19 +662,16 @@ fn is_refreshable_text_flow_diagnostic(code: &str) -> bool {
 fn resolve_viewer_text_fragments(
     projection: &pub_layout::BoundedLayoutProjection,
 ) -> Result<(Vec<ViewerTextFragment>, Vec<ResolveDiagnostic>)> {
-    let flow = resolve_bounded_text_flow(
-        projection,
-        viewer_fallback_text_flow_environment_v0_1(),
-    )
-    .map_err(|blocked| {
-        let codes = blocked
-            .projection_errors
-            .iter()
-            .map(|diagnostic| diagnostic.code.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        anyhow!("Viewer text-flow resolution blocked by layout projection errors: {codes}")
-    })?;
+    let flow = resolve_bounded_text_flow(projection, viewer_fallback_text_flow_environment_v0_1())
+        .map_err(|blocked| {
+            let codes = blocked
+                .projection_errors
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow!("Viewer text-flow resolution blocked by layout projection errors: {codes}")
+        })?;
 
     let fragments = flow
         .text_fragments
@@ -1121,11 +1245,7 @@ mod tests {
             page.children = vec![first_frame, second_frame];
         }
 
-        let mut second_node = graph
-            .nodes
-            .get(&first_frame)
-            .expect("first frame")
-            .clone();
+        let mut second_node = graph.nodes.get(&first_frame).expect("first frame").clone();
         second_node.header.id = second_frame;
         second_node.header.bounds = RectEmu::new(
             LengthEmu::ZERO,
@@ -1162,6 +1282,193 @@ mod tests {
             .expect("fixture story")
             .text = text.to_owned();
         graph
+    }
+
+    #[test]
+    fn created_text_box_scene_sync_tracks_create_undo_redo_without_touching_baseline_nodes() {
+        let mut graph = resolved_graph_fixture();
+        let projection =
+            project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
+        let baseline_scene =
+            resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
+                .expect("baseline scene");
+        let baseline_nodes = baseline_scene.nodes.clone();
+        let source_hash = graph.source.source_hash;
+        let mut visual = ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document: ViewerDocument {
+                schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
+                source: ViewerSource {
+                    format: "pub".to_owned(),
+                    format_version: Some("0x2c".to_owned()),
+                    source_hash,
+                    byte_len: 1,
+                },
+                pages: Vec::new(),
+                stories: Vec::new(),
+                diagnostics: Vec::new(),
+            },
+            scene: baseline_scene,
+            paints: Vec::new(),
+            story_frames: Vec::new(),
+            text_fragments: Vec::new(),
+            images: Vec::new(),
+        };
+
+        let page_id = graph.document.pages[0];
+        let node_id = NodeId::from_canonical(id(9));
+        let story_id = StoryId::from_canonical(id(10));
+        let bounds = RectEmu::new(
+            LengthEmu::new(100),
+            LengthEmu::new(200),
+            LengthEmu::new(300),
+            LengthEmu::new(400),
+        );
+        let story = Story {
+            id: story_id,
+            text: String::new(),
+            paragraphs: Vec::new(),
+            runs: Vec::new(),
+            fields: Vec::new(),
+            hyperlinks: Vec::new(),
+            source_refs: Vec::new(),
+        };
+        let node = Node {
+            kind: NodeKind::TextFrame,
+            header: NodeHeader {
+                id: node_id,
+                parent_id: page_id.into_canonical(),
+                bounds,
+                transform: Affine2D::identity(),
+                source_refs: Vec::new(),
+                extensions: Vec::new(),
+            },
+            payload: PubResolvedNodePayload {
+                contents_seq_num: 0,
+                officeart_shape_type: None,
+                officeart_spid: None,
+                image_slot: None,
+                explicit_image_crop: None,
+                explicit_paint: pub_reader::PubExplicitShapePaintSource::default(),
+                story_frame: Some(PubResolvedStoryFrame {
+                    story_id: Some(story_id),
+                    ordinal: 0,
+                    previous_frame: None,
+                    next_frame: None,
+                }),
+                table_story: None,
+                table: None,
+            },
+        };
+
+        graph.stories.insert(story_id, story.clone());
+        graph.nodes.insert(node_id, node.clone());
+        graph
+            .pages
+            .get_mut(&page_id)
+            .expect("page")
+            .children
+            .push(node_id);
+
+        let synced = visual
+            .sync_editor_created_text_box_scene_nodes(&graph, &[node_id], &BTreeSet::new())
+            .expect("create sync");
+        let created = visual
+            .scene
+            .nodes
+            .iter()
+            .find(|scene_node| scene_node.origin == node_id)
+            .expect("created TextBox scene node");
+        assert_eq!(created.parent_origin, page_id.into_canonical());
+        assert_eq!(created.bounds, bounds);
+        assert_eq!(
+            visual
+                .scene
+                .nodes
+                .iter()
+                .filter(|scene_node| !synced.contains(&scene_node.origin))
+                .cloned()
+                .collect::<Vec<_>>(),
+            baseline_nodes
+        );
+
+        graph.nodes.remove(&node_id);
+        graph.stories.remove(&story_id);
+        graph
+            .pages
+            .get_mut(&page_id)
+            .expect("page")
+            .children
+            .retain(|child| *child != node_id);
+        let after_undo = visual
+            .sync_editor_created_text_box_scene_nodes(&graph, &[], &synced)
+            .expect("undo sync");
+        assert!(after_undo.is_empty());
+        assert_eq!(visual.scene.nodes, baseline_nodes);
+
+        graph.stories.insert(story_id, story);
+        graph.nodes.insert(node_id, node);
+        graph
+            .pages
+            .get_mut(&page_id)
+            .expect("page")
+            .children
+            .push(node_id);
+        let after_redo = visual
+            .sync_editor_created_text_box_scene_nodes(&graph, &[node_id], &after_undo)
+            .expect("redo sync");
+        assert_eq!(after_redo, BTreeSet::from([node_id]));
+        assert_eq!(
+            visual
+                .scene
+                .nodes
+                .iter()
+                .find(|scene_node| scene_node.origin == node_id)
+                .expect("redo node")
+                .bounds,
+            bounds
+        );
+        assert_eq!(visual.document.source.source_hash, source_hash);
+    }
+
+    #[test]
+    fn created_text_box_scene_sync_fails_closed_on_unproven_source_backed_node() {
+        let mut graph = resolved_graph_fixture();
+        let projection =
+            project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
+        let scene = resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
+            .expect("scene");
+        let source_hash = graph.source.source_hash;
+        let existing = *graph.nodes.keys().next().expect("fixture node");
+        let mut visual = ViewerGeometryDocument {
+            schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+            document: ViewerDocument {
+                schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
+                source: ViewerSource {
+                    format: "pub".to_owned(),
+                    format_version: Some("0x2c".to_owned()),
+                    source_hash,
+                    byte_len: 1,
+                },
+                pages: Vec::new(),
+                stories: Vec::new(),
+                diagnostics: Vec::new(),
+            },
+            scene,
+            paints: Vec::new(),
+            story_frames: Vec::new(),
+            text_fragments: Vec::new(),
+            images: Vec::new(),
+        };
+        let before = visual.scene.nodes.clone();
+
+        graph.nodes.get_mut(&existing).expect("fixture node").kind = NodeKind::TextFrame;
+        assert!(
+            visual
+                .sync_editor_created_text_box_scene_nodes(&graph, &[existing], &BTreeSet::new(),)
+                .is_err()
+        );
+        assert_eq!(visual.scene.nodes, before);
     }
 
     #[test]
@@ -1481,9 +1788,11 @@ mod tests {
             resolve_viewer_text_fragments(&projection).expect("fallback flow should resolve");
 
         assert!(fragments.is_empty());
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "shared_story_without_explicit_flow"
-        }));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code == "shared_story_without_explicit_flow" })
+        );
     }
 
     #[test]
@@ -1516,10 +1825,8 @@ mod tests {
         let node_id = *graph.nodes.keys().next().expect("fixture node");
         let story_id = *graph.stories.keys().next().expect("fixture story");
 
-        graph.pages.get_mut(&page_id).expect("fixture page").size = Size2D::new(
-            LengthEmu::new(2_000_000),
-            LengthEmu::new(2_000_000),
-        );
+        graph.pages.get_mut(&page_id).expect("fixture page").size =
+            Size2D::new(LengthEmu::new(2_000_000), LengthEmu::new(2_000_000));
         graph
             .pages
             .get_mut(&page_id)
@@ -1531,17 +1838,16 @@ mod tests {
             .expect("fixture node")
             .header
             .bounds = RectEmu::new(
-                LengthEmu::ZERO,
-                LengthEmu::ZERO,
-                LengthEmu::new(1_000_000),
-                LengthEmu::new(1_000_000),
-            );
+            LengthEmu::ZERO,
+            LengthEmu::ZERO,
+            LengthEmu::new(1_000_000),
+            LengthEmu::new(1_000_000),
+        );
 
         let projection =
             project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
-        let scene =
-            resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
-                .expect("scene");
+        let scene = resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
+            .expect("scene");
         let (initial_fragments, _) =
             resolve_viewer_text_fragments(&projection).expect("initial text flow");
         assert!(!initial_fragments.is_empty());
@@ -1608,9 +1914,8 @@ mod tests {
         let story_id = *graph.stories.keys().next().expect("fixture story");
         let projection =
             project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
-        let scene =
-            resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
-                .expect("scene");
+        let scene = resolve_bounded_geometry(&projection, viewer_geometry_environment_v0_1())
+            .expect("scene");
         let (initial_fragments, initial_flow_diagnostics) =
             resolve_viewer_text_fragments(&projection).expect("initial linked flow");
         assert_eq!(
@@ -1732,7 +2037,11 @@ mod tests {
         visual.document.source.source_hash = Sha256Digest::from_bytes([0xCD; 32]);
         let mismatched_before = visual.clone();
 
-        assert!(visual.refresh_text_projection_from_resolved(&graph).is_err());
+        assert!(
+            visual
+                .refresh_text_projection_from_resolved(&graph)
+                .is_err()
+        );
         assert_eq!(visual, mismatched_before);
         assert_ne!(visual, before);
     }
