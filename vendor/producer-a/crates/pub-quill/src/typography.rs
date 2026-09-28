@@ -9,11 +9,19 @@ const FDPC: [u8; 4] = *b"FDPC";
 const FDPP: [u8; 4] = *b"FDPP";
 const STSH: [u8; 4] = *b"STSH";
 
-const VARIABLE_BLOCK_TYPES: [u8; 8] = [0xC0, 0x80, 0x82, 0x88, 0x8A, 0x90, 0x98, 0xA0];
+const VARIABLE_BLOCK_TYPES: [u8; 6] = [0xC0, 0x80, 0x88, 0x90, 0x98, 0xA0];
 const GENERAL_CONTAINER: u8 = 0x88;
-const FONT_INDEX_CONTAINER_ID: u8 = 0x24;
-const TEXT_SIZE_ID: u8 = 0x0C;
-const PARAGRAPH_DEFAULT_CHAR_STYLE_ID: u8 = 0x19;
+
+// Mature Quill OplChp properties use the same packed 11-bit field coordinate
+// proven for Publisher OPL tags. This typography slice promotes only the
+// independently named 0x2xx family; other low-bit patterns retain the
+// historical fail-closed/raw behavior until separately grounded.
+const OPL_CHP_EXTENDED_HIGH_BITS: u8 = 0x02;
+const FBOLD_ID: u16 = 0x0202;
+const FBOLD_CS_ID: u16 = 0x0237;
+const FONT_INDEX_CONTAINER_ID: u16 = 0x0224;
+const TEXT_SIZE_ID: u16 = 0x020C;
+const PARAGRAPH_DEFAULT_CHAR_STYLE_ID: u16 = 0x0019;
 
 pub const QUILL_TEXT_SIZE_EMU_PER_POINT: u32 = 12_700;
 
@@ -242,7 +250,7 @@ fn explicit_run_projection_allowed(unknown_block_types: &BTreeSet<u8>) -> bool {
 
 #[derive(Debug, Clone, Copy)]
 struct BlockObservation {
-    id: u8,
+    id: u16,
     block_type: u8,
     data_offset: usize,
     end: usize,
@@ -1252,6 +1260,17 @@ fn extract_primary_font_index(
     Ok(None)
 }
 
+fn decode_quill_style_tag(raw_tag: [u8; 2]) -> (u16, u8) {
+    let raw_type = raw_tag[1];
+    if raw_type & 0x07 == OPL_CHP_EXTENDED_HIGH_BITS {
+        let field_id =
+            u16::from(raw_tag[0]) | (u16::from(raw_type & 0x07) << 8);
+        (field_id, raw_type & 0xF8)
+    } else {
+        (u16::from(raw_tag[0]), raw_type)
+    }
+}
+
 fn parse_block(
     bytes: &[u8],
     start: usize,
@@ -1263,8 +1282,8 @@ fn parse_block(
             "Quill style block header exceeds limit at 0x{start:x}"
         )));
     }
-    let id = bytes[start];
-    let block_type = bytes[start + 1];
+    let raw_tag = [bytes[start], bytes[start + 1]];
+    let (id, block_type) = decode_quill_style_tag(raw_tag);
     let data_offset = start + 2;
 
     let (end, value) = if VARIABLE_BLOCK_TYPES.contains(&block_type) {
@@ -1288,14 +1307,20 @@ fn parse_block(
         (end, None)
     } else {
         let data_len = match block_type {
-            0x78 | 0x05 | 0x08 | 0x0A => 0,
-            0x10 | 0x12 | 0x18 | 0x1A | 0x07 => 2,
-            0x20 | 0x22 | 0x58 | 0x68 | 0x70 | 0xB8 => 4,
+            // OplChp boolean suppression/delta forms proven on text-style.pub
+            // and independently bounded on SampleBrochure. We use them only
+            // for framing here; effective bold semantics remain out of scope.
+            0x00 if matches!(id, FBOLD_ID | FBOLD_CS_ID) => 0,
+            0x78 | 0x05 | 0x08 => 0,
+            0x10 | 0x18 | 0x07 => 2,
+            0x20 | 0x58 | 0x68 | 0x70 | 0xB8 => 4,
             0x28 => 8,
             0x38 => 16,
             0x48 => 24,
-            other => {
-                unknown_block_types.insert(other);
+            _ => {
+                // Keep the historical diagnostic in raw-byte coordinates so
+                // callers can locate the exact unsupported tag on disk.
+                unknown_block_types.insert(raw_tag[1]);
                 0
             }
         };
@@ -1633,11 +1658,67 @@ mod tests {
     }
 
     #[test]
+    fn packed_quill_style_tag_preserves_following_font_size_block() {
+        // SampleBrochure pattern: explicit FBold suppression/delta marker,
+        // immediately followed by FontSize field 0x20C / wire 0x20.
+        let bytes = [0x02, 0x02, 0x0c, 0x22, 0xec, 0x84, 0x02, 0x00];
+        let mut unknown = BTreeSet::new();
+
+        let (bold, next) =
+            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("parse FBold marker");
+        assert_eq!(bold.id, FBOLD_ID);
+        assert_eq!(bold.block_type, 0x00);
+        assert_eq!(bold.value, None);
+        assert_eq!(next, 2);
+
+        let (size, end) =
+            parse_block(&bytes, next, bytes.len(), &mut unknown).expect("parse FontSize");
+        assert_eq!(size.id, TEXT_SIZE_ID);
+        assert_eq!(size.block_type, 0x20);
+        assert_eq!(size.value, Some(165_100));
+        assert_eq!(end, bytes.len());
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn packed_quill_style_tag_preserves_complex_script_size_block() {
+        let bytes = [0x37, 0x02, 0x39, 0x22, 0xec, 0x84, 0x02, 0x00];
+        let mut unknown = BTreeSet::new();
+
+        let (bold_cs, next) =
+            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("parse FBoldCS marker");
+        assert_eq!(bold_cs.id, FBOLD_CS_ID);
+        assert_eq!(bold_cs.block_type, 0x00);
+        assert_eq!(next, 2);
+
+        let (size_cs, end) =
+            parse_block(&bytes, next, bytes.len(), &mut unknown).expect("parse FpsCS");
+        assert_eq!(size_cs.id, 0x0239);
+        assert_eq!(size_cs.block_type, 0x20);
+        assert_eq!(size_cs.value, Some(165_100));
+        assert_eq!(end, bytes.len());
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn legacy_raw_0x07_width_is_not_reinterpreted_by_packed_0x2xx_promotion() {
+        let bytes = [0x55, 0x07, 0x34, 0x12];
+        let mut unknown = BTreeSet::new();
+        let (block, end) = parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("legacy block");
+        assert_eq!(block.id, 0x55);
+        assert_eq!(block.block_type, 0x07);
+        assert_eq!(block.value, Some(0x1234));
+        assert_eq!(end, bytes.len());
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
     fn fixed_block_parser_preserves_known_size_value() {
-        let bytes = [TEXT_SIZE_ID, 0x20, 0x40, 0xa6, 0x04, 0x00];
+        let bytes = [0x0c, 0x22, 0x40, 0xa6, 0x04, 0x00];
         let mut unknown = BTreeSet::new();
         let (block, end) = parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("parse block");
         assert_eq!(block.id, TEXT_SIZE_ID);
+        assert_eq!(block.block_type, 0x20);
         assert_eq!(block.value, Some(304_704));
         assert_eq!(end, bytes.len());
         assert!(unknown.is_empty());
