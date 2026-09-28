@@ -1,0 +1,40 @@
+name: Carlton presentation profile V1
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/pub-model/**"
+      - "crates/pub-presentation-profile/**"
+      - ".github/workflows/carlton-page-presentation-profile.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt -p pub-presentation-profile -- --check
+
+      - name: Check source-free presentation contract
+        run: cargo check -p pub-presentation-profile --all-targets
+
+      - name: Lint source-free presentation contract
+        run: cargo clippy -p pub-presentation-profile --all-targets -- -D warnings
+
+      - name: Test Carlton family admission and role law
+        run: cargo test -p pub-presentation-profile

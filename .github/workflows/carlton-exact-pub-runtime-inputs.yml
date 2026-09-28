@@ -3,8 +3,16 @@ name: Carlton exact PUB runtime inputs
 on:
   pull_request:
     paths:
+      - "Cargo.toml"
+      - "crates/pub-model/**"
+      - "crates/pub-presentation-profile/**"
+      - "vendor/producer-a/crates/pub-reader/**"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -34,6 +42,7 @@ jobs:
           import hashlib
           import json
           import re
+          import time
           from pathlib import Path
 
           import requests
@@ -62,12 +71,153 @@ jobs:
           session.headers.update({
               "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/2.0)",
               "Accept": "*/*",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache",
           })
 
-          response = session.get(PAGE, timeout=30)
+          request_page = f"{PAGE}?chaptera_cache_bust={int(time.time())}"
+          response = session.get(request_page, timeout=30)
           response.raise_for_status()
           raw = response.text
           (DISC / "latest-letters.html").write_text(raw, encoding="utf-8")
+
+          # Capture the public frontend route vocabulary. The document declares
+          # <base href="/">, so resolve Angular bundles through that base exactly as
+          # a browser does instead of relative to /parents/latest-letters.
+          script_srcs = re.findall(r'<script[^>]+src="([^"]+)"', raw, flags=re.I)
+          base_match = re.search(r'<base[^>]+href="([^"]+)"', raw, flags=re.I)
+          base_href = base_match.group(1) if base_match else "/"
+          document_base = requests.compat.urljoin(response.url, base_href)
+          main_src = next((src for src in script_srcs if re.search(r'(^|/)main-[^/]+[.]js$', src)), None)
+          frontend_diag = {
+              "response_url": response.url,
+              "base_href": base_href,
+              "document_base": document_base,
+              "script_srcs": script_srcs,
+              "main_src": main_src,
+          }
+          (DISC / "frontend-scripts.json").write_text(
+              json.dumps(frontend_diag, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if main_src:
+              bundle_url = requests.compat.urljoin(document_base, main_src)
+              bundle = session.get(bundle_url, timeout=30)
+              frontend_diag["bundle_url"] = bundle_url
+              frontend_diag["bundle_status"] = bundle.status_code
+              (DISC / "frontend-scripts.json").write_text(
+                  json.dumps(frontend_diag, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              bundle.raise_for_status()
+              (DISC / "school-jotter-main.js").write_bytes(bundle.content)
+              candidates = sorted(set(
+                  match.group(0)
+                  for match in re.finditer(
+                      r'[^"\s]{0,120}(?:/api/|download|file)[^"\s]{0,220}',
+                      bundle.text,
+                      flags=re.I,
+                  )
+              ))
+              (DISC / "frontend-route-candidates.txt").write_text(
+                  "\n".join(candidates[:4000]) + "\n",
+                  encoding="utf-8",
+              )
+
+          # Pull the directly referenced public Angular chunks and scan them for
+          # API connector/base-url vocabulary. This remains diagnostics-only.
+          js_dir = DISC / "js"
+          js_dir.mkdir(exist_ok=True)
+          asset_refs = set(script_srcs)
+          asset_refs.update(
+              re.findall(
+                  r'<link[^>]+rel="modulepreload"[^>]+href="([^"]+[.]js)"',
+                  raw,
+                  flags=re.I,
+              )
+          )
+          if (DISC / "school-jotter-main.js").exists():
+              main_text = (DISC / "school-jotter-main.js").read_text(encoding="utf-8")
+              asset_refs.update(
+                  re.findall(r'from"[.]/([^"]+[.]js)"', main_text)
+              )
+              asset_refs.update(
+                  re.findall(r'import\("[.]/([^"]+[.]js)"\)', main_text)
+              )
+          chunk_findings = []
+          api_base_candidates = set()
+          total_js_bytes = 0
+          for asset_ref in sorted(asset_refs):
+              asset_name = asset_ref.rsplit("/", 1)[-1]
+              if not re.fullmatch(r"[A-Za-z0-9._-]+[.]js", asset_name):
+                  continue
+              asset_url = requests.compat.urljoin(document_base, asset_ref)
+              asset_response = session.get(asset_url, timeout=30)
+              if not asset_response.ok:
+                  chunk_findings.append({
+                      "asset": asset_name,
+                      "url": asset_url,
+                      "status": asset_response.status_code,
+                  })
+                  continue
+              total_js_bytes += len(asset_response.content)
+              if total_js_bytes > 10_000_000:
+                  raise SystemExit("frontend diagnostics exceeded 10 MB JS ceiling")
+              (js_dir / asset_name).write_bytes(asset_response.content)
+              text_body = asset_response.text
+              api_base_candidates.update(
+                  re.findall(
+                      r'ApiConnectorConfig:\{DB_URL:"(https://[^"]+)"',
+                      text_body,
+                  )
+              )
+              contexts = []
+              for needle in [
+                  "DB_URL",
+                  "DB_URL_VPC",
+                  "ApiConnectorConfig",
+                  "/api/resources",
+                  "resource_lists",
+                  "full_tenant_domain_entities",
+              ]:
+                  pos = text_body.find(needle)
+                  if pos >= 0:
+                      contexts.append(text_body[max(0, pos - 500): pos + 1200])
+              if contexts:
+                  chunk_findings.append({
+                      "asset": asset_name,
+                      "url": asset_url,
+                      "status": asset_response.status_code,
+                      "contexts": contexts,
+                  })
+          (DISC / "frontend-api-config-candidates.json").write_text(
+              json.dumps(chunk_findings, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if len(api_base_candidates) != 1:
+              raise SystemExit(
+                  f"public API base is not uniquely grounded: {sorted(api_base_candidates)}"
+              )
+          api_base = next(iter(api_base_candidates)).rstrip("/")
+
+          tenant_match = re.search(
+              r'"TENANT_DOMAIN":\{"id":"([^"]+)"',
+              raw,
+          )
+          if not tenant_match:
+              raise SystemExit("TENANT_DOMAIN.id missing from public hydration state")
+          tenant_id = tenant_match.group(1)
+          (DISC / "frontend-public-api.json").write_text(
+              json.dumps(
+                  {
+                      "api_base": api_base,
+                      "tenant_id": tenant_id,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
 
           found = {}
           for public_name, spec in specs.items():
@@ -78,13 +228,15 @@ jobs:
 
               window = raw[max(0, idx - 600): min(len(raw), idx + 14000)]
 
-              file_match = re.search(
-                  r'"file":\{"id":"([^"]+)","name":"' + re.escape(public_name) + r'"',
+              resource_match = re.search(
+                  r'\{"id":"([^"]+)","file":\{"id":"([^"]+)","name":"'
+                  + re.escape(public_name)
+                  + r'"',
                   window,
               )
-              if not file_match:
-                  raise SystemExit(f"{public_name}: file id not found")
-              file_id = file_match.group(1)
+              if not resource_match:
+                  raise SystemExit(f"{public_name}: resource/file ids not found")
+              resource_id, file_id = resource_match.groups()
               if file_id != spec["expected_id"]:
                   raise SystemExit(
                       f"{public_name}: file id drift {file_id} != {spec['expected_id']}"
@@ -110,10 +262,78 @@ jobs:
               )
               if not origin_match:
                   raise SystemExit(f"{public_name}: signed origin URL missing")
-              origin = json.loads('"' + origin_match.group(1) + '"')
+              hydration_origin = json.loads('"' + origin_match.group(1) + '"')
+              origin = hydration_origin
+
+              # Public UI resource refresh. The shipped client explicitly admits
+              # /api/resources/{id}; use it only to refresh the ephemeral origin.
+              # Immutable file identity/size/SHA gates below remain authoritative.
+              resource_url = f"{api_base}/resources/{resource_id}"
+              api_response = session.get(
+                  resource_url,
+                  timeout=30,
+                  headers={
+                      "Accept": "application/json",
+                      "X-Tenant": tenant_id,
+                  },
+              )
+              api_diag = {
+                  "public_name": public_name,
+                  "resource_id": resource_id,
+                  "file_id": file_id,
+                  "resource_url": resource_url,
+                  "status": api_response.status_code,
+              }
+              if api_response.ok:
+                  try:
+                      api_payload = api_response.json()
+                  except ValueError:
+                      api_payload = None
+
+                  def find_file(node):
+                      if isinstance(node, dict):
+                          if (
+                              node.get("id") == file_id
+                              and node.get("name") == public_name
+                              and isinstance(node.get("url"), dict)
+                              and isinstance(node["url"].get("origin"), str)
+                          ):
+                              return node
+                          for value in node.values():
+                              found_node = find_file(value)
+                              if found_node is not None:
+                                  return found_node
+                      elif isinstance(node, list):
+                          for value in node:
+                              found_node = find_file(value)
+                              if found_node is not None:
+                                  return found_node
+                      return None
+
+                  refreshed_file = find_file(api_payload)
+                  if refreshed_file is not None:
+                      refreshed_size = refreshed_file.get("size")
+                      if refreshed_size != spec["size"]:
+                          raise SystemExit(
+                              f"{public_name}: refreshed size drift "
+                              f"{refreshed_size} != {spec['size']}"
+                          )
+                      origin = refreshed_file["url"]["origin"]
+                      api_diag["refreshed_origin"] = True
+                  else:
+                      api_diag["refreshed_origin"] = False
+              else:
+                  api_diag["refreshed_origin"] = False
+
+              (DISC / f"{spec['artifact_name']}.resource-api.json").write_text(
+                  json.dumps(api_diag, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
 
               print(
-                  f"{public_name}: id={file_id} declared_size={declared_size} "
+                  f"{public_name}: resource={resource_id} id={file_id} "
+                  f"declared_size={declared_size} "
+                  f"resource_api={api_response.status_code} "
                   f"origin_host={requests.utils.urlparse(origin).hostname}"
               )
 
@@ -1026,8 +1246,8 @@ jobs:
               )
           PY
 
-          python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/March-2026-plccmob-receipt.json
-          python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/December-2025-plccmob-receipt.json
+          python tools/validate_plccmob_projection_receipt.py out/carlton/exact/March-2026-plccmob-receipt.json
+          python tools/validate_plccmob_projection_receipt.py out/carlton/exact/December-2025-plccmob-receipt.json
 
       - name: Parse exact PlcCmob chunks through Rust core
         shell: bash
@@ -1072,6 +1292,151 @@ jobs:
                   f"{label}: Rust exact-wire PASS size={rust['declared_length']} "
                   f"rows={rust['declared_count']}"
               )
+          PY
+
+      - name: Emit source-free PAGE-role evidence for exact family controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- out/carlton/exact/March-2026.pub \
+               out/carlton/exact/March-2026-page-role.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- out/carlton/exact/December-2025.pub \
+               out/carlton/exact/December-2025-page-role.json
+
+      - name: Assemble bounded Carlton presentation inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          extraction = json.loads((root / "plccmob-runtime-extraction.json").read_text())
+
+          specs = {
+              "March-2026": root / "March-2026.pub",
+              "December-2025": root / "December-2025.pub",
+          }
+          for label, source in specs.items():
+              roles = json.loads((root / f"{label}-page-role.json").read_text())
+              receipt = extraction["receipts"][label]
+              carrier_pages = sorted({
+                  check["parent_seq_num"]
+                  for check in receipt["carrier_checks"]
+              })
+              pages = [
+                  {
+                      "document_ordinal": page["document_ordinal"],
+                      "contents_seq_num": page["contents_seq_num"],
+                      "oid_dword0": page.get("oid_dword0"),
+                      "oid_dword1": page.get("oid_dword1"),
+                      "applied_master_seq_num": page.get("applied_master_seq_num"),
+                      "shape_child_count": page["shape_child_count"],
+                  }
+                  for page in roles["pages"]
+              ]
+              payload = {
+                  "schema_version": "chaptera.carlton-presentation-profile-input.v1",
+                  "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                  "pages": pages,
+                  "carrier_page_seq_nums": carrier_pages,
+              }
+              (root / f"{label}-presentation-input.json").write_text(
+                  json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+              print(
+                  f"{label}: presentation input pages={len(pages)} "
+                  f"carriers={carrier_pages}"
+              )
+          PY
+
+      - name: Build exact admitted Carlton presentation manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p pub-presentation-profile --bin carlton-presentation-profile -- \
+            out/carlton/exact/March-2026-presentation-input.json \
+            out/carlton/exact/March-2026-presentation-manifest.json
+          cargo run -q -p pub-presentation-profile --bin carlton-presentation-profile -- \
+            out/carlton/exact/December-2025-presentation-input.json \
+            out/carlton/exact/December-2025-presentation-manifest.json
+          cat out/carlton/exact/March-2026-presentation-manifest.json
+          cat out/carlton/exact/December-2025-presentation-manifest.json
+
+      - name: Gate March 8-to-3 and December family control
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          march = json.loads((root / "March-2026-presentation-manifest.json").read_text())
+          december = json.loads((root / "December-2025-presentation-manifest.json").read_text())
+
+          assert march["profile_id"] == "carlton-school-jotter/march-2026/v1"
+          assert march["raw_page_count"] == 8
+          assert march["customer_page_count"] == 3
+          assert march["customer_page_seq_nums"] == [266, 361, 406]
+          assert march["master_page_seq_nums"] == [263]
+          assert march["carrier_page_seq_nums"] == [279]
+          roles = {
+              page["contents_seq_num"]: page["role"]
+              for page in march["pages"]
+          }
+          assert roles == {
+              263: "master",
+              266: "customer",
+              361: "customer",
+              406: "customer",
+              269: "internal_service",
+              272: "internal_service",
+              275: "internal_service",
+              279: "carrier",
+          }, roles
+          assert all(
+              edge["master_page_seq_num"] == 263
+              for edge in march["customer_master_relations"]
+          )
+          assert march["invariants"] == {
+              "exact_source_admission": True,
+              "family_scoped_oid_rule": True,
+              "canonical_source_graph_mutated": False,
+              "canonical_page_ids_preserved": True,
+              "carrier_pages_exposed_as_customer_pages": False,
+              "master_pages_exposed_as_customer_pages": False,
+          }
+
+          assert december["profile_id"] == "carlton-school-jotter/december-2025/v1"
+          assert december["customer_page_count"] == 5
+          assert set(december["customer_page_seq_nums"]) == {266, 361, 406, 456, 493}
+          assert december["master_page_seq_nums"] == [263]
+          assert december["carrier_page_seq_nums"] == [279]
+          assert all(
+              page["role"] != "customer"
+              for page in december["pages"]
+              if page["contents_seq_num"] in {263, 279}
+          )
+          assert all(
+              edge["master_page_seq_num"] == 263
+              for edge in december["customer_master_relations"]
+          )
+
+          print(
+              "CARLTON PRESENTATION PROFILE PASS "
+              "March raw=8 customer=3 master=263 carrier=279; "
+              "December customer=5 master=263 carrier=279"
+          )
           PY
 
       - name: Upload exact runtime inputs
