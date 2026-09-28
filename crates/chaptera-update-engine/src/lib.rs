@@ -209,15 +209,15 @@ impl UpdateEngine {
                 valid.push(envelope);
                 continue;
             }
-            if let Ok(journal) = serde_json::from_slice::<UpdateJournal>(&bytes) {
-                if validate_journal(&journal).is_ok() {
-                    let journal_sha256 = journal_digest(&journal)?;
-                    valid.push(JournalEnvelope {
-                        generation: legacy_generation,
-                        journal,
-                        journal_sha256,
-                    });
-                }
+            if let Ok(journal) = serde_json::from_slice::<UpdateJournal>(&bytes)
+                && validate_journal(&journal).is_ok()
+            {
+                let journal_sha256 = journal_digest(&journal)?;
+                valid.push(JournalEnvelope {
+                    generation: legacy_generation,
+                    journal,
+                    journal_sha256,
+                });
             }
         }
         if existing != 0 && valid.is_empty() {
