@@ -4,10 +4,10 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.OpenableColumns;
+import android.provider.OpenableColumns;\nimport android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.Button;
+import android.widget.Button;\nimport android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
@@ -53,12 +53,35 @@ public final class MainActivity extends Activity {
         previousPage.setText("Previous");
         previousPage.setEnabled(false);
         previousPage.setOnClickListener(v -> renderPage(currentPage - 1));
+        navigation.addView(previousPage, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        pageJump = new EditText(this);
+        pageJump.setId(com.chaptera.reader.R.id.reader_page_jump);
+        pageJump.setSingleLine(true);
+        pageJump.setGravity(Gravity.CENTER);
+        pageJump.setInputType(InputType.TYPE_CLASS_NUMBER);
+        pageJump.setHint("Page");
+        pageJump.setEnabled(false);
+        navigation.addView(pageJump, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button go = new Button(this);
+        go.setId(com.chaptera.reader.R.id.reader_page_go);
+        go.setText("Go");
+        go.setOnClickListener(v -> {
+            try {
+                int requested = Integer.parseInt(pageJump.getText().toString().trim()) - 1;
+                renderPage(requested);
+            } catch (NumberFormatException ignored) {
+                status.setText("Enter a page number between 1 and " + Math.max(1, pageCount) + ".");
+            }
+        });
+        navigation.addView(go, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.6f));
+
         nextPage = new Button(this);
         nextPage.setId(com.chaptera.reader.R.id.reader_next_page);
         nextPage.setText("Next");
         nextPage.setEnabled(false);
         nextPage.setOnClickListener(v -> renderPage(currentPage + 1));
-        navigation.addView(previousPage, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         navigation.addView(nextPage, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(navigation, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -75,7 +98,7 @@ public final class MainActivity extends Activity {
         ));
 
         diagnosticsView = new TextView(this);
-        diagnosticsView.setId(com.chaptera.reader.R.id.reader_diagnostics);
+        diagnosticsView.setId(com.chaptera.reader.R.id.reader_viewer_diagnostics);
         diagnosticsView.setVisibility(View.GONE);
         root.addView(diagnosticsView, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -165,7 +188,11 @@ public final class MainActivity extends Activity {
     }
 
     private void renderPage(int pageIndex) {
-        if (sessionId <= 0L || pageIndex < 0 || pageIndex >= pageCount) return;
+        if (sessionId <= 0L) return;
+        if (pageIndex < 0 || pageIndex >= pageCount) {
+            status.setText("Page must be between 1 and " + Math.max(1, pageCount) + ".");
+            return;
+        }
         String wire = NativeReader.pageRenderPlanJson(sessionId, pageIndex);
         if (wire.startsWith("ERR:")) {
             status.setText("Could not render page " + (pageIndex + 1) + ": " + wire);
@@ -174,6 +201,8 @@ public final class MainActivity extends Activity {
         try {
             JSONObject page = new JSONObject(wire);
             currentPage = pageIndex;
+            pageJump.setText(Integer.toString(currentPage + 1));
+            pageJump.setEnabled(true);
             canvas.setPage(page, sessionId);
             status.setText(
                 documentName + " · page " + (currentPage + 1) + "/" + pageCount
@@ -224,6 +253,10 @@ public final class MainActivity extends Activity {
         }
         if (previousPage != null) previousPage.setEnabled(false);
         if (nextPage != null) nextPage.setEnabled(false);
+        if (pageJump != null) {
+            pageJump.setText("");
+            pageJump.setEnabled(false);
+        }
     }
 
     @Override
