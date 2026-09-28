@@ -12,17 +12,12 @@ pub const SUCCESS: egui::Color32 = egui::Color32::from_rgb(20, 128, 82);
 pub const WARNING: egui::Color32 = egui::Color32::from_rgb(181, 113, 21);
 pub const DANGER: egui::Color32 = egui::Color32::from_rgb(185, 56, 56);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InspectorTab {
+    #[default]
     Document,
     Text,
     Diagnostics,
-}
-
-impl Default for InspectorTab {
-    fn default() -> Self {
-        Self::Document
-    }
 }
 
 pub fn configure_context(ctx: &egui::Context) {
