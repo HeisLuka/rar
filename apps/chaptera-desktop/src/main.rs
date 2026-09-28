@@ -792,12 +792,11 @@ impl ViewerApp {
     }
 
     fn save_diagnostic_sweep_report(&mut self) {
-        let Some(report) = self.diagnostic_sweep_report.as_ref() else {
-            return;
-        };
-
         #[cfg(target_os = "windows")]
         {
+            let Some(report) = self.diagnostic_sweep_report.as_ref() else {
+                return;
+            };
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name("chaptera-pub-folder-diagnostics.json")
                 .save_file()
