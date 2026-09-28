@@ -13,6 +13,7 @@ mod image_decode_adapter;
 mod locale;
 mod product_smoke;
 mod render_backend;
+mod reader_product_ui;
 #[allow(dead_code)]
 mod supporter;
 #[allow(dead_code)]
@@ -685,6 +686,7 @@ struct ViewerApp {
     exact_file_consent_open: bool,
     exact_file_consent_status: Option<String>,
     show_diagnostics: bool,
+    reader_inspector_tab: reader_product_ui::InspectorTab,
 }
 
 impl ViewerApp {
@@ -737,6 +739,7 @@ impl ViewerApp {
             exact_file_consent_open: false,
             exact_file_consent_status: None,
             show_diagnostics: false,
+            reader_inspector_tab: reader_product_ui::InspectorTab::Document,
         };
 
         if let Some(path) = initial_path {
@@ -1118,7 +1121,136 @@ impl ViewerApp {
         }
     }
 
+    fn show_reader_command_bar(&mut self, ui: &mut egui::Ui) {
+        let document_label = self
+            .source_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Chaptera Reader")
+                    .size(16.0)
+                    .strong()
+                    .color(reader_product_ui::TEXT),
+            );
+            ui.separator();
+            if let Some(label) = &document_label {
+                ui.label(egui::RichText::new(label).color(reader_product_ui::MUTED_TEXT));
+            } else {
+                reader_product_ui::muted(ui, "No PUB open");
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                reader_product_ui::muted(ui, "Local · read-only");
+            });
+        });
+
+        reader_product_ui::panel_separator(ui);
+
+        ui.horizontal(|ui| {
+            if reader_product_ui::toolbar_button(ui, "□", "Open", false).clicked() {
+                self.open_pub_picker();
+            }
+
+            ui.separator();
+
+            if reader_product_ui::toolbar_button(ui, "−", "Zoom Out", false).clicked() {
+                let base = if self.zoom_mode == CanvasZoomMode::Percent {
+                    self.zoom
+                } else {
+                    1.0
+                };
+                self.zoom = (base - 0.10).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                self.zoom_mode = CanvasZoomMode::Percent;
+            }
+            if reader_product_ui::toolbar_button(ui, "+", "Zoom In", false).clicked() {
+                let base = if self.zoom_mode == CanvasZoomMode::Percent {
+                    self.zoom
+                } else {
+                    1.0
+                };
+                self.zoom = (base + 0.10).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                self.zoom_mode = CanvasZoomMode::Percent;
+            }
+            if reader_product_ui::toolbar_button(
+                ui,
+                "▣",
+                "Fit Page",
+                self.zoom_mode == CanvasZoomMode::FitPage,
+            )
+            .clicked()
+            {
+                self.zoom_mode = CanvasZoomMode::FitPage;
+            }
+            if reader_product_ui::toolbar_button(
+                ui,
+                "↔",
+                "Fit Width",
+                self.zoom_mode == CanvasZoomMode::PageWidth,
+            )
+            .clicked()
+            {
+                self.zoom_mode = CanvasZoomMode::PageWidth;
+            }
+            if reader_product_ui::toolbar_button(
+                ui,
+                "1:1",
+                "Actual Size",
+                self.zoom_mode == CanvasZoomMode::Percent && (self.zoom - 1.0).abs() < 0.001,
+            )
+            .clicked()
+            {
+                self.zoom = 1.0;
+                self.zoom_mode = CanvasZoomMode::Percent;
+            }
+
+            ui.separator();
+
+            if reader_product_ui::toolbar_button(
+                ui,
+                "⌕",
+                "Search",
+                self.reader_inspector_tab == reader_product_ui::InspectorTab::Text,
+            )
+            .clicked()
+            {
+                self.reader_inspector_tab = reader_product_ui::InspectorTab::Text;
+            }
+
+            if reader_product_ui::toolbar_button(
+                ui,
+                "ⓘ",
+                "Details",
+                self.reader_inspector_tab == reader_product_ui::InspectorTab::Diagnostics,
+            )
+            .clicked()
+            {
+                self.reader_inspector_tab = reader_product_ui::InspectorTab::Diagnostics;
+            }
+
+            ui.separator();
+            ui.menu_button("⋯  More", |ui| {
+                if ui.button("Scan PUB folder…").clicked() {
+                    self.open_pub_folder_diagnostics();
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(self.visual.is_some(), egui::Button::new("Fidelity & diagnostics…"))
+                    .clicked()
+                {
+                    self.show_diagnostics = true;
+                    ui.close_menu();
+                }
+            });
+        });
+    }
+
     fn show_command_bar(&mut self, ui: &mut egui::Ui) {
+        if reader_only_mode() {
+            self.show_reader_command_bar(ui);
+            return;
+        }
         let operation_count = self
             .editor
             .as_ref()
@@ -1258,7 +1390,101 @@ impl ViewerApp {
         });
     }
 
-    fn show_workspace_status(&self, ui: &mut egui::Ui) {
+    fn show_workspace_status(&mut self, ui: &mut egui::Ui) {
+        if reader_only_mode() {
+            let page_count = self
+                .visual
+                .as_ref()
+                .map(|visual| visual.document.pages.len())
+                .unwrap_or(0);
+            let current_page = if page_count == 0 {
+                0
+            } else {
+                self.selected_page.min(page_count - 1) + 1
+            };
+
+            ui.columns(3, |columns| {
+                columns[0].vertical_centered(|ui| {
+                    if page_count > 0 {
+                        ui.label(format!("Page {current_page} of {page_count}"));
+                    } else {
+                        reader_product_ui::muted(ui, "No document open");
+                    }
+                });
+
+                columns[1].horizontal_centered(|ui| {
+                    let previous = ui.add_enabled(
+                        self.selected_page > 0,
+                        egui::Button::new("‹").min_size(egui::vec2(34.0, 26.0)),
+                    );
+                    if previous.clicked() {
+                        self.selected_page -= 1;
+                        self.canvas_selection.clear();
+                        self.canvas_drag = None;
+                        self.canvas_resize = None;
+                        self.supporter_value.observe(
+                            supporter::ValueEvent::PageNavigated {
+                                page_index: self.selected_page,
+                            },
+                        );
+                    }
+
+                    if page_count > 0 {
+                        ui.label(
+                            egui::RichText::new(current_page.to_string())
+                                .strong()
+                                .color(reader_product_ui::TEXT),
+                        );
+                    }
+
+                    let next = ui.add_enabled(
+                        page_count > 0 && self.selected_page + 1 < page_count,
+                        egui::Button::new("›").min_size(egui::vec2(34.0, 26.0)),
+                    );
+                    if next.clicked() {
+                        self.selected_page += 1;
+                        self.canvas_selection.clear();
+                        self.canvas_drag = None;
+                        self.canvas_resize = None;
+                        self.supporter_value.observe(
+                            supporter::ValueEvent::PageNavigated {
+                                page_index: self.selected_page,
+                            },
+                        );
+                    }
+                });
+
+                columns[2].with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        if self.zoom_mode == CanvasZoomMode::Percent {
+                            let mut zoom_percent = self.zoom * 100.0;
+                            let slider = ui.add(
+                                egui::Slider::new(&mut zoom_percent, 10.0..=400.0)
+                                    .suffix("%")
+                                    .show_value(true),
+                            );
+                            if slider.changed() {
+                                self.zoom =
+                                    (zoom_percent / 100.0).clamp(MIN_NUMERIC_ZOOM, MAX_NUMERIC_ZOOM);
+                            }
+                        } else {
+                            reader_product_ui::muted(
+                                ui,
+                                match self.zoom_mode {
+                                    CanvasZoomMode::FitPage => "Fit Page",
+                                    CanvasZoomMode::PageWidth => "Fit Width",
+                                    CanvasZoomMode::FitSelection => "Fit Selection",
+                                    CanvasZoomMode::Percent => unreachable!(),
+                                },
+                            );
+                        }
+                    },
+                );
+            });
+            return;
+        }
+
         ui.horizontal_wrapped(|ui| {
             let operation_count = self
                 .editor
@@ -1450,8 +1676,16 @@ impl ViewerApp {
     }
 
     fn show_pages(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Pages");
-        ui.separator();
+        if reader_only_mode() {
+            reader_product_ui::section_label(ui, "Pages");
+            if let Some(visual) = &self.visual {
+                reader_product_ui::muted(ui, format!("{} pages", visual.document.pages.len()));
+            }
+            reader_product_ui::panel_separator(ui);
+        } else {
+            ui.heading("Pages");
+            ui.separator();
+        }
 
         self.ensure_image_textures(ui.ctx());
 
@@ -1518,12 +1752,149 @@ impl ViewerApp {
             self.selected_page = index;
         }
 
-        self.show_search(ui);
+        if !reader_only_mode() {
+            self.show_search(ui);
+        }
+    }
+
+    fn show_reader_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if reader_product_ui::inspector_tab(
+                ui,
+                "Document",
+                self.reader_inspector_tab == reader_product_ui::InspectorTab::Document,
+            )
+            .clicked()
+            {
+                self.reader_inspector_tab = reader_product_ui::InspectorTab::Document;
+            }
+            if reader_product_ui::inspector_tab(
+                ui,
+                "Text",
+                self.reader_inspector_tab == reader_product_ui::InspectorTab::Text,
+            )
+            .clicked()
+            {
+                self.reader_inspector_tab = reader_product_ui::InspectorTab::Text;
+            }
+            if reader_product_ui::inspector_tab(
+                ui,
+                "Diagnostics",
+                self.reader_inspector_tab == reader_product_ui::InspectorTab::Diagnostics,
+            )
+            .clicked()
+            {
+                self.reader_inspector_tab = reader_product_ui::InspectorTab::Diagnostics;
+            }
+        });
+        reader_product_ui::panel_separator(ui);
+
+        match self.reader_inspector_tab {
+            reader_product_ui::InspectorTab::Document => {
+                self.show_inspector(ui);
+                ui.add_space(14.0);
+                reader_product_ui::panel_separator(ui);
+                reader_product_ui::section_label(ui, "Fidelity");
+                match self.fidelity_status() {
+                    Some(status) => {
+                        let label = fidelity_status_label(status);
+                        ui.label(
+                            egui::RichText::new(format!("●  {label}"))
+                                .strong()
+                                .color(reader_product_ui::status_color(label)),
+                        );
+                        reader_product_ui::muted(ui, fidelity_status_summary(status));
+                    }
+                    None => reader_product_ui::muted(ui, "Not evaluated"),
+                }
+                if self.preview_clipped_frames > 0 {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} preview text clipping issue(s)",
+                            self.preview_clipped_frames
+                        ))
+                        .color(reader_product_ui::WARNING),
+                    );
+                }
+                if ui
+                    .add_enabled(
+                        self.visual.is_some(),
+                        egui::Button::new("Open fidelity details…"),
+                    )
+                    .clicked()
+                {
+                    self.show_diagnostics = true;
+                }
+            }
+            reader_product_ui::InspectorTab::Text => {
+                self.show_search(ui);
+                if let Some(index) = self.selected_search_result {
+                    if let Some(result) = self.search_results.get(index) {
+                        ui.add_space(12.0);
+                        reader_product_ui::section_label(ui, "Selected match");
+                        ui.label(&result.text);
+                        if ui.button("Copy match").clicked() {
+                            ui.ctx().copy_text(result.text.clone());
+                            self.supporter_value
+                                .observe(supporter::ValueEvent::SearchMatchCopied);
+                        }
+                    }
+                }
+            }
+            reader_product_ui::InspectorTab::Diagnostics => {
+                reader_product_ui::section_label(ui, "Fidelity & diagnostics");
+                if let Some(status) = self.fidelity_status() {
+                    let label = fidelity_status_label(status);
+                    ui.label(
+                        egui::RichText::new(format!("●  {label}"))
+                            .strong()
+                            .color(reader_product_ui::status_color(label)),
+                    );
+                    reader_product_ui::muted(ui, fidelity_status_summary(status));
+                } else {
+                    reader_product_ui::muted(ui, "No document has been evaluated yet.");
+                }
+
+                if let Some(visual) = &self.visual {
+                    ui.add_space(10.0);
+                    if visual.document.diagnostics.is_empty() {
+                        reader_product_ui::muted(ui, "No Viewer diagnostics.");
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .max_height(360.0)
+                            .show(ui, |ui| {
+                                for diagnostic in &visual.document.diagnostics {
+                                    ui.group(|ui| {
+                                        ui.strong(&diagnostic.code);
+                                        ui.small(diagnostic_severity_label(diagnostic.severity));
+                                        ui.label(&diagnostic.message);
+                                    });
+                                    ui.add_space(4.0);
+                                }
+                            });
+                    }
+                }
+
+                ui.add_space(8.0);
+                if ui
+                    .add_enabled(
+                        self.visual.is_some(),
+                        egui::Button::new("Open detailed diagnostics…"),
+                    )
+                    .clicked()
+                {
+                    self.show_diagnostics = true;
+                }
+            }
+        }
     }
 
     fn show_inspector(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Document");
-        ui.separator();
+        if !reader_only_mode() {
+            ui.heading("Document");
+            ui.separator();
+        }
 
         if let Some(path) = &self.source_path {
             ui.label("Document");
@@ -3014,7 +3385,8 @@ impl ViewerApp {
 
         let ctrl_held = ui.ctx().input(|input| input.modifiers.ctrl);
 
-        ui.horizontal_wrapped(|ui| {
+        if !reader_only_mode() {
+            ui.horizontal_wrapped(|ui| {
             ui.label("Zoom");
 
             if self.zoom_mode == CanvasZoomMode::Percent {
@@ -3063,8 +3435,9 @@ impl ViewerApp {
             if fit_selection.clicked() {
                 self.zoom_mode = CanvasZoomMode::FitSelection;
             }
-        });
-        ui.separator();
+            });
+            ui.separator();
+        }
 
         let Some(visual) = &self.visual else {
             ui.centered_and_justified(|ui| {
@@ -3822,13 +4195,19 @@ impl eframe::App for ViewerApp {
             }
         }
 
+        if reader_only_mode() {
+            reader_product_ui::configure_context(ctx);
+        }
+
         egui::TopBottomPanel::top("workspace-command-bar").show(ctx, |ui| {
             self.show_command_bar(ui);
         });
 
-        egui::TopBottomPanel::top("fidelity-status").show(ctx, |ui| {
-            self.show_fidelity_status(ui);
-        });
+        if !reader_only_mode() {
+            egui::TopBottomPanel::top("fidelity-status").show(ctx, |ui| {
+                self.show_fidelity_status(ui);
+            });
+        }
 
         egui::TopBottomPanel::bottom("workspace-status").show(ctx, |ui| {
             self.show_workspace_status(ui);
@@ -3836,15 +4215,29 @@ impl eframe::App for ViewerApp {
 
         egui::SidePanel::left("pages")
             .resizable(true)
-            .default_width(170.0)
+            .default_width(if reader_only_mode() { 210.0 } else { 170.0 })
+            .min_width(if reader_only_mode() { 160.0 } else { 120.0 })
             .show(ctx, |ui| self.show_pages(ui));
 
         egui::SidePanel::right("inspector")
             .resizable(true)
-            .default_width(320.0)
-            .show(ctx, |ui| self.show_inspector(ui));
+            .default_width(if reader_only_mode() { 360.0 } else { 320.0 })
+            .min_width(if reader_only_mode() { 280.0 } else { 220.0 })
+            .show(ctx, |ui| {
+                if reader_only_mode() {
+                    self.show_reader_inspector(ui);
+                } else {
+                    self.show_inspector(ui);
+                }
+            });
 
-        egui::CentralPanel::default().show(ctx, |ui| self.show_canvas(ui));
+        if reader_only_mode() {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE.fill(reader_product_ui::CANVAS_BG))
+                .show(ctx, |ui| self.show_canvas(ui));
+        } else {
+            egui::CentralPanel::default().show(ctx, |ui| self.show_canvas(ui));
+        }
         self.show_diagnostics_window(ctx);
         self.show_exact_file_consent_dialog(ctx);
         self.show_diagnostic_sweep_window(ctx);
