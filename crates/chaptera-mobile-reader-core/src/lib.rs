@@ -81,6 +81,17 @@ impl MobileReaderDocumentV1 {
             .find(|image| image.resource_id == resource_id)
             .map(|image| image.bytes.as_slice())
     }
+
+    /// Resolves a source-neutral canonical resource key used by render plans.
+    ///
+    /// This keeps platform adapters from importing PUB parser/model internals
+    /// just to turn the serialized render-plan resource ID back into a lookup.
+    pub fn image_resource_bytes_by_key(&self, resource_key: &str) -> Result<Option<&[u8]>> {
+        let canonical = resource_key
+            .parse::<pub_model::CanonicalId>()
+            .map_err(|error| anyhow::anyhow!("invalid render resource id: {error}"))?;
+        Ok(self.image_resource_bytes(ResourceId::from_canonical(canonical)))
+    }
 }
 
 #[cfg(test)]

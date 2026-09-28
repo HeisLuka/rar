@@ -1,25 +1,75 @@
 package com.chaptera.reader;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
+import java.util.HashMap;
+import java.util.Map;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 final class PubCanvasView extends View {
     private JSONObject page;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Map<String, Bitmap> imageBitmaps = new HashMap<>();
+    private final ScaleGestureDetector scaleDetector;
+    private float userScale = 1f;
+    private float panX;
+    private float panY;
+    private float lastTouchX;
+    private float lastTouchY;
 
     PubCanvasView(Context context) {
         super(context);
         paint.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.NORMAL));
+        scaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                userScale = clamp(userScale * detector.getScaleFactor(), 0.5f, 8f);
+                invalidate();
+                return true;
+            }
+        });
     }
 
     void setPage(JSONObject page) {
+        setPage(page, 0L);
+    }
+
+    void setPage(JSONObject page, long sessionId) {
         this.page = page;
+        imageBitmaps.clear();
+        userScale = 1f;
+        panX = 0f;
+        panY = 0f;
+
+        if (page != null && sessionId > 0L) {
+            JSONArray nodes = page.optJSONArray("nodes");
+            if (nodes != null) {
+                for (int i = 0; i < nodes.length(); i++) {
+                    JSONObject node = nodes.optJSONObject(i);
+                    JSONObject image = node == null ? null : node.optJSONObject("image");
+                    if (image == null) continue;
+                    String resourceId = image.optString("resource_id", "");
+                    if (resourceId.isEmpty() || imageBitmaps.containsKey(resourceId)) continue;
+                    try {
+                        byte[] encoded = NativeReader.imageResourceBytes(sessionId, resourceId);
+                        if (encoded == null || encoded.length == 0) continue;
+                        Bitmap bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+                        if (bitmap != null) imageBitmaps.put(resourceId, bitmap);
+                    } catch (RuntimeException ignored) {
+                        // Viewer diagnostics remain the authority for missing/partial image fidelity.
+                    }
+                }
+            }
+        }
         invalidate();
     }
 
@@ -36,14 +86,15 @@ final class PubCanvasView extends View {
         if (pageWidth <= 0 || pageHeight <= 0) return;
 
         float margin = 24f;
-        float scale = Math.min(
+        float fitScale = Math.min(
             Math.max(1f, getWidth() - margin * 2f) / pageWidth,
             Math.max(1f, getHeight() - margin * 2f) / pageHeight
         );
+        float scale = fitScale * userScale;
         float drawWidth = pageWidth * scale;
         float drawHeight = pageHeight * scale;
-        float ox = (getWidth() - drawWidth) / 2f;
-        float oy = margin;
+        float ox = (getWidth() - drawWidth) / 2f + panX;
+        float oy = margin + panY;
 
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.WHITE);
@@ -75,6 +126,15 @@ final class PubCanvasView extends View {
                 canvas.drawRect(rect, paint);
             }
 
+            JSONObject image = node.optJSONObject("image");
+            if (image != null) {
+                Bitmap bitmap = imageBitmaps.get(image.optString("resource_id", ""));
+                if (bitmap != null) {
+                    paint.setStyle(Paint.Style.FILL);
+                    canvas.drawBitmap(bitmap, null, rect, paint);
+                }
+            }
+
             JSONObject line = node.optJSONObject("solid_line");
             if (line != null) {
                 JSONArray rgb = line.optJSONArray("rgb");
@@ -102,4 +162,42 @@ final class PubCanvasView extends View {
             }
         }
     }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        scaleDetector.onTouchEvent(event);
+
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                lastTouchX = event.getX();
+                lastTouchY = event.getY();
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if (!scaleDetector.isInProgress() && event.getPointerCount() == 1) {
+                    float x = event.getX();
+                    float y = event.getY();
+                    panX += x - lastTouchX;
+                    panY += y - lastTouchY;
+                    lastTouchX = x;
+                    lastTouchY = y;
+                    invalidate();
+                }
+                return true;
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (event.getPointerCount() > 0) {
+                    lastTouchX = event.getX(0);
+                    lastTouchY = event.getY(0);
+                }
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
 }
