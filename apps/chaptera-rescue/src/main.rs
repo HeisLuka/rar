@@ -366,12 +366,11 @@ fn self_check() -> SelfCheck {
     }
 }
 
-fn rescue_handoff_admitted(path: &Path) -> Result<bool, String> {
-    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(matches!(
-        classify_failure_candidate(&bytes).class,
+fn rescue_handoff_admitted_bytes(bytes: &[u8]) -> bool {
+    matches!(
+        classify_failure_candidate(bytes).class,
         FailureIntakeClass::PubDamaged
-    ))
+    )
 }
 
 fn run_cli(args: &[String]) -> Result<Option<i32>, String> {
@@ -399,7 +398,7 @@ fn run_cli(args: &[String]) -> Result<Option<i32>, String> {
             &packet_path,
             chaptera_suite_handoff::RESCUE_PRODUCT_ID,
         )?;
-        let receiver_admitted = rescue_handoff_admitted(validated.source_path())?;
+        let receiver_admitted = rescue_handoff_admitted_bytes(validated.source_bytes());
         let receipt = chaptera_suite_handoff::finish_acceptance(validated, receiver_admitted)?;
         chaptera_suite_handoff::write_acceptance(&receipt, &output)?;
         println!(
