@@ -124,6 +124,67 @@ jobs:
                   encoding="utf-8",
               )
 
+          # Pull the directly referenced public Angular chunks and scan them for
+          # API connector/base-url vocabulary. This remains diagnostics-only.
+          js_dir = DISC / "js"
+          js_dir.mkdir(exist_ok=True)
+          asset_refs = set(script_srcs)
+          asset_refs.update(
+              re.findall(
+                  r'<link[^>]+rel="modulepreload"[^>]+href="([^"]+[.]js)"',
+                  raw,
+                  flags=re.I,
+              )
+          )
+          if (DISC / "school-jotter-main.js").exists():
+              main_text = (DISC / "school-jotter-main.js").read_text(encoding="utf-8")
+              asset_refs.update(
+                  re.findall(r'(?:from|import\\()["\'](?:[.]/)?([^"\']+[.]js)', main_text)
+              )
+          chunk_findings = []
+          total_js_bytes = 0
+          for asset_ref in sorted(asset_refs):
+              asset_name = asset_ref.rsplit("/", 1)[-1]
+              if not re.fullmatch(r"[A-Za-z0-9._-]+[.]js", asset_name):
+                  continue
+              asset_url = requests.compat.urljoin(document_base, asset_ref)
+              asset_response = session.get(asset_url, timeout=30)
+              if not asset_response.ok:
+                  chunk_findings.append({
+                      "asset": asset_name,
+                      "url": asset_url,
+                      "status": asset_response.status_code,
+                  })
+                  continue
+              total_js_bytes += len(asset_response.content)
+              if total_js_bytes > 10_000_000:
+                  raise SystemExit("frontend diagnostics exceeded 10 MB JS ceiling")
+              (js_dir / asset_name).write_bytes(asset_response.content)
+              text_body = asset_response.text
+              contexts = []
+              for needle in [
+                  "DB_URL",
+                  "DB_URL_VPC",
+                  "ApiConnectorConfig",
+                  "/api/resources",
+                  "resource_lists",
+                  "full_tenant_domain_entities",
+              ]:
+                  pos = text_body.find(needle)
+                  if pos >= 0:
+                      contexts.append(text_body[max(0, pos - 500): pos + 1200])
+              if contexts:
+                  chunk_findings.append({
+                      "asset": asset_name,
+                      "url": asset_url,
+                      "status": asset_response.status_code,
+                      "contexts": contexts,
+                  })
+          (DISC / "frontend-api-config-candidates.json").write_text(
+              json.dumps(chunk_findings, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
           found = {}
           for public_name, spec in specs.items():
               needle = '"name":"' + public_name + '"'
