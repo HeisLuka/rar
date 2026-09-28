@@ -1929,6 +1929,7 @@ mod tests {
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
             images: Vec::new(),
+        projected_instances: Vec::new(),
         };
 
         let page_id = graph.document.pages[0];
@@ -2077,6 +2078,7 @@ mod tests {
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
             images: Vec::new(),
+        projected_instances: Vec::new(),
         };
         let before = visual.scene.nodes.clone();
 
@@ -2500,6 +2502,7 @@ mod tests {
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
             images: Vec::new(),
+        projected_instances: Vec::new(),
         };
 
         graph
@@ -2603,6 +2606,7 @@ mod tests {
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
             images: Vec::new(),
+        projected_instances: Vec::new(),
         };
 
         graph
@@ -2667,6 +2671,7 @@ mod tests {
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
             images: Vec::new(),
+        projected_instances: Vec::new(),
         };
         let before = visual.clone();
         visual.document.source.source_hash = Sha256Digest::from_bytes([0xCD; 32]);
