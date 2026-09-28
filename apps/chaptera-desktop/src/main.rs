@@ -108,6 +108,27 @@ fn build_desktop_page_render_plan(
     )
 }
 
+fn text_layout_disposition_counts(plan: &PageRenderPlanV1) -> (usize, usize) {
+    let mut shared = 0_usize;
+    let mut fallback = 0_usize;
+    for layout in plan
+        .nodes
+        .iter()
+        .filter_map(|node| node.text.as_ref())
+        .filter_map(|text| text.layout.as_ref())
+    {
+        match layout.disposition {
+            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::SharedResolved { .. } => {
+                shared += 1;
+            }
+            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::BackendFallback { .. } => {
+                fallback += 1;
+            }
+        }
+    }
+    (shared, fallback)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
     Percent,
@@ -7684,6 +7705,8 @@ mod tests {
                 .filter_map(|node| node.text.as_ref())
                 .map(|text| text.typography.len())
                 .sum::<usize>();
+            let (planned_shared_resolved_layout_frames, planned_backend_fallback_frames) =
+                text_layout_disposition_counts(&plan);
             page_receipts.push(serde_json::json!({
                 "page_number": page_index + 1,
                 "page_id": visual.document.pages[page_index].id,
@@ -7697,6 +7720,8 @@ mod tests {
                 "image_node_count": plan.nodes.iter().filter(|node| node.image.is_some()).count(),
                 "text_node_count": plan.nodes.iter().filter(|node| node.text.is_some()).count(),
                 "typography_sections": typography_sections,
+                "planned_shared_resolved_layout_frames": planned_shared_resolved_layout_frames,
+                "planned_backend_fallback_frames": planned_backend_fallback_frames,
                 "executed_text_node_count": executed.painted_text_nodes,
                 "executed_source_typography_sections": executed.source_typography_sections,
                 "executed_fallback_typography_sections": executed.fallback_typography_sections,
@@ -7801,6 +7826,12 @@ mod tests {
             typography_sections > 0,
             "source typography must reach shared Reader render plan"
         );
+        let (shared_resolved_layout_frames, backend_fallback_frames) =
+            text_layout_disposition_counts(&plan);
+        assert!(
+            shared_resolved_layout_frames > 0,
+            "SampleNewsletter must exercise at least one shared resolved text-layout frame"
+        );
 
         let fixture_for_app = fixture.clone();
         let mut harness = Harness::builder()
@@ -7833,6 +7864,8 @@ mod tests {
             "typography_run_count": visual.typography_runs.len(),
             "inherited_typography_run_count": inherited_typography_run_count,
             "render_plan_typography_sections": typography_sections,
+            "shared_resolved_layout_frames": shared_resolved_layout_frames,
+            "backend_fallback_frames": backend_fallback_frames,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
             "text_layout_authority": "shared_resolved_when_admitted_else_backend_fallback",
