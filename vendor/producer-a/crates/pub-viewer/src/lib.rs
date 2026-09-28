@@ -8,6 +8,7 @@
 //! part of the Viewer contract.
 
 use anyhow::{Context, Result, anyhow};
+use chaptera_layout_projection::{CarrierExtentV1, CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1};
 use pub_layout::{
     BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
     BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, ResolvedPhysicalNode,
@@ -15,7 +16,8 @@ use pub_layout::{
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
-    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+    Affine2D, CanonicalId, LengthEmu, NodeId, NodeKind, PageId, RectEmu, ResourceId, Sha256Digest,
+    StoryFrame, StoryId,
 };
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
@@ -31,7 +33,8 @@ use pub_reader::{
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, analyze_mature_0x2c_page_roles,
     build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
-    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
+    build_mature_0x2c_cmo_projection_bridge_v1, build_mature_0x2c_source_graph,
+    derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -161,6 +164,8 @@ pub struct ViewerGeometryDocument {
     pub document: ViewerDocument,
     pub scene: BoundedResolvedScene,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projected_instances: Vec<ViewerProjectedNodeInstance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paints: Vec<ViewerNodePaint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub story_frames: Vec<ViewerStoryFrame>,
@@ -170,6 +175,30 @@ pub struct ViewerGeometryDocument {
     pub typography_runs: Vec<ViewerTypographyRun>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerProjectionKind {
+    CmoStorySlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerProjectedNodeInstance {
+    /// Visual identity is distinct from the source-backed authoring NodeId.
+    pub instance_id: String,
+    pub projection_kind: ViewerProjectionKind,
+    pub origin_node_id: NodeId,
+    pub target_page_id: PageId,
+    pub target_story_id: StoryId,
+    pub target_frame_node_id: NodeId,
+    pub scalar_index: u32,
+    pub source_order: usize,
+    pub cmo_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_story_id: Option<StoryId>,
+    pub bounds: RectEmu,
+    pub transform: Affine2D,
 }
 
 impl ViewerGeometryDocument {
@@ -700,6 +729,32 @@ pub fn open_mature_0x2c_geometry(
             .map(map_scene_diagnostic),
     );
 
+    let projected_instances = match project_carlton_march_cmo_instances(bytes, &pipeline, &scene) {
+        Ok(instances) => {
+            if !instances.is_empty() {
+                document.diagnostics.push(ViewerDiagnostic {
+                    code: "viewer.cmo.slot_projection_applied".to_owned(),
+                    severity: ViewerDiagnosticSeverity::Info,
+                    message: format!(
+                        "{} read-only Cmo Story-slot instance(s) were projected through the admitted Carlton March slot-flow authority.",
+                        instances.len()
+                    ),
+                });
+            }
+            instances
+        }
+        Err(error) => {
+            document.diagnostics.push(ViewerDiagnostic {
+                code: "viewer.cmo.slot_projection_unavailable".to_owned(),
+                severity: ViewerDiagnosticSeverity::FidelityWarning,
+                message: format!(
+                    "Admitted Carlton Cmo Story-slot projection could not be applied safely ({error}); source PAGE/carrier truth remains preserved."
+                ),
+            });
+            Vec::new()
+        }
+    };
+
     if !scene.nodes.is_empty() {
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.visual.geometry_only".to_owned(),
@@ -714,12 +769,310 @@ pub fn open_mature_0x2c_geometry(
         schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
         document,
         scene,
+        projected_instances,
         paints,
         story_frames,
         text_fragments,
         typography_runs,
         images,
     })
+}
+
+const CARLTON_MARCH_PRESENTATION_PROFILE_V1: &str = "carlton-school-jotter/march-2026/v1";
+
+fn parse_projected_node_id(value: &str, label: &str) -> Result<NodeId> {
+    let canonical = value
+        .parse::<CanonicalId>()
+        .with_context(|| format!("{label} is not a canonical UUID: {value}"))?;
+    Ok(NodeId::from_canonical(canonical))
+}
+
+fn parse_projected_story_id(value: &str, label: &str) -> Result<StoryId> {
+    let canonical = value
+        .parse::<CanonicalId>()
+        .with_context(|| format!("{label} is not a canonical UUID: {value}"))?;
+    Ok(StoryId::from_canonical(canonical))
+}
+
+fn page_for_resolved_node(graph: &PubResolvedGraph, node_id: NodeId) -> Result<PageId> {
+    let mut current = graph
+        .nodes
+        .get(&node_id)
+        .with_context(|| format!("projected target frame {} is absent", node_id.as_canonical()))?
+        .header
+        .parent_id;
+    let mut seen = BTreeSet::new();
+
+    loop {
+        if !seen.insert(current) {
+            return Err(anyhow!("projected target ancestry contains a cycle at {current}"));
+        }
+
+        let page_id = PageId::from_canonical(current);
+        if graph.pages.contains_key(&page_id) {
+            return Ok(page_id);
+        }
+
+        let parent_node_id = NodeId::from_canonical(current);
+        let parent = graph.nodes.get(&parent_node_id).with_context(|| {
+            format!(
+                "projected target ancestry {} is neither a page nor a resolved node",
+                current
+            )
+        })?;
+        current = parent.header.parent_id;
+    }
+}
+
+fn project_carlton_march_cmo_instances(
+    bytes: &[u8],
+    pipeline: &Mature0x2cPipeline,
+    scene: &BoundedResolvedScene,
+) -> Result<Vec<ViewerProjectedNodeInstance>> {
+    let ViewerPageSelectionDisposition::FamilyProfileApplied { profile_id, .. } =
+        &pipeline.page_selection.disposition
+    else {
+        return Ok(Vec::new());
+    };
+    if profile_id != CARLTON_MARCH_PRESENTATION_PROFILE_V1 {
+        return Ok(Vec::new());
+    }
+
+    let bridge = build_mature_0x2c_cmo_projection_bridge_v1(
+        bytes,
+        pipeline.source_hash,
+        &pipeline.source.graph,
+        &pipeline.resolved.graph,
+    )
+    .context("build active Reader Cmo authority bridge for Carlton March")?;
+    if !bridge.active_graph_identity_parity {
+        return Err(anyhow!("active Reader Cmo bridge did not prove identity parity"));
+    }
+
+    let graph = &pipeline.resolved.graph;
+    let context = &bridge.output.context;
+    let target_qsids = context
+        .cmo_relations
+        .iter()
+        .map(|relation| relation.target_qsid)
+        .collect::<BTreeSet<_>>();
+    let mut projected = Vec::new();
+
+    for target_qsid in target_qsids {
+        let relations = context
+            .cmo_relations
+            .iter()
+            .filter(|relation| relation.target_qsid == target_qsid)
+            .collect::<Vec<_>>();
+        let first = relations
+            .first()
+            .copied()
+            .with_context(|| format!("Cmo target Qsid {target_qsid} has no relations"))?;
+
+        if relations.iter().any(|relation| {
+            relation.target_story_id != first.target_story_id
+                || relation.target_frame_node_id != first.target_frame_node_id
+        }) {
+            return Err(anyhow!(
+                "Cmo target Qsid {target_qsid} has inconsistent Story/frame authority"
+            ));
+        }
+
+        let target_story_id =
+            parse_projected_story_id(&first.target_story_id, "Cmo target_story_id")?;
+        let target_frame_text = first.target_frame_node_id.as_deref().with_context(|| {
+            format!("Cmo target Qsid {target_qsid} has no unique target frame")
+        })?;
+        let target_frame_node_id =
+            parse_projected_node_id(target_frame_text, "Cmo target_frame_node_id")?;
+        let target_frame = graph.nodes.get(&target_frame_node_id).with_context(|| {
+            format!("Cmo target Qsid {target_qsid} frame is absent from resolved graph")
+        })?;
+        let target_frame_story = target_frame
+            .payload
+            .story_frame
+            .as_ref()
+            .and_then(|frame| frame.story_id)
+            .with_context(|| {
+                format!("Cmo target Qsid {target_qsid} frame has no Story identity")
+            })?;
+        if target_frame_story != target_story_id {
+            return Err(anyhow!(
+                "Cmo target Qsid {target_qsid} frame/Story identity mismatch"
+            ));
+        }
+
+        let target_page_id = page_for_resolved_node(graph, target_frame_node_id)?;
+        if !pipeline.page_selection.page_ids.contains(&target_page_id) {
+            return Err(anyhow!(
+                "Cmo target Qsid {target_qsid} resolves outside the admitted customer-page set"
+            ));
+        }
+
+        let target_scene_node = scene
+            .nodes
+            .iter()
+            .find(|node| node.origin == target_frame_node_id)
+            .with_context(|| {
+                format!("Cmo target Qsid {target_qsid} frame is absent from resolved Viewer scene")
+            })?;
+        let target_story = graph.stories.get(&target_story_id).with_context(|| {
+            format!("Cmo target Qsid {target_qsid} Story is absent from resolved graph")
+        })?;
+        let object_marker_scalars = target_story
+            .text
+            .chars()
+            .enumerate()
+            .filter_map(|(index, ch)| {
+                (ch == '\u{FFFC}')
+                    .then(|| u32::try_from(index).context("Cmo marker scalar exceeds u32"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let frame_count = graph
+            .nodes
+            .values()
+            .filter(|node| {
+                node.payload
+                    .story_frame
+                    .as_ref()
+                    .and_then(|frame| frame.story_id)
+                    == Some(target_story_id)
+            })
+            .count();
+        let frame_count =
+            u32::try_from(frame_count).context("Cmo target frame count exceeds u32")?;
+
+        let carrier_extents = relations
+            .iter()
+            .map(|relation| {
+                let carrier_node_id =
+                    parse_projected_node_id(&relation.carrier_node_id, "Cmo carrier_node_id")?;
+                let carrier = graph.nodes.get(&carrier_node_id).with_context(|| {
+                    format!(
+                        "Cmo carrier Ohpo {} is absent from resolved graph",
+                        relation.carrier_ohpo
+                    )
+                })?;
+                let nested_cmo = relation.carrier_story_id.as_ref().is_some_and(|story_id| {
+                    context
+                        .cmo_relations
+                        .iter()
+                        .any(|candidate| candidate.target_story_id == *story_id)
+                });
+                Ok(CarrierExtentV1 {
+                    carrier_node_id: relation.carrier_node_id.clone(),
+                    width_emu: carrier.header.bounds.width.get(),
+                    height_emu: carrier.header.bounds.height.get(),
+                    nested_cmo,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Exact March target Stories start with the semantic object marker. For
+        // the three one-slot targets there is no preceding visible text. For
+        // Qsid49 the already-proven second carrier fails both width and height
+        // even under the zero-inter-slot-text lower bound, so an empty line set
+        // cannot expose a later slot incorrectly. This is deliberately scoped
+        // to the exact admitted March profile, not a generic Cmo text-flow law.
+        let output = resolve_cmo_slot_flow_v1(
+            context,
+            &CmoStorySlotFlowInputV1 {
+                target_qsid,
+                target_page_id: target_page_id.as_canonical().to_string(),
+                target_story_id: target_story_id.as_canonical().to_string(),
+                target_frame_node_id: target_frame_node_id.as_canonical().to_string(),
+                frame_count,
+                host_width_emu: target_scene_node.bounds.width.get(),
+                host_height_emu: target_scene_node.bounds.height.get(),
+                object_marker_scalars,
+                text_lines: Vec::new(),
+                carrier_extents,
+            },
+        )
+        .with_context(|| format!("resolve Carlton March Cmo target Qsid {target_qsid}"))?;
+
+        for slot in output.visible_slots {
+            let origin_node_id =
+                parse_projected_node_id(&slot.carrier_node_id, "visible Cmo carrier_node_id")?;
+            let carrier = graph.nodes.get(&origin_node_id).with_context(|| {
+                format!("visible Cmo carrier {} is absent", slot.carrier_node_id)
+            })?;
+            let carrier_story_id = slot
+                .carrier_story_id
+                .as_deref()
+                .map(|value| parse_projected_story_id(value, "visible Cmo carrier_story_id"))
+                .transpose()?;
+            if let Some(story_id) = carrier_story_id
+                && !graph.stories.contains_key(&story_id)
+            {
+                return Err(anyhow!(
+                    "visible Cmo carrier Story {} is absent",
+                    story_id.as_canonical()
+                ));
+            }
+
+            let x = target_scene_node
+                .bounds
+                .x
+                .get()
+                .checked_add(slot.resolved_x_emu)
+                .context("Cmo projected x overflow")?;
+            let y = target_scene_node
+                .bounds
+                .y
+                .get()
+                .checked_add(slot.resolved_y_emu)
+                .context("Cmo projected y overflow")?;
+            let bounds = RectEmu::new(
+                LengthEmu::new(x),
+                LengthEmu::new(y),
+                LengthEmu::new(slot.resolved_width_emu),
+                LengthEmu::new(slot.resolved_height_emu),
+            );
+
+            projected.push(ViewerProjectedNodeInstance {
+                instance_id: slot.instance_id,
+                projection_kind: ViewerProjectionKind::CmoStorySlot,
+                origin_node_id,
+                target_page_id,
+                target_story_id,
+                target_frame_node_id,
+                scalar_index: slot.scalar_index,
+                source_order: slot.source_order,
+                cmo_id: slot.cmo_id,
+                carrier_story_id,
+                bounds,
+                transform: carrier.header.transform.clone(),
+            });
+        }
+    }
+
+    projected.sort_by(|left, right| {
+        (
+            left.target_page_id,
+            left.target_story_id,
+            left.scalar_index,
+            left.source_order,
+            left.instance_id.as_str(),
+        )
+            .cmp(&(
+                right.target_page_id,
+                right.target_story_id,
+                right.scalar_index,
+                right.source_order,
+                right.instance_id.as_str(),
+            ))
+    });
+
+    if projected.len() != 4 {
+        return Err(anyhow!(
+            "exact Carlton March Cmo projection expected 4 visible slot instances, got {}",
+            projected.len()
+        ));
+    }
+
+    Ok(projected)
 }
 
 fn viewer_fallback_text_flow_environment_v0_1() -> BoundedTextFlowEnvironment {
