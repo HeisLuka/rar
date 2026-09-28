@@ -6,6 +6,19 @@ use std::fmt;
 
 pub const MOBILE_ANDROID_COLOR_DISPOSITION_REF_V1: &str =
     "chaptera.mobile.android.argb8888.v1";
+pub const MOBILE_IMAGE_MAX_ENCODED_BYTES_V1: usize = 32 * 1024 * 1024;
+pub const MOBILE_IMAGE_MAX_DIMENSION_PX_V1: u32 = 8_192;
+pub const MOBILE_IMAGE_MAX_TOTAL_PIXELS_V1: u64 = 8 * 1024 * 1024;
+pub const MOBILE_IMAGE_MAX_DECODED_BYTES_V1: usize = 32 * 1024 * 1024;
+
+pub fn mobile_image_decode_limits_v1() -> DecodeLimitsV1 {
+    DecodeLimitsV1 {
+        max_encoded_bytes: MOBILE_IMAGE_MAX_ENCODED_BYTES_V1,
+        max_dimension_px: MOBILE_IMAGE_MAX_DIMENSION_PX_V1,
+        max_total_pixels: MOBILE_IMAGE_MAX_TOTAL_PIXELS_V1,
+        max_decoded_bytes: MOBILE_IMAGE_MAX_DECODED_BYTES_V1,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MobileAdmittedImageV1 {
@@ -37,7 +50,7 @@ pub fn decode_mobile_image_v1(
     bytes: &[u8],
     mime: &str,
 ) -> Result<MobileAdmittedImageV1, MobileImageDecodeError> {
-    decode_mobile_image_with_limits(bytes, mime, &DecodeLimitsV1::default())
+    decode_mobile_image_with_limits(bytes, mime, &mobile_image_decode_limits_v1())
 }
 
 fn decode_mobile_image_with_limits(
@@ -268,6 +281,21 @@ mod tests {
         let unsupported = decode_mobile_image_v1(b"bytes", "image/gif")
             .expect_err("unsupported codec must fail");
         assert_eq!(unsupported.code, "unsupported_codec");
+    }
+
+    #[test]
+    fn mobile_limits_are_tighter_than_reference_limits() {
+        let mobile = mobile_image_decode_limits_v1();
+        let reference = DecodeLimitsV1::default();
+
+        assert_eq!(mobile.max_encoded_bytes, 32 * 1024 * 1024);
+        assert_eq!(mobile.max_dimension_px, 8_192);
+        assert_eq!(mobile.max_total_pixels, 8 * 1024 * 1024);
+        assert_eq!(mobile.max_decoded_bytes, 32 * 1024 * 1024);
+        assert!(mobile.max_encoded_bytes < reference.max_encoded_bytes);
+        assert!(mobile.max_dimension_px < reference.max_dimension_px);
+        assert!(mobile.max_total_pixels < reference.max_total_pixels);
+        assert!(mobile.max_decoded_bytes < reference.max_decoded_bytes);
     }
 
     #[test]
