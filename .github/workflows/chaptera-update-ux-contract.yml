@@ -1,0 +1,21 @@
+name: Chaptera update UX contract
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-update-ui-state/**"
+      - ".github/workflows/chaptera-update-ux-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - run: cargo test --manifest-path crates/chaptera-update-ui-state/Cargo.toml
