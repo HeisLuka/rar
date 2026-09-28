@@ -523,8 +523,9 @@ mod tests {
         ));
         let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         bytes.extend_from_slice(b"Microsoft Publisher");
-        fs::write(&path, bytes).expect("write damaged classifier witness");
-        assert!(rescue_handoff_admitted(&path).expect("classify damaged witness"));
+        fs::write(&path, &bytes).expect("write damaged classifier witness");
+        let admitted = fs::read(&path).expect("read damaged classifier witness");
+        assert!(rescue_handoff_admitted_bytes(&admitted));
         fs::remove_file(path).ok();
     }
 
@@ -539,7 +540,8 @@ mod tests {
             [0x00, 0xFF, 0x10, 0x80, 0x00, 0x7F, 0xAA, 0x55, 0x13, 0x37],
         )
         .expect("write unknown witness");
-        assert!(!rescue_handoff_admitted(&path).expect("classify unknown witness"));
+        let admitted = fs::read(&path).expect("read unknown classifier witness");
+        assert!(!rescue_handoff_admitted_bytes(&admitted));
         fs::remove_file(path).ok();
     }
 
