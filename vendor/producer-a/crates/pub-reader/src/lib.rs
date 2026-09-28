@@ -9,6 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 mod asset_export;
 mod assets;
+#[cfg(feature = "cmo-projection-bridge")]
 mod cmo_bridge;
 mod failure_envelope;
 mod failure_intake;
@@ -29,6 +30,7 @@ pub use assets::{
     PubImageAlpha, PubImageBlobRef, PubImageResource, PubImageResourceCatalog,
     PubImageResourceDiagnostic, build_pub_asset_manifest, build_pub_image_resource_catalog,
 };
+#[cfg(feature = "cmo-projection-bridge")]
 pub use cmo_bridge::{
     PubCmoProjectionBridgeV1, build_mature_0x2c_cmo_projection_bridge_v1,
 };
