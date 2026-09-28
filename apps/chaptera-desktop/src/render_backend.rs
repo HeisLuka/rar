@@ -7,9 +7,25 @@
 use chaptera_viewer_render_plan::{NodeRenderPlanV1, RenderTextFragmentV1};
 use eframe::egui;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextPaintMetrics {
+    pub layout_section_count: usize,
+    pub source_typography_sections: usize,
+    pub fallback_sections: usize,
+    pub executed_font_sizes_px: Vec<f32>,
+    pub wrap_width_px: f32,
+    pub galley_width_px: f32,
+    pub galley_height_px: f32,
+    pub clip_width_px: f32,
+    pub clip_height_px: f32,
+    pub overflow_delta_px: f32,
+    pub line_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct NodePaintOutcome {
     pub text_clipped: bool,
+    pub text_metrics: Option<TextPaintMetrics>,
 }
 
 pub fn paint_page_surface(painter: &egui::Painter, page_rect: egui::Rect) {
@@ -110,27 +126,61 @@ pub fn paint_document_node_foreground(
 
     let text_clip_rect = node_rect.shrink(2.0);
     let text_painter = painter.with_clip_rect(text_clip_rect);
-    let layout_job =
+    let (layout_job, usage) =
         layout_document_text(fragment, scene_scale, text_clip_rect.width().max(1.0_f32));
+    let executed_font_sizes_px = layout_job
+        .sections
+        .iter()
+        .map(|section| section.format.font_id.size)
+        .collect::<Vec<_>>();
+    let layout_section_count = layout_job.sections.len();
     let galley = text_painter.layout_job(layout_job);
     let text_clipped = preview_text_height_is_clipped(galley.size().y, text_clip_rect.height());
+    let text_metrics = TextPaintMetrics {
+        layout_section_count,
+        source_typography_sections: usage.source_typography_sections,
+        fallback_sections: usage.fallback_sections,
+        executed_font_sizes_px,
+        wrap_width_px: text_clip_rect.width().max(1.0),
+        galley_width_px: galley.size().x,
+        galley_height_px: galley.size().y,
+        clip_width_px: text_clip_rect.width(),
+        clip_height_px: text_clip_rect.height(),
+        overflow_delta_px: (galley.size().y - text_clip_rect.height()).max(0.0),
+        line_count: galley.rows.len(),
+    };
     text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
 
-    NodePaintOutcome { text_clipped }
+    NodePaintOutcome {
+        text_clipped,
+        text_metrics: Some(text_metrics),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TextLayoutUsage {
+    source_typography_sections: usize,
+    fallback_sections: usize,
 }
 
 fn layout_document_text(
     fragment: &RenderTextFragmentV1,
     scene_scale: f32,
     wrap_width_px: f32,
-) -> egui::text::LayoutJob {
+) -> (egui::text::LayoutJob, TextLayoutUsage) {
     let fallback = crate::fallback_font::font_id_for_scene_scale(scene_scale);
     let fallback_job = || {
-        egui::text::LayoutJob::simple(
-            fragment.text.clone(),
-            fallback.clone(),
-            egui::Color32::BLACK,
-            wrap_width_px.max(1.0),
+        (
+            egui::text::LayoutJob::simple(
+                fragment.text.clone(),
+                fallback.clone(),
+                egui::Color32::BLACK,
+                wrap_width_px.max(1.0),
+            ),
+            TextLayoutUsage {
+                source_typography_sections: 0,
+                fallback_sections: usize::from(!fragment.text.is_empty()),
+            },
         )
     };
 
@@ -167,6 +217,7 @@ fn layout_document_text(
         return fallback_job();
     }
 
+    let source_section_count = source_sections.len();
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = wrap_width_px.max(1.0);
     let mut cursor = 0_u32;
@@ -199,7 +250,18 @@ fn layout_document_text(
     if job.text != fragment.text {
         return fallback_job();
     }
-    job
+    let source_typography_sections = source_section_count;
+    let fallback_sections = job
+        .sections
+        .len()
+        .saturating_sub(source_typography_sections);
+    (
+        job,
+        TextLayoutUsage {
+            source_typography_sections,
+            fallback_sections,
+        },
+    )
 }
 
 fn append_text_section(job: &mut egui::text::LayoutJob, text: &str, font_id: egui::FontId) {
@@ -307,7 +369,7 @@ mod tests {
         .expect("render text fragment");
 
         let scene_scale = 1.0 / 12_700.0;
-        let job = layout_document_text(&fragment, scene_scale, 400.0);
+        let (job, usage) = layout_document_text(&fragment, scene_scale, 400.0);
         assert_eq!(job.text, "ABCDEF");
         assert_eq!(job.sections.len(), 3);
         let sizes = job
@@ -323,6 +385,8 @@ mod tests {
                 14.0
             ]
         );
+        assert_eq!(usage.source_typography_sections, 2);
+        assert_eq!(usage.fallback_sections, 1);
         assert!(
             job.sections
                 .iter()
@@ -344,8 +408,10 @@ mod tests {
             ]
         }))
         .expect("render text fragment");
-        let job = layout_document_text(&fragment, 1.0 / 12_700.0, 400.0);
+        let (job, usage) = layout_document_text(&fragment, 1.0 / 12_700.0, 400.0);
         assert_eq!(job.sections.len(), 1);
+        assert_eq!(usage.source_typography_sections, 0);
+        assert_eq!(usage.fallback_sections, 1);
         assert_eq!(
             job.sections[0].format.font_id,
             crate::fallback_font::font_id_for_scene_scale(1.0 / 12_700.0)
