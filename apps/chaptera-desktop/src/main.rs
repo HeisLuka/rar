@@ -41,6 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(feature = "reader-only")]
 const APP_TITLE: &str = "Chaptera PUB Reader — Technical Preview";
@@ -83,6 +84,7 @@ const MIN_NUMERIC_ZOOM: f32 = 0.10;
 const MAX_NUMERIC_ZOOM: f32 = 4.00;
 const PAGE_THUMBNAIL_MAX_WIDTH: f32 = 116.0;
 const PAGE_THUMBNAIL_MAX_HEIGHT: f32 = 148.0;
+const SOURCE_REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
@@ -112,6 +114,51 @@ struct ViewerLoadFailure {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OpenGeneration(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceFileStamp {
+    byte_len: u64,
+    modified: Option<SystemTime>,
+}
+
+fn source_file_stamp(path: &Path) -> std::io::Result<SourceFileStamp> {
+    let metadata = fs::metadata(path)?;
+    Ok(SourceFileStamp {
+        byte_len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn source_sha256(bytes: &[u8]) -> pub_editor::Sha256Digest {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(bytes);
+    let mut sha256 = [0_u8; 32];
+    sha256.copy_from_slice(&digest);
+    pub_editor::Sha256Digest::from_bytes(sha256)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceFreshness {
+    Current,
+    ReloadRequiredChanged,
+    ReloadRequiredUnavailable,
+}
+
+impl SourceFreshness {
+    fn requires_reload(self) -> bool {
+        !matches!(self, Self::Current)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommittedSourceState {
+    generation: OpenGeneration,
+    source_hash: pub_editor::Sha256Digest,
+    byte_len: u64,
+    file_stamp: Option<SourceFileStamp>,
+    freshness: SourceFreshness,
+}
 
 #[derive(Debug, Default)]
 struct OpenStateAuthority {
@@ -149,6 +196,7 @@ impl OpenStateAuthority {
 
 struct PreparedDocumentOpen {
     source_path: PathBuf,
+    source_file_stamp: Option<SourceFileStamp>,
     visual: ViewerGeometryDocument,
     editor: Option<pub_editor::EditorSession>,
     editor_load_error: Option<String>,
@@ -734,6 +782,8 @@ struct CachedPageFrameWork {
 struct ViewerApp {
     source_path: Option<PathBuf>,
     open_state: OpenStateAuthority,
+    committed_source: Option<CommittedSourceState>,
+    source_revalidate_after: Option<Instant>,
     visual: Option<ViewerGeometryDocument>,
     selected_page: usize,
     page_frame_cache: BTreeMap<usize, Rc<CachedPageFrameWork>>,
@@ -790,6 +840,8 @@ impl ViewerApp {
         let mut app = Self {
             source_path: None,
             open_state: OpenStateAuthority::default(),
+            committed_source: None,
+            source_revalidate_after: None,
             visual: None,
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
@@ -1091,6 +1143,7 @@ impl ViewerApp {
     }
 
     fn prepare_document_open(path: PathBuf) -> Result<PreparedDocumentOpen, ViewerLoadFailure> {
+        let stamp_before = source_file_stamp(&path).ok();
         let bytes = fs::read(&path).map_err(|error| ViewerLoadFailure {
             kind: ViewerLoadFailureKind::FileAccess,
             attempted_path: Some(path.clone()),
@@ -1098,6 +1151,10 @@ impl ViewerApp {
             classification: None,
             diagnostic_json: None,
         })?;
+        let stamp_after = source_file_stamp(&path).ok();
+        let source_file_stamp = (stamp_before.is_some() && stamp_before == stamp_after)
+            .then_some(stamp_after)
+            .flatten();
 
         let visual =
             diagnostic_sweep::open_for_product(&bytes).map_err(|error| ViewerLoadFailure {
@@ -1130,6 +1187,7 @@ impl ViewerApp {
 
         Ok(PreparedDocumentOpen {
             source_path: path,
+            source_file_stamp,
             visual,
             editor,
             editor_load_error,
@@ -1137,15 +1195,22 @@ impl ViewerApp {
         })
     }
 
-    fn commit_prepared_document_open(&mut self, prepared: PreparedDocumentOpen) {
+    fn commit_prepared_document_open(
+        &mut self,
+        generation: OpenGeneration,
+        prepared: PreparedDocumentOpen,
+    ) {
         let PreparedDocumentOpen {
             source_path,
+            source_file_stamp,
             visual,
             editor,
             editor_load_error,
             project_status,
         } = prepared;
 
+        let source_hash = visual.document.source.source_hash;
+        let source_byte_len = visual.document.source.byte_len;
         let supporter_status = match visual.document.fidelity_status() {
             ViewerFidelityStatus::Supported => supporter::OpenStatus::Supported,
             ViewerFidelityStatus::Partial => supporter::OpenStatus::Partial,
@@ -1159,6 +1224,14 @@ impl ViewerApp {
             .any(|story| !story.text.is_empty());
 
         self.source_path = Some(source_path);
+        self.committed_source = Some(CommittedSourceState {
+            generation,
+            source_hash,
+            byte_len: source_byte_len,
+            file_stamp: source_file_stamp,
+            freshness: SourceFreshness::Current,
+        });
+        self.source_revalidate_after = Some(Instant::now() + SOURCE_REVALIDATE_INTERVAL);
         self.visual = Some(visual);
         self.selected_page = 0;
         self.page_frame_cache.clear();
@@ -1222,7 +1295,7 @@ impl ViewerApp {
         match Self::prepare_document_open(path) {
             Ok(prepared) => {
                 if self.open_state.commit_if_current(generation) {
-                    self.commit_prepared_document_open(prepared);
+                    self.commit_prepared_document_open(generation, prepared);
                 }
             }
             Err(error) => {
@@ -1233,6 +1306,117 @@ impl ViewerApp {
                 }
             }
         }
+    }
+
+    fn revalidate_committed_source_now(&mut self) {
+        let Some(path) = self.source_path.clone() else {
+            return;
+        };
+        let Some((generation, expected_hash, expected_len, previous_stamp, previous_freshness)) =
+            self.committed_source.as_ref().map(|source| {
+                (
+                    source.generation,
+                    source.source_hash,
+                    source.byte_len,
+                    source.file_stamp,
+                    source.freshness,
+                )
+            })
+        else {
+            return;
+        };
+        debug_assert!(generation.0 > 0);
+        if previous_freshness.requires_reload() {
+            return;
+        }
+
+        let observed_stamp = match source_file_stamp(&path) {
+            Ok(stamp) => stamp,
+            Err(_) => {
+                if let Some(source) = self.committed_source.as_mut() {
+                    source.freshness = SourceFreshness::ReloadRequiredUnavailable;
+                }
+                return;
+            }
+        };
+
+        // Metadata is only the cheap change signal. Exact SHA-256 remains the
+        // committed source identity whenever the signal moves. Adversarial
+        // Windows path/file-identity races remain owned by CHAPTERA-WIN-PATH-IDENTITY-01.
+        let metadata_is_strongly_unchanged = previous_stamp.is_some_and(|stamp| {
+            stamp.modified.is_some()
+                && stamp.byte_len == observed_stamp.byte_len
+                && stamp.modified == observed_stamp.modified
+        });
+        if metadata_is_strongly_unchanged {
+            return;
+        }
+
+        let freshness = match fs::read(&path) {
+            Ok(bytes) => {
+                let observed_len = u64::try_from(bytes.len())
+                    .expect("desktop source length must fit into u64");
+                if observed_len == expected_len && source_sha256(&bytes) == expected_hash {
+                    SourceFreshness::Current
+                } else {
+                    SourceFreshness::ReloadRequiredChanged
+                }
+            }
+            Err(_) => SourceFreshness::ReloadRequiredUnavailable,
+        };
+
+        if let Some(source) = self.committed_source.as_mut() {
+            source.freshness = freshness;
+            if freshness == SourceFreshness::Current {
+                source.file_stamp = Some(observed_stamp);
+            }
+        }
+    }
+
+    fn poll_committed_source_freshness(&mut self) {
+        if !reader_only_mode() || self.committed_source.is_none() {
+            return;
+        }
+
+        let now = Instant::now();
+        if self
+            .source_revalidate_after
+            .is_some_and(|deadline| now < deadline)
+        {
+            return;
+        }
+        self.source_revalidate_after = Some(now + SOURCE_REVALIDATE_INTERVAL);
+        self.revalidate_committed_source_now();
+    }
+
+    fn show_source_freshness_banner(&mut self, ui: &mut egui::Ui) {
+        let Some(freshness) = self
+            .committed_source
+            .as_ref()
+            .map(|source| source.freshness)
+        else {
+            return;
+        };
+        if !freshness.requires_reload() {
+            return;
+        }
+
+        let reload_path = self.source_path.clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(match freshness {
+                SourceFreshness::ReloadRequiredChanged => "Source changed on disk.",
+                SourceFreshness::ReloadRequiredUnavailable => "Source is no longer readable.",
+                SourceFreshness::Current => unreachable!(),
+            });
+            ui.label(
+                "Chaptera is showing the previously opened coherent snapshot. Reload is required before this view is treated as current.",
+            );
+            if let Some(path) = reload_path.as_ref()
+                && ui.button("Reload").clicked()
+            {
+                self.load_path(path.clone());
+            }
+        });
     }
 
     fn show_reader_command_bar(&mut self, ui: &mut egui::Ui) {
@@ -4346,6 +4530,7 @@ impl eframe::App for ViewerApp {
             self.open_pub_picker();
         }
         self.accept_dropped_file(ctx);
+        self.poll_committed_source_freshness();
         self.poll_diagnostic_sweep();
         self.process_canvas_text_input(ctx);
 
@@ -4367,6 +4552,17 @@ impl eframe::App for ViewerApp {
         egui::TopBottomPanel::top("workspace-command-bar").show(ctx, |ui| {
             self.show_command_bar(ui);
         });
+
+        if reader_only_mode()
+            && self
+                .committed_source
+                .as_ref()
+                .is_some_and(|source| source.freshness.requires_reload())
+        {
+            egui::TopBottomPanel::top("source-freshness").show(ctx, |ui| {
+                self.show_source_freshness_banner(ui);
+            });
+        }
 
         if !reader_only_mode() {
             egui::TopBottomPanel::top("fidelity-status").show(ctx, |ui| {
@@ -5213,6 +5409,83 @@ mod tests {
     }
 
     #[test]
+    fn committed_source_exact_hash_detects_same_length_replacement() {
+        let before = b"same-length-source-a";
+        let after = b"same-length-source-b";
+        assert_eq!(before.len(), after.len());
+        assert_ne!(source_sha256(before), source_sha256(after));
+    }
+
+    #[test]
+    fn changed_committed_source_becomes_reload_required_without_evicting_snapshot() {
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-open-state-source-change-{}.pub",
+            std::process::id()
+        ));
+        let before = b"committed-source-a";
+        let after = b"committed-source-b";
+        assert_eq!(before.len(), after.len());
+        fs::write(&path, before).expect("write committed source fixture");
+
+        let mut app = ViewerApp::new(None);
+        app.source_path = Some(path.clone());
+        app.selected_page = 4;
+        app.search_query = "snapshot search".to_owned();
+        app.committed_source = Some(CommittedSourceState {
+            generation: OpenGeneration(7),
+            source_hash: source_sha256(before),
+            byte_len: u64::try_from(before.len()).expect("fixture length"),
+            file_stamp: None,
+            freshness: SourceFreshness::Current,
+        });
+
+        fs::write(&path, after).expect("replace committed source fixture");
+        app.revalidate_committed_source_now();
+
+        let committed = app.committed_source.as_ref().expect("committed source state");
+        assert_eq!(committed.generation, OpenGeneration(7));
+        assert_eq!(committed.freshness, SourceFreshness::ReloadRequiredChanged);
+        assert_eq!(app.source_path.as_ref(), Some(&path));
+        assert_eq!(app.selected_page, 4);
+        assert_eq!(app.search_query, "snapshot search");
+        assert_eq!(fs::read(&path).expect("re-read changed source"), after);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_committed_source_becomes_reload_required_not_unsupported() {
+        let path = std::env::temp_dir().join(format!(
+            "chaptera-open-state-source-missing-{}.pub",
+            std::process::id()
+        ));
+        let before = b"committed-source";
+        fs::write(&path, before).expect("write committed source fixture");
+
+        let mut app = ViewerApp::new(None);
+        app.source_path = Some(path.clone());
+        app.committed_source = Some(CommittedSourceState {
+            generation: OpenGeneration(9),
+            source_hash: source_sha256(before),
+            byte_len: u64::try_from(before.len()).expect("fixture length"),
+            file_stamp: None,
+            freshness: SourceFreshness::Current,
+        });
+        fs::remove_file(&path).expect("remove committed source fixture");
+
+        app.revalidate_committed_source_now();
+
+        assert_eq!(
+            app.committed_source
+                .as_ref()
+                .expect("committed source state")
+                .freshness,
+            SourceFreshness::ReloadRequiredUnavailable
+        );
+        assert!(app.load_error.is_none());
+    }
+
+    #[test]
     fn multi_file_drop_is_explicitly_ambiguous() {
         let a = Some(PathBuf::from("a.pub"));
         let b = Some(PathBuf::from("b.pub"));
@@ -5239,6 +5512,13 @@ mod tests {
         let committed_path = PathBuf::from("already-open.pub");
         let mut app = ViewerApp::new(None);
         app.source_path = Some(committed_path.clone());
+        app.committed_source = Some(CommittedSourceState {
+            generation: OpenGeneration(11),
+            source_hash: source_sha256(b"committed A"),
+            byte_len: u64::try_from(b"committed A".len()).expect("fixture length"),
+            file_stamp: None,
+            freshness: SourceFreshness::Current,
+        });
         app.selected_page = 3;
         app.search_query = "existing search state".to_owned();
         app.zoom = 1.75;
@@ -5253,6 +5533,9 @@ mod tests {
         assert_eq!(app.selected_page, 3);
         assert_eq!(app.search_query, "existing search state");
         assert_eq!(app.zoom, 1.75);
+        let committed = app.committed_source.as_ref().expect("committed A authority");
+        assert_eq!(committed.generation, OpenGeneration(11));
+        assert_eq!(committed.freshness, SourceFreshness::Current);
         let failure = app.load_error.as_ref().expect("replacement failure");
         assert_eq!(failure.kind, ViewerLoadFailureKind::Unsupported);
         assert_eq!(failure.attempted_path.as_ref(), Some(&replacement));
@@ -5277,6 +5560,8 @@ mod tests {
         let app = ViewerApp {
             source_path: None,
             open_state: OpenStateAuthority::default(),
+            committed_source: None,
+            source_revalidate_after: None,
             visual: None,
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
@@ -5337,6 +5622,8 @@ mod tests {
         let app = ViewerApp {
             source_path: None,
             open_state: OpenStateAuthority::default(),
+            committed_source: None,
+            source_revalidate_after: None,
             visual: None,
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
@@ -5612,6 +5899,8 @@ mod tests {
         let mut app = ViewerApp {
             source_path: Some(PathBuf::from("SampleNewsletter.pub")),
             open_state: OpenStateAuthority::default(),
+            committed_source: None,
+            source_revalidate_after: None,
             visual: Some(visual),
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
