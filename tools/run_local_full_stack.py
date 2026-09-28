@@ -214,8 +214,11 @@ def main() -> int:
                 if PACKAGED
                 else ROOT / "tools/run_local_real_editor.py"
             )
+            editor_command = [sys.executable, str(editor_launcher)]
+            if args.smoke:
+                editor_command.append("--smoke")
             editor = subprocess.Popen(
-                [sys.executable, str(editor_launcher)],
+                editor_command,
                 cwd=ROOT,
                 env=env,
                 stdout=editor_handle,
@@ -238,26 +241,18 @@ def main() -> int:
                 if dashboard.status != 200:
                     raise RuntimeError(f"local dashboard returned {dashboard.status}")
 
-                editor_deadline = time.monotonic() + 240
-                editor_ready = None
-                while time.monotonic() < editor_deadline:
-                    if editor.poll() is not None:
-                        raise RuntimeError(
-                            f"local editor exited during startup with code {editor.returncode}; "
-                            f"see {EDITOR_LOG}"
-                        )
-                    editor_ready = http_code("http://127.0.0.1:18765/health")
-                    editor_page = http_code(
-                        "http://127.0.0.1:18083/apps/web/local-editor.html"
-                    )
-                    if editor_ready == 200 and editor_page == 200:
-                        break
-                    time.sleep(0.5)
-                if editor_ready != 200 or editor_page != 200:
+                try:
+                    editor_returncode = editor.wait(timeout=240)
+                except subprocess.TimeoutExpired as error:
                     raise RuntimeError(
-                        "local editor did not become browser-ready "
-                        f"(api={editor_ready}, page={editor_page}); see {EDITOR_LOG}"
+                        f"local editor smoke did not finish; see {EDITOR_LOG}"
+                    ) from error
+                if editor_returncode != 0:
+                    raise RuntimeError(
+                        f"local editor smoke failed with code {editor_returncode}\n"
+                        f"--- editor-service.log ---\n{tail(EDITOR_LOG)}"
                     )
+                editor = None
                 return 0
 
             while True:
