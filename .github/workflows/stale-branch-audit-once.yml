@@ -1,0 +1,89 @@
+name: One-shot stale branch inventory
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/stale-branch-audit-once.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Inventory non-open remote branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CURRENT_HEAD: ${{ github.head_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+
+          gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == "'"$GH_REPO"'") | .head.ref' \
+            | sort -u > open-heads.txt
+
+          python - <<'PY'
+          import os, subprocess, datetime, collections
+          default=os.environ["DEFAULT_BRANCH"]
+          current=os.environ["CURRENT_HEAD"]
+          open_heads=set(open("open-heads.txt", encoding="utf-8").read().splitlines())
+          now=datetime.datetime.now(datetime.timezone.utc)
+
+          refs=subprocess.check_output([
+              "git","for-each-ref",
+              "--format=%(refname)\t%(objectname)\t%(committerdate:iso-strict)",
+              "refs/remotes/origin"
+          ], text=True).splitlines()
+
+          rows=[]
+          sha_counts=collections.Counter()
+          parsed=[]
+          for line in refs:
+              ref,sha,date=line.split("\t",2)
+              prefix="refs/remotes/origin/"
+              if not ref.startswith(prefix):
+                  continue
+              branch=ref[len(prefix):]
+              if branch in {"HEAD",default,current} or branch in open_heads:
+                  continue
+              try:
+                  dt=datetime.datetime.fromisoformat(date)
+              except Exception:
+                  continue
+              age_h=(now-dt.astimezone(datetime.timezone.utc)).total_seconds()/3600.0
+              merged=subprocess.run(
+                  ["git","merge-base","--is-ancestor",ref,f"refs/remotes/origin/{default}"],
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+              ).returncode==0
+              parsed.append((branch,sha,dt,age_h,merged))
+              sha_counts[sha]+=1
+
+          for branch,sha,dt,age_h,merged in parsed:
+              rows.append((age_h,branch,sha,dt.isoformat(),merged,sha_counts[sha]))
+
+          rows.sort(reverse=True)
+          stale=[r for r in rows if r[0] >= 72]
+          with open("comment.md","w",encoding="utf-8") as f:
+              f.write("### Stale branch inventory\n\n")
+              f.write(f"Non-open refs inventoried: **{len(rows)}**  \n")
+              f.write(f"Refs older than 72h: **{len(stale)}**\n\n")
+              f.write("Columns: age_hours | merged_into_main | duplicate_sha_refs | branch | sha | commit_date\n\n")
+              f.write("~~~text\n")
+              for age_h,branch,sha,date,merged,dup in stale:
+                  f.write(f"{age_h:.1f}\t{int(merged)}\t{dup}\t{branch}\t{sha}\t{date}\n")
+              f.write("~~~\n")
+          PY
+
+          gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file comment.md
