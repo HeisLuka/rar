@@ -1,6 +1,6 @@
 use pub_model::derive_pub_page_id_v1;
 use serde::{Deserialize, Serialize};
-use std::{collections::{BTreeMap, BTreeSet}, error::Error, fmt};
+use std::{\n    collections::{BTreeMap, BTreeSet},\n    error::Error,\n    fmt,\n};
 
 pub const CARLTON_PRESENTATION_INPUT_SCHEMA_V1: &str =
     "chaptera.carlton-presentation-profile-input.v1";
@@ -94,7 +94,7 @@ pub enum CarltonPresentationError {
     EmptyPageSet,
     DuplicateDocumentOrdinal(usize),
     DuplicatePageSeqNum(u32),
-    CustomerCountMismatch { expected: usize, observed: usize },
+    CustomerCountMismatch {\n        expected: usize,\n        observed: usize,\n    },
     MissingMasterTarget,
     MultipleMasterTargets(Vec<u32>),
     MasterTargetMissingFromPages(u32),
@@ -110,7 +110,7 @@ impl fmt::Display for CarltonPresentationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SchemaVersionMismatch => write!(f, "Carlton presentation input schema mismatch"),
-            Self::UnsupportedSourceHash => write!(f, "source is not an admitted Carlton family control"),
+            Self::UnsupportedSourceHash => {\n                write!(f, "source is not an admitted Carlton family control")\n            }
             Self::EmptyPageSet => write!(f, "Carlton presentation input has no PAGE evidence"),
             Self::DuplicateDocumentOrdinal(value) => {
                 write!(f, "duplicate Carlton document ordinal {value}")
@@ -122,28 +122,28 @@ impl fmt::Display for CarltonPresentationError {
                 f,
                 "Carlton customer-page count mismatch: expected {expected}, observed {observed}"
             ),
-            Self::MissingMasterTarget => write!(f, "Carlton family evidence has no applied-master target"),
+            Self::MissingMasterTarget => {\n                write!(f, "Carlton family evidence has no applied-master target")\n            }
             Self::MultipleMasterTargets(values) => {
-                write!(f, "Carlton family evidence has multiple master targets: {values:?}")
+                write!(\n                    f,\n                    "Carlton family evidence has multiple master targets: {values:?}"\n                )
             }
             Self::MasterTargetMissingFromPages(value) => {
-                write!(f, "Carlton master target PAGE {value} is absent from PAGE evidence")
+                write!(\n                    f,\n                    "Carlton master target PAGE {value} is absent from PAGE evidence"\n                )
             }
             Self::MasterLooksCustomerVisible(value) => write!(
                 f,
                 "Carlton master PAGE {value} unexpectedly satisfies the family customer Oid rule"
             ),
             Self::UnknownCarrierPage(value) => {
-                write!(f, "Carlton Cmo carrier PAGE {value} is absent from PAGE evidence")
+                write!(\n                    f,\n                    "Carlton Cmo carrier PAGE {value} is absent from PAGE evidence"\n                )
             }
             Self::CarrierCustomerOverlap(value) => write!(
                 f,
                 "Carlton Cmo carrier PAGE {value} also satisfies the customer-page rule"
             ),
             Self::CarrierMasterOverlap(value) => {
-                write!(f, "Carlton Cmo carrier PAGE {value} is also the master PAGE")
+                write!(\n                    f,\n                    "Carlton Cmo carrier PAGE {value} is also the master PAGE"\n                )
             }
-            Self::CustomerMissingExpectedMaster { page_seq_num, expected_master } => write!(
+            Self::CustomerMissingExpectedMaster {\n                page_seq_num,\n                expected_master,\n            } => write!(
                 f,
                 "Carlton customer PAGE {page_seq_num} does not apply expected master PAGE {expected_master}"
             ),
@@ -237,7 +237,7 @@ pub fn build_carlton_presentation_manifest_v1(
         .copied()
         .ok_or(CarltonPresentationError::MasterTargetMissingFromPages(master_seq))?;
     if master_page.oid_dword0 == Some(2) {
-        return Err(CarltonPresentationError::MasterLooksCustomerVisible(master_seq));
+        return Err(CarltonPresentationError::MasterLooksCustomerVisible(\n            master_seq,\n        ));
     }
 
     let mut carrier_set = BTreeSet::new();
@@ -365,21 +365,29 @@ mod tests {
             pages: seqs
                 .into_iter()
                 .enumerate()
-                .map(|(document_ordinal, contents_seq_num)| CarltonPageEvidenceV1 {
-                    document_ordinal,
-                    contents_seq_num,
-                    oid_dword0: customer.get(&contents_seq_num).map(|value| value.0).or(Some(0)),
-                    oid_dword1: customer.get(&contents_seq_num).map(|value| value.1).or(Some(0)),
-                    applied_master_seq_num: (contents_seq_num != 263).then_some(263),
-                    shape_child_count: match contents_seq_num {
-                        263 => 2,
-                        266 => 23,
-                        361 => 34,
-                        406 => 14,
-                        279 => 9,
-                        _ => 0,
+                .map(
+                    |(document_ordinal, contents_seq_num)| CarltonPageEvidenceV1 {
+                        document_ordinal,
+                        contents_seq_num,
+                        oid_dword0: customer
+                            .get(&contents_seq_num)
+                            .map(|value| value.0)
+                            .or(Some(0)),
+                        oid_dword1: customer
+                            .get(&contents_seq_num)
+                            .map(|value| value.1)
+                            .or(Some(0)),
+                        applied_master_seq_num: (contents_seq_num != 263).then_some(263),
+                        shape_child_count: match contents_seq_num {
+                            263 => 2,
+                            266 => 23,
+                            361 => 34,
+                            406 => 14,
+                            279 => 9,
+                            _ => 0,
+                        },
                     },
-                })
+                )
                 .collect(),
             carrier_page_seq_nums: vec![279],
         }
