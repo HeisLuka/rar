@@ -174,10 +174,10 @@ pub struct ViewerProjectedSceneInstanceV1 {
     pub scene_instance: SceneInstanceV1,
     /// Paint placement metadata only; not an identity authority.
     pub target_frame_node_id: NodeId,
-    /// Exact composition proof: visible direct target-frame text is empty after
-    /// object-marker removal or is fully duplicated by one admitted visible
-    /// carrier Story. This permits paint suppression without mutating the
-    /// canonical target Story or inventing a generic Cmo interleave law.
+    /// Exact composition proof: direct target-frame text within the native
+    /// slot-flow visible scalar prefix contains no paintable text after object
+    /// markers/line breaks are ignored. Text beyond the authoritative first
+    /// non-fitting scalar remains canonical source text but is overset.
     #[serde(default)]
     pub target_frame_text_fully_covered: bool,
     pub bounds: RectEmu,
@@ -1637,30 +1637,29 @@ fn project_carlton_march_cmo_instances(
             ));
         }
 
+        let target_story_scalar_count = u32::try_from(target_story.text.chars().count())
+            .context("Cmo target Story scalar count exceeds u32")?;
+        let visible_scalar_end = output
+            .overset
+            .first_nonfitting_scalar_index
+            .unwrap_or(target_story_scalar_count);
+        if visible_scalar_end > target_story_scalar_count {
+            return Err(anyhow!(
+                "exact Carlton March target Qsid {target_qsid} overset scalar exceeds Story length"
+            ));
+        }
+        let visible_scalar_end =
+            usize::try_from(visible_scalar_end).context("Cmo visible scalar count exceeds usize")?;
         let target_visible_residual = target_story
             .text
             .chars()
+            .take(visible_scalar_end)
             .filter(|ch| !matches!(ch, '\u{FFFC}' | '\r' | '\n'))
             .collect::<String>();
-        let target_visible_residual = target_visible_residual.trim();
-        let target_frame_text_fully_covered = target_visible_residual.is_empty()
-            || output.visible_slots.iter().any(|slot| {
-                let Some(carrier_story_id) = slot.carrier_story_id.as_deref() else {
-                    return false;
-                };
-                let Ok(carrier_story_id) =
-                    parse_projected_story_id(carrier_story_id, "visible Cmo carrier_story_id")
-                else {
-                    return false;
-                };
-                graph
-                    .stories
-                    .get(&carrier_story_id)
-                    .is_some_and(|story| story.text.trim().ends_with(target_visible_residual))
-            });
+        let target_frame_text_fully_covered = target_visible_residual.trim().is_empty();
         if !target_frame_text_fully_covered {
             return Err(anyhow!(
-                "exact Carlton March target Qsid {target_qsid} contains visible direct text not covered by the admitted visible carrier Story"
+                "exact Carlton March target Qsid {target_qsid} contains visible direct text before the authoritative Cmo overset boundary"
             ));
         }
 
