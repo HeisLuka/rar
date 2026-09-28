@@ -411,12 +411,7 @@ mod tests {
 
         let operation_count_before = editor.operations().len();
         let mut mode = enter_pointer_text_mode(
-            &editor,
-            story_id,
-            frame_id,
-            &page_id,
-            page_x_emu,
-            page_y_emu,
+            &editor, story_id, frame_id, &page_id, page_x_emu, page_y_emu,
         )
         .expect("one admitted pointer hit enters direct text mode");
         assert_eq!(
