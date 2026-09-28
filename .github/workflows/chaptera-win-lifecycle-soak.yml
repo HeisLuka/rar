@@ -1,0 +1,149 @@
+name: Chaptera Windows lifecycle soak
+
+on:
+  pull_request:
+    paths:
+      - "tools/chaptera-win-lifecycle-soak.ps1"
+      - "crates/chaptera-update-orchestrator/**"
+      - "crates/chaptera-update-engine/**"
+      - "crates/chaptera-update-trust/**"
+      - "installer/windows/chaptera-reader.iss"
+      - "apps/chaptera-desktop/**"
+      - ".github/workflows/chaptera-win-lifecycle-soak.yml"
+      - ".github/workstream-scopes/chaptera-win-lifecycle-soak-01.md"
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "Lifecycle cycles"
+        required: false
+        default: "10"
+
+concurrency:
+  group: chaptera-win-lifecycle-soak-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NEWSLETTER_SHA256: 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf
+  INNO_SETUP_VERSION: 6.7.1
+  VERSION_A: 0.1.0-soak-a
+  VERSION_B: 0.2.0-soak-b
+
+jobs:
+  lifecycle-soak:
+    name: Repeated install update rollback repair uninstall
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Build Reader-only payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p chaptera-desktop --release --features reader-only
+          if (-not (Test-Path "target/release/chaptera-editor.exe")) {
+            throw "reader-only shared desktop binary missing"
+          }
+
+          Remove-Item -Recurse -Force stage/soak,dist/soak -ErrorAction SilentlyContinue
+          foreach ($variant in @("a","b")) {
+            $stage = "stage/soak/$variant"
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            Copy-Item "target/release/chaptera-editor.exe" "$stage/Chaptera-Reader.exe"
+            @"
+          # Chaptera PUB Reader - lifecycle soak
+
+          External lifecycle diagnostic payload.
+          "@ | Set-Content -Encoding utf8 "$stage/README.md"
+          }
+          New-Item -ItemType Directory -Force -Path "dist/soak/a","dist/soak/b" | Out-Null
+
+      - name: Acquire pinned real PUB fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $fixture
+          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          $bytes = (Get-Item $fixture).Length
+          if ($hash -ne $env:NEWSLETTER_SHA256) { throw "fixture SHA-256 mismatch: $hash" }
+          if ($bytes -ne 291840) { throw "fixture byte length mismatch: $bytes" }
+          "CHAPTERA_SOAK_PUB=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install innosetup --version=$env:INNO_SETUP_VERSION --yes --no-progress --limit-output
+          $candidate = Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $candidate)) {
+            $candidate = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          }
+          if (Test-Path $candidate) {
+            $iscc = $candidate
+          } else {
+            $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw "ISCC.exe not found after pinned Inno Setup install" }
+            $iscc = $cmd.Source
+          }
+          "ISCC_PATH=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile A and B installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sourceA = (Resolve-Path "stage/soak/a").Path
+          $sourceB = (Resolve-Path "stage/soak/b").Path
+          $outA = (Resolve-Path "dist/soak/a").Path
+          $outB = (Resolve-Path "dist/soak/b").Path
+
+          & $env:ISCC_PATH "/DMyAppVersion=$env:VERSION_A" "/DSourceDir=$sourceA" "/DOutputDir=$outA" "installer/windows/chaptera-reader.iss"
+          if ($LASTEXITCODE -ne 0) { throw "A installer compilation failed: $LASTEXITCODE" }
+
+          & $env:ISCC_PATH "/DMyAppVersion=$env:VERSION_B" "/DSourceDir=$sourceB" "/DOutputDir=$outB" "installer/windows/chaptera-reader.iss"
+          if ($LASTEXITCODE -ne 0) { throw "B installer compilation failed: $LASTEXITCODE" }
+
+          $setupA = Join-Path $outA "Chaptera-Reader-Setup-$env:VERSION_A.exe"
+          $setupB = Join-Path $outB "Chaptera-Reader-Setup-$env:VERSION_B.exe"
+          if (-not (Test-Path $setupA)) { throw "A installer missing: $setupA" }
+          if (-not (Test-Path $setupB)) { throw "B installer missing: $setupB" }
+
+          "CHAPTERA_SOAK_SETUP_A=$setupA" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_SOAK_SETUP_B=$setupB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run lifecycle soak
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cycles = 3
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.cycles }}") {
+            $cycles = [int]"${{ inputs.cycles }}"
+          }
+          & ./tools/chaptera-win-lifecycle-soak.ps1 -SetupA $env:CHAPTERA_SOAK_SETUP_A -SetupB $env:CHAPTERA_SOAK_SETUP_B -Fixture $env:CHAPTERA_SOAK_PUB -FixtureSha256 $env:NEWSLETTER_SHA256 -Cycles $cycles -OutDir "target/lifecycle-soak"
+
+      - name: Print lifecycle summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "target/lifecycle-soak/summary.json") {
+            Get-Content -Raw "target/lifecycle-soak/summary.json"
+          }
+          if (Test-Path "target/lifecycle-soak/state.json") {
+            Write-Host "Last durable state:"
+            Get-Content -Raw "target/lifecycle-soak/state.json"
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-windows-lifecycle-soak
+          path: target/lifecycle-soak/
+          if-no-files-found: error
