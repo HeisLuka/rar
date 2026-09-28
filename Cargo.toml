@@ -10,6 +10,7 @@ members = [
   "crates/chaptera-glyph-runtime",
   "crates/chaptera-untrusted-pub-scan",
   "crates/chaptera-update-trust",
+  "crates/chaptera-update-candidate",
   "crates/chaptera-update-engine",
   "crates/chaptera-update-orchestrator",
   "crates/chaptera-update-handoff",
