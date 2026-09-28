@@ -3483,23 +3483,22 @@ impl ViewerApp {
 
                 render_backend::paint_page_surface(&painter, page_rect);
 
-                for node in page_nodes.iter().copied() {
-                    let Some(render_node) = render_plan
-                        .nodes
-                        .iter()
-                        .find(|planned| planned.node_id == node.origin)
-                    else {
-                        continue;
+                for render_node in &render_plan.nodes {
+                    let projected_read_only = render_node.projected_read_only;
+                    let node_id = render_node.node_id;
+                    let node_bounds = if projected_read_only {
+                        render_node.bounds
+                    } else {
+                        next_canvas_resize
+                            .filter(|resize| resize.node_id() == node_id)
+                            .and_then(|resize| resize.preview_bounds())
+                            .or_else(|| {
+                                next_canvas_drag
+                                    .filter(|drag| drag.node_id() == node_id)
+                                    .map(|drag| drag.preview_bounds())
+                            })
+                            .unwrap_or(render_node.bounds)
                     };
-                    let node_bounds = next_canvas_resize
-                        .filter(|resize| resize.node_id() == node.origin)
-                        .and_then(|resize| resize.preview_bounds())
-                        .or_else(|| {
-                            next_canvas_drag
-                                .filter(|drag| drag.node_id() == node.origin)
-                                .map(|drag| drag.preview_bounds())
-                        })
-                        .unwrap_or(render_node.bounds);
                     let Some(node_rect) = render_backend::physical_rect_to_egui(
                         page_rect,
                         scene_scale,
@@ -3510,43 +3509,52 @@ impl ViewerApp {
                     ) else {
                         continue;
                     };
-                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
-                        && movable_nodes.contains_key(instance_id)
-                    {
-                        let a11y = ui.interact(
-                            node_rect,
-                            ui.id().with(("movable-canvas-object", instance_id)),
-                            egui::Sense::hover(),
-                        );
-                        a11y.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::Other,
-                                true,
-                                "Movable canvas object",
-                            )
-                        });
+
+                    // Cmo projected instances are product-visible paint, but they
+                    // never enter the authored direct-page hit/edit index.
+                    if !projected_read_only {
+                        if let Some(instance_id) = hit_index.instance_for_node(node_id)
+                            && movable_nodes.contains_key(instance_id)
+                        {
+                            let a11y = ui.interact(
+                                node_rect,
+                                ui.id().with(("movable-canvas-object", instance_id)),
+                                egui::Sense::hover(),
+                            );
+                            a11y.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Other,
+                                    true,
+                                    "Movable canvas object",
+                                )
+                            });
+                        }
+                        if let Some(instance_id) = hit_index.instance_for_node(node_id)
+                            && resizable_nodes.contains_key(instance_id)
+                        {
+                            let a11y = ui.interact(
+                                node_rect,
+                                ui.id().with(("resizable-canvas-object", instance_id)),
+                                egui::Sense::hover(),
+                            );
+                            a11y.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Other,
+                                    true,
+                                    "Resizable canvas object",
+                                )
+                            });
+                        }
                     }
-                    if let Some(instance_id) = hit_index.instance_for_node(node.origin)
-                        && resizable_nodes.contains_key(instance_id)
-                    {
-                        let a11y = ui.interact(
-                            node_rect,
-                            ui.id().with(("resizable-canvas-object", instance_id)),
-                            egui::Sense::hover(),
-                        );
-                        a11y.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::Other,
-                                true,
-                                "Resizable canvas object",
-                            )
-                        });
-                    }
-                    let replacement_key = self
-                        .editor
-                        .as_ref()
-                        .and_then(|editor| editor.image_replacement_for(node.origin))
-                        .map(|sha256| format!("replacement:{:?}", sha256));
+
+                    let replacement_key = (!projected_read_only)
+                        .then(|| {
+                            self.editor
+                                .as_ref()
+                                .and_then(|editor| editor.image_replacement_for(node_id))
+                                .map(|sha256| format!("replacement:{:?}", sha256))
+                        })
+                        .flatten();
                     let replacement_texture = replacement_key
                         .as_ref()
                         .and_then(|key| self.image_textures.get(key));
@@ -3585,9 +3593,9 @@ impl ViewerApp {
                                     PreviewTextMetricDiagnostic::from_executed_layout(
                                         page.index,
                                         page.id.as_canonical().to_string(),
-                                        node.origin.as_canonical().to_string(),
+                                        node_id.as_canonical().to_string(),
                                         fragment.story_id.as_canonical().to_string(),
-                                        node.bounds,
+                                        render_node.bounds,
                                         self.zoom,
                                         metrics,
                                     ),
