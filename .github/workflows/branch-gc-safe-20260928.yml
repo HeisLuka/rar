@@ -3,7 +3,7 @@ name: One-shot vetted branch garbage collection
 on:
   push:
     branches:
-      - "ops/branch-gc-safe-20260928"
+      - main
     paths:
       - ".github/branch-cleanup/2026-09-28-updater-safe-delete.txt"
       - ".github/workflows/branch-gc-safe-20260928.yml"
