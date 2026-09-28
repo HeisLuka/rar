@@ -18,11 +18,11 @@ use pub_layout::{
     project_bounded, resolve_bounded_geometry, resolve_bounded_text_flow,
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
+#[cfg(feature = "cmo-slot-compose")]
+use pub_model::RectEmu;
 use pub_model::{
     Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
-#[cfg(feature = "cmo-slot-compose")]
-use pub_model::RectEmu;
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
     carlton_admitted_carrier_page_seq_nums_v1, select_carlton_customer_page_seq_nums_v1,
@@ -40,9 +40,7 @@ use pub_reader::{
     build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
 #[cfg(feature = "cmo-slot-compose")]
-use pub_reader::{
-    PubCmoProjectionBridgeV1, build_mature_0x2c_cmo_projection_bridge_v1,
-};
+use pub_reader::{PubCmoProjectionBridgeV1, build_mature_0x2c_cmo_projection_bridge_v1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -782,7 +780,6 @@ pub fn open_mature_0x2c_geometry(
     })
 }
 
-
 #[cfg(feature = "cmo-slot-compose")]
 fn parse_vendor_node_id(value: &str, label: &str) -> Result<NodeId> {
     let canonical = value
@@ -805,7 +802,8 @@ fn exact_carlton_march_marker_scalars(target_qsid: u32, text: &str) -> Result<Ve
         .chars()
         .enumerate()
         .filter_map(|(index, ch)| {
-            (ch == '\u{FFFC}').then(|| u32::try_from(index).context("Story scalar index exceeds u32"))
+            (ch == '\u{FFFC}')
+                .then(|| u32::try_from(index).context("Story scalar index exceeds u32"))
         })
         .collect::<Result<Vec<_>>>()?;
     let expected: &[u32] = match target_qsid {
@@ -854,8 +852,7 @@ fn apply_exact_carlton_march_cmo_slots(
             .first()
             .context("Cmo target has no projection relations")?;
 
-        let target_story_id =
-            parse_vendor_story_id(&first.target_story_id, "Cmo target Story")?;
+        let target_story_id = parse_vendor_story_id(&first.target_story_id, "Cmo target Story")?;
         let target_frame_node_id = parse_vendor_node_id(
             first
                 .target_frame_node_id
@@ -904,9 +901,10 @@ fn apply_exact_carlton_march_cmo_slots(
             .map(|relation| -> Result<CarrierExtentV1> {
                 let carrier_node_id =
                     parse_vendor_node_id(&relation.carrier_node_id, "Cmo carrier node")?;
-                let carrier = graph.nodes.get(&carrier_node_id).with_context(|| {
-                    format!("Cmo carrier node {carrier_node_id:?} is absent")
-                })?;
+                let carrier = graph
+                    .nodes
+                    .get(&carrier_node_id)
+                    .with_context(|| format!("Cmo carrier node {carrier_node_id:?} is absent"))?;
                 let nested_cmo = relation.carrier_story_id.as_ref().is_some_and(|story_id| {
                     context
                         .cmo_relations
@@ -989,9 +987,10 @@ fn apply_exact_carlton_march_cmo_slots(
                     "visible Cmo carrier {carrier_node_id:?} would collide with an existing customer-page node"
                 ));
             }
-            let carrier = graph.nodes.get(&carrier_node_id).with_context(|| {
-                format!("visible Cmo carrier {carrier_node_id:?} is absent")
-            })?;
+            let carrier = graph
+                .nodes
+                .get(&carrier_node_id)
+                .with_context(|| format!("visible Cmo carrier {carrier_node_id:?} is absent"))?;
             let x = target_frame
                 .header
                 .bounds
