@@ -74,49 +74,6 @@ jobs:
           curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/Simple.pub --output apps/chaptera-mobile-android/app/src/androidTest/assets/Simple.pub
           echo "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d  apps/chaptera-mobile-android/app/src/androidTest/assets/Simple.pub" | sha256sum --check
 
-      - name: TEMP package full pinned public PUB corpus for manual device test
-        run: |
-          python - <<'PY'
-          import hashlib
-          import json
-          import pathlib
-          import shutil
-          import urllib.parse
-          import urllib.request
-
-          manifest_path = pathlib.Path("tools/reader_corpus_manifest_v1.json")
-          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          root = pathlib.Path("target/mobile-reader-manual-corpus")
-          corpus = root / "valid22"
-          corpus.mkdir(parents=True, exist_ok=True)
-          base = manifest["upstream"]["base_url"].rstrip("/")
-
-          for entry in manifest["fixtures"]:
-              name = entry["name"]
-              url = base + "/" + urllib.parse.quote(name)
-              with urllib.request.urlopen(url, timeout=60) as response:
-                  data = response.read()
-              sha = hashlib.sha256(data).hexdigest()
-              if sha != entry["sha256"] or len(data) != entry["byte_len"]:
-                  raise SystemExit(f"fixture verification failed: {name}")
-              (corpus / name).write_bytes(data)
-              print(f"OK {name} {len(data)} {sha}")
-
-          shutil.copy2(manifest_path, root / "reader_corpus_manifest_v1.json")
-          (root / "README.txt").write_text(
-              "22 SHA-pinned public Apache POI Publisher fixtures used by Chaptera Reader corpus truth.\n"
-              "These are real upstream .pub files, not synthetic corruptions.\n"
-              "Some legacy/adversarial inputs are intentionally unsupported and are useful negative tests.\n",
-              encoding="utf-8",
-          )
-          PY
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: chaptera-mobile-reader-manual-corpus-valid22
-          path: target/mobile-reader-manual-corpus/
-          if-no-files-found: error
-
       - name: Build Android app and instrumentation APK
         working-directory: apps/chaptera-mobile-android
         run: |
