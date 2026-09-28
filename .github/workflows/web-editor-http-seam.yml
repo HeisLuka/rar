@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "apps/web/editor-service-client-v1.mjs"
+      - "apps/web/current-authoring-graph-scene-v1.mjs"
+      - "apps/web/current-authoring-graph-scene-v1.test.mjs"
       - "apps/web/observability-v1.mjs"
       - "apps/web/observability-v1.test.mjs"
       - "apps/web/editor-shell-http-harness.html"
@@ -17,6 +19,10 @@ on:
       - "docs/cloud-editor-observability-v1.md"
       - ".github/workflows/web-editor-http-seam.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -39,6 +45,7 @@ jobs:
       - name: Regression browser shell primitives
         run: |
           node --test apps/web/interaction-v1.test.mjs
+          node --test apps/web/current-authoring-graph-scene-v1.test.mjs
           node --test apps/web/render-v1.test.mjs
           node --test apps/web/observability-v1.test.mjs
       - name: Install Playwright
