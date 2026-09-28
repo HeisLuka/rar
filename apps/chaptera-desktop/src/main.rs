@@ -3181,26 +3181,28 @@ impl ViewerApp {
         let mut text_pointer_request: Option<(String, pub_interaction::DocumentPoint)> = None;
         let mut text_exit_request = false;
         let hit_index = SceneHitTestIndex::new(
-            self.editor
-                .as_ref()
-                .map(|editor| {
-                    page_nodes
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(paint_order, node)| {
-                            let instance =
-                                direct_scene_instance(editor, &page_id_text, node.origin)?;
-                            Some(SceneHitEntry {
-                                instance_id: instance.instance_id,
-                                node_id: node.origin,
-                                bounds: node.bounds,
-                                z_order: 0,
-                                paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
-                            })
-                        })
-                        .collect()
+            render_plan
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(paint_order, render_node)| {
+                    let instance_id = match render_node.projected_scene_instance.as_ref() {
+                        Some(instance) => instance.instance_id.clone(),
+                        None => {
+                            let editor = self.editor.as_ref()?;
+                            direct_scene_instance(editor, &page_id_text, render_node.node_id)?
+                                .instance_id
+                        }
+                    };
+                    Some(SceneHitEntry {
+                        instance_id,
+                        node_id: render_node.node_id,
+                        bounds: render_node.bounds,
+                        z_order: 0,
+                        paint_order: u32::try_from(paint_order).unwrap_or(u32::MAX),
+                    })
                 })
-                .unwrap_or_default(),
+                .collect(),
         );
 
         let movable_nodes = self
@@ -4333,6 +4335,8 @@ mod tests {
         let source = include_str!("main.rs");
         assert!(source.contains("for render_node in &render_plan.nodes"));
         assert!(source.contains("render_node.projected_scene_instance.as_ref()"));
+        assert!(source.contains("Some(instance) => instance.instance_id.clone()"));
+        assert!(source.contains("SceneHitTestIndex::new("));
         assert!(
             source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode)")
         );
