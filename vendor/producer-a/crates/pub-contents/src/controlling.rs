@@ -180,7 +180,8 @@ pub fn parse_confirmed_controlling_page_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{StreamPath, encode_packed_field_tag};
+    use crate::encode_packed_field_tag;
+    use pub_core::StreamPath;
 
     fn fixed8(id: u16, bytes: [u8; 8]) -> Vec<u8> {
         let mut out = encode_packed_field_tag(id, BLOCK_TYPE_FIXED_8)
