@@ -1409,6 +1409,120 @@ mod tests {
         CanonicalId::from_bytes([byte; 16])
     }
 
+    fn presentation_document_fixture() -> ViewerDocument {
+        let source_hash = Sha256Digest::from_bytes([0xAB; 32]);
+        ViewerDocument {
+            schema_version: VIEWER_DOCUMENT_SCHEMA_V0_1.to_owned(),
+            source: ViewerSource {
+                format: "pub".to_owned(),
+                format_version: Some("0x2c".to_owned()),
+                source_hash,
+                byte_len: 1,
+            },
+            pages: [2_u8, 3, 4]
+                .into_iter()
+                .enumerate()
+                .map(|(zero_based, byte)| ViewerPage {
+                    index: u32::try_from(zero_based + 1).expect("fixture index"),
+                    id: PageId::from_canonical(id(byte)),
+                    width_emu: 1_000,
+                    height_emu: 2_000,
+                })
+                .collect(),
+            stories: Vec::new(),
+            diagnostics: vec![ViewerDiagnostic {
+                code: "viewer.page_projection.roles_unresolved".to_owned(),
+                severity: ViewerDiagnosticSeverity::FidelityWarning,
+                message: "fixture generic no-loss role state".to_owned(),
+            }],
+        }
+    }
+
+    #[test]
+    fn presentation_selection_reorders_and_reindexes_only_product_pages() {
+        let mut document = presentation_document_fixture();
+        let source_before = document.source.clone();
+        let selection = ViewerPresentationSelection {
+            profile_id: "fixture/exact/v1".to_owned(),
+            source_hash: document.source.source_hash,
+            page_ids: vec![
+                PageId::from_canonical(id(4)),
+                PageId::from_canonical(id(2)),
+            ],
+        };
+
+        let selected =
+            apply_presentation_selection_to_document(&mut document, &selection).expect("selection");
+
+        assert_eq!(selected, selection.page_ids);
+        assert_eq!(
+            document
+                .pages
+                .iter()
+                .map(|page| (page.index, page.id))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, PageId::from_canonical(id(4))),
+                (2, PageId::from_canonical(id(2))),
+            ]
+        );
+        assert_eq!(document.source, source_before);
+        assert!(
+            document
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code
+                    == "viewer.page_projection.presentation_profile")
+        );
+        assert!(
+            !document
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "viewer.page_projection.roles_unresolved")
+        );
+    }
+
+    #[test]
+    fn presentation_selection_fails_closed_on_identity_or_membership_drift() {
+        let base = presentation_document_fixture();
+
+        let wrong_hash = ViewerPresentationSelection {
+            profile_id: "fixture/exact/v1".to_owned(),
+            source_hash: Sha256Digest::from_bytes([0xCD; 32]),
+            page_ids: vec![PageId::from_canonical(id(2))],
+        };
+        let mut document = base.clone();
+        assert!(
+            apply_presentation_selection_to_document(&mut document, &wrong_hash).is_err()
+        );
+        assert_eq!(document, base);
+
+        let duplicate = ViewerPresentationSelection {
+            profile_id: "fixture/exact/v1".to_owned(),
+            source_hash: base.source.source_hash,
+            page_ids: vec![
+                PageId::from_canonical(id(2)),
+                PageId::from_canonical(id(2)),
+            ],
+        };
+        let mut document = base.clone();
+        assert!(
+            apply_presentation_selection_to_document(&mut document, &duplicate).is_err()
+        );
+        assert_eq!(document, base);
+
+        let foreign_page = ViewerPresentationSelection {
+            profile_id: "fixture/exact/v1".to_owned(),
+            source_hash: base.source.source_hash,
+            page_ids: vec![PageId::from_canonical(id(99))],
+        };
+        let mut document = base.clone();
+        assert!(
+            apply_presentation_selection_to_document(&mut document, &foreign_page).is_err()
+        );
+        assert_eq!(document, base);
+    }
+
     fn resolved_graph_fixture() -> PubResolvedGraph {
         let source_hash = Sha256Digest::from_bytes([0xAB; 32]);
         let page_id = PageId::from_canonical(id(2));
