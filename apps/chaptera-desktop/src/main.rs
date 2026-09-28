@@ -117,7 +117,7 @@ fn text_layout_disposition_counts(plan: &PageRenderPlanV1) -> (usize, usize) {
         .filter_map(|node| node.text.as_ref())
         .filter_map(|text| text.layout.as_ref())
     {
-        match layout.disposition {
+        match &layout.disposition {
             chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::SharedResolved { .. } => {
                 shared += 1;
             }
