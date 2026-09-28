@@ -58,7 +58,7 @@ jobs:
             -- "$CHAPTERA_PAGE_ROLE_FIXTURE" "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role.json"
           cat "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role.json"
 
-      - name: Compare to pinned Publisher customer-page reference
+      - name: Compare Pgid scenario observation to pinned Publisher reference subset
         shell: python
         env:
           SOURCE_SHA256: 6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf
@@ -75,24 +75,24 @@ jobs:
               raise SystemExit(f"raw PAGE order drifted: {actual!r}")
 
           customer_reference = [266, 323, 352, 381]
-          customer_oid_order = [
+          publisher_reference_customer_oid_order = [
               [page["oid_dword0"], page["oid_dword1"]]
               for page in physical["pages"]
               if page["contents_seq_num"] in customer_reference
           ]
-          decoded_page_lists = [
+          decoded_scenario_page_lists = [
               field["pgids"]
               for controlling in physical.get("controlling", [])
               for field in controlling.get("fields", [])
               if field["id"] == 6
           ]
-          if not decoded_page_lists:
+          if not decoded_scenario_page_lists:
               raise SystemExit("SampleNewsletter has no decoded OplControlling PageList")
-          for index, pgids in enumerate(decoded_page_lists):
-              if pgids != customer_oid_order:
+          for index, pgids in enumerate(decoded_scenario_page_lists):
+              if pgids != publisher_reference_customer_oid_order:
                   raise SystemExit(
                       f"OplControlling PageList[{index}] disagrees with Publisher customer Oid order: "
-                      f"{pgids!r} != {customer_oid_order!r}"
+                      f"{pgids!r} != {publisher_reference_customer_oid_order!r}"
                   )
 
           comparison = {
@@ -101,9 +101,9 @@ jobs:
               "raw_page_seq_nums": actual,
               "publisher_reference_customer_seq_nums": customer_reference,
               "publisher_reference_basis": "recorded same-source side-by-side Publisher page crosswalk",
-              "customer_oid_order": customer_oid_order,
-              "decoded_oplcontrolling_page_lists": decoded_page_lists,
-              "pgid_customer_order_exact_match": True,
+              "publisher_reference_customer_oid_order": publisher_reference_customer_oid_order,
+              "decoded_oplcontrolling_page_lists": decoded_scenario_page_lists,
+              "pgid_matches_publisher_reference_customer_subset": True,
               "classification_promoted": False,
               "pages": [
                   {
