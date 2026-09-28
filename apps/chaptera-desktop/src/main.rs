@@ -612,6 +612,7 @@ struct ViewerApp {
     canvas_selection: SceneSelectionState,
     canvas_drag: Option<MoveTransaction>,
     canvas_resize: Option<ResizeTransaction>,
+    created_text_box_scene_nodes: BTreeSet<pub_editor::NodeId>,
     text_mode: Option<text_session::DesktopTextMode>,
     zoom: f32,
     zoom_mode: CanvasZoomMode,
@@ -662,6 +663,7 @@ impl ViewerApp {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
@@ -960,6 +962,7 @@ impl ViewerApp {
         self.canvas_selection.clear();
         self.canvas_drag = None;
         self.canvas_resize = None;
+        self.created_text_box_scene_nodes.clear();
         self.text_mode = None;
         self.zoom = 1.0;
         self.zoom_mode = CanvasZoomMode::FitPage;
@@ -1052,6 +1055,11 @@ impl ViewerApp {
                 if let Err(error) = self.sync_visual_stories_from_editor() {
                     self.edit_status = Some(format!(
                         "Viewer text projection refresh failed closed: {error}"
+                    ));
+                }
+                if let Err(error) = self.sync_visual_created_text_boxes_from_editor() {
+                    self.edit_status = Some(format!(
+                        "Viewer created TextBox scene sync failed closed: {error}"
                     ));
                 }
                 self.sync_visual_geometry_from_editor();
@@ -2160,13 +2168,22 @@ impl ViewerApp {
         self.canvas_drag = None;
         self.canvas_resize = None;
         let text_projection_refresh = self.sync_visual_stories_from_editor();
+        let created_node_scene_sync = self.sync_visual_created_text_boxes_from_editor();
         self.sync_visual_geometry_from_editor();
         self.refresh_search();
         self.export_preview = None;
         self.project_status = Some("Editor project has unsaved changes.".to_owned());
-        self.edit_status = Some(match text_projection_refresh {
-            Ok(()) => status.to_owned(),
-            Err(error) => format!("{status} Viewer text projection refresh failed closed: {error}"),
+        self.edit_status = Some(match (text_projection_refresh, created_node_scene_sync) {
+            (Ok(()), Ok(())) => status.to_owned(),
+            (Err(text_error), Ok(())) => {
+                format!("{status} Viewer text projection refresh failed closed: {text_error}")
+            }
+            (Ok(()), Err(scene_error)) => {
+                format!("{status} Viewer created TextBox scene sync failed closed: {scene_error}")
+            }
+            (Err(text_error), Err(scene_error)) => format!(
+                "{status} Viewer text projection refresh failed closed: {text_error}; created TextBox scene sync failed closed: {scene_error}"
+            ),
         });
     }
 
@@ -2386,6 +2403,32 @@ impl ViewerApp {
             self.edit_buffer.clone_from(&story.text);
         }
 
+        Ok(())
+    }
+
+    fn sync_visual_created_text_boxes_from_editor(&mut self) -> Result<(), String> {
+        let (Some(editor), Some(visual)) = (&self.editor, &mut self.visual) else {
+            self.created_text_box_scene_nodes.clear();
+            return Ok(());
+        };
+
+        let active_node_ids = editor
+            .operations()
+            .iter()
+            .filter_map(|operation| match operation {
+                pub_editor::EditOperation::CreateTextBox { node_id, .. } => Some(*node_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let next = visual
+            .sync_editor_created_text_box_scene_nodes(
+                editor.graph(),
+                &active_node_ids,
+                &self.created_text_box_scene_nodes,
+            )
+            .map_err(|error| error.to_string())?;
+        self.created_text_box_scene_nodes = next;
         Ok(())
     }
 
@@ -4393,6 +4436,7 @@ mod tests {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
@@ -4446,6 +4490,7 @@ mod tests {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
@@ -4714,6 +4759,7 @@ mod tests {
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
+            created_text_box_scene_nodes: BTreeSet::new(),
             text_mode: None,
             zoom: 1.0,
             zoom_mode: CanvasZoomMode::FitPage,
