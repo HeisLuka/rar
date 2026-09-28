@@ -1,4 +1,5 @@
 import { head } from '@vercel/blob';
+import { checkBotId } from 'botid/server';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -24,6 +25,11 @@ function validEmail(value: string) {
 }
 
 export async function POST(request: Request) {
+  const verification = await checkBotId();
+  if (verification.isBot) {
+    return Response.json({ error: 'Automated submission rejected.' }, { status: 403 });
+  }
+
   let body: CreateBody;
   try {
     body = (await request.json()) as CreateBody;
