@@ -40,7 +40,10 @@ pub fn extract_verified_reader_candidate(
     verify_payload_against_receipt(payload, payload_receipt)?;
 
     if destination.exists() {
-        bail!("candidate destination already exists: {}", destination.display());
+        bail!(
+            "candidate destination already exists: {}",
+            destination.display()
+        );
     }
 
     let mut archive =
@@ -88,9 +91,7 @@ pub fn extract_verified_reader_candidate(
 
     let installed_tree_bytes = extracted
         .values()
-        .try_fold(0_u64, |total, bytes| {
-            total.checked_add(bytes.len() as u64)
-        })
+        .try_fold(0_u64, |total, bytes| total.checked_add(bytes.len() as u64))
         .ok_or_else(|| anyhow::anyhow!("installed tree byte count overflow"))?;
     if installed_tree_bytes != payload_receipt.installed_tree_bytes {
         bail!(
@@ -147,20 +148,22 @@ pub fn extract_verified_reader_candidate(
     })
 }
 
-pub fn verify_candidate_tree(
-    root: &Path,
-    receipt: &VerifiedCandidateReceipt,
-) -> Result<()> {
+pub fn verify_candidate_tree(root: &Path, receipt: &VerifiedCandidateReceipt) -> Result<()> {
     if receipt.schema_version != CANDIDATE_RECEIPT_SCHEMA_VERSION {
         bail!("unsupported verified candidate receipt schema");
     }
 
     let mut files = BTreeMap::new();
-    for entry in fs::read_dir(root).with_context(|| format!("read candidate tree {}", root.display()))? {
+    for entry in
+        fs::read_dir(root).with_context(|| format!("read candidate tree {}", root.display()))?
+    {
         let entry = entry?;
         let file_type = entry.file_type()?;
         if !file_type.is_file() {
-            bail!("candidate tree contains non-file entry: {}", entry.path().display());
+            bail!(
+                "candidate tree contains non-file entry: {}",
+                entry.path().display()
+            );
         }
         let name = entry
             .file_name()
