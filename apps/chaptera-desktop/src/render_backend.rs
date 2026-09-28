@@ -4,7 +4,9 @@
 //! by egui. Product interaction state (selection, caret, drag/resize admission,
 //! EditorSession state, commands and product chrome) stays in the shell.
 
-use chaptera_viewer_render_plan::{NodeRenderPlanV1, RenderTextFragmentV1};
+use chaptera_viewer_render_plan::{
+    NodeRenderPlanV1, RenderTextFragmentV1, RenderTextLayoutDispositionV1,
+};
 use eframe::egui;
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
@@ -20,6 +22,9 @@ pub struct TextPaintMetrics {
     pub clip_height_px: f32,
     pub overflow_delta_px: f32,
     pub line_count: usize,
+    pub shared_resolved_layout: bool,
+    pub shared_resolved_line_count: usize,
+    pub backend_fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -126,6 +131,40 @@ pub fn paint_document_node_foreground(
 
     let text_clip_rect = node_rect.shrink(2.0);
     let text_painter = painter.with_clip_rect(text_clip_rect);
+
+    if let Some(layout) = fragment.layout.as_ref() {
+        if let RenderTextLayoutDispositionV1::SharedResolved {
+            font_size_emu,
+            line_height_emu,
+            ..
+        } = &layout.disposition
+        {
+            if let Some(metrics) = paint_shared_resolved_text(
+                &text_painter,
+                fragment,
+                layout.lines.as_slice(),
+                *font_size_emu,
+                *line_height_emu,
+                scene_scale,
+                text_clip_rect,
+            ) {
+                let text_clipped =
+                    preview_text_height_is_clipped(metrics.galley_height_px, text_clip_rect.height());
+                return NodePaintOutcome {
+                    text_clipped,
+                    text_metrics: Some(metrics),
+                };
+            }
+        }
+    }
+
+    let backend_fallback_reason = fragment.layout.as_ref().and_then(|layout| match &layout.disposition {
+        RenderTextLayoutDispositionV1::BackendFallback { reason } => Some(reason.code().to_owned()),
+        RenderTextLayoutDispositionV1::SharedResolved { .. } => {
+            Some("shared_layout_backend_execution_invalid".to_owned())
+        }
+    });
+
     let (layout_job, usage) =
         layout_document_text(fragment, scene_scale, text_clip_rect.width().max(1.0_f32));
     let executed_font_sizes_px = layout_job
@@ -148,6 +187,9 @@ pub fn paint_document_node_foreground(
         clip_height_px: text_clip_rect.height(),
         overflow_delta_px: (galley.size().y - text_clip_rect.height()).max(0.0),
         line_count: galley.rows.len(),
+        shared_resolved_layout: false,
+        shared_resolved_line_count: 0,
+        backend_fallback_reason,
     };
     text_painter.galley(text_clip_rect.min, galley, egui::Color32::BLACK);
 
@@ -155,6 +197,85 @@ pub fn paint_document_node_foreground(
         text_clipped,
         text_metrics: Some(text_metrics),
     }
+}
+
+fn shared_resolved_line_job(text: &str, font_id: egui::FontId) -> egui::text::LayoutJob {
+    egui::text::LayoutJob::simple(
+        text.to_owned(),
+        font_id,
+        egui::Color32::BLACK,
+        f32::INFINITY,
+    )
+}
+
+fn paint_shared_resolved_text(
+    painter: &egui::Painter,
+    fragment: &RenderTextFragmentV1,
+    lines: &[chaptera_viewer_render_plan::RenderResolvedTextLineV1],
+    font_size_emu: i64,
+    line_height_emu: i64,
+    scene_scale: f32,
+    clip_rect: egui::Rect,
+) -> Option<TextPaintMetrics> {
+    if font_size_emu <= 0
+        || line_height_emu <= 0
+        || !scene_scale.is_finite()
+        || scene_scale <= 0.0
+    {
+        return None;
+    }
+
+    let font_size_px = (font_size_emu as f32 * scene_scale).clamp(4.0, 512.0);
+    let line_height_px = line_height_emu as f32 * scene_scale;
+    if !font_size_px.is_finite() || !line_height_px.is_finite() || line_height_px <= 0.0 {
+        return None;
+    }
+
+    let font_id = egui::FontId::new(font_size_px, crate::fallback_font::family());
+    let mut max_width_px = 0.0_f32;
+
+    for (expected_index, line) in lines.iter().enumerate() {
+        if usize::try_from(line.line_index).ok() != Some(expected_index)
+            || line.line_height_emu != line_height_emu
+        {
+            return None;
+        }
+
+        let job = shared_resolved_line_job(&line.text, font_id.clone());
+        let galley = painter.layout_job(job);
+        max_width_px = max_width_px.max(galley.size().x);
+        let y = clip_rect.top() + line.line_index as f32 * line_height_px;
+        painter.galley(
+            egui::pos2(clip_rect.left(), y),
+            galley,
+            egui::Color32::BLACK,
+        );
+    }
+
+    let resolved_height_px = lines.len() as f32 * line_height_px;
+    let source_typography_sections = fragment.typography.len();
+    let fallback_sections = usize::from(fragment.typography.is_empty());
+
+    Some(TextPaintMetrics {
+        layout_section_count: lines.len(),
+        source_typography_sections,
+        fallback_sections,
+        executed_font_sizes_px: if lines.is_empty() {
+            Vec::new()
+        } else {
+            vec![font_size_px]
+        },
+        wrap_width_px: clip_rect.width().max(1.0),
+        galley_width_px: max_width_px,
+        galley_height_px: resolved_height_px,
+        clip_width_px: clip_rect.width(),
+        clip_height_px: clip_rect.height(),
+        overflow_delta_px: (resolved_height_px - clip_rect.height()).max(0.0),
+        line_count: lines.len(),
+        shared_resolved_layout: true,
+        shared_resolved_line_count: lines.len(),
+        backend_fallback_reason: None,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -337,6 +458,16 @@ mod tests {
         assert!(!preview_text_height_is_clipped(100.0, 100.0));
         assert!(!preview_text_height_is_clipped(100.4, 100.0));
         assert!(preview_text_height_is_clipped(100.6, 100.0));
+    }
+
+    #[test]
+    fn shared_resolved_line_job_disables_backend_wrapping() {
+        let job = shared_resolved_line_job(
+            "one already resolved line",
+            egui::FontId::new(12.0, crate::fallback_font::family()),
+        );
+        assert!(job.wrap.max_width.is_infinite());
+        assert_eq!(job.text, "one already resolved line");
     }
 
     #[test]
