@@ -27,7 +27,7 @@ fn run() -> Result<(), String> {
     let snapshot = pub_reader_copy_ledger_snapshot_v1();
 
     println!(
-        "{{"scenario":"open_parse","nodes":{},"stories":{},"file_buffer_bytes":{},"file_buffer_instances":{},"contents_stream_bytes":{},"contents_stream_instances":{},"quill_stream_bytes":{},"quill_stream_instances":{},"escher_stream_bytes":{},"escher_stream_instances":{}}}",
+        r#"{{"scenario":"open_parse","nodes":{},"stories":{},"file_buffer_bytes":{},"file_buffer_instances":{},"contents_stream_bytes":{},"contents_stream_instances":{},"quill_stream_bytes":{},"quill_stream_instances":{},"escher_stream_bytes":{},"escher_stream_instances":{}}}"#,
         build.graph.nodes.len(),
         build.graph.stories.len(),
         snapshot.file_buffer_bytes,
