@@ -6,6 +6,7 @@ on:
     paths:
       - "vendor/producer-a/crates/pub-contents/**"
       - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
       - "crates/pub-model/**"
       - ".github/workflows/reader-page-role-observation.yml"
 
@@ -138,6 +139,57 @@ jobs:
             -- "$CHAPTERA_PAGE_ROLE_BROCHURE" \
             "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role-samplebrochure.json"
           cat "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role-samplebrochure.json"
+
+      - name: Emit current Viewer page projection receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_FIXTURE" \
+            "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplenewsletter.json"
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_BROCHURE" \
+            "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplebrochure.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplenewsletter.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/viewer-page-projection-samplebrochure.json"
+
+      - name: Gate Viewer customer-page projection
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CHAPTERA_PAGE_ROLE_OUT"])
+          newsletter = json.loads(
+              (root / "viewer-page-projection-samplenewsletter.json").read_text(encoding="utf-8")
+          )
+          brochure = json.loads(
+              (root / "viewer-page-projection-samplebrochure.json").read_text(encoding="utf-8")
+          )
+
+          if newsletter["viewer_page_count"] != 4:
+              raise SystemExit(f"SampleNewsletter Viewer page count: {newsletter['viewer_page_count']} != 4")
+          if newsletter["scene_surface_count"] != 4:
+              raise SystemExit(f"SampleNewsletter scene surface count: {newsletter['scene_surface_count']} != 4")
+          if newsletter["viewer_page_indices"] != [1, 2, 3, 4]:
+              raise SystemExit(f"SampleNewsletter Viewer page indices drifted: {newsletter['viewer_page_indices']!r}")
+          newsletter_codes = set(newsletter["diagnostic_codes"])
+          if "viewer.page_projection.customer_order" not in newsletter_codes:
+              raise SystemExit("SampleNewsletter did not report applied customer-page authority")
+          if "viewer.page_projection.raw_fallback" in newsletter_codes:
+              raise SystemExit("SampleNewsletter unexpectedly fell back to raw PAGE order")
+
+          if brochure["viewer_page_count"] != 6:
+              raise SystemExit(f"SampleBrochure fail-open page count: {brochure['viewer_page_count']} != 6")
+          if brochure["scene_surface_count"] != 6:
+              raise SystemExit(f"SampleBrochure fail-open surface count: {brochure['scene_surface_count']} != 6")
+          if "viewer.page_projection.raw_fallback" not in set(brochure["diagnostic_codes"]):
+              raise SystemExit("SampleBrochure must expose explicit raw-page fallback diagnostic")
 
       - uses: actions/upload-artifact@v4
         with:
