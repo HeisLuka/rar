@@ -1421,13 +1421,10 @@ impl ViewerApp {
                         .surfaces
                         .iter()
                         .find(|surface| surface.origin == page.id)
-                        && let Some(size) = page_thumbnail_size(
-                            surface.size.width.get(),
-                            surface.size.height.get(),
-                        )
+                        && let Some(size) =
+                            page_thumbnail_size(surface.size.width.get(), surface.size.height.get())
                     {
-                        let (rect, response) =
-                            ui.allocate_exact_size(size, egui::Sense::click());
+                        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::Button,
@@ -6934,7 +6931,8 @@ mod tests {
             visual
                 .typography_runs
                 .iter()
-                .any(|run| run.source_font_name == "Rockwell Condensed" && run.text_size_emu == 24 * 12_700),
+                .any(|run| run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700),
             "proven Rockwell Condensed 24pt anchor must reach Viewer"
         );
 
