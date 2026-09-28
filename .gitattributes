@@ -1,0 +1,3 @@
+# Signed TUF fixture metadata is byte-addressed by length/hash fields.
+# Never normalize line endings in these fixtures on checkout.
+crates/chaptera-update-trust/tests/fixtures/** -text
