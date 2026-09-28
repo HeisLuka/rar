@@ -1,5 +1,6 @@
 use chaptera_update_engine::{RecoveryOutcome, UpdateEngine, UpdatePhase};
 use chaptera_update_orchestrator::InstallLock;
+use sha2::Digest;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,7 +103,6 @@ fn inspect(engine: &UpdateEngine) -> Result<(), String> {
 }
 
 fn main() {
-    use sha2::Digest;
 
     let args = env::args().collect::<Vec<_>>();
     if args.len() < 3 {
