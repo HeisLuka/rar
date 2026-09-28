@@ -34,10 +34,7 @@ struct AspectLockInventoryV1 {
 }
 
 fn decode_aspect_lock(entry: &Fopte) -> Option<(bool, bool, Option<bool>)> {
-    if entry.property_id() != PROTECTION_BOOLEAN_PROPERTY_ID
-        || entry.f_bid()
-        || entry.f_complex()
-    {
+    if entry.property_id() != PROTECTION_BOOLEAN_PROPERTY_ID || entry.f_bid() || entry.f_complex() {
         return None;
     }
 
