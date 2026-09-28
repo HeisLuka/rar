@@ -76,8 +76,8 @@ fn mobile_failure_diagnostic_json_with_policy(
     policy: PubScanPolicyV1,
 ) -> Result<String> {
     let admission = inspect_pub_bytes_v1(bytes, policy, false);
-    let bypass_shared_classifier = matches!(admission.status, PubScanStatusV1::RejectedByPolicy)
-        || (matches!(admission.status, PubScanStatusV1::ParseFailed)
+    let bypass_shared_classifier = matches!(&admission.status, PubScanStatusV1::RejectedByPolicy)
+        || (matches!(&admission.status, PubScanStatusV1::ParseFailed)
             && bytes.starts_with(CFB_MAGIC_V1));
 
     if bypass_shared_classifier {
