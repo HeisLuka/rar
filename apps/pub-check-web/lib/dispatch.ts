@@ -1,4 +1,38 @@
-export async function dispatchCheck(checkId: string, origin: string) {
+async function dispatchGitHub(checkId: string, origin: string) {
+  const token = process.env.GITHUB_CHECKER_TOKEN;
+  const repository = process.env.GITHUB_CHECKER_REPOSITORY || 'HeisLuka/rar';
+  const ref = process.env.GITHUB_CHECKER_REF || 'main';
+  if (!token) return 'not_configured' as const;
+
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+    return 'failed' as const;
+  }
+
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/actions/workflows/pub-check-worker.yml/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+        'x-github-api-version': '2022-11-28',
+      },
+      body: JSON.stringify({
+        ref,
+        inputs: {
+          check_id: checkId,
+          source_url: `${origin}/api/internal/source/${encodeURIComponent(checkId)}`,
+          result_url: `${origin}/api/internal/result/${encodeURIComponent(checkId)}`,
+        },
+      }),
+    },
+  );
+
+  return response.status === 204 ? ('sent' as const) : ('failed' as const);
+}
+
+async function dispatchWebhook(checkId: string, origin: string) {
   const webhook = process.env.CHECKER_WEBHOOK_URL;
   if (!webhook) return 'not_configured' as const;
 
@@ -27,4 +61,11 @@ export async function dispatchCheck(checkId: string, origin: string) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function dispatchCheck(checkId: string, origin: string) {
+  if (process.env.GITHUB_CHECKER_TOKEN) {
+    return dispatchGitHub(checkId, origin);
+  }
+  return dispatchWebhook(checkId, origin);
 }
