@@ -202,6 +202,10 @@ struct AdmittedProfile {
     carrier_page_seq_nums: &'static [u32],
 }
 
+pub fn is_admitted_carlton_source_v1(source_sha256: &str) -> bool {
+    matches!(source_sha256, MARCH_2026_SHA256 | DECEMBER_2025_SHA256)
+}
+
 fn admitted_profile(source_sha256: &str) -> Result<AdmittedProfile, CarltonPresentationError> {
     match source_sha256 {
         MARCH_2026_SHA256 => Ok(AdmittedProfile {
