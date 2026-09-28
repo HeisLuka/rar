@@ -1,0 +1,105 @@
+name: Reader customer-page projection
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-contents/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - ".github/workflows/reader-page-role-observation.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  customer-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Check bounded parser + Reader + Viewer
+        run: |
+          cargo test --manifest-path vendor/producer-a/crates/pub-contents/Cargo.toml controlling --lib
+          cargo test --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml customer_page_consensus --lib
+          cargo check --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml --all-targets
+          cargo check --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml --all-targets
+
+      - name: Acquire pinned public fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/reader-customer-pages"
+          mkdir -p "$out"
+
+          newsletter="$RUNNER_TEMP/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$newsletter"
+          test "$(sha256sum "$newsletter" | awk '{print $1}')" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+
+          brochure="$RUNNER_TEMP/SampleBrochure.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub" \
+            --output "$brochure"
+          test "$(sha256sum "$brochure" | awk '{print $1}')" = "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87"
+
+          echo "CHAPTERA_NEWSLETTER=$newsletter" >> "$GITHUB_ENV"
+          echo "CHAPTERA_BROCHURE=$brochure" >> "$GITHUB_ENV"
+          echo "CHAPTERA_PAGE_OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Emit current Viewer integration receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- "$CHAPTERA_NEWSLETTER" "$CHAPTERA_PAGE_OUT/newsletter.json"
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- "$CHAPTERA_BROCHURE" "$CHAPTERA_PAGE_OUT/brochure.json"
+          cat "$CHAPTERA_PAGE_OUT/newsletter.json"
+          cat "$CHAPTERA_PAGE_OUT/brochure.json"
+
+      - name: Gate customer pages plus typography
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CHAPTERA_PAGE_OUT"])
+          newsletter = json.loads((root / "newsletter.json").read_text(encoding="utf-8"))
+          brochure = json.loads((root / "brochure.json").read_text(encoding="utf-8"))
+
+          assert newsletter["viewer_page_count"] == 4, newsletter
+          assert newsletter["scene_surface_count"] == 4, newsletter
+          assert newsletter["viewer_page_indices"] == [1, 2, 3, 4], newsletter
+          assert newsletter["typography_run_count"] == 106, newsletter
+          assert newsletter["inherited_typography_run_count"] == 88, newsletter
+          n_codes = set(newsletter["diagnostic_codes"])
+          assert "viewer.page_projection.customer_order" in n_codes, newsletter
+          assert "viewer.page_projection.raw_fallback" not in n_codes, newsletter
+          assert "viewer.text.source_typography_partial" in n_codes, newsletter
+
+          assert brochure["viewer_page_count"] == 6, brochure
+          assert brochure["scene_surface_count"] == 6, brochure
+          b_codes = set(brochure["diagnostic_codes"])
+          assert "viewer.page_projection.raw_fallback" in b_codes, brochure
+          assert "viewer.page_projection.customer_order" not in b_codes, brochure
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reader-customer-page-projection
+          path: ${{ env.CHAPTERA_PAGE_OUT }}
+          if-no-files-found: error
