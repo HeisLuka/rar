@@ -2436,6 +2436,8 @@ fn build_effective_page_projection(
     // Pgid is scenario/design identity evidence, not generic physical visible-page authority.
     // Native Page.Duplicate/Pages.Add can create persisted visible pages without OplControlling/Pgid,
     // so generic Reader must not suppress any raw PAGE from this observation alone.
+    // observed_scenario_page_ids is evidence only; any product-specific filtering needs a separate,
+    // explicitly authorized profile law and must not mutate this generic page_ids projection.
     PubEffectivePageProjection {
         authority: PubEffectivePageProjectionAuthority::RawDocumentPageList,
         page_ids: raw_page_ids.to_vec(),
