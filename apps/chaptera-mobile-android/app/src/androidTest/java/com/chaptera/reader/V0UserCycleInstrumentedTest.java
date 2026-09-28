@@ -2,6 +2,7 @@ package com.chaptera.reader;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import android.content.ContentResolver;
@@ -20,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -31,17 +33,20 @@ public final class V0UserCycleInstrumentedTest {
         context.getSharedPreferences("chaptera_reader_resume_v1", android.content.Context.MODE_PRIVATE)
             .edit().clear().commit();
 
-        byte[] fixture = readAsset("SampleNewsletter.pub");
-        Uri firstPub = insertDownload("CycleOne.pub", "application/x-mspublisher", fixture);
+        byte[] firstFixture = readAsset("SampleNewsletter.pub");
+        byte[] secondFixture = readAsset("SampleBrochure.pub");
+        Uri firstPub = insertDownload("CycleOne.pub", "application/x-mspublisher", firstFixture);
         Uri bad = insertDownload(
             "not-publisher.txt",
             "text/plain",
             "plain text is not Publisher".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         );
-        Uri secondPub = insertDownload("CycleTwo.pub", "application/x-mspublisher", fixture);
+        Uri secondPub = insertDownload("CycleTwo.pub", "application/x-mspublisher", secondFixture);
 
         byte[] firstHashBefore = sha256(readUri(firstPub));
         byte[] secondHashBefore = sha256(readUri(secondPub));
+        assertFalse("V0 repeat-use acceptance must use two distinct real PUB fixtures",
+            Arrays.equals(firstHashBefore, secondHashBefore));
 
         try {
             Intent first = new Intent(Intent.ACTION_VIEW)
