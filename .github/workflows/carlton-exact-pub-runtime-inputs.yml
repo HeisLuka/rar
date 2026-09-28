@@ -1533,11 +1533,13 @@ jobs:
           mkdir -p out/carlton/reader-cmo-bridge
           cargo run --quiet \
             --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --features cmo-authority-bridge \
             --bin cmo_projection_bridge_receipt -- \
             out/carlton/exact/March-2026.pub \
             out/carlton/reader-cmo-bridge/march.json
           cargo run --quiet \
             --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --features cmo-authority-bridge \
             --bin cmo_projection_bridge_receipt -- \
             out/carlton/exact/December-2025.pub \
             out/carlton/reader-cmo-bridge/december.json
