@@ -1,0 +1,27 @@
+name: Chaptera local restart preflight self-test
+
+on:
+  pull_request:
+    paths:
+      - "tools/chaptera-local-restart-preflight.ps1"
+      - ".github/workflows/chaptera-local-restart-preflight.yml"
+      - ".github/workstream-scopes/chaptera-local-restart-preflight-01.md"
+  workflow_dispatch:
+
+concurrency:
+  group: chaptera-local-restart-preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test restart-resume harness without reboot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & ./tools/chaptera-local-restart-preflight.ps1 -Mode SelfTest -StateRoot (Join-Path $env:RUNNER_TEMP "chaptera-restart-preflight")
