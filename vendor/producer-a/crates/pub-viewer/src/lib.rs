@@ -163,6 +163,8 @@ pub struct ViewerGeometryDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_fragments: Vec<ViewerTextFragment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typography_runs: Vec<ViewerTypographyRun>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
 
@@ -387,6 +389,31 @@ pub struct ViewerTextFragment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerTypographyRun {
+    pub story_id: StoryId,
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+    pub source_font_name: String,
+    pub text_size_emu: u32,
+    pub font_inherited: bool,
+    pub size_inherited: bool,
+    pub source_story_text_sha256: Sha256Digest,
+}
+
+impl ViewerTypographyRun {
+    pub fn applies_to_story_text(&self, text: &str) -> bool {
+        self.source_story_text_sha256 == viewer_story_text_sha256(text)
+    }
+}
+
+pub fn viewer_story_text_sha256(text: &str) -> Sha256Digest {
+    let digest = Sha256::digest(text.as_bytes());
+    let mut bytes = [0_u8; 32];
+    bytes.copy_from_slice(&digest);
+    Sha256Digest::from_bytes(bytes)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerEmbeddedImage {
     pub resource_id: ResourceId,
     pub mime: String,
@@ -540,6 +567,40 @@ pub fn open_mature_0x2c_geometry(
             .push(viewer_fallback_flow_metrics_diagnostic());
     }
 
+    let typography_runs = pipeline
+        .source
+        .typography_runs
+        .iter()
+        .filter_map(|run| {
+            let story = pipeline.resolved.graph.stories.get(&run.story_id)?;
+            Some(ViewerTypographyRun {
+                story_id: run.story_id,
+                scalar_start: run.story_scalar_start,
+                scalar_end: run.story_scalar_end,
+                source_font_name: run.source_font_name.clone(),
+                text_size_emu: run.text_size_emu,
+                font_inherited: run.font_inherited,
+                size_inherited: run.size_inherited,
+                source_story_text_sha256: viewer_story_text_sha256(&story.text),
+            })
+        })
+        .collect::<Vec<_>>();
+    if !typography_runs.is_empty() {
+        let inherited = typography_runs
+            .iter()
+            .filter(|run| run.font_inherited || run.size_inherited)
+            .count();
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.text.source_typography_partial".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: format!(
+                "{} source typography range(s) are available for preview sizing; {} use bounded inherited font/size authority. The renderer still uses the pinned fallback font face and does not claim Publisher-exact reflow.",
+                typography_runs.len(),
+                inherited
+            ),
+        });
+    }
+
     let images = match build_mature_0x2c_asset_export_bundle_from_bytes(
         bytes,
         &pipeline.source.graph,
@@ -607,7 +668,7 @@ pub fn open_mature_0x2c_geometry(
         document.diagnostics.push(ViewerDiagnostic {
             code: "viewer.visual.geometry_only".to_owned(),
             severity: ViewerDiagnosticSeverity::FidelityWarning,
-            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded semantic text, including explicit linked-frame chains with Viewer fallback metrics, exact embedded PNG/JPEG bytes, and complete explicit shape-local solid fill/line state when available. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
+            message: "Object positions and sizes are resolved. The desktop Viewer may paint bounded semantic text, including explicit linked-frame chains and admitted source font sizes (including bounded inheritance) through Viewer fallback font metrics, plus exact embedded PNG/JPEG bytes and complete explicit shape-local solid fill/line state when available. Other inherited/default styling beyond admitted font/size, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet."
                 .to_owned(),
         });
     }
@@ -620,6 +681,7 @@ pub fn open_mature_0x2c_geometry(
         paints,
         story_frames,
         text_fragments,
+        typography_runs,
         images,
     })
 }
@@ -643,7 +705,7 @@ fn viewer_fallback_flow_metrics_diagnostic() -> ViewerDiagnostic {
     ViewerDiagnostic {
         code: "viewer.text.fallback_flow_metrics".to_owned(),
         severity: ViewerDiagnosticSeverity::FidelityWarning,
-        message: "Visible text fragments use explicit Viewer fallback metrics for bounded frame flow. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
+        message: "Visible text fragments use Viewer fallback font metrics for bounded frame flow while admitted source font sizes may affect sizing. Their frame ownership is grounded, but line breaks and fragment boundaries are not claimed to match Publisher typography.".to_owned(),
     }
 }
 
@@ -981,6 +1043,16 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             "viewer.table.layout_metrics_unavailable",
             ViewerDiagnosticSeverity::FidelityWarning,
             "Exact table layout metrics are not available.",
+        ),
+        TypographyProjectionUnavailable { .. } => (
+            "viewer.text.typography_projection_unavailable",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "Some source typography could not be projected safely; pinned fallback text rendering remains in use.",
+        ),
+        TypographyUnknownFixedBlockTypes { .. } => (
+            "viewer.text.typography_unknown_block_type",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "The typography stream contains unproven fixed block widths; affected typography promotion fails closed.",
         ),
     };
 
@@ -1874,6 +1946,7 @@ mod tests {
             paints: Vec::new(),
             story_frames: Vec::new(),
             text_fragments: initial_fragments,
+            typography_runs: Vec::new(),
             images: Vec::new(),
         };
 
@@ -1969,6 +2042,7 @@ mod tests {
             paints: Vec::new(),
             story_frames: initial_frames.clone(),
             text_fragments: initial_fragments,
+            typography_runs: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2031,6 +2105,7 @@ mod tests {
             paints: Vec::new(),
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
+            typography_runs: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.clone();

@@ -90,7 +90,7 @@ enum CanvasZoomMode {
     FitSelection,
 }
 
-const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Proven source font sizes, including bounded FDPP→STSH1 inheritance where admitted, affect text sizing through the shared render plan; the current renderer still uses Chaptera's pinned fallback font face rather than claiming source-font availability. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Other inherited/default styling beyond admitted font/size, Publisher-exact font metrics/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +107,45 @@ struct ViewerLoadFailure {
     diagnostic_json: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct PreviewTextMetricDiagnostic {
+    page_index: u32,
+    page_id: String,
+    frame_id: String,
+    story_id: String,
+    frame_bounds_emu: [i64; 4],
+    zoom: f32,
+    font_face_disposition: &'static str,
+    metrics: render_backend::TextPaintMetrics,
+}
+
+impl PreviewTextMetricDiagnostic {
+    fn from_executed_layout(
+        page_index: u32,
+        page_id: String,
+        frame_id: String,
+        story_id: String,
+        frame_bounds: pub_editor::RectEmu,
+        zoom: f32,
+        metrics: render_backend::TextPaintMetrics,
+    ) -> Self {
+        Self {
+            page_index,
+            page_id,
+            frame_id,
+            story_id,
+            frame_bounds_emu: [
+                frame_bounds.x.get(),
+                frame_bounds.y.get(),
+                frame_bounds.width.get(),
+                frame_bounds.height.get(),
+            ],
+            zoom,
+            font_face_disposition: "fallback_not_source_font",
+            metrics,
+        }
+    }
+}
 #[derive(Debug, Clone)]
 struct DesktopExportPreview {
     target: pub_editor::EditorEditableTarget,
@@ -632,6 +671,7 @@ struct ViewerApp {
     project_status: Option<String>,
     preview_clipped_frames: usize,
     preview_clipped_story_keys: BTreeSet<String>,
+    preview_text_diagnostics: Vec<PreviewTextMetricDiagnostic>,
     diagnostic_save_path: String,
     diagnostic_status: Option<String>,
     diagnostic_sweep: Option<diagnostic_sweep::FolderSweepHandle>,
@@ -683,6 +723,7 @@ impl ViewerApp {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -982,6 +1023,7 @@ impl ViewerApp {
         self.project_status = None;
         self.preview_clipped_frames = 0;
         self.preview_clipped_story_keys.clear();
+        self.preview_text_diagnostics.clear();
         self.diagnostic_save_path.clear();
         self.diagnostic_status = None;
         self.exact_file_consent_open = false;
@@ -1729,6 +1771,37 @@ impl ViewerApp {
                         "Preview text clipping: {preview_clipped_frames} frame(s)"
                     ));
                     ui.small(PREVIEW_TEXT_CLIP_WARNING);
+                }
+
+                if !self.preview_text_diagnostics.is_empty() {
+                    ui.add_space(6.0);
+                    if ui.button("Copy preview metrics JSON").clicked()
+                        && let Ok(json) =
+                            serde_json::to_string_pretty(&self.preview_text_diagnostics)
+                    {
+                        ui.ctx().copy_text(json);
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for row in &self.preview_text_diagnostics {
+                                ui.monospace(format!(
+                                    "p{} frame={} sizes={:?}px source={} fallback={} wrap={:.1}px galley={:.1}x{:.1}px clip={:.1}x{:.1}px overflow={:.1}px lines={}",
+                                    row.page_index,
+                                    row.frame_id,
+                                    row.metrics.executed_font_sizes_px,
+                                    row.metrics.source_typography_sections,
+                                    row.metrics.fallback_sections,
+                                    row.metrics.wrap_width_px,
+                                    row.metrics.galley_width_px,
+                                    row.metrics.galley_height_px,
+                                    row.metrics.clip_width_px,
+                                    row.metrics.clip_height_px,
+                                    row.metrics.overflow_delta_px,
+                                    row.metrics.line_count,
+                                ));
+                            }
+                        });
                 }
 
                 ui.add_space(12.0);
@@ -3093,6 +3166,7 @@ impl ViewerApp {
         let content_height = (page_height + PAGE_MARGIN * 2.0).max(viewport.y);
         let mut preview_clipped_frames = 0usize;
         let mut preview_clipped_story_keys = BTreeSet::new();
+        let mut preview_text_diagnostics = Vec::new();
         let selected_canvas_instance = self.canvas_selection.primary().map(str::to_owned);
         let mut canvas_clicked = false;
         let mut canvas_hit: Option<String> = None;
@@ -3505,6 +3579,19 @@ impl ViewerApp {
                         preview_clipped_frames += 1;
                         if let Some(fragment) = render_node.text.as_ref() {
                             preview_clipped_story_keys.insert(format!("{:?}", fragment.story_id));
+                            if let Some(metrics) = paint_outcome.text_metrics.clone() {
+                                preview_text_diagnostics.push(
+                                    PreviewTextMetricDiagnostic::from_executed_layout(
+                                        page.index,
+                                        page.id.as_canonical().to_string(),
+                                        node.origin.as_canonical().to_string(),
+                                        fragment.story_id.as_canonical().to_string(),
+                                        node.bounds,
+                                        self.zoom,
+                                        metrics,
+                                    ),
+                                );
+                            }
                         }
                         painter.rect_stroke(
                             node_rect,
@@ -3512,12 +3599,14 @@ impl ViewerApp {
                             egui::Stroke::new(2.0_f32, egui::Color32::RED),
                             egui::StrokeKind::Inside,
                         );
+                        let marker_center = node_rect.right_top() + egui::vec2(7.0_f32, -7.0_f32);
+                        painter.circle_filled(marker_center, 5.0_f32, egui::Color32::RED);
                         painter.text(
-                            node_rect.right_top() + egui::vec2(-4.0_f32, 4.0_f32),
-                            egui::Align2::RIGHT_TOP,
-                            "preview overflow",
-                            egui::FontId::proportional(10.0_f32),
-                            egui::Color32::RED,
+                            marker_center,
+                            egui::Align2::CENTER_CENTER,
+                            "!",
+                            egui::FontId::proportional(9.0_f32),
+                            egui::Color32::WHITE,
                         );
                     }
                 }
@@ -3697,6 +3786,7 @@ impl ViewerApp {
 
         self.preview_clipped_frames = preview_clipped_frames;
         self.preview_clipped_story_keys = preview_clipped_story_keys;
+        self.preview_text_diagnostics = preview_text_diagnostics;
     }
 }
 
@@ -4461,6 +4551,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -4515,6 +4606,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -4779,6 +4871,7 @@ mod tests {
             project_status: None,
             preview_clipped_frames: 0,
             preview_clipped_story_keys: BTreeSet::new(),
+            preview_text_diagnostics: Vec::new(),
             diagnostic_save_path: String::new(),
             diagnostic_status: None,
             diagnostic_sweep: None,
@@ -6940,6 +7033,109 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
+    fn golden_sample_newsletter_reader_page_2_uses_shared_typography_render_plan() {
+        use egui_kittest::Harness;
+        use sha2::{Digest, Sha256};
+
+        let fixture = std::env::var_os("CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER");
+        let output_dir = std::env::var_os("CHAPTERA_GOLDEN_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_OUT");
+        fs::create_dir_all(&output_dir).expect("create golden output directory");
+
+        let bytes = fs::read(&fixture).expect("read pinned SampleNewsletter");
+        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            source_sha256, "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+            "golden fixture identity drifted"
+        );
+
+        let visual = diagnostic_sweep::open_for_product(&bytes)
+            .expect("pinned SampleNewsletter must open through product Reader path");
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "Reader must expose bounded source typography"
+        );
+        let inherited_typography_run_count = visual
+            .typography_runs
+            .iter()
+            .filter(|run| run.font_inherited || run.size_inherited)
+            .count();
+        assert_eq!(
+            visual.typography_runs.len(),
+            106,
+            "current main source authority proves 106 product-safe SampleNewsletter effective typography runs; Reader/Viewer projection must preserve them 1:1"
+        );
+        assert_eq!(
+            inherited_typography_run_count, 88,
+            "current main source authority proves 88 explicit-FDPP-selector inherited SampleNewsletter runs; projection must not drop inheritance provenance"
+        );
+        assert!(
+            visual
+                .typography_runs
+                .iter()
+                .any(|run| run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700),
+            "proven Rockwell Condensed 24pt anchor must reach Viewer"
+        );
+
+        let page_offset = 1_usize;
+        let plan =
+            build_page_render_plan_v1(&visual, page_offset).expect("page 2 shared render plan");
+        let typography_sections = plan
+            .nodes
+            .iter()
+            .filter_map(|node| node.text.as_ref())
+            .map(|text| text.typography.len())
+            .sum::<usize>();
+        assert!(
+            typography_sections > 0,
+            "source typography must reach shared Reader render plan"
+        );
+
+        let fixture_for_app = fixture.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(24)
+            .wgpu()
+            .build_eframe(move |cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                let mut app = ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                app.selected_page = page_offset;
+                app
+            });
+        harness.step();
+
+        let image = harness
+            .render()
+            .expect("headless Reader render must succeed");
+        let png_path = output_dir.join("samplenewsletter-page-002-reader.png");
+        image.save(&png_path).expect("write Reader golden PNG");
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.reader-golden-samplenewsletter.v2",
+            "source_sha256": source_sha256,
+            "page_number": 2,
+            "typography_run_count": visual.typography_runs.len(),
+            "inherited_typography_run_count": inherited_typography_run_count,
+            "render_plan_typography_sections": typography_sections,
+            "source_font_face_claimed": false,
+            "publisher_exact_reflow_claimed": false,
+            "png": "samplenewsletter-page-002-reader.png"
+        });
+        fs::write(
+            output_dir.join("samplenewsletter-reader-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize golden receipt"),
+        )
+        .expect("write golden receipt");
     }
 
     #[test]
