@@ -92,6 +92,16 @@ impl fmt::Display for RenderPlanErrorV1 {
 
 impl std::error::Error for RenderPlanErrorV1 {}
 
+fn suppress_projected_object_marker_glyphs(text: &str) -> String {
+    // U+FFFC is semantic object-slot authority. Once a projected visual owns
+    // that slot, render it as a zero-width scalar rather than a missing-glyph
+    // box. Scalar cardinality stays unchanged, so typography/range authority
+    // remains aligned and any non-marker target Story text is preserved.
+    text.chars()
+        .map(|ch| if ch == '\u{FFFC}' { '\u{200B}' } else { ch })
+        .collect()
+}
+
 pub fn build_page_render_plan_v1(
     visual: &ViewerGeometryDocument,
     page_index: usize,
@@ -130,14 +140,10 @@ pub fn build_page_render_plan_v1(
             let target_frame_has_projected_slot = visual.projected_instances.iter().any(|instance| {
                 instance.target_page_id == page.id && instance.target_frame_node_id == node.origin
             });
-            let text = (!target_frame_has_projected_slot)
-                .then(|| {
-                    visual
-                        .text_fragments
-                        .iter()
-                        .find(|fragment| fragment.frame_id == node.origin)
-                })
-                .flatten()
+            let text = visual
+                .text_fragments
+                .iter()
+                .find(|fragment| fragment.frame_id == node.origin)
                 .map(|fragment| {
                     let current_story_text = visual
                         .document
@@ -172,7 +178,11 @@ pub fn build_page_render_plan_v1(
                         story_id: fragment.story_id,
                         scalar_start: fragment.scalar_start,
                         scalar_end: fragment.scalar_end,
-                        text: fragment.text.clone(),
+                        text: if target_frame_has_projected_slot {
+                            suppress_projected_object_marker_glyphs(&fragment.text)
+                        } else {
+                            fragment.text.clone()
+                        },
                         line_count: fragment.line_count,
                         typography,
                     }
@@ -412,6 +422,54 @@ mod tests {
         assert_eq!(typography[0].scalar_end, 2);
         assert_eq!(typography[0].text_size_emu, 24 * 12_700);
         assert!(typography[0].size_inherited);
+    }
+
+    #[test]
+    fn projected_slot_suppresses_only_object_marker_glyphs_and_keeps_target_text() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let target_node_id = visual.scene.nodes[0].origin;
+        let target_story_id = visual.document.stories[0].id;
+        let source = "\u{FFFC}\r\u{FFFC}\r\u{FFFC}am.";
+        visual.document.stories[0].text = source.to_owned();
+        visual.text_fragments[0].text = source.to_owned();
+        visual.text_fragments[0].scalar_end =
+            u32::try_from(source.chars().count()).expect("bounded fixture");
+        visual.projected_instances.push(pub_viewer::ViewerProjectedNodeInstance {
+            instance_id: "scene:cmo-story-slot:test".to_owned(),
+            projection_kind: pub_viewer::ViewerProjectionKind::CmoStorySlot,
+            origin_node_id: target_node_id,
+            target_page_id: page_id,
+            target_story_id,
+            target_frame_node_id: target_node_id,
+            scalar_index: 0,
+            source_order: 0,
+            cmo_id: 7,
+            carrier_story_id: None,
+            bounds: RectEmu::new(
+                LengthEmu::new(50),
+                LengthEmu::new(60),
+                LengthEmu::new(70),
+                LengthEmu::new(80),
+            ),
+            transform: Affine2D::identity(),
+        });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        let target = plan
+            .nodes
+            .iter()
+            .find(|node| node.scene_instance_id.is_none() && node.node_id == target_node_id)
+            .expect("direct target frame");
+        let rendered = &target.text.as_ref().expect("target text preserved").text;
+
+        assert!(!rendered.contains('\u{FFFC}'));
+        assert_eq!(rendered.chars().count(), source.chars().count());
+        assert!(rendered.ends_with("am."));
+        assert_eq!(
+            rendered,
+            &suppress_projected_object_marker_glyphs(source)
+        );
     }
 
     #[test]
