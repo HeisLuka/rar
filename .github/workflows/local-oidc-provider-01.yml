@@ -54,3 +54,4 @@ jobs:
           name: local-oidc-provider-01-receipts
           path: .chaptera-oidc
           if-no-files-found: error
+          include-hidden-files: true
