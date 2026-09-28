@@ -93,6 +93,15 @@ impl fmt::Display for RenderPlanErrorV1 {
 
 impl std::error::Error for RenderPlanErrorV1 {}
 
+fn suppress_projected_object_marker_glyphs(text: &str) -> String {
+    // U+FFFC remains canonical Story authority. Once a projected visual owns
+    // that slot, paint a zero-width scalar instead of a missing-glyph box.
+    // Cardinality is preserved so scalar-aligned typography stays valid.
+    text.chars()
+        .map(|ch| if ch == '\u{FFFC}' { '\u{200B}' } else { ch })
+        .collect()
+}
+
 fn render_typography_for_span(
     visual: &ViewerGeometryDocument,
     story_id: StoryId,
@@ -240,11 +249,21 @@ pub fn build_page_render_plan_v1(
         .iter()
         .filter(|node| node.parent_origin == parent_origin)
         .map(|node| {
+            let target_frame_has_projected_slot = visual.projected_instances.iter().any(|instance| {
+                instance.target_page_id == page.id
+                    && instance.target_frame_node_id == Some(node.origin)
+            });
             let text = visual
                 .text_fragments
                 .iter()
                 .find(|fragment| fragment.frame_id == node.origin)
-                .map(|fragment| render_text_fragment_v1(visual, fragment));
+                .map(|fragment| {
+                    let mut rendered = render_text_fragment_v1(visual, fragment);
+                    if target_frame_has_projected_slot {
+                        rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
+                    }
+                    rendered
+                });
 
             render_node_plan_v1(
                 visual,
@@ -257,27 +276,37 @@ pub fn build_page_render_plan_v1(
         })
         .collect::<Vec<_>>();
 
-    // Projection instances deliberately retain their semantic origin NodeId but
-    // paint at target-page geometry under a distinct visual identity.
-    nodes.extend(
-        visual
-            .projected_instances
-            .iter()
-            .filter(|instance| instance.target_page_id == page.id)
-            .map(|instance| {
-                let text = instance
-                    .story_authority_id
-                    .and_then(|story_id| render_projected_story_v1(visual, story_id));
-                render_node_plan_v1(
-                    visual,
-                    instance.origin_node_id,
-                    instance.bounds,
-                    instance.transform.clone(),
-                    Some(instance.instance_id.clone()),
-                    text,
-                )
-            }),
-    );
+    // Projected visuals retain semantic origin NodeId but receive distinct
+    // visual identity and target geometry. Insert immediately after the target
+    // frame when known so paint order follows slot ownership deterministically.
+    for instance in visual
+        .projected_instances
+        .iter()
+        .filter(|instance| instance.target_page_id == page.id)
+    {
+        let text = instance
+            .story_authority_id
+            .and_then(|story_id| render_projected_story_v1(visual, story_id));
+        let projected = render_node_plan_v1(
+            visual,
+            instance.origin_node_id,
+            instance.bounds,
+            instance.transform.clone(),
+            Some(instance.instance_id.clone()),
+            text,
+        );
+
+        let insert_at = instance
+            .target_frame_node_id
+            .and_then(|target_frame_node_id| {
+                nodes.iter().position(|node| {
+                    node.visual_instance_id.is_none() && node.node_id == target_frame_node_id
+                })
+            })
+            .map(|index| index + 1)
+            .unwrap_or(nodes.len());
+        nodes.insert(insert_at, projected);
+    }
 
     Ok(PageRenderPlanV1 {
         schema_version: PAGE_RENDER_PLAN_SCHEMA_V1.to_owned(),
@@ -443,6 +472,11 @@ mod tests {
             projection_kind: ViewerProjectionKindV1::CmoStorySlot,
             origin_node_id,
             target_page_id: page_id,
+            target_story_id: None,
+            target_frame_node_id: None,
+            scalar_index: None,
+            source_order: None,
+            cmo_id: None,
             bounds: projected_bounds,
             transform: Affine2D::identity(),
             story_authority_id: Some(story_id),
@@ -463,6 +497,86 @@ mod tests {
         assert_eq!(
             projected.text.as_ref().map(|text| text.text.as_str()),
             Some("hello")
+        );
+    }
+
+    #[test]
+    fn projected_slot_suppresses_only_object_marker_glyphs_and_keeps_target_text() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let target_node_id = visual.scene.nodes[0].origin;
+        let target_story_id = visual.document.stories[0].id;
+        let source = "\u{FFFC}\r\u{FFFC}\r\u{FFFC}am.";
+        visual.document.stories[0].text = source.to_owned();
+        visual.text_fragments[0].text = source.to_owned();
+        visual.text_fragments[0].scalar_end =
+            u32::try_from(source.chars().count()).expect("bounded fixture");
+        visual.projected_instances.push(ViewerProjectedNodeInstanceV1 {
+            instance_id: "scene:cmo-story-slot:test".to_owned(),
+            projection_kind: ViewerProjectionKindV1::CmoStorySlot,
+            origin_node_id: target_node_id,
+            target_page_id: page_id,
+            target_story_id: Some(target_story_id),
+            target_frame_node_id: Some(target_node_id),
+            scalar_index: Some(0),
+            source_order: Some(0),
+            cmo_id: Some(7),
+            bounds: RectEmu::new(
+                LengthEmu::new(50),
+                LengthEmu::new(60),
+                LengthEmu::new(70),
+                LengthEmu::new(80),
+            ),
+            transform: Affine2D::identity(),
+            story_authority_id: None,
+        });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        let target = plan
+            .nodes
+            .iter()
+            .find(|node| node.visual_instance_id.is_none() && node.node_id == target_node_id)
+            .expect("direct target frame");
+        let rendered = &target.text.as_ref().expect("target text preserved").text;
+
+        assert!(!rendered.contains('\u{FFFC}'));
+        assert_eq!(rendered.chars().count(), source.chars().count());
+        assert!(rendered.ends_with("am."));
+        assert_eq!(rendered, &suppress_projected_object_marker_glyphs(source));
+    }
+
+    #[test]
+    fn projected_instance_is_painted_immediately_after_its_target_frame() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let target_node_id = visual.scene.nodes[0].origin;
+        let target_story_id = visual.document.stories[0].id;
+        visual.projected_instances.push(ViewerProjectedNodeInstanceV1 {
+            instance_id: "scene:cmo-story-slot:order-test".to_owned(),
+            projection_kind: ViewerProjectionKindV1::CmoStorySlot,
+            origin_node_id: target_node_id,
+            target_page_id: page_id,
+            target_story_id: Some(target_story_id),
+            target_frame_node_id: Some(target_node_id),
+            scalar_index: Some(0),
+            source_order: Some(0),
+            cmo_id: Some(7),
+            bounds: RectEmu::new(
+                LengthEmu::new(50),
+                LengthEmu::new(60),
+                LengthEmu::new(70),
+                LengthEmu::new(80),
+            ),
+            transform: Affine2D::identity(),
+            story_authority_id: None,
+        });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        assert_eq!(plan.nodes.len(), 2);
+        assert!(plan.nodes[0].visual_instance_id.is_none());
+        assert_eq!(
+            plan.nodes[1].visual_instance_id.as_deref(),
+            Some("scene:cmo-story-slot:order-test")
         );
     }
 
