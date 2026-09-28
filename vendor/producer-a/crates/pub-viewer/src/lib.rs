@@ -19,7 +19,8 @@ use pub_model::{
 };
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
-    carlton_admitted_carrier_page_seq_nums_v1, select_carlton_customer_page_seq_nums_v1,
+    carlton_admitted_carrier_page_seq_nums_v1, reference_fixture_profile_known_v1,
+    select_carlton_customer_page_seq_nums_v1, select_reference_fixture_customer_page_seq_nums_v1,
 };
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
@@ -825,6 +826,78 @@ fn select_viewer_pages(
     };
 
     let source_sha256 = source_hash.to_string();
+
+    if reference_fixture_profile_known_v1(&source_sha256) {
+        let page_roles = match analyze_mature_0x2c_page_roles(Cursor::new(bytes)) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                return ViewerPageSelection {
+                    page_ids: source.effective_pages.page_ids.clone(),
+                    disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                        reason: format!("reference_page_role_evidence_unavailable:{error}"),
+                    },
+                };
+            }
+        };
+        let observed_raw_page_seq_nums = page_roles
+            .pages
+            .iter()
+            .map(|page| page.contents_seq_num)
+            .collect::<Vec<_>>();
+        let selection = match select_reference_fixture_customer_page_seq_nums_v1(
+            &source_sha256,
+            &observed_raw_page_seq_nums,
+        ) {
+            Ok(Some(selection)) => selection,
+            Ok(None) => return generic(),
+            Err(error) => {
+                return ViewerPageSelection {
+                    page_ids: source.effective_pages.page_ids.clone(),
+                    disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                        reason: format!("reference_profile_rejected:{error}"),
+                    },
+                };
+            }
+        };
+
+        let mut page_ids = Vec::with_capacity(selection.customer_page_seq_nums.len());
+        for seq_num in &selection.customer_page_seq_nums {
+            let page_id = match derive_pub_page_id(&source_hash, *seq_num) {
+                Ok(page_id) => page_id,
+                Err(error) => {
+                    return ViewerPageSelection {
+                        page_ids: source.effective_pages.page_ids.clone(),
+                        disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                            reason: format!(
+                                "reference_customer_page_identity_unavailable:{seq_num}:{error}"
+                            ),
+                        },
+                    };
+                }
+            };
+            if !resolved.graph.pages.contains_key(&page_id) {
+                return ViewerPageSelection {
+                    page_ids: source.effective_pages.page_ids.clone(),
+                    disposition: ViewerPageSelectionDisposition::FamilyProfileUnavailable {
+                        reason: format!(
+                            "reference_customer_page_missing_from_resolved_graph:{seq_num}"
+                        ),
+                    },
+                };
+            }
+            page_ids.push(page_id);
+        }
+
+        return ViewerPageSelection {
+            page_ids,
+            disposition: ViewerPageSelectionDisposition::FamilyProfileApplied {
+                profile_id: selection.profile_id,
+                raw_page_count: selection.raw_page_count,
+                customer_page_count: selection.customer_page_seq_nums.len(),
+            },
+        };
+    }
+
     let Some(carrier_page_seq_nums) = carlton_admitted_carrier_page_seq_nums_v1(&source_sha256)
     else {
         return generic();
