@@ -323,6 +323,35 @@ pub fn derive_editor_story_provenance_v1(
     }
 }
 
+pub fn derive_editor_story_provenance_auto_v1(
+    session: &EditorSession,
+    story_id: StoryId,
+) -> Result<StoryProvenanceV1, StoryEditDomainError> {
+    match session.prove_author_created_story_v1(story_id) {
+        Ok(Some(_proof)) => Ok(StoryProvenanceV1::ChapteraCreated),
+        Ok(None) => derive_editor_story_provenance_v1(
+            session,
+            story_id,
+            StoryProvenanceHintV1::ImportedAuto,
+        ),
+        Err(error) => Err(StoryEditDomainError::new(error.code, error.message)),
+    }
+}
+
+pub fn derive_editor_story_edit_domain_auto_v1(
+    session: &EditorSession,
+    story_id: StoryId,
+) -> Result<StoryEditDomainV1, StoryEditDomainError> {
+    let story = session.graph().stories.get(&story_id).ok_or_else(|| {
+        StoryEditDomainError::new(
+            "missing_story",
+            "Story is absent from current EditorSession",
+        )
+    })?;
+    let provenance = derive_editor_story_provenance_auto_v1(session, story_id)?;
+    derive_story_edit_domain_v1(story_id.as_canonical().to_string(), &story.text, provenance)
+}
+
 pub fn derive_editor_story_edit_domain_v1(
     session: &EditorSession,
     story_id: StoryId,
