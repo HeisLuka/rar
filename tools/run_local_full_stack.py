@@ -80,7 +80,7 @@ def tail(path: pathlib.Path, count: int = 80) -> str:
     return "\n".join(lines[-count:])
 
 
-def open_failure_page(message: str) -> None:
+def open_failure_page(message: str, *, launch_browser: bool = True) -> None:
     STATE.mkdir(parents=True, exist_ok=True)
     page = STATE / "startup-error.html"
     body = f"""<!doctype html><meta charset="utf-8"><title>Chaptera Local — startup error">
@@ -92,7 +92,8 @@ def open_failure_page(message: str) -> None:
 <h2>editor-service.log</h2><pre>{html.escape(tail(EDITOR_LOG))}</pre>
 <p>Файлы логов: <code>{html.escape(str(LOGS))}</code></p>"""
     page.write_text(body, encoding="utf-8")
-    webbrowser.open(page.resolve().as_uri())
+    if launch_browser:
+        webbrowser.open(page.resolve().as_uri())
 
 
 def render_config(issuer: str) -> None:
@@ -272,7 +273,7 @@ def main() -> int:
         return 0
     except Exception as error:
         print(f"Chaptera Local failed: {error}", file=sys.stderr)
-        open_failure_page(str(error))
+        open_failure_page(str(error), launch_browser=not args.no_browser)
         return 1
     finally:
         for proc in (editor, worker, server):
