@@ -98,7 +98,7 @@ fn mobile_failure_diagnostic_json_with_policy(
     }
 
     pub_viewer::local_failure_diagnostic_json(bytes)
-
+}
 
 /// Read-only, source-neutral document state for a mobile Reader shell.
 ///
@@ -293,6 +293,31 @@ mod tests {
                 .contains("cfb_declared_stream_bytes_limit:"),
             "unexpected stream-byte rejection: {stream_error}"
         );
+    }
+
+    #[test]
+    fn mobile_failure_diagnostics_do_not_reparse_policy_rejected_cfb() {
+        let two_streams = cfb_fixture(&[("A", b"x"), ("B", b"y")]);
+        let diagnostic = mobile_failure_diagnostic_json_with_policy(
+            &two_streams,
+            PubScanPolicyV1 {
+                max_file_bytes: u64::MAX,
+                max_cfb_entries: 1,
+                max_declared_stream_bytes: u64::MAX,
+            },
+        )
+        .expect("policy rejection must produce source-free admission diagnostics");
+
+        let json: serde_json::Value =
+            serde_json::from_str(&diagnostic).expect("valid admission diagnostic JSON");
+        assert_eq!(
+            json["schema_version"],
+            MOBILE_ADMISSION_FAILURE_SCHEMA_V1
+        );
+        assert_eq!(json["admission"]["status"], "rejected_by_policy");
+        assert_eq!(json["contains_document_bytes"], false);
+        assert_eq!(json["contains_recovered_document_text"], false);
+        assert!(json.get("envelope").is_none());
     }
 
     #[test]
