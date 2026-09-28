@@ -80,7 +80,7 @@ fn effective_counts(path: &Path) -> (usize, usize, usize, usize, Vec<u8>) {
 
 #[test]
 #[ignore = "requires pinned Apache POI SampleNewsletter and SampleBrochure paths"]
-fn real_pub_effective_typography_matches_product_authority_on_both_fixtures() {
+fn real_pub_effective_typography_matches_product_authority_and_brochure_fence() {
     let newsletter = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
         .map(std::path::PathBuf::from)
         .expect("CHAPTERA_SAMPLE_NEWSLETTER");
