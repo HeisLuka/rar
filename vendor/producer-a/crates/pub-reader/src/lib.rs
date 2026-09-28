@@ -2995,6 +2995,55 @@ mod tests {
     }
 
     #[test]
+    fn customer_page_consensus_requires_exact_order_and_unique_oid_resolution() {
+        let hash = source_hash();
+        let p1 = derive_pub_page_id(&hash, 266).unwrap();
+        let p2 = derive_pub_page_id(&hash, 323).unwrap();
+        let mut pages = BTreeMap::new();
+        pages.insert((1, 0), vec![p1]);
+        pages.insert((1, 1), vec![p2]);
+
+        let projected = resolve_customer_page_ids_from_evidence(
+            &[vec![(1, 0), (1, 1)], vec![(1, 0), (1, 1)]],
+            &pages,
+        )
+        .unwrap();
+        assert_eq!(projected, vec![p1, p2]);
+
+        assert_eq!(
+            resolve_customer_page_ids_from_evidence(
+                &[vec![(1, 0), (1, 1)], vec![(1, 1), (1, 0)]],
+                &pages,
+            )
+            .unwrap_err(),
+            "controlling_page_lists_disagree"
+        );
+    }
+
+    #[test]
+    fn customer_page_consensus_fails_closed_on_missing_or_ambiguous_oid() {
+        let hash = source_hash();
+        let p1 = derive_pub_page_id(&hash, 266).unwrap();
+        let p2 = derive_pub_page_id(&hash, 323).unwrap();
+
+        let mut missing = BTreeMap::new();
+        missing.insert((1, 0), vec![p1]);
+        assert!(
+            resolve_customer_page_ids_from_evidence(&[vec![(1, 0), (1, 1)]], &missing)
+                .unwrap_err()
+                .starts_with("pgid_has_no_page:")
+        );
+
+        let mut ambiguous = BTreeMap::new();
+        ambiguous.insert((1, 0), vec![p1, p2]);
+        assert!(
+            resolve_customer_page_ids_from_evidence(&[vec![(1, 0)]], &ambiguous)
+                .unwrap_err()
+                .contains("pgid_is_ambiguous:")
+        );
+    }
+
+    #[test]
     fn source_object_key_vocabularies_are_explicit_and_disjoint() {
         assert_eq!(contents_object_key(330), "contents/0x2c/seq/330");
         assert_eq!(quill_story_object_key(22), "quill/syid/22");
