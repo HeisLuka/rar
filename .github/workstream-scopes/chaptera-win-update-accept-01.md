@@ -1,19 +1,34 @@
 # CHAPTERA-WIN-UPDATE-ACCEPT-01
 
-Fresh-main W2 acceptance over merged CHAPTERA-UPDATE-CORE-HARDEN-01.
+Fresh-main W2 acceptance over merged updater-core and the landed first Windows acceptance slice.
 
 ## Goal
-Prove the Windows update path converges safely across healthy update, failed health check rollback, and restart recovery without mutating user state outside the product tree.
+Prove the updater composes with the actual installed Chaptera Reader product boundary, not only synthetic fixture trees.
 
-## Scope
-- Windows-only product-level acceptance.
-- Reuse chaptera-update-engine/orchestrator/trust; no second updater implementation.
-- Use test identities/keys only; production signing remains out of scope.
-- Fail closed on ambiguous or broken state.
+## Reused lower-level authorities
+Do not duplicate proofs already owned elsewhere:
+- chaptera-update-engine transaction acceptance owns journal/crash/rename seams;
+- chaptera-update-engine staging acceptance owns tree-manifest/tamper/bounds;
+- Chaptera Reader Windows V0 owns the source-free Reader binary and pinned real-PUB smoke;
+- Chaptera Reader Windows installer V1 owns the stable current/.staging/.rollback layout plus Open With/no-default-steal and uninstall semantics.
 
-## Acceptance
-- A healthy candidate reaches confirmed current.
-- A candidate that fails health returns to the previous confirmed tree.
-- A process restart after unconfirmed activation recovers the previous confirmed tree before another transaction.
-- External user-state sentinel survives every transition.
-- Workflow runs on windows-latest against the fresh-main updater head.
+## This slice
+On windows-latest:
+1. build the real reader-only desktop binary;
+2. compile and run the existing stable-AppId Inno installer;
+3. preserve a foreign pre-existing .pub default and external state sentinel;
+4. run the pinned Apache POI SampleNewsletter PUB through the installed Reader;
+5. apply authenticated payload-swap policy A -> B using the real installed current/ tree;
+6. run real Reader health smoke on B and confirm it;
+7. apply C, run real Reader smoke, then inject a post-smoke health rejection;
+8. require rollback to restore the confirmed B tree byte-for-byte;
+9. run the real PUB smoke again after rollback;
+10. verify Open With, foreign .pub default, source PUB and external user state are unchanged;
+11. run the ordinary Reader uninstaller and prove updater-owned generations/journals are cleaned while external state/default remain.
+
+## Non-goals
+- no production signing credentials;
+- no second installer or registry authority;
+- no duplicate crash/tamper matrix;
+- no public update repository;
+- no document-model changes.
