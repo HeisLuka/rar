@@ -11,8 +11,7 @@ pub const CARLTON_PRESENTATION_INPUT_SCHEMA_V1: &str =
 pub const CARLTON_PRESENTATION_MANIFEST_SCHEMA_V1: &str =
     "chaptera.carlton-presentation-manifest.v1";
 
-const MARCH_2026_SHA256: &str =
-    "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3";
+const MARCH_2026_SHA256: &str = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3";
 const DECEMBER_2025_SHA256: &str =
     "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e";
 
@@ -109,8 +108,13 @@ pub enum CarltonPresentationError {
     UnknownCarrierPage(u32),
     CarrierCustomerOverlap(u32),
     CarrierMasterOverlap(u32),
-    CustomerMissingExpectedMaster { page_seq_num: u32, expected_master: u32 },
-    IdentityDerivation { page_seq_num: u32 },
+    CustomerMissingExpectedMaster {
+        page_seq_num: u32,
+        expected_master: u32,
+    },
+    IdentityDerivation {
+        page_seq_num: u32,
+    },
 }
 
 impl fmt::Display for CarltonPresentationError {
@@ -258,10 +262,9 @@ pub fn build_carlton_presentation_manifest_v1(
             ));
         }
     };
-    let master_page = pages_by_seq
-        .get(&master_seq)
-        .copied()
-        .ok_or(CarltonPresentationError::MasterTargetMissingFromPages(master_seq))?;
+    let master_page = pages_by_seq.get(&master_seq).copied().ok_or(
+        CarltonPresentationError::MasterTargetMissingFromPages(master_seq),
+    )?;
     if master_page.oid_dword0 == Some(2) {
         return Err(CarltonPresentationError::MasterLooksCustomerVisible(
             master_seq,
@@ -293,8 +296,11 @@ pub fn build_carlton_presentation_manifest_v1(
     }
 
     let page_id = |seq_num: u32| {
-        derive_pub_page_id_v1(&input.source_sha256, seq_num)
-            .map_err(|_| CarltonPresentationError::IdentityDerivation { page_seq_num: seq_num })
+        derive_pub_page_id_v1(&input.source_sha256, seq_num).map_err(|_| {
+            CarltonPresentationError::IdentityDerivation {
+                page_seq_num: seq_num,
+            }
+        })
     };
 
     let mut pages = Vec::with_capacity(input.pages.len());
