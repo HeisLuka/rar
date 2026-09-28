@@ -209,6 +209,57 @@ pub fn enter_explicit_text_mode(
     })
 }
 
+pub fn enter_pointer_text_mode(
+    editor: &EditorSession,
+    story_id: StoryId,
+    frame_id: NodeId,
+    page_id: &str,
+    page_x_emu: i64,
+    page_y_emu: i64,
+) -> Result<DesktopTextMode, String> {
+    editor
+        .can_replace_story_text(story_id)
+        .map_err(|error| error.to_string())?;
+    let revision = revision_id(editor);
+    let domain = derive_domain(editor, story_id)?;
+    let interaction_domain = to_interaction_domain_v1(&domain);
+    let layout = build_layout(editor, story_id, &revision)?;
+    let document_id = document_id(editor)?;
+    let session_id = format!("chaptera.desktop.text-session:{document_id}");
+    let activation = activate_pointer_text_v1(
+        &candidate(story_id, frame_id),
+        &revision,
+        &interaction_domain,
+        &layout.caret_map,
+        &layout.layout_revision_id,
+        &TextPointerTargetV1 {
+            page_id: page_id.to_owned(),
+            page_x_emu,
+            page_y_emu,
+        },
+        None,
+        true,
+        1,
+        &session_id,
+        &document_id,
+        None,
+    )
+    .map_err(|error| error.to_string())?;
+    let session = activation.active_session.ok_or_else(|| {
+        activation
+            .reason
+            .unwrap_or_else(|| "pointer text activation produced no active session".to_owned())
+    })?;
+
+    Ok(DesktopTextMode {
+        story_id,
+        frame_id,
+        domain,
+        layout,
+        session,
+    })
+}
+
 pub fn replace_external_text(
     editor: &mut EditorSession,
     mode: &mut DesktopTextMode,
@@ -337,24 +388,37 @@ mod tests {
         )
         .expect("open real SampleNewsletter Viewer geometry");
 
-        let (story_id, frame_id) = visual
+        let (story_id, frame_id, page_id, page_x_emu, page_y_emu) = visual
             .text_fragments
             .iter()
             .find_map(|fragment| {
-                editor
-                    .can_replace_story_text(fragment.story_id)
-                    .ok()
-                    .and_then(|_| {
-                        enter_explicit_text_mode(&editor, fragment.story_id, fragment.frame_id)
-                            .ok()
-                            .map(|_| (fragment.story_id, fragment.frame_id))
-                    })
+                editor.can_replace_story_text(fragment.story_id).ok()?;
+                let probe =
+                    enter_explicit_text_mode(&editor, fragment.story_id, fragment.frame_id).ok()?;
+                let stop = probe.layout.caret_map.caret_stops.iter().find(|stop| {
+                    stop.frame_id == fragment.frame_id.as_canonical().to_string()
+                        && stop.page_y_top_emu < stop.page_y_bottom_emu
+                })?;
+                Some((
+                    fragment.story_id,
+                    fragment.frame_id,
+                    stop.page_id.clone(),
+                    stop.page_x_emu,
+                    stop.page_y_top_emu + (stop.page_y_bottom_emu - stop.page_y_top_emu) / 2,
+                ))
             })
-            .expect("real fixture should expose one capability-safe placed TextFrame");
+            .expect("real fixture should expose one capability-safe placed TextFrame caret");
 
         let operation_count_before = editor.operations().len();
-        let mut mode =
-            enter_explicit_text_mode(&editor, story_id, frame_id).expect("enter direct text mode");
+        let mut mode = enter_pointer_text_mode(
+            &editor,
+            story_id,
+            frame_id,
+            &page_id,
+            page_x_emu,
+            page_y_emu,
+        )
+        .expect("one admitted pointer hit enters direct text mode");
         assert_eq!(
             editor.operations().len(),
             operation_count_before,
