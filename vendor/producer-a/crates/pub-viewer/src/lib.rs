@@ -15,7 +15,8 @@ use pub_layout::{
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
-    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+    Affine2D, CanonicalId, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest,
+    StoryFrame, StoryId,
 };
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
@@ -484,6 +485,141 @@ pub struct ViewerDiagnostic {
     pub message: String,
 }
 
+/// Source-neutral product projection admitted by an authority above the generic
+/// Reader. The generic PUB graph and its raw PAGE list remain unchanged; this
+/// value selects only the customer-facing Viewer/navigation/layout surfaces for
+/// one exact source identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerPresentationSelection {
+    pub profile_id: String,
+    pub source_hash: Sha256Digest,
+    pub page_ids: Vec<PageId>,
+}
+
+fn apply_presentation_selection_to_document(
+    document: &mut ViewerDocument,
+    selection: &ViewerPresentationSelection,
+) -> Result<Vec<PageId>> {
+    if selection.profile_id.trim().is_empty() {
+        return Err(anyhow!("Viewer presentation selection requires a non-empty profile id"));
+    }
+    if selection.source_hash != document.source.source_hash {
+        return Err(anyhow!(
+            "Viewer presentation selection source hash does not match the opened document"
+        ));
+    }
+    if selection.page_ids.is_empty() {
+        return Err(anyhow!("Viewer presentation selection cannot hide every page"));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut selected_pages = Vec::with_capacity(selection.page_ids.len());
+    for (zero_based, page_id) in selection.page_ids.iter().enumerate() {
+        if !seen.insert(*page_id) {
+            return Err(anyhow!(
+                "Viewer presentation selection contains duplicate page {}",
+                page_id.as_canonical()
+            ));
+        }
+        let mut page = document
+            .pages
+            .iter()
+            .find(|page| page.id == *page_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Viewer presentation selection references page {} outside the generic no-loss Viewer",
+                    page_id.as_canonical()
+                )
+            })?;
+        page.index =
+            u32::try_from(zero_based + 1).context("Viewer presentation page index exceeds u32")?;
+        selected_pages.push(page);
+    }
+
+    document.pages = selected_pages;
+    document
+        .diagnostics
+        .retain(|diagnostic| diagnostic.code != "viewer.page_projection.roles_unresolved");
+    document.diagnostics.push(ViewerDiagnostic {
+        code: "viewer.page_projection.presentation_profile".to_owned(),
+        severity: ViewerDiagnosticSeverity::Info,
+        message: format!(
+            "Admitted presentation profile {} selects {} customer-facing page surface(s) for this exact source; raw PAGE identities remain preserved upstream.",
+            selection.profile_id,
+            selection.page_ids.len()
+        ),
+    });
+    normalize_diagnostics(&mut document.diagnostics);
+
+    Ok(selection.page_ids.clone())
+}
+
+/// Applies an already-admitted presentation selection to product-facing Viewer
+/// state only. Physical scene instances are retained when their resolved parent
+/// surface is selected, even when their semantic origin belongs to a hidden
+/// master/carrier PAGE.
+pub fn apply_viewer_presentation_selection(
+    visual: &mut ViewerGeometryDocument,
+    selection: &ViewerPresentationSelection,
+) -> Result<()> {
+    let selected_page_ids =
+        apply_presentation_selection_to_document(&mut visual.document, selection)?;
+    let selected_origins = selected_page_ids
+        .iter()
+        .map(|page_id| page_id.into_canonical())
+        .collect::<BTreeSet<CanonicalId>>();
+
+    let old_surfaces = std::mem::take(&mut visual.scene.surfaces);
+    let mut selected_surfaces = Vec::with_capacity(selected_page_ids.len());
+    for page_id in &selected_page_ids {
+        let surface = old_surfaces
+            .iter()
+            .find(|surface| surface.origin == *page_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Viewer presentation selection references page {} without a resolved surface",
+                    page_id.as_canonical()
+                )
+            })?;
+        selected_surfaces.push(surface);
+    }
+    visual.scene.surfaces = selected_surfaces;
+
+    visual
+        .scene
+        .nodes
+        .retain(|node| selected_origins.contains(&node.parent_origin));
+    let retained_node_ids = visual
+        .scene
+        .nodes
+        .iter()
+        .map(|node| node.origin)
+        .collect::<BTreeSet<_>>();
+    visual
+        .scene
+        .origin_mapping
+        .retain(|mapping| retained_node_ids.contains(&mapping.resolved_node_origin));
+    visual
+        .paints
+        .retain(|paint| retained_node_ids.contains(&paint.node_id));
+    visual
+        .story_frames
+        .retain(|frame| retained_node_ids.contains(&frame.frame_id));
+    visual
+        .text_fragments
+        .retain(|fragment| retained_node_ids.contains(&fragment.frame_id));
+    for image in &mut visual.images {
+        image
+            .node_ids
+            .retain(|node_id| retained_node_ids.contains(node_id));
+    }
+    visual.images.retain(|image| !image.node_ids.is_empty());
+
+    Ok(())
+}
+
 struct Mature0x2cPipeline {
     source_hash: Sha256Digest,
     source: PubSourceGraphBuild,
@@ -499,6 +635,29 @@ struct Mature0x2cPipeline {
 pub fn open_mature_0x2c(bytes: &[u8]) -> Result<ViewerDocument> {
     let pipeline = build_mature_0x2c_pipeline(bytes)?;
     viewer_document_from_pipeline(bytes.len(), &pipeline)
+}
+
+/// Opens one mature 0x2C Publisher file and applies an already-admitted
+/// source-neutral presentation selection to Viewer navigation only.
+pub fn open_mature_0x2c_with_presentation(
+    bytes: &[u8],
+    selection: &ViewerPresentationSelection,
+) -> Result<ViewerDocument> {
+    let mut document = open_mature_0x2c(bytes)?;
+    apply_presentation_selection_to_document(&mut document, selection)?;
+    Ok(document)
+}
+
+/// Opens one mature 0x2C Publisher file and applies an already-admitted
+/// presentation selection to Viewer navigation and resolved physical surfaces.
+pub fn open_mature_0x2c_geometry_with_presentation(
+    bytes: &[u8],
+    environment: BoundedLayoutEnvironment,
+    selection: &ViewerPresentationSelection,
+) -> Result<ViewerGeometryDocument> {
+    let mut visual = open_mature_0x2c_geometry(bytes, environment)?;
+    apply_viewer_presentation_selection(&mut visual, selection)?;
+    Ok(visual)
 }
 
 /// Opens one mature 0x2C Publisher file through the real layout/scene boundary.
