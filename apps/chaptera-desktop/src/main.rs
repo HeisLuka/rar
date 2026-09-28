@@ -5623,10 +5623,12 @@ mod tests {
                         {
                             return None;
                         }
+                        // Object resize owns the exact frame boundary. Interior clicks on a
+                        // capability-safe TextFrame now intentionally request text activation, so
+                        // this regression must select the object through the boundary contract
+                        // rather than relying on the pre-text-activation center-click behavior.
                         let point = pub_interaction::DocumentPoint::new(
-                            pub_editor::LengthEmu::new(
-                                hit.bounds.x.get() + hit.bounds.width.get() / 2,
-                            ),
+                            hit.bounds.x,
                             pub_editor::LengthEmu::new(
                                 hit.bounds.y.get() + hit.bounds.height.get() / 2,
                             ),
@@ -5643,7 +5645,7 @@ mod tests {
         harness.get_by_label(&page_label).click();
         harness.step();
 
-        let object_center = {
+        let object_boundary = {
             let canvas = harness
                 .get_by_label("Document canvas")
                 .raw_bounds()
@@ -5682,15 +5684,15 @@ mod tests {
             )
         };
         harness.input_mut().events.extend([
-            egui::Event::PointerMoved(object_center),
+            egui::Event::PointerMoved(object_boundary),
             egui::Event::PointerButton {
-                pos: object_center,
+                pos: object_boundary,
                 button: egui::PointerButton::Primary,
                 pressed: true,
                 modifiers: egui::Modifiers::default(),
             },
             egui::Event::PointerButton {
-                pos: object_center,
+                pos: object_boundary,
                 button: egui::PointerButton::Primary,
                 pressed: false,
                 modifiers: egui::Modifiers::default(),
