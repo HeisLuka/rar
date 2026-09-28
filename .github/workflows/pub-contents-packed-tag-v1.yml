@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.94.1"
       - name: Run packed-tag codec regressions
         run: python tools/test_pub_contents_packed_tag_v1.py -v
       - name: Check production Rust Contents library
