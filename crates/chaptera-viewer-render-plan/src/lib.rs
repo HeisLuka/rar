@@ -561,7 +561,6 @@ mod tests {
         let mut visual = fixture();
         let page_id = visual.document.pages[0].id;
         let frame_id = visual.scene.nodes[0].origin;
-        let story_id = visual.document.stories[0].id;
         let source = "\u{FFFC}\r\u{FFFC}\r\u{FFFC}am.";
         visual.document.stories[0].text = source.to_owned();
         visual.text_fragments[0].text = source.to_owned();
