@@ -7217,11 +7217,77 @@ mod tests {
             ),
             "exact Carlton family presentation profile must be active before visual rendering"
         );
+        assert_eq!(
+            visual.projected_instances.len(),
+            4,
+            "exact March must admit exactly four visible canonical Cmo scene instances"
+        );
+        let projected_instance_ids = visual
+            .projected_instances
+            .iter()
+            .map(|projected| projected.scene_instance.instance_id.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            projected_instance_ids.len(),
+            4,
+            "canonical projected SceneInstance identities must be distinct"
+        );
+        assert!(visual.projected_instances.iter().all(|projected| {
+            projected.scene_instance.projection_kind
+                == chaptera_scene_instance::SceneProjectionKindV1::CmoStorySlot
+        }));
+        let direct_scene_origins = visual
+            .scene
+            .nodes
+            .iter()
+            .map(|node| node.origin.as_canonical().to_string())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            visual.projected_instances.iter().all(|projected| {
+                !direct_scene_origins.contains(&projected.scene_instance.origin_node_id)
+            }),
+            "projected Cmo carriers must not be reparented into direct customer scene nodes"
+        );
+        let projected_page_counts = visual
+            .document
+            .pages
+            .iter()
+            .map(|page| {
+                let page_id = page.id.as_canonical().to_string();
+                visual
+                    .projected_instances
+                    .iter()
+                    .filter(|projected| projected.scene_instance.target_page_id == page_id)
+                    .count()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            projected_page_counts,
+            vec![1, 2, 1],
+            "exact March projected Cmo distribution must stay 1/2/1"
+        );
 
         let mut page_receipts = Vec::new();
         for page_index in 0..visual.document.pages.len() {
             let plan = build_page_render_plan_v1(&visual, page_index)
                 .expect("current Reader page render plan");
+            let projected_node_count = plan
+                .nodes
+                .iter()
+                .filter(|node| node.projected_scene_instance.is_some())
+                .count();
+            assert_eq!(
+                projected_node_count,
+                projected_page_counts[page_index],
+                "render-plan projected instance count must match canonical Viewer adapter"
+            );
+            assert!(
+                plan.nodes
+                    .iter()
+                    .filter_map(|node| node.text.as_ref())
+                    .all(|fragment| !fragment.text.contains('\u{FFFC}')),
+                "admitted projected object markers must not paint as U+FFFC missing-glyph boxes"
+            );
             let width_px = ((plan.page_size.width.get() as f64 * RASTER_DPI / EMU_PER_INCH)
                 .round()
                 .max(1.0)) as u32;
@@ -7273,6 +7339,7 @@ mod tests {
                 "raster_width_px": width_px,
                 "raster_height_px": height_px,
                 "node_count": plan.nodes.len(),
+                "projected_scene_instance_count": projected_node_count,
                 "fill_node_count": plan.nodes.iter().filter(|node| node.solid_fill_rgb.is_some()).count(),
                 "line_node_count": plan.nodes.iter().filter(|node| node.solid_line.is_some()).count(),
                 "image_node_count": plan.nodes.iter().filter(|node| node.image.is_some()).count(),
@@ -7305,6 +7372,8 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic.code.clone())
                 .collect::<Vec<_>>(),
+            "projected_scene_instance_ids": projected_instance_ids,
+            "projected_page_counts": projected_page_counts,
             "pages": page_receipts,
         });
         fs::write(
