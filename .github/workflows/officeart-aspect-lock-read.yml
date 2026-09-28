@@ -24,6 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
+          components: rustfmt
       - name: Format
         run: cargo fmt --manifest-path tools/officeart-aspect-lock-read/Cargo.toml --check
       - name: Test source-free aspect-lock observations
