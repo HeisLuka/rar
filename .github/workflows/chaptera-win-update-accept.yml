@@ -1,0 +1,28 @@
+name: Chaptera Windows update acceptance
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-update-engine/**"
+      - "crates/chaptera-update-orchestrator/**"
+      - ".github/workflows/chaptera-win-update-accept.yml"
+      - ".github/workstream-scopes/chaptera-win-update-accept-01.md"
+  workflow_dispatch:
+
+concurrency:
+  group: chaptera-win-update-accept-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-update-acceptance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+      - name: Run Windows product update acceptance
+        run: cargo test -p chaptera-update-orchestrator --test windows_product_acceptance -- --nocapture
