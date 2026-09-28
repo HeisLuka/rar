@@ -62,6 +62,11 @@ def render_caddy() -> pathlib.Path:
         f"127.0.0.1:{UPSTREAM_PORT}",
         1,
     )
+    rendered = rendered.replace(
+        "header_up X-Forwarded-Host {host}",
+        f"header_up X-Forwarded-Host {EDGE_HOST}:{HTTPS_PORT}",
+        1,
+    )
     rendered = (
         "{\n"
         f"    http_port {HTTP_PORT}\n"
