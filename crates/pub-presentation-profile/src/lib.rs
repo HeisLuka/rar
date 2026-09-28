@@ -16,6 +16,11 @@ const MARCH_2026_SHA256: &str = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253
 const DECEMBER_2025_SHA256: &str =
     "41786e9ee564dfc3d10864a49c9e58af5e1689d31479ef0c478ffb79da16f79e";
 
+const SAMPLE_NEWSLETTER_SHA256: &str =
+    "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf";
+const SAMPLE_BROCHURE_SHA256: &str =
+    "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CarltonPageEvidenceV1 {
     pub document_ordinal: usize,
@@ -100,6 +105,40 @@ pub struct CarltonPresentationManifestV1 {
     pub customer_master_relations: Vec<CarltonMasterPresentationRelationV1>,
     pub invariants: CarltonPresentationInvariantsV1,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceFixturePresentationSelectionV1 {
+    pub profile_id: String,
+    pub source_sha256: String,
+    pub raw_page_count: usize,
+    pub customer_page_seq_nums: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceFixturePresentationError {
+    RawPageSequenceMismatch {
+        profile_id: &'static str,
+        expected: Vec<u32>,
+        observed: Vec<u32>,
+    },
+}
+
+impl fmt::Display for ReferenceFixturePresentationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RawPageSequenceMismatch {
+                profile_id,
+                expected,
+                observed,
+            } => write!(
+                f,
+                "reference fixture {profile_id} raw PAGE sequence mismatch: expected {expected:?}, observed {observed:?}"
+            ),
+        }
+    }
+}
+
+impl Error for ReferenceFixturePresentationError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CarltonPresentationError {
@@ -205,6 +244,65 @@ impl fmt::Display for CarltonPresentationError {
 }
 
 impl Error for CarltonPresentationError {}
+
+#[derive(Debug, Clone, Copy)]
+struct ReferenceFixtureProfile {
+    profile_id: &'static str,
+    expected_raw_page_seq_nums: &'static [u32],
+    customer_page_seq_nums: &'static [u32],
+}
+
+fn reference_fixture_profile(source_sha256: &str) -> Option<ReferenceFixtureProfile> {
+    match source_sha256 {
+        SAMPLE_NEWSLETTER_SHA256 => Some(ReferenceFixtureProfile {
+            profile_id: "apache-poi/sample-newsletter/publisher-reference/v1",
+            expected_raw_page_seq_nums: &[263, 266, 323, 352, 381, 269, 273, 277],
+            customer_page_seq_nums: &[266, 323, 352, 381],
+        }),
+        SAMPLE_BROCHURE_SHA256 => Some(ReferenceFixtureProfile {
+            profile_id: "apache-poi/sample-brochure/publisher-reference/v1",
+            expected_raw_page_seq_nums: &[263, 266, 334, 269, 273, 277],
+            customer_page_seq_nums: &[266, 334],
+        }),
+        _ => None,
+    }
+}
+
+/// Returns true only for exact, previously evidenced reference fixture bytes.
+/// This is intentionally not a family classifier.
+pub fn reference_fixture_profile_known_v1(source_sha256: &str) -> bool {
+    reference_fixture_profile(source_sha256).is_some()
+}
+
+/// Applies an exact-source Publisher-backed presentation projection to the two
+/// pinned Apache POI reference fixtures. Unknown hashes are not classified.
+///
+/// The caller must pass the recovered physical PAGE sequence in document order.
+/// Any drift on an admitted hash fails closed so the product can fall back to
+/// generic no-loss presentation rather than silently hiding source truth.
+pub fn select_reference_fixture_customer_page_seq_nums_v1(
+    source_sha256: &str,
+    observed_raw_page_seq_nums: &[u32],
+) -> Result<Option<ReferenceFixturePresentationSelectionV1>, ReferenceFixturePresentationError> {
+    let Some(profile) = reference_fixture_profile(source_sha256) else {
+        return Ok(None);
+    };
+
+    if observed_raw_page_seq_nums != profile.expected_raw_page_seq_nums {
+        return Err(ReferenceFixturePresentationError::RawPageSequenceMismatch {
+            profile_id: profile.profile_id,
+            expected: profile.expected_raw_page_seq_nums.to_vec(),
+            observed: observed_raw_page_seq_nums.to_vec(),
+        });
+    }
+
+    Ok(Some(ReferenceFixturePresentationSelectionV1 {
+        profile_id: profile.profile_id.to_owned(),
+        source_sha256: source_sha256.to_owned(),
+        raw_page_count: observed_raw_page_seq_nums.len(),
+        customer_page_seq_nums: profile.customer_page_seq_nums.to_vec(),
+    }))
+}
 
 #[derive(Debug, Clone, Copy)]
 struct AdmittedProfile {
@@ -513,6 +611,47 @@ mod tests {
                 .collect(),
             carrier_page_seq_nums: vec![279],
         }
+    }
+
+    #[test]
+    fn newsletter_reference_profile_selects_four_publisher_pages() {
+        let selection = select_reference_fixture_customer_page_seq_nums_v1(
+            SAMPLE_NEWSLETTER_SHA256,
+            &[263, 266, 323, 352, 381, 269, 273, 277],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(selection.customer_page_seq_nums, vec![266, 323, 352, 381]);
+        assert_eq!(selection.raw_page_count, 8);
+    }
+
+    #[test]
+    fn brochure_reference_profile_selects_two_publisher_pages() {
+        let selection = select_reference_fixture_customer_page_seq_nums_v1(
+            SAMPLE_BROCHURE_SHA256,
+            &[263, 266, 334, 269, 273, 277],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(selection.customer_page_seq_nums, vec![266, 334]);
+        assert_eq!(selection.raw_page_count, 6);
+    }
+
+    #[test]
+    fn reference_profile_drift_fails_closed_and_unknown_hash_is_ignored() {
+        assert!(
+            select_reference_fixture_customer_page_seq_nums_v1(&"11".repeat(32), &[263, 266],)
+                .unwrap()
+                .is_none()
+        );
+
+        assert!(matches!(
+            select_reference_fixture_customer_page_seq_nums_v1(
+                SAMPLE_BROCHURE_SHA256,
+                &[263, 266, 334, 269, 277],
+            ),
+            Err(ReferenceFixturePresentationError::RawPageSequenceMismatch { .. })
+        ));
     }
 
     #[test]
