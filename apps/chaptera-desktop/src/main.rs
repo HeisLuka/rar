@@ -7019,8 +7019,21 @@ mod tests {
             !visual.typography_runs.is_empty(),
             "Reader must expose bounded source typography"
         );
-        // Inherited typography is measured in the receipt but is not a golden precondition:
-        // this fixture may validly expose only explicit admitted runs on a given parser frontier.
+        let inherited_typography_run_count = visual
+            .typography_runs
+            .iter()
+            .filter(|run| run.font_inherited || run.size_inherited)
+            .count();
+        assert_eq!(
+            visual.typography_runs.len(),
+            106,
+            "current main source authority proves 106 product-safe SampleNewsletter effective typography runs; Reader/Viewer projection must preserve them 1:1"
+        );
+        assert_eq!(
+            inherited_typography_run_count,
+            88,
+            "current main source authority proves 88 explicit-FDPP-selector inherited SampleNewsletter runs; projection must not drop inheritance provenance"
+        );
         assert!(
             visual
                 .typography_runs
@@ -7070,11 +7083,7 @@ mod tests {
             "source_sha256": source_sha256,
             "page_number": 2,
             "typography_run_count": visual.typography_runs.len(),
-            "inherited_typography_run_count": visual
-                .typography_runs
-                .iter()
-                .filter(|run| run.font_inherited || run.size_inherited)
-                .count(),
+            "inherited_typography_run_count": inherited_typography_run_count,
             "render_plan_typography_sections": typography_sections,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
