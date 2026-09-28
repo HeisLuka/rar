@@ -4958,6 +4958,7 @@ mod tests {
             exact_file_consent_open: false,
             exact_file_consent_status: None,
             show_diagnostics: false,
+            reader_inspector_tab: reader_product_ui::InspectorTab::Document,
         };
 
         assert_eq!(
@@ -5013,6 +5014,7 @@ mod tests {
             exact_file_consent_open: false,
             exact_file_consent_status: None,
             show_diagnostics: false,
+            reader_inspector_tab: reader_product_ui::InspectorTab::Document,
         };
 
         assert_eq!(app.fidelity_status(), None);
@@ -5278,6 +5280,7 @@ mod tests {
             exact_file_consent_open: false,
             exact_file_consent_status: None,
             show_diagnostics: false,
+            reader_inspector_tab: reader_product_ui::InspectorTab::Document,
         };
 
         app.editor
