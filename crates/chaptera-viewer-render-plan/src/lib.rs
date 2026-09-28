@@ -6,9 +6,9 @@
 
 #[cfg(feature = "projected-scene-instances")]
 use chaptera_scene_instance::{SceneInstanceV1, SceneProjectionKindV1};
-use pub_model::{Affine2D, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
 #[cfg(feature = "projected-scene-instances")]
 use pub_model::CanonicalId;
+use pub_model::{Affine2D, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
 use pub_viewer::ViewerGeometryDocument;
 #[cfg(feature = "projected-scene-instances")]
 use pub_viewer::ViewerProjectedSceneInstanceV1;
@@ -78,12 +78,21 @@ pub struct RenderTypographyRunV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderPlanErrorV1 {
-    PageIndexOutOfBounds { page_index: usize },
-    PageSurfaceMissing { page_id: PageId },
+    PageIndexOutOfBounds {
+        page_index: usize,
+    },
+    PageSurfaceMissing {
+        page_id: PageId,
+    },
     #[cfg(feature = "projected-scene-instances")]
-    ProjectedIdentityInvalid { field: &'static str, value: String },
+    ProjectedIdentityInvalid {
+        field: &'static str,
+        value: String,
+    },
     #[cfg(feature = "projected-scene-instances")]
-    ProjectedKindUnsupported { instance_id: String },
+    ProjectedKindUnsupported {
+        instance_id: String,
+    },
 }
 
 impl fmt::Display for RenderPlanErrorV1 {
@@ -97,11 +106,17 @@ impl fmt::Display for RenderPlanErrorV1 {
             }
             #[cfg(feature = "projected-scene-instances")]
             Self::ProjectedIdentityInvalid { field, value } => {
-                write!(formatter, "projected {field} is not canonical identity: {value}")
+                write!(
+                    formatter,
+                    "projected {field} is not canonical identity: {value}"
+                )
             }
             #[cfg(feature = "projected-scene-instances")]
             Self::ProjectedKindUnsupported { instance_id } => {
-                write!(formatter, "projected instance {instance_id} has unsupported projection kind")
+                write!(
+                    formatter,
+                    "projected instance {instance_id} has unsupported projection kind"
+                )
             }
         }
     }
@@ -147,7 +162,12 @@ fn projected_text(
         return Ok(None);
     };
     let story_id = parse_story_id(story_text, "story_authority_id")?;
-    let Some(story) = visual.document.stories.iter().find(|story| story.id == story_id) else {
+    let Some(story) = visual
+        .document
+        .stories
+        .iter()
+        .find(|story| story.id == story_id)
+    else {
         return Ok(None);
     };
     let scalar_end = u32::try_from(story.text.chars().count()).unwrap_or(u32::MAX);
@@ -244,14 +264,18 @@ pub fn build_page_render_plan_v1(
                     };
                     #[cfg(feature = "projected-scene-instances")]
                     if visual.projected_instances.iter().any(|projected| {
-                        projected.scene_instance.target_page_id == page.id.as_canonical().to_string()
+                        projected.scene_instance.target_page_id
+                            == page.id.as_canonical().to_string()
                             && projected.target_frame_node_id == node.origin
                     }) {
                         rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
                     }
                     rendered
                 });
-            let paint = visual.paints.iter().find(|paint| paint.node_id == node.origin);
+            let paint = visual
+                .paints
+                .iter()
+                .find(|paint| paint.node_id == node.origin);
             let image = visual
                 .images
                 .iter()
@@ -280,13 +304,9 @@ pub fn build_page_render_plan_v1(
         .collect::<Vec<_>>();
 
     #[cfg(feature = "projected-scene-instances")]
-    for projected in visual
-        .projected_instances
-        .iter()
-        .filter(|projected| {
-            projected.scene_instance.target_page_id == page.id.as_canonical().to_string()
-        })
-    {
+    for projected in visual.projected_instances.iter().filter(|projected| {
+        projected.scene_instance.target_page_id == page.id.as_canonical().to_string()
+    }) {
         if projected.scene_instance.projection_kind != SceneProjectionKindV1::CmoStorySlot {
             return Err(RenderPlanErrorV1::ProjectedKindUnsupported {
                 instance_id: projected.scene_instance.instance_id.clone(),
@@ -294,7 +314,10 @@ pub fn build_page_render_plan_v1(
         }
         let origin_node_id =
             parse_node_id(&projected.scene_instance.origin_node_id, "origin_node_id")?;
-        let paint = visual.paints.iter().find(|paint| paint.node_id == origin_node_id);
+        let paint = visual
+            .paints
+            .iter()
+            .find(|paint| paint.node_id == origin_node_id);
         let image = visual
             .images
             .iter()
@@ -341,14 +364,14 @@ pub fn build_page_render_plan_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pub_layout::{
-        BoundedLayoutEnvironment, BoundedResolvedScene, ResolvedPhysicalNode, ResolvedSurface,
-    };
-    use pub_model::{Affine2D, CanonicalId, LengthEmu, RectEmu, Sha256Digest, Size2D};
     #[cfg(feature = "projected-scene-instances")]
     use chaptera_scene_instance::{
         SCENE_INSTANCE_SCHEMA_V1, SceneInstanceV1, SceneProjectionKindV1,
     };
+    use pub_layout::{
+        BoundedLayoutEnvironment, BoundedResolvedScene, ResolvedPhysicalNode, ResolvedSurface,
+    };
+    use pub_model::{Affine2D, CanonicalId, LengthEmu, RectEmu, Sha256Digest, Size2D};
     use pub_viewer::{
         ViewerDocument, ViewerEmbeddedImage, ViewerNodePaint, ViewerPage, ViewerSolidLine,
         ViewerSource, ViewerTextFragment, ViewerTypographyRun, viewer_story_text_sha256,
@@ -502,17 +525,19 @@ mod tests {
             cmo_slot_index: Some(0),
             cmo_scalar_index: Some(0),
         };
-        visual.projected_instances.push(pub_viewer::ViewerProjectedSceneInstanceV1 {
-            scene_instance: instance.clone(),
-            target_frame_node_id: origin_node_id,
-            bounds: RectEmu::new(
-                LengthEmu::new(50),
-                LengthEmu::new(60),
-                LengthEmu::new(70),
-                LengthEmu::new(80),
-            ),
-            transform: Affine2D::identity(),
-        });
+        visual
+            .projected_instances
+            .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
+                scene_instance: instance.clone(),
+                target_frame_node_id: origin_node_id,
+                bounds: RectEmu::new(
+                    LengthEmu::new(50),
+                    LengthEmu::new(60),
+                    LengthEmu::new(70),
+                    LengthEmu::new(80),
+                ),
+                transform: Affine2D::identity(),
+            });
 
         let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
         let projected = plan
@@ -553,12 +578,14 @@ mod tests {
             cmo_slot_index: Some(0),
             cmo_scalar_index: Some(0),
         };
-        visual.projected_instances.push(pub_viewer::ViewerProjectedSceneInstanceV1 {
-            scene_instance: instance,
-            target_frame_node_id: frame_id,
-            bounds: visual.scene.nodes[0].bounds,
-            transform: Affine2D::identity(),
-        });
+        visual
+            .projected_instances
+            .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
+                scene_instance: instance,
+                target_frame_node_id: frame_id,
+                bounds: visual.scene.nodes[0].bounds,
+                transform: Affine2D::identity(),
+            });
 
         let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
         let direct = plan
