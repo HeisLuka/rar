@@ -262,9 +262,7 @@ fn valid_tool_part(value: &str) -> bool {
         return false;
     }
     bytes.all(|byte| {
-        byte.is_ascii_lowercase()
-            || byte.is_ascii_digit()
-            || matches!(byte, b'.' | b'_' | b'-')
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
     })
 }
 
@@ -358,10 +356,7 @@ impl CanvasToolStateV1 {
             self.active_tool.name.clone(),
         )?;
         if let Some(gesture) = &self.active_gesture {
-            CanvasToolIdV1::new(
-                gesture.tool.namespace.clone(),
-                gesture.tool.name.clone(),
-            )?;
+            CanvasToolIdV1::new(gesture.tool.namespace.clone(), gesture.tool.name.clone())?;
             if gesture.token.is_empty() {
                 return Err(CreationInteractionError::new(
                     "invalid_gesture_token",
@@ -407,10 +402,7 @@ pub struct CanvasToolTransitionV1 {
     pub commit_requested: bool,
 }
 
-fn transition(
-    state: CanvasToolStateV1,
-    action: CanvasToolActionV1,
-) -> CanvasToolTransitionV1 {
+fn transition(state: CanvasToolStateV1, action: CanvasToolActionV1) -> CanvasToolTransitionV1 {
     CanvasToolTransitionV1 {
         state,
         action,
@@ -632,21 +624,19 @@ mod tests {
     #[test]
     fn zero_size_cancel_identity_and_overflow_match_canonical_law() {
         for current in [p(0, 20), p(20, 0), p(0, 0)] {
-            let tx =
-                update_box_draw_v1(&start_box_draw_v1("page:1", p(0, 0)).unwrap(), current)
-                    .unwrap();
+            let tx = update_box_draw_v1(&start_box_draw_v1("page:1", p(0, 0)).unwrap(), current)
+                .unwrap();
             let result = commit_box_draw_v1(&tx).unwrap();
             assert_eq!(result.status, BoxDrawCommitStatusV1::NoChange);
             assert!(result.bounds.is_none());
         }
 
-        let tx =
-            update_box_draw_v1(&start_box_draw_v1("customer-page:42", p(1, 2)).unwrap(), p(11, 22))
-                .unwrap();
-        assert_eq!(
-            commit_box_draw_v1(&tx).unwrap().page_id,
-            "customer-page:42"
-        );
+        let tx = update_box_draw_v1(
+            &start_box_draw_v1("customer-page:42", p(1, 2)).unwrap(),
+            p(11, 22),
+        )
+        .unwrap();
+        assert_eq!(commit_box_draw_v1(&tx).unwrap().page_id, "customer-page:42");
         let cancelled = cancel_box_draw_v1(&tx).unwrap();
         assert_eq!(
             preview_box_draw_v1(&cancelled).unwrap().status,
@@ -723,10 +713,9 @@ mod tests {
         assert!(switched.state.active_gesture.is_none());
 
         let link = link_textbox_tool_v1();
-        let state =
-            activate_canvas_tool_v1(&default_canvas_tool_state_v1(), link.clone())
-                .unwrap()
-                .state;
+        let state = activate_canvas_tool_v1(&default_canvas_tool_state_v1(), link.clone())
+            .unwrap()
+            .state;
         let state = start_pointer_gesture_v1(&state, link.clone(), "link-1")
             .unwrap()
             .state;
@@ -764,10 +753,9 @@ mod tests {
     #[test]
     fn textbox_tool_can_own_boxdraw_without_leaking_tool_semantics_into_boxdraw() {
         let tool = textbox_create_tool_v1();
-        let state =
-            activate_canvas_tool_v1(&default_canvas_tool_state_v1(), tool.clone())
-                .unwrap()
-                .state;
+        let state = activate_canvas_tool_v1(&default_canvas_tool_state_v1(), tool.clone())
+            .unwrap()
+            .state;
         let state = start_pointer_gesture_v1(&state, tool.clone(), "textbox-draw-1")
             .unwrap()
             .state;
@@ -777,7 +765,10 @@ mod tests {
         assert_eq!(preview.status, BoxDrawPreviewStatusV1::Preview);
         assert_eq!(state.active_tool, tool);
         assert_eq!(
-            state.active_gesture.as_ref().map(|gesture| gesture.token.as_str()),
+            state
+                .active_gesture
+                .as_ref()
+                .map(|gesture| gesture.token.as_str()),
             Some("textbox-draw-1")
         );
         let ended = end_pointer_gesture_v1(&state, &tool, "textbox-draw-1").unwrap();
