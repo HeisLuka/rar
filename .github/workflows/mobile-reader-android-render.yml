@@ -63,11 +63,16 @@ jobs:
           test -f apps/chaptera-mobile-android/app/src/main/jniLibs/arm64-v8a/libchaptera_mobile_reader_jni.so
           test -f apps/chaptera-mobile-android/app/src/main/jniLibs/x86_64/libchaptera_mobile_reader_jni.so
 
-      - name: Acquire pinned real PUB fixture
+      - name: Acquire pinned real PUB fixtures and probe exact image coverage
         run: |
           mkdir -p apps/chaptera-mobile-android/app/src/androidTest/assets
-          curl --fail --location             https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub             --output apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub
+          mkdir -p "$RUNNER_TEMP/mobile-image-probe"
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub --output apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub
           echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub" | sha256sum --check
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub --output "$RUNNER_TEMP/mobile-image-probe/SampleBrochure.pub"
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/Simple.pub --output "$RUNNER_TEMP/mobile-image-probe/Simple.pub"
+          sha256sum "$RUNNER_TEMP/mobile-image-probe/"*.pub
+          cargo +1.94.1 run --quiet --manifest-path crates/chaptera-mobile-reader-core/Cargo.toml --bin mobile-reader-image-probe --             apps/chaptera-mobile-android/app/src/androidTest/assets/SampleNewsletter.pub             "$RUNNER_TEMP/mobile-image-probe/SampleBrochure.pub"             "$RUNNER_TEMP/mobile-image-probe/Simple.pub"
 
       - name: Build Android app and instrumentation APK
         working-directory: apps/chaptera-mobile-android
