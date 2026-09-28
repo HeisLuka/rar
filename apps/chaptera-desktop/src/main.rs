@@ -21,10 +21,10 @@ mod text_session;
 
 use chaptera_canvas_creation_interaction::{
     BoxDrawCommitStatusV1, BoxDrawTransactionV1, CanvasToolStateV1, PointEmuV1, RectEmuV1,
-    activate_canvas_tool_v1, cancel_box_draw_v1, commit_box_draw_v1,
-    default_canvas_tool_state_v1, end_pointer_gesture_v1, preview_box_draw_v1,
-    select_tool_v1, start_box_draw_v1, start_pointer_gesture_v1, textbox_create_tool_v1,
-    update_box_draw_v1, update_pointer_gesture_v1,
+    activate_canvas_tool_v1, cancel_box_draw_v1, commit_box_draw_v1, default_canvas_tool_state_v1,
+    end_pointer_gesture_v1, preview_box_draw_v1, select_tool_v1, start_box_draw_v1,
+    start_pointer_gesture_v1, textbox_create_tool_v1, update_box_draw_v1,
+    update_pointer_gesture_v1,
 };
 use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
@@ -2222,9 +2222,7 @@ impl ViewerApp {
                 self.canvas_tool_state = transition.state;
             }
         }
-        if let Ok(transition) =
-            activate_canvas_tool_v1(&self.canvas_tool_state, select_tool_v1())
-        {
+        if let Ok(transition) = activate_canvas_tool_v1(&self.canvas_tool_state, select_tool_v1()) {
             self.canvas_tool_state = transition.state;
         }
         self.canvas_box_draw = None;
@@ -2232,19 +2230,13 @@ impl ViewerApp {
             Some("Text Box creation cancelled without creating a document revision.".to_owned());
     }
 
-    fn create_canvas_text_box(
-        &mut self,
-        page_id: pub_editor::PageId,
-        bounds: RectEmuV1,
-    ) {
-        let node_id =
-            pub_editor::NodeId::from_canonical(pub_model::new_editor_canonical_id());
-        let story_id =
-            pub_editor::StoryId::from_canonical(pub_model::new_editor_canonical_id());
+    fn create_canvas_text_box(&mut self, page_id: pub_editor::PageId, bounds: RectEmuV1) {
+        let node_id = pub_editor::NodeId::from_canonical(pub_model::new_editor_canonical_id());
+        let story_id = pub_editor::StoryId::from_canonical(pub_model::new_editor_canonical_id());
         let preset = pub_editor::AuthoringTextPresetV1 {
             resource_id: chaptera_desktop_fallback_font_resource::RESOURCE_ID.to_owned(),
-            font_fingerprint_sha256:
-                chaptera_desktop_fallback_font_resource::EXPECTED_SHA256.to_owned(),
+            font_fingerprint_sha256: chaptera_desktop_fallback_font_resource::EXPECTED_SHA256
+                .to_owned(),
             face_index: 0,
             font_size_emu: pub_editor::LengthEmu::new(
                 chaptera_desktop_fallback_font_resource::FONT_SIZE_EMU,
