@@ -1,9 +1,17 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
+import { checkBotId } from 'botid/server';
 
 const MAX_BYTES = 64 * 1024 * 1024;
 
 export async function POST(request: Request) {
   const body = (await request.json()) as HandleUploadBody;
+
+  if (body.type === 'blob.generate-client-token') {
+    const verification = await checkBotId();
+    if (verification.isBot) {
+      return Response.json({ error: 'Automated upload rejected.' }, { status: 403 });
+    }
+  }
 
   try {
     const response = await handleUpload({
