@@ -6923,6 +6923,8 @@ mod tests {
             !visual.typography_runs.is_empty(),
             "Reader must expose bounded source typography"
         );
+        // Inherited typography is measured in the receipt but is not a golden precondition:
+        // this fixture may validly expose only explicit admitted runs on a given parser frontier.
         assert!(
             visual
                 .typography_runs
