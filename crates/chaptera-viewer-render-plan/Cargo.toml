@@ -11,12 +11,13 @@ projected-scene-instances = ["dep:chaptera-scene-instance", "pub-viewer/cmo-slot
 
 [dependencies]
 chaptera-scene-instance = { path = "../chaptera-scene-instance", optional = true }
+pub-layout = { path = "../../vendor/producer-a/crates/pub-layout" }
 pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
 pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-pub-layout = { path = "../../vendor/producer-a/crates/pub-layout" }
+font-test-data = "=0.8.0"
 serde_json = "1"
 
 [workspace]
