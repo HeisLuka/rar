@@ -270,10 +270,10 @@ fn exact_u32_field(
             field.block_type
         );
     }
-    let RawContentsBlockBody::U32 { value, .. } = field.body else {
+    let RawContentsBlockBody::U32 { value, .. } = &field.body else {
         bail!("{label} does not decode as u32");
     };
-    Ok(Some(value))
+    Ok(Some(*value))
 }
 
 fn exact_chunk_bytes<'a>(contents: &'a [u8], chunk: &Contents0x2cChunk) -> Result<&'a [u8]> {
