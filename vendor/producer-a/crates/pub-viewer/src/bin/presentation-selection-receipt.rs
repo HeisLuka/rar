@@ -45,9 +45,7 @@ fn main() -> Result<()> {
             .context("usage: presentation-selection-receipt SOURCE.pub PROFILE.json OUTPUT.json")?,
     );
     if args.next().is_some() {
-        anyhow::bail!(
-            "usage: presentation-selection-receipt SOURCE.pub PROFILE.json OUTPUT.json"
-        );
+        anyhow::bail!("usage: presentation-selection-receipt SOURCE.pub PROFILE.json OUTPUT.json");
     }
 
     let bytes = fs::read(&source_path)
