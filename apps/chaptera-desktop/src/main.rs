@@ -4132,15 +4132,10 @@ fn paint_page_thumbnail(
     let Some(page) = visual.document.pages.get(page_index) else {
         return;
     };
-    let Some(surface) = visual
-        .scene
-        .surfaces
-        .iter()
-        .find(|surface| surface.origin == page.id)
-    else {
+    let Ok(render_plan) = build_page_render_plan_v1(visual, page_index) else {
         return;
     };
-    if surface.size.width.get() <= 0 || surface.size.height.get() <= 0 {
+    if render_plan.page_size.width.get() <= 0 || render_plan.page_size.height.get() <= 0 {
         return;
     }
 
@@ -4161,16 +4156,10 @@ fn paint_page_thumbnail(
     );
 
     let content_painter = painter.with_clip_rect(page_rect);
-    let scale_x = page_rect.width() / surface.size.width.get() as f32;
-    let scale_y = page_rect.height() / surface.size.height.get() as f32;
-    let page_origin = page.id.into_canonical();
+    let scale_x = page_rect.width() / render_plan.page_size.width.get() as f32;
+    let scale_y = page_rect.height() / render_plan.page_size.height.get() as f32;
 
-    for node in visual
-        .scene
-        .nodes
-        .iter()
-        .filter(|node| node.parent_origin == page_origin)
-    {
+    for node in &render_plan.nodes {
         if node.bounds.width.get() <= 0 || node.bounds.height.get() <= 0 {
             continue;
         }
@@ -4186,11 +4175,7 @@ fn paint_page_thumbnail(
             ),
         );
 
-        let node_paint = visual
-            .paints
-            .iter()
-            .find(|paint| paint.node_id == node.origin);
-        if let Some(rgb) = node_paint.and_then(|paint| paint.solid_fill_rgb) {
+        if let Some(rgb) = node.solid_fill_rgb {
             content_painter.rect_filled(
                 node_rect,
                 0.0,
@@ -4198,20 +4183,21 @@ fn paint_page_thumbnail(
             );
         }
 
-        let replacement_key = editor
-            .and_then(|editor| editor.image_replacement_for(node.origin))
-            .map(|sha256| format!("replacement:{:?}", sha256));
+        let projected_read_only = node.scene_instance_id.is_some();
+        let replacement_key = (!projected_read_only)
+            .then(|| {
+                editor
+                    .and_then(|editor| editor.image_replacement_for(node.node_id))
+                    .map(|sha256| format!("replacement:{:?}", sha256))
+            })
+            .flatten();
         let replacement_texture = replacement_key
             .as_ref()
             .and_then(|key| image_textures.get(key));
-        let source_texture = visual
-            .images
-            .iter()
-            .find(|embedded| embedded.node_ids.contains(&node.origin))
-            .and_then(|embedded| {
-                let key = format!("{:?}", embedded.resource_id);
-                image_textures.get(&key)
-            });
+        let source_texture = node.image.as_ref().and_then(|image| {
+            let key = format!("{:?}", image.resource_id);
+            image_textures.get(&key)
+        });
         if let Some(texture) = replacement_texture.or(source_texture) {
             content_painter.image(
                 texture.texture.id(),
@@ -4221,10 +4207,7 @@ fn paint_page_thumbnail(
             );
         }
 
-        if let Some(fragment) = visual
-            .text_fragments
-            .iter()
-            .find(|fragment| fragment.frame_id == node.origin)
+        if let Some(fragment) = node.text.as_ref()
             && !fragment.text.is_empty()
             && node_rect.width() >= 4.0
             && node_rect.height() >= 4.0
@@ -4240,7 +4223,7 @@ fn paint_page_thumbnail(
             );
         }
 
-        if let Some(line) = node_paint.and_then(|paint| paint.solid_line.as_ref()) {
+        if let Some(line) = node.solid_line.as_ref() {
             content_painter.rect_stroke(
                 node_rect,
                 0.0,
@@ -4252,6 +4235,8 @@ fn paint_page_thumbnail(
             );
         }
     }
+
+    debug_assert_eq!(render_plan.page_id, page.id);
 }
 
 fn numeric_zoom_scene_scale(zoom: f32) -> Option<f32> {
@@ -4343,8 +4328,9 @@ mod tests {
         let source = include_str!("main.rs");
         assert!(source.contains("Page {} thumbnail"));
         assert!(source.contains("paint_page_thumbnail"));
+        assert!(source.contains("build_page_render_plan_v1(visual, page_index)"));
+        assert!(source.contains("for node in &render_plan.nodes"));
         assert!(source.contains("with_clip_rect(page_rect)"));
-        assert!(source.contains("text_fragments"));
         assert!(source.contains("PageNavigated"));
     }
 
