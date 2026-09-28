@@ -39,7 +39,11 @@ pub fn mobile_reader_admission_policy_v1() -> PubScanPolicyV1 {
 /// Linux seccomp, process isolation, filesystem confinement, or malware scan on
 /// Android/iOS.
 pub fn admit_mobile_pub_bytes_v1(bytes: &[u8]) -> Result<()> {
-    let result = inspect_pub_bytes_v1(bytes, mobile_reader_admission_policy_v1(), false);
+    admit_mobile_pub_bytes_with_policy_v1(bytes, mobile_reader_admission_policy_v1())
+}
+
+fn admit_mobile_pub_bytes_with_policy_v1(bytes: &[u8], policy: PubScanPolicyV1) -> Result<()> {
+    let result = inspect_pub_bytes_v1(bytes, policy, false);
     match result.status {
         PubScanStatusV1::AcceptedCfb => Ok(()),
         PubScanStatusV1::ParseFailed => {
@@ -199,6 +203,86 @@ mod tests {
         assert_eq!(policy.max_file_bytes, MOBILE_READER_MAX_FILE_BYTES_V1);
         assert!(policy.max_cfb_entries > 0);
         assert!(policy.max_declared_stream_bytes > 0);
+    }
+
+    fn cfb_fixture(streams: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+
+        let mut compound = cfb::CompoundFile::create(Cursor::new(Vec::new()))
+            .expect("create synthetic CFB");
+        for (name, bytes) in streams {
+            compound
+                .create_stream(format!("/{name}"))
+                .expect("create synthetic stream")
+                .write_all(bytes)
+                .expect("write synthetic stream");
+        }
+        compound.into_inner().into_inner()
+    }
+
+    #[test]
+    fn mobile_admission_rejects_entry_count_and_declared_stream_bombs() {
+        let two_streams = cfb_fixture(&[("A", b"x"), ("B", b"y")]);
+        let entry_error = admit_mobile_pub_bytes_with_policy_v1(
+            &two_streams,
+            PubScanPolicyV1 {
+                max_file_bytes: u64::MAX,
+                max_cfb_entries: 1,
+                max_declared_stream_bytes: u64::MAX,
+            },
+        )
+        .expect_err("CFB entry-count limit must fail closed");
+        assert!(
+            entry_error
+                .to_string()
+                .contains("cfb_entry_limit:"),
+            "unexpected entry-count rejection: {entry_error}"
+        );
+
+        let stream_bytes = cfb_fixture(&[("Payload", b"1234")]);
+        let stream_error = admit_mobile_pub_bytes_with_policy_v1(
+            &stream_bytes,
+            PubScanPolicyV1 {
+                max_file_bytes: u64::MAX,
+                max_cfb_entries: u64::MAX,
+                max_declared_stream_bytes: 3,
+            },
+        )
+        .expect_err("declared stream byte limit must fail closed");
+        assert!(
+            stream_error
+                .to_string()
+                .contains("cfb_declared_stream_bytes_limit:"),
+            "unexpected stream-byte rejection: {stream_error}"
+        );
+    }
+
+    #[test]
+    fn mobile_admission_rejects_oversized_input_before_cfb_walk_and_recovers_statelessly() {
+        let valid_cfb = cfb_fixture(&[("Payload", b"x")]);
+        let size_error = admit_mobile_pub_bytes_with_policy_v1(
+            &valid_cfb,
+            PubScanPolicyV1 {
+                max_file_bytes: valid_cfb.len() as u64 - 1,
+                max_cfb_entries: u64::MAX,
+                max_declared_stream_bytes: u64::MAX,
+            },
+        )
+        .expect_err("oversized input must fail before parse/render");
+        assert!(
+            size_error.to_string().contains("input_size_limit:"),
+            "unexpected size rejection: {size_error}"
+        );
+
+        admit_mobile_pub_bytes_with_policy_v1(
+            &valid_cfb,
+            PubScanPolicyV1 {
+                max_file_bytes: valid_cfb.len() as u64,
+                max_cfb_entries: u64::MAX,
+                max_declared_stream_bytes: u64::MAX,
+            },
+        )
+        .expect("a later valid structural admission must not be poisoned by rejection");
     }
 
     #[test]
