@@ -115,23 +115,11 @@ fn decode_booleans(raw: u32) -> CalloutBooleansV1 {
         f_callout_drop_auto: raw & CALLOUT_DROP_AUTO_BIT != 0,
         f_callout_length_specified: raw & CALLOUT_LENGTH_SPECIFIED_BIT != 0,
         callout: effective(raw, USE_CALLOUT_BIT, CALLOUT_BIT),
-        callout_accent_bar: effective(
-            raw,
-            USE_CALLOUT_ACCENT_BAR_BIT,
-            CALLOUT_ACCENT_BAR_BIT,
-        ),
-        callout_text_border: effective(
-            raw,
-            USE_CALLOUT_TEXT_BORDER_BIT,
-            CALLOUT_TEXT_BORDER_BIT,
-        ),
+        callout_accent_bar: effective(raw, USE_CALLOUT_ACCENT_BAR_BIT, CALLOUT_ACCENT_BAR_BIT),
+        callout_text_border: effective(raw, USE_CALLOUT_TEXT_BORDER_BIT, CALLOUT_TEXT_BORDER_BIT),
         callout_minus_x: effective(raw, USE_CALLOUT_MINUS_X_BIT, CALLOUT_MINUS_X_BIT),
         callout_minus_y: effective(raw, USE_CALLOUT_MINUS_Y_BIT, CALLOUT_MINUS_Y_BIT),
-        callout_drop_auto: effective(
-            raw,
-            USE_CALLOUT_DROP_AUTO_BIT,
-            CALLOUT_DROP_AUTO_BIT,
-        ),
+        callout_drop_auto: effective(raw, USE_CALLOUT_DROP_AUTO_BIT, CALLOUT_DROP_AUTO_BIT),
         callout_length_specified: effective(
             raw,
             USE_CALLOUT_LENGTH_SPECIFIED_BIT,
@@ -188,10 +176,7 @@ fn decode_callout(entry: &Fopte) -> Option<CalloutPropertyValueV1> {
     }
 }
 
-fn inspect(
-    logical_stream: StreamPath,
-    bytes: &[u8],
-) -> Result<CalloutInventoryV1, Box<dyn Error>> {
+fn inspect(logical_stream: StreamPath, bytes: &[u8]) -> Result<CalloutInventoryV1, Box<dyn Error>> {
     let shapes = inspect_sp_containers(logical_stream.clone(), bytes)?;
     let mut observations = Vec::new();
 
