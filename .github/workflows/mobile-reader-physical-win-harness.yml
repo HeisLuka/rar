@@ -1,0 +1,98 @@
+name: Mobile Reader Windows physical harness
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "scripts/run-mobile-reader-v0-device.ps1"
+      - ".github/workflows/mobile-reader-physical-win-harness.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate-powershell-harness:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse PowerShell runner and enforce physical-gate boundaries
+        shell: pwsh
+        run: |
+          $path = "scripts/run-mobile-reader-v0-device.ps1"
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $path),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+
+          $text = Get-Content -Raw $path
+          $required = @(
+            "PrepareFixturesOnly",
+            "InteractiveResolver",
+            "ANDROID_SDK_ROOT_MISSING",
+            "ANDROID_NDK_MISSING",
+            "AIRPLANE_MODE_REQUIRED",
+            "ANDROID_DEVICE_COUNT",
+            "UNSUPPORTED_ANDROID_API",
+            "UNSUPPORTED_ANDROID_ABI",
+            "V0UserCycleInstrumentedTest",
+            "PhysicalPerfInstrumentedTest",
+            "query-activities",
+            "android.intent.action.VIEW",
+            "resolver_not_offered",
+            "resolver_requires_human_choice",
+            "resolver_chaptera_no_useful_page",
+            "Test-ChapteraUsefulPage",
+            "uiautomator",
+            "PHYSICAL_OPEN_WITH_FAILED",
+            'chaptera_offered = $ResolverChapteraOffered',
+            'unqualified_view_intent = $ResolverUnqualifiedIntent',
+            'useful_page_visible = $ResolverUsefulPageVisible',
+            'contains_device_serial = $false',
+            'contains_android_id = $false',
+            'contains_document_bytes = $false',
+            'contains_recovered_document_text = $false',
+            'internet_permission_requested = $false'
+          )
+          foreach ($marker in $required) {
+            if (-not $text.Contains($marker)) {
+              throw "missing required harness marker: $marker"
+            }
+          }
+
+          if ($text -match "settings\s+get\s+secure\s+android_id") {
+            throw "physical receipt runner must not read Android ID"
+          }
+          if ($text -match "serial_number|ro\.serialno") {
+            throw "physical receipt runner must not collect device serial identifiers"
+          }
+          if ($text -match "com\.chaptera\.reader/\.MainActivity|--component") {
+            throw "system Open with proof must use an unqualified VIEW intent"
+          }
+
+      - name: Verify pinned physical fixtures
+        shell: pwsh
+        run: |
+          $text = Get-Content -Raw scripts/run-mobile-reader-v0-device.ps1
+          foreach ($pair in @(
+            @("Simple.pub", "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d"),
+            @("SampleBrochure.pub", "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87"),
+            @("SampleNewsletter.pub", "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf")
+          )) {
+            if (-not $text.Contains($pair[0]) -or -not $text.Contains($pair[1])) {
+              throw "missing pinned fixture identity: $($pair[0])"
+            }
+          }
