@@ -14,3 +14,6 @@ pub-reader={path="../pub-reader"}
 serde.workspace=true
 serde_json.workspace=true
 sha2.workspace=true
+
+[dev-dependencies]
+root-pub-model = { package = "pub-model", path = "../../../../crates/pub-model" }
