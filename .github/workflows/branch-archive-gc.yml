@@ -1,0 +1,128 @@
+name: Guarded stale branch archival
+
+on:
+  pull_request:
+    paths:
+      - ".github/branch-cleanup/2026-09-29-stale-archive.tsv"
+      - ".github/workflows/branch-archive-gc.yml"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  archive-gc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Archive exact tips to tags, then delete stale branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_HEAD: ${{ github.head_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          MANIFEST: .github/branch-cleanup/2026-09-29-stale-archive.tsv
+          TAG_PREFIX: archive/branches/2026-09-29
+        run: |
+          set -euo pipefail
+          git fetch --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+
+          mkdir -p target/branch-archive-gc
+          for f in archived deleted absent changed skipped-open-pr failed; do
+            : > "target/branch-archive-gc/$f.txt"
+          done
+
+          gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == "'"$GH_REPO"'") | .head.ref' \
+            | sort -u > target/branch-archive-gc/open-heads.txt
+
+          while IFS=$'\t' read -r branch expected_sha commit_date audit_age || [[ -n "${branch:-}" ]]; do
+            [[ -z "${branch:-}" || "$branch" == \#* ]] && continue
+
+            if [[ "$branch" == "main" || "$branch" == "master" || "$branch" == "$DEFAULT_BRANCH" || "$branch" == "$CURRENT_HEAD" ]]; then
+              echo "REFUSE $branch" >&2
+              printf '%s\n' "$branch" >> target/branch-archive-gc/failed.txt
+              continue
+            fi
+
+            if grep -Fxq "$branch" target/branch-archive-gc/open-heads.txt; then
+              echo "SKIP open PR head: $branch"
+              printf '%s\n' "$branch" >> target/branch-archive-gc/skipped-open-pr.txt
+              continue
+            fi
+
+            remote_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1{print $1}')"
+            if [[ -z "$remote_sha" ]]; then
+              echo "ABSENT $branch"
+              printf '%s\n' "$branch" >> target/branch-archive-gc/absent.txt
+              continue
+            fi
+
+            if [[ "$remote_sha" != "$expected_sha" ]]; then
+              echo "CHANGED $branch expected=$expected_sha actual=$remote_sha"
+              printf '%s\t%s\t%s\n' "$branch" "$expected_sha" "$remote_sha" >> target/branch-archive-gc/changed.txt
+              continue
+            fi
+
+            tag="$TAG_PREFIX/$branch"
+            remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk 'NR==1{print $1}')"
+            if [[ -n "$remote_tag_sha" && "$remote_tag_sha" != "$expected_sha" ]]; then
+              echo "TAG COLLISION $tag expected=$expected_sha actual=$remote_tag_sha" >&2
+              printf '%s\n' "$branch" >> target/branch-archive-gc/failed.txt
+              continue
+            fi
+
+            if [[ -z "$remote_tag_sha" ]]; then
+              git tag -f "$tag" "$expected_sha"
+              git push origin "refs/tags/$tag:refs/tags/$tag"
+            fi
+
+            verify_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk 'NR==1{print $1}')"
+            if [[ "$verify_tag_sha" != "$expected_sha" ]]; then
+              echo "TAG VERIFY FAILED $tag expected=$expected_sha actual=$verify_tag_sha" >&2
+              printf '%s\n' "$branch" >> target/branch-archive-gc/failed.txt
+              continue
+            fi
+            printf '%s\t%s\t%s\n' "$branch" "$expected_sha" "$tag" >> target/branch-archive-gc/archived.txt
+
+            if git push origin --delete "$branch"; then
+              echo "ARCHIVED+DELETED $branch -> $tag"
+              printf '%s\n' "$branch" >> target/branch-archive-gc/deleted.txt
+            else
+              echo "DELETE FAILED $branch" >&2
+              printf '%s\n' "$branch" >> target/branch-archive-gc/failed.txt
+            fi
+          done < "$MANIFEST"
+
+          python - <<'PY'
+          import json, pathlib
+          root=pathlib.Path("target/branch-archive-gc")
+          def lines(name):
+              p=root/(name+".txt")
+              return [x.strip() for x in p.read_text().splitlines() if x.strip()]
+          receipt={
+              "schema_version":"rar.branch-archive-gc.v1",
+              "archived":lines("archived"),
+              "deleted":lines("deleted"),
+              "already_absent":lines("absent"),
+              "changed_since_audit":lines("changed"),
+              "skipped_open_pr":lines("skipped-open-pr"),
+              "failed":lines("failed"),
+          }
+          (root/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n")
+          print(json.dumps(receipt,indent=2))
+          if receipt["failed"]:
+              raise SystemExit(1)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: branch-archive-gc-receipt
+          path: target/branch-archive-gc/
+          if-no-files-found: error
