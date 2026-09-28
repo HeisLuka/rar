@@ -3489,10 +3489,12 @@ impl ViewerApp {
                         admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode).admitted
                     });
                     let resize_admitted = projected.is_none_or(|instance| {
-                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode).admitted
+                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode)
+                            .admitted
                     });
                     let replace_image_admitted = projected.is_none_or(|instance| {
-                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage).admitted
+                        admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage)
+                            .admitted
                     });
                     let node_id = render_node.node_id;
                     let node_bounds = if move_admitted && resize_admitted {
@@ -4189,9 +4191,12 @@ fn paint_page_thumbnail(
             );
         }
 
-        let replace_image_admitted = node.projected_scene_instance.as_ref().is_none_or(|instance| {
-            admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage).admitted
-        });
+        let replace_image_admitted =
+            node.projected_scene_instance
+                .as_ref()
+                .is_none_or(|instance| {
+                    admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage).admitted
+                });
         let replacement_key = replace_image_admitted
             .then(|| {
                 editor
@@ -4328,9 +4333,16 @@ mod tests {
         let source = include_str!("main.rs");
         assert!(source.contains("for render_node in &render_plan.nodes"));
         assert!(source.contains("render_node.projected_scene_instance.as_ref()"));
-        assert!(source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode)"));
-        assert!(source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode)"));
-        assert!(source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage)"));
+        assert!(
+            source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::MoveNode)")
+        );
+        assert!(
+            source.contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ResizeNode)")
+        );
+        assert!(
+            source
+                .contains("admit_object_mutation_v1(instance, ObjectMutationKindV1::ReplaceImage)")
+        );
     }
 
     #[test]
@@ -7277,8 +7289,7 @@ mod tests {
                 .filter(|node| node.projected_scene_instance.is_some())
                 .count();
             assert_eq!(
-                projected_node_count,
-                projected_page_counts[page_index],
+                projected_node_count, projected_page_counts[page_index],
                 "render-plan projected instance count must match canonical Viewer adapter"
             );
             assert!(
