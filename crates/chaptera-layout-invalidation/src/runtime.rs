@@ -2,11 +2,48 @@ use crate::{
     ArtifactDependencyV1, ArtifactKeyV1, ArtifactReceiptV1, DependencyEdgeV1, DependencyKindV1,
     DependencyNodeV1, ExpectedUpstreamV1, FingerprintV1, fingerprint_v1,
 };
+use std::mem::size_of;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const PREPARED_METRICS_STAGE_V1: &str = "prepared-metrics-v1";
 pub const LINE_REGION_STAGE_V1: &str = "line-region-v1";
 pub const STORY_FLOW_STAGE_V1: &str = "story-flow-v1";
 pub const SCENE_SHARD_STAGE_V1: &str = "scene-shard-v1";
+
+static COPY_LEDGER_PREPARED_UNITS_CLONE_BYTES: AtomicU64 = AtomicU64::new(0);
+static COPY_LEDGER_PREPARED_UNITS_CLONE_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LayoutCopyLedgerSnapshotV1 {
+    pub prepared_units_clone_bytes: u64,
+    pub prepared_units_clone_instances: u64,
+}
+
+pub fn reset_layout_copy_ledger_v1() {
+    COPY_LEDGER_PREPARED_UNITS_CLONE_BYTES.store(0, Ordering::Relaxed);
+    COPY_LEDGER_PREPARED_UNITS_CLONE_INSTANCES.store(0, Ordering::Relaxed);
+}
+
+pub fn layout_copy_ledger_snapshot_v1() -> LayoutCopyLedgerSnapshotV1 {
+    LayoutCopyLedgerSnapshotV1 {
+        prepared_units_clone_bytes: COPY_LEDGER_PREPARED_UNITS_CLONE_BYTES.load(Ordering::Relaxed),
+        prepared_units_clone_instances: COPY_LEDGER_PREPARED_UNITS_CLONE_INSTANCES
+            .load(Ordering::Relaxed),
+    }
+}
+
+fn prepared_units_clone_byte_len(units: &[PreparedMetricsUnitV1]) -> u64 {
+    let mut total = size_of::<PreparedMetricsUnitV1>().saturating_mul(units.len());
+    for unit in units {
+        total = total
+            .saturating_add(unit.story_id.len())
+            .saturating_add(unit.unit_id.len())
+            .saturating_add(
+                size_of::<ResolvedScalarMetricV1>().saturating_mul(unit.scalars.len()),
+            );
+    }
+    u64::try_from(total).unwrap_or(u64::MAX)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedScalarMetricV1 {
@@ -300,7 +337,10 @@ pub fn resolve_story_flow_v1(
         return Err(FlowErrorV1::MissingPreparedUnits);
     }
 
+    let clone_bytes = prepared_units_clone_byte_len(prepared_units);
     let mut units = prepared_units.to_vec();
+    COPY_LEDGER_PREPARED_UNITS_CLONE_BYTES.fetch_add(clone_bytes, Ordering::Relaxed);
+    COPY_LEDGER_PREPARED_UNITS_CLONE_INSTANCES.fetch_add(1, Ordering::Relaxed);
     units.sort_by_key(|unit| unit.scalar_start);
     for pair in units.windows(2) {
         if pair[0].scalar_end != pair[1].scalar_start {
