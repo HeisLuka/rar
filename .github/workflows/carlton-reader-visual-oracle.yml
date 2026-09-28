@@ -41,6 +41,13 @@ jobs:
         shell: pwsh
         run: python -m pip install --disable-pip-version-check --no-cache-dir "requests==2.32.5" "PyMuPDF==1.24.14"
 
+      - name: Validate visual-oracle Python tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m py_compile tools/acquire_carlton_march_pair.py tools/reader_reference_pdf_raster_v1.py tools/pdf_reference_diff_v1.py
+          if ($LASTEXITCODE -ne 0) { throw "visual-oracle Python syntax check failed" }
+
       - name: Acquire exact public Carlton March PUB/PDF pair
         shell: pwsh
         run: |
