@@ -26,7 +26,6 @@ SERIAL="${DEVICES[0]}"
 MODEL="$(adb -s "$SERIAL" shell getprop ro.product.model | tr -d '\r')"
 API="$(adb -s "$SERIAL" shell getprop ro.build.version.sdk | tr -d '\r')"
 ABI="$(adb -s "$SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')"
-ANDROID_ID="$(adb -s "$SERIAL" shell settings get secure android_id 2>/dev/null | tr -d '\r' || true)"
 AIRPLANE_MODE="$(adb -s "$SERIAL" shell settings get global airplane_mode_on 2>/dev/null | tr -d '\r' || true)"
 
 if [ "$AIRPLANE_MODE" != "1" ]; then
@@ -114,7 +113,7 @@ if [ "$TEST_RC" -eq 0 ] && [ "$PERF_RC" -eq 0 ]; then
   fi
 fi
 
-python3 - "$RECEIPT" "$MODEL" "$API" "$ABI" "$ANDROID_ID" "$AIRPLANE_MODE" "$START_UTC" "$END_UTC" "$TEST_RC" "$PERF_RC" "$WIFI_STATE" "$DATA_STATE" <<'PY'
+python3 - "$RECEIPT" "$MODEL" "$API" "$ABI" "$AIRPLANE_MODE" "$START_UTC" "$END_UTC" "$TEST_RC" "$PERF_RC" "$WIFI_STATE" "$DATA_STATE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -125,15 +124,14 @@ receipt = {
         "model": sys.argv[2],
         "api": sys.argv[3],
         "abi": sys.argv[4],
-        "android_id_present": bool(sys.argv[5] and sys.argv[5] != "null"),
-        "airplane_mode_enabled": sys.argv[6] == "1",
+        "airplane_mode_enabled": sys.argv[5] == "1",
     },
-    "started_at_utc": sys.argv[7],
-    "finished_at_utc": sys.argv[8],
-    "v0_user_cycle_exit_code": int(sys.argv[9]),
-    "physical_perf_exit_code": int(sys.argv[10]),
-    "wifi_observation": sys.argv[11],
-    "mobile_data_observation": sys.argv[12],
+    "started_at_utc": sys.argv[6],
+    "finished_at_utc": sys.argv[7],
+    "v0_user_cycle_exit_code": int(sys.argv[8]),
+    "physical_perf_exit_code": int(sys.argv[9]),
+    "wifi_observation": sys.argv[10],
+    "mobile_data_observation": sys.argv[11],
     "contains_document_bytes": False,
     "contains_recovered_document_text": False,
 }
