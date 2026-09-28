@@ -42,6 +42,7 @@ jobs:
           import hashlib
           import json
           import re
+          import time
           from pathlib import Path
 
           import requests
@@ -70,9 +71,12 @@ jobs:
           session.headers.update({
               "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Acquisition/2.0)",
               "Accept": "*/*",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache",
           })
 
-          response = session.get(PAGE, timeout=30)
+          request_page = f"{PAGE}?chaptera_cache_bust={int(time.time())}"
+          response = session.get(request_page, timeout=30)
           response.raise_for_status()
           raw = response.text
           (DISC / "latest-letters.html").write_text(raw, encoding="utf-8")
@@ -1034,12 +1038,8 @@ jobs:
               )
           PY
 
-          python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/March-2026-plccmob-receipt.json
-          python tools/validate_plccmob_projection_receipt.py             out/carlton/exact/December-2025-plccmob-receipt.json
-            out/carlton/exact/March-2026-page-role.json
-            out/carlton/exact/December-2025-page-role.json
-            out/carlton/exact/March-2026-presentation-manifest.json
-            out/carlton/exact/December-2025-presentation-manifest.json
+          python tools/validate_plccmob_projection_receipt.py out/carlton/exact/March-2026-plccmob-receipt.json
+          python tools/validate_plccmob_projection_receipt.py out/carlton/exact/December-2025-plccmob-receipt.json
 
       - name: Parse exact PlcCmob chunks through Rust core
         shell: bash
