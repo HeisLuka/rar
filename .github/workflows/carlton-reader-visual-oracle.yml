@@ -1,0 +1,227 @@
+name: Carlton March Reader visual oracle
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/pub-presentation-profile/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "apps/chaptera-desktop/src/render_backend.rs"
+      - "apps/chaptera-desktop/src/main.rs"
+      - "tools/acquire_carlton_march_pair.py"
+      - "tools/pdf_reference_diff_v1.py"
+      - "tools/reader_reference_pdf_raster_v1.py"
+      - ".github/workflows/carlton-reader-visual-oracle.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  visual-oracle:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install exact visual-oracle dependencies
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check --no-cache-dir "requests==2.32.5" "PyMuPDF==1.24.14"
+
+      - name: Acquire exact public Carlton March PUB/PDF pair
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "carlton-reader-visual-oracle"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          python tools/acquire_carlton_march_pair.py $root
+          if ($LASTEXITCODE -ne 0) { throw "Carlton acquisition failed" }
+          $pub = Join-Path $root "March-2026.pub"
+          $pdf = Join-Path $root "March-2026-reference.pdf"
+          $out = Join-Path $root "reader-golden"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          "CHAPTERA_GOLDEN_CARLTON_MARCH=$pub" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_GOLDEN_CARLTON_OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_CARLTON_REFERENCE_PDF=$pdf" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_CARLTON_VISUAL_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check shared render plan
+        run: cargo test --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml
+
+      - name: Render all three clean Carlton customer pages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test -p chaptera-desktop --features reader-only golden_carlton_march_clean_pages_use_current_reader_render_backend -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { throw "Carlton clean Reader render failed" }
+
+      - name: Compare current Reader rasters with published PDF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $golden = Join-Path $env:CHAPTERA_GOLDEN_CARLTON_OUT "carlton-march-reader-golden-receipt.json"
+          $diff = Join-Path $env:CHAPTERA_CARLTON_VISUAL_ROOT "reader-reference-diff.json"
+          python tools/reader_reference_pdf_raster_v1.py $golden $env:CHAPTERA_CARLTON_REFERENCE_PDF $diff
+          if ($LASTEXITCODE -ne 0) { throw "Carlton Reader/reference comparison failed" }
+
+      - name: Build sanitized baseline visual receipt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CHAPTERA_CARLTON_VISUAL_ROOT"])
+          golden_root = Path(os.environ["CHAPTERA_GOLDEN_CARLTON_OUT"])
+          golden = json.loads(
+              (golden_root / "carlton-march-reader-golden-receipt.json").read_text()
+          )
+          diff = json.loads((root / "reader-reference-diff.json").read_text())
+          acquisition = json.loads((root / "acquisition.json").read_text())
+
+          expected_pub = "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
+          expected_pdf = "c1288571ee8da91afa27ca5c49191aacefe82123df294c11f58ca047d0ced769"
+
+          if golden["source_sha256"] != expected_pub:
+              raise SystemExit("Reader golden source identity drift")
+          if diff["reader_source_sha256"] != expected_pub:
+              raise SystemExit("comparator source identity drift")
+          if diff["reference_sha256"] != expected_pdf:
+              raise SystemExit("reference PDF identity drift")
+          if acquisition["files"]["March 2026.pub"]["sha256"] != expected_pub:
+              raise SystemExit("acquired PUB identity drift")
+          if acquisition["files"]["March 2026.pdf"]["sha256"] != expected_pdf:
+              raise SystemExit("acquired PDF identity drift")
+          if diff["page_count"] != {"candidate": 3, "reference": 3, "match": True}:
+              raise SystemExit(f"page-count mismatch: {diff['page_count']!r}")
+          if golden["page_count"] != 3 or golden["scene_surface_count"] != 3:
+              raise SystemExit("current Reader is not on Carlton 3/3 presentation")
+
+          pages = []
+          for golden_page, diff_page in zip(golden["pages"], diff["pages"]):
+              visual = diff_page["diff"]
+              pages.append({
+                  "page_number": golden_page["page_number"],
+                  "page_id": golden_page["page_id"],
+                  "physical_page_size_matches_reference": diff_page[
+                      "physical_page_size_matches_reference"
+                  ],
+                  "raster_size_match": visual["raster_size_match"],
+                  "node_count": golden_page["node_count"],
+                  "fill_node_count": golden_page["fill_node_count"],
+                  "line_node_count": golden_page["line_node_count"],
+                  "image_node_count": golden_page["image_node_count"],
+                  "text_node_count": golden_page["text_node_count"],
+                  "typography_sections": golden_page["typography_sections"],
+                  "executed_text_node_count": golden_page["executed_text_node_count"],
+                  "executed_source_typography_sections": golden_page[
+                      "executed_source_typography_sections"
+                  ],
+                  "executed_fallback_typography_sections": golden_page[
+                      "executed_fallback_typography_sections"
+                  ],
+                  "clipped_text_node_count": golden_page["clipped_text_node_count"],
+                  "raw_changed_pixel_count": visual.get("raw_changed_pixel_count"),
+                  "noise_only_pixel_count": visual.get("noise_only_pixel_count"),
+                  "significant_pixel_count": visual.get("significant_pixel_count"),
+                  "significant_fraction": visual.get("significant_fraction"),
+                  "mean_abs_channel_delta": visual.get("mean_abs_channel_delta"),
+                  "max_channel_delta": visual.get("max_channel_delta"),
+                  "significant_bbox": visual.get("significant_bbox"),
+                  "region_count": len(visual.get("regions", [])),
+                  "regions": visual.get("regions", []),
+              })
+
+          receipt = {
+              "schema": "chaptera.carlton-march-reader-baseline-visual-oracle.v1",
+              "source_pub_sha256": expected_pub,
+              "reference_pdf_sha256": expected_pdf,
+              "page_count": 3,
+              "family_profile_applied": golden["family_profile_applied"],
+              "viewer_diagnostic_codes": golden["viewer_diagnostic_codes"],
+              "reader_render": {
+                  "backend": golden["render_backend"],
+                  "raster_dpi": golden["raster_dpi"],
+                  "shell_ui_rendered": golden["shell_ui_rendered"],
+                  "selection_overlay_rendered": golden["selection_overlay_rendered"],
+                  "preview_warning_overlay_rendered": golden[
+                      "preview_warning_overlay_rendered"
+                  ],
+                  "source_font_face_claimed": golden["source_font_face_claimed"],
+                  "publisher_exact_reflow_claimed": golden[
+                      "publisher_exact_reflow_claimed"
+                  ],
+              },
+              "comparator": diff["comparator"],
+              "pages": pages,
+              "claims": {
+                  "current_reader_product_semantics": True,
+                  "baseline_unedited_source": True,
+                  "editor_current_state_export": False,
+                  "publisher_visual_parity": False,
+                  "visual_differences_are_localized_not_ranked": True,
+                  "raw_story_text_emitted": False,
+                  "reference_pdf_bytes_emitted": False,
+              },
+          }
+          target = root / "baseline-visual-receipt.json"
+          target.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+
+          print("CARLTON READER BASELINE VISUAL RECEIPT")
+          print(json.dumps({
+              "page_significant_fractions": [
+                  page["significant_fraction"] for page in pages
+              ],
+              "page_region_counts": [page["region_count"] for page in pages],
+              "physical_size_matches": [
+                  page["physical_page_size_matches_reference"] for page in pages
+              ],
+              "clipped_text_nodes": [
+                  page["clipped_text_node_count"] for page in pages
+              ],
+              "fallback_typography_sections": [
+                  page["executed_fallback_typography_sections"] for page in pages
+              ],
+          }, indent=2, sort_keys=True))
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "baseline visual receipt failed" }
+
+      - name: Upload sanitized Carlton Reader visual receipt
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-march-reader-baseline-visual-oracle
+          path: |
+            ${{ env.CHAPTERA_CARLTON_VISUAL_ROOT }}/acquisition.json
+            ${{ env.CHAPTERA_CARLTON_VISUAL_ROOT }}/reader-reference-diff.json
+            ${{ env.CHAPTERA_CARLTON_VISUAL_ROOT }}/baseline-visual-receipt.json
+            ${{ env.CHAPTERA_GOLDEN_CARLTON_OUT }}/carlton-march-reader-golden-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload short-lived visual artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-march-reader-baseline-visual-private
+          path: |
+            ${{ env.CHAPTERA_CARLTON_REFERENCE_PDF }}
+            ${{ env.CHAPTERA_GOLDEN_CARLTON_OUT }}/carlton-march-reader-page-*.png
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
