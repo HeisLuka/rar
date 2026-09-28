@@ -134,6 +134,8 @@ pub struct PubPageRoleObservationReceipt {
     pub confirmed_page_count: usize,
     pub special_entry_count: usize,
     pub pages: Vec<PubPageRoleObservation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controlling: Vec<PubControllingObservation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +153,23 @@ pub struct PubPageRoleObservation {
     pub child_raw_type_counts: BTreeMap<u16, usize>,
     pub shape_child_count: usize,
     pub group_child_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubControllingObservation {
+    pub contents_seq_num: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_seq_num: Option<u32>,
+    pub fully_decoded: bool,
+    pub fields: Vec<PubControllingFieldObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubControllingFieldObservation {
+    pub id: u16,
+    pub block_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_length: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -544,12 +563,44 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
         });
     }
 
+
+    const RAW_TYPE_CONTROLLING: u16 = 0x4D;
+    let mut controlling = references
+        .values()
+        .filter(|reference| single_raw_type(reference) == Some(RAW_TYPE_CONTROLLING))
+        .map(|reference| {
+            let chunk = chunk_for_reference(contents_stream.clone(), &contents, reference)?;
+            let fields = chunk
+                .fields
+                .iter()
+                .map(|field| PubControllingFieldObservation {
+                    id: field.id,
+                    block_type: field.block_type,
+                    declared_length: match &field.body {
+                        RawContentsBlockBody::Container {
+                            declared_length, ..
+                        } => Some(*declared_length),
+                        _ => None,
+                    },
+                })
+                .collect::<Vec<_>>();
+            Ok(PubControllingObservation {
+                contents_seq_num: reference.seq_num,
+                parent_seq_num: single_parent_seq(reference),
+                fully_decoded: chunk.is_fully_decoded(),
+                fields,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    controlling.sort_by_key(|item| item.contents_seq_num);
+
     Ok(PubPageRoleObservationReceipt {
         schema: PUB_PAGE_ROLE_OBSERVATION_SCHEMA_V1.to_owned(),
         document_page_list_entry_count: page_list.entries.len(),
         confirmed_page_count: pages.len(),
         special_entry_count,
         pages,
+        controlling,
     })
 }
 
