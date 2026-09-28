@@ -15,7 +15,8 @@ use pub_layout::{
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
-    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+    Affine2D, LengthEmu, NodeId, NodeKind, PageId, RectEmu, ResourceId, Sha256Digest, StoryFrame,
+    StoryId,
 };
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
@@ -155,6 +156,24 @@ impl ViewerDocument {
 /// source-free physical geometry produced by the existing layout boundary. It
 /// intentionally does not claim that text, images, fill/line, or effects have
 /// been painted yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerProjectionKindV1 {
+    CmoStorySlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerProjectedNodeInstanceV1 {
+    pub instance_id: String,
+    pub projection_kind: ViewerProjectionKindV1,
+    pub origin_node_id: NodeId,
+    pub target_page_id: PageId,
+    pub bounds: RectEmu,
+    pub transform: Affine2D,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story_authority_id: Option<StoryId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerGeometryDocument {
     pub schema_version: String,
@@ -168,6 +187,8 @@ pub struct ViewerGeometryDocument {
     pub text_fragments: Vec<ViewerTextFragment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typography_runs: Vec<ViewerTypographyRun>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projected_instances: Vec<ViewerProjectedNodeInstanceV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
@@ -718,6 +739,7 @@ pub fn open_mature_0x2c_geometry(
         story_frames,
         text_fragments,
         typography_runs,
+        projected_instances: Vec::new(),
         images,
     })
 }
@@ -1574,6 +1596,7 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -1721,6 +1744,7 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.scene.nodes.clone();
@@ -2143,6 +2167,7 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2245,6 +2270,7 @@ mod tests {
             story_frames: initial_frames.clone(),
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2308,6 +2334,7 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.clone();
