@@ -1059,17 +1059,19 @@ mod tests {
 
         let source_digest = Sha256Digest::from_str(&source_sha256).unwrap();
         let session = open_mature_0x2c_editor(&source_bytes, source_digest).unwrap();
-        let (node_id, x_emu, y_emu) = session
+        let (node_id, before_x_emu, before_y_emu, x_emu, y_emu) = session
             .graph()
             .nodes
             .iter()
             .find_map(|(node_id, node)| {
-                let x = node.header.bounds.x.get().checked_add(9_525)?;
-                let y = node.header.bounds.y.get().checked_add(9_525)?;
+                let before_x = node.header.bounds.x.get();
+                let before_y = node.header.bounds.y.get();
+                let x = before_x.checked_add(9_525)?;
+                let y = before_y.checked_add(9_525)?;
                 session
                     .can_move_node_to(*node_id, LengthEmu::new(x), LengthEmu::new(y))
                     .ok()
-                    .map(|_| (*node_id, x, y))
+                    .map(|_| (*node_id, before_x, before_y, x, y))
             })
             .expect("Sample3 must contain one movable canonical node");
         let node_id = serde_json::to_value(node_id)
@@ -1077,6 +1079,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+        let opened_node = &opened["authoring_graph"]["nodes"][node_id.as_str()];
+        assert_eq!(opened_node["header"]["bounds"]["x"], before_x_emu);
+        assert_eq!(opened_node["header"]["bounds"]["y"], before_y_emu);
 
         let body = json!({
             "protocol_version": COMMIT_REQUEST_V1,
@@ -1168,6 +1173,9 @@ mod tests {
         assert_eq!(reopened.status(), StatusCode::OK);
         let reopened = json_body(reopened).await;
         assert_eq!(reopened["revision_id"], child_revision);
+        let reopened_node = &reopened["authoring_graph"]["nodes"][node_id.as_str()];
+        assert_eq!(reopened_node["header"]["bounds"]["x"], x_emu);
+        assert_eq!(reopened_node["header"]["bounds"]["y"], y_emu);
 
         pool.close().await;
         authn.close().await;
