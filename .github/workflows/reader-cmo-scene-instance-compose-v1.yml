@@ -1,5 +1,7 @@
 name: Reader canonical Cmo scene-instance compose V1
 
+# Current-main sync marker only; no runtime or acceptance semantics.
+
 on:
   pull_request:
     paths:
