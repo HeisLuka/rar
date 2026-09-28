@@ -7036,16 +7036,20 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-
     const CARLTON_VISUAL_GOLDEN_DPI: f32 = 144.0;
     const CARLTON_VISUAL_GOLDEN_MAX_TEXTURE_SIDE: usize = 4096;
 
-    fn carlton_golden_page_pixels(visual: &ViewerGeometryDocument, page_index: usize) -> (u32, u32) {
+    fn carlton_golden_page_pixels(
+        visual: &ViewerGeometryDocument,
+        page_index: usize,
+    ) -> (u32, u32) {
         let plan = build_page_render_plan_v1(visual, page_index)
             .expect("Carlton golden page must have a render plan");
         let scale = CARLTON_VISUAL_GOLDEN_DPI / EMU_PER_INCH;
         let width = (plan.page_size.width.get() as f32 * scale).round().max(1.0) as u32;
-        let height = (plan.page_size.height.get() as f32 * scale).round().max(1.0) as u32;
+        let height = (plan.page_size.height.get() as f32 * scale)
+            .round()
+            .max(1.0) as u32;
         (width, height)
     }
 
@@ -7128,8 +7132,7 @@ mod tests {
             let render_plan = build_page_render_plan_v1(&self.visual, self.page_index)
                 .expect("Carlton golden page render plan");
             let scene_scale = CARLTON_VISUAL_GOLDEN_DPI / EMU_PER_INCH;
-            let (width_px, height_px) =
-                carlton_golden_page_pixels(&self.visual, self.page_index);
+            let (width_px, height_px) = carlton_golden_page_pixels(&self.visual, self.page_index);
             let page_rect = egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(width_px as f32, height_px as f32),
@@ -7205,8 +7208,7 @@ mod tests {
                         egui::Stroke::new(2.0_f32, egui::Color32::RED),
                         egui::StrokeKind::Inside,
                     );
-                    let marker_center =
-                        node_rect.right_top() + egui::vec2(7.0_f32, -7.0_f32);
+                    let marker_center = node_rect.right_top() + egui::vec2(7.0_f32, -7.0_f32);
                     painter.circle_filled(marker_center, 5.0_f32, egui::Color32::RED);
                     painter.text(
                         marker_center,
@@ -7237,8 +7239,7 @@ mod tests {
         let bytes = fs::read(&fixture).expect("read exact Carlton March PUB");
         let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(
-            source_sha256,
-            "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+            source_sha256, "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
             "Carlton March source identity drifted"
         );
 
@@ -7255,11 +7256,9 @@ mod tests {
             "Carlton March Reader geometry must expose exactly three surfaces"
         );
         assert!(
-            visual
-                .document
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "viewer.page_projection.family_profile_applied"),
+            visual.document.diagnostics.iter().any(
+                |diagnostic| diagnostic.code == "viewer.page_projection.family_profile_applied"
+            ),
             "Carlton family presentation profile must be visibly admitted"
         );
 
@@ -7279,8 +7278,7 @@ mod tests {
             // portable 2048px default. Delay real embedded-image uploads until the
             // next frame, after binding the test input to a bounded capability that
             // covers Carlton's proven 2480x2835 image without resampling it.
-            harness.input_mut().max_texture_side =
-                Some(CARLTON_VISUAL_GOLDEN_MAX_TEXTURE_SIDE);
+            harness.input_mut().max_texture_side = Some(CARLTON_VISUAL_GOLDEN_MAX_TEXTURE_SIDE);
             harness.state_mut().enable_texture_upload();
             harness.step();
 
@@ -7292,7 +7290,9 @@ mod tests {
 
             let png_name = format!("carlton-march-reader-page-{:03}.png", page_index + 1);
             let png_path = output_dir.join(&png_name);
-            image.save(&png_path).expect("write Carlton Reader page PNG");
+            image
+                .save(&png_path)
+                .expect("write Carlton Reader page PNG");
             let png_bytes = fs::read(&png_path).expect("read rendered Carlton PNG");
 
             let page = &visual.document.pages[page_index];
