@@ -4,7 +4,7 @@ use pub_contents::{
     parse_0x2c_header, parse_confirmed_0x2c_trailer_root,
 };
 use pub_core::StreamPath;
-use pub_model::Sha256Digest;
+use pub_model::{CanonicalId, NodeId, Sha256Digest, StoryId};
 use pub_plccmob_projection::{
     CONTENTS_RAW_TYPE_PLC_CMOB, CarrierSourceIdentityV1, ExactU32FieldV1,
     OPL_DOCQ_PLC_CMOB_FIELD_ID, PlcCmobChunkInputV1, PlcCmobSourceProjectionInputV1,
@@ -296,51 +296,96 @@ fn encode_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn parse_node_id(value: &str, label: &str) -> Result<NodeId> {
+    let canonical = value
+        .parse::<CanonicalId>()
+        .with_context(|| format!("{label} is not a canonical UUID: {value}"))?;
+    Ok(NodeId::from_canonical(canonical))
+}
+
+fn parse_story_id(value: &str, label: &str) -> Result<StoryId> {
+    let canonical = value
+        .parse::<CanonicalId>()
+        .with_context(|| format!("{label} is not a canonical UUID: {value}"))?;
+    Ok(StoryId::from_canonical(canonical))
+}
+
 fn verify_active_graph_identity_parity(
     graph: &PubResolvedGraph,
     output: &PlcCmobSourceProjectionOutputV1,
 ) -> Result<()> {
     for relation in &output.context.cmo_relations {
-        if !graph
-            .nodes
-            .values()
-            .any(|node| node.header.id.as_canonical().to_string() == relation.carrier_node_id)
-        {
-            bail!(
+        let carrier_node_id = parse_node_id(
+            &relation.carrier_node_id,
+            "Cmo carrier_node_id",
+        )?;
+        let carrier_node = graph.nodes.get(&carrier_node_id).with_context(|| {
+            format!(
                 "root/vendor identity mismatch for carrier Ohpo {}",
                 relation.carrier_ohpo
-            );
-        }
-        if !graph
-            .stories
-            .values()
-            .any(|story| story.id.as_canonical().to_string() == relation.target_story_id)
-        {
+            )
+        })?;
+
+        let target_story_id = parse_story_id(
+            &relation.target_story_id,
+            "Cmo target_story_id",
+        )?;
+        if !graph.stories.contains_key(&target_story_id) {
             bail!(
                 "root/vendor identity mismatch for target Qsid {}",
                 relation.target_qsid
             );
         }
+
         if let Some(frame_id) = relation.target_frame_node_id.as_deref() {
-            if !graph
-                .nodes
-                .values()
-                .any(|node| node.header.id.as_canonical().to_string() == frame_id)
-            {
-                bail!(
+            let target_frame_id = parse_node_id(frame_id, "Cmo target_frame_node_id")?;
+            let target_frame = graph.nodes.get(&target_frame_id).with_context(|| {
+                format!(
                     "root/vendor identity mismatch for target frame Qsid {}",
+                    relation.target_qsid
+                )
+            })?;
+            let frame_story_id = target_frame
+                .payload
+                .story_frame
+                .as_ref()
+                .and_then(|frame| frame.story_id)
+                .with_context(|| {
+                    format!(
+                        "target frame for Qsid {} has no resolved Story identity",
+                        relation.target_qsid
+                    )
+                })?;
+            if frame_story_id != target_story_id {
+                bail!(
+                    "target frame/story mismatch for Qsid {}",
                     relation.target_qsid
                 );
             }
         }
+
         if let Some(story_id) = relation.carrier_story_id.as_deref() {
-            if !graph
-                .stories
-                .values()
-                .any(|story| story.id.as_canonical().to_string() == story_id)
-            {
+            let carrier_story_id = parse_story_id(story_id, "Cmo carrier_story_id")?;
+            if !graph.stories.contains_key(&carrier_story_id) {
                 bail!(
                     "root/vendor identity mismatch for carrier Story Ohpo {}",
+                    relation.carrier_ohpo
+                );
+            }
+            let node_story_id = carrier_node
+                .payload
+                .story_frame
+                .as_ref()
+                .and_then(|frame| frame.story_id)
+                .with_context(|| {
+                    format!(
+                        "carrier node Ohpo {} has no resolved Story identity",
+                        relation.carrier_ohpo
+                    )
+                })?;
+            if node_story_id != carrier_story_id {
+                bail!(
+                    "carrier node/story mismatch for Ohpo {}",
                     relation.carrier_ohpo
                 );
             }
