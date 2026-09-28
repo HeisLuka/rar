@@ -147,6 +147,37 @@ pub struct AuthoringTextPresetV1 {
     pub line_height_emu: LengthEmu,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvenAuthorCreatedStoryV1 {
+    pub story_id: StoryId,
+    pub frame_id: NodeId,
+    pub page_id: PageId,
+    pub text_preset: AuthoringTextPresetV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorCreatedStoryProofError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl AuthorCreatedStoryProofError {
+    fn unproven(message: impl Into<String>) -> Self {
+        Self {
+            code: "author_created_story_unproven",
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for AuthorCreatedStoryProofError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for AuthorCreatedStoryProofError {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EditOperation {
@@ -1462,6 +1493,140 @@ impl EditorSession {
 
     pub fn operations(&self) -> &[EditOperation] {
         &self.undo
+    }
+
+    pub fn prove_author_created_story_v1(
+        &self,
+        story_id: StoryId,
+    ) -> Result<Option<ProvenAuthorCreatedStoryV1>, AuthorCreatedStoryProofError> {
+        let claims = self
+            .undo
+            .iter()
+            .filter_map(|operation| match operation {
+                EditOperation::CreateTextBox {
+                    node_id,
+                    story_id: claimed_story_id,
+                    page_id,
+                    text_preset,
+                    ..
+                } if *claimed_story_id == story_id => Some((*node_id, *page_id, text_preset)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if claims.is_empty() {
+            return Ok(None);
+        }
+        if claims.len() != 1 {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "current history contains multiple applied CreateTextBox claims for one Story",
+            ));
+        }
+        let (frame_id, page_id, text_preset) = claims[0];
+
+        if !is_editor_created_uuid_v7_story_id(story_id)
+            || !is_editor_created_uuid_v7_node_id(frame_id)
+            || !validate_authoring_text_preset_v1(text_preset)
+        {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "CreateTextBox identity or text preset no longer satisfies the canonical author-created contract",
+            ));
+        }
+
+        let story = self.graph.stories.get(&story_id).ok_or_else(|| {
+            AuthorCreatedStoryProofError::unproven(
+                "applied CreateTextBox Story is absent from the current graph",
+            )
+        })?;
+        if story.id != story_id
+            || !story.source_refs.is_empty()
+            || !story.paragraphs.is_empty()
+            || !story.runs.is_empty()
+            || !story.fields.is_empty()
+            || !story.hyperlinks.is_empty()
+        {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "current Story is not the bounded source-free Chaptera-created Story shape",
+            ));
+        }
+
+        let owners = self
+            .graph
+            .nodes
+            .iter()
+            .filter_map(|(node_id, node)| {
+                frame_from_payload(*node_id, &node.payload)
+                    .filter(|frame| frame.story_id == story_id)
+                    .map(|_| *node_id)
+            })
+            .collect::<Vec<_>>();
+        if owners.as_slice() != [frame_id] {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "author-created Story must have exactly one current TextFrame owner matching CreateTextBox",
+            ));
+        }
+
+        let node = self.graph.nodes.get(&frame_id).ok_or_else(|| {
+            AuthorCreatedStoryProofError::unproven(
+                "CreateTextBox TextFrame is absent from the current graph",
+            )
+        })?;
+        let frame = frame_from_payload(frame_id, &node.payload).ok_or_else(|| {
+            AuthorCreatedStoryProofError::unproven(
+                "CreateTextBox node no longer carries one canonical StoryFrame",
+            )
+        })?;
+        if node.kind != NodeKind::TextFrame
+            || node.header.id != frame_id
+            || node.header.parent_id != page_id.into_canonical()
+            || node.header.transform != Affine2D::identity()
+            || !node.header.source_refs.is_empty()
+            || node.payload.contents_seq_num != 0
+            || node.payload.table_story.is_some()
+            || node.payload.table.is_some()
+            || frame.story_id != story_id
+            || frame.frame_id != frame_id
+            || frame.ordinal != 0
+            || frame.previous.is_some()
+            || frame.next.is_some()
+        {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "current TextFrame topology/provenance no longer matches the bounded CreateTextBox contract",
+            ));
+        }
+        if node.header.bounds.width.get() <= 0
+            || node.header.bounds.height.get() <= 0
+            || node.header.bounds.right().is_none()
+            || node.header.bounds.bottom().is_none()
+        {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "current author-created TextFrame has invalid geometry",
+            ));
+        }
+
+        let page = self.graph.pages.get(&page_id).ok_or_else(|| {
+            AuthorCreatedStoryProofError::unproven(
+                "CreateTextBox parent page is absent from the current graph",
+            )
+        })?;
+        if page
+            .children
+            .iter()
+            .filter(|child| **child == frame_id)
+            .count()
+            != 1
+        {
+            return Err(AuthorCreatedStoryProofError::unproven(
+                "parent page must contain the author-created TextFrame exactly once",
+            ));
+        }
+
+        Ok(Some(ProvenAuthorCreatedStoryV1 {
+            story_id,
+            frame_id,
+            page_id,
+            text_preset: text_preset.clone(),
+        }))
     }
 
     pub fn authored_shapes(
