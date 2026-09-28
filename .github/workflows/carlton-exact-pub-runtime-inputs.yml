@@ -8,6 +8,7 @@ on:
       - "crates/pub-presentation-profile/**"
       - "vendor/producer-a/crates/pub-reader/**"
       - "vendor/producer-a/crates/pub-viewer/**"
+      - "tools/pdf_reference_diff_v1.py"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
 
@@ -21,7 +22,7 @@ permissions:
 jobs:
   acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
@@ -29,8 +30,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install bounded acquisition dependencies
-        run: python -m pip install "requests==2.32.5" "olefile==0.47" "jsonschema==4.23.0"
+      - name: Install bounded acquisition and visual-oracle dependencies
+        run: python -m pip install "requests==2.32.5" "olefile==0.47" "jsonschema==4.23.0" "PyMuPDF==1.24.14"
 
       - name: Acquire exact Carlton PUBs from School Jotter hydration state
         shell: bash
@@ -1525,6 +1526,383 @@ jobs:
               "March=3/3 December=5/5 generic Newsletter=8/8 Brochure=6/6"
           )
           PY
+
+      - name: Install fixed-PDF validation runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y qpdf poppler-utils fonts-dejavu-core
+          test -s /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+
+      - name: Acquire exact school-published March reference PDF
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton/visual/private out/carlton/visual/sanitized
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import time
+          from pathlib import Path
+
+          import requests
+
+          PAGE = "https://www.carltonji.org.uk/parents/latest-letters"
+          PUBLIC_NAME = "March 2026.pdf"
+          EXPECTED_ID = "21dbc16e-9242-4ff1-8b3d-f7c5d0f0a50e"
+          EXPECTED_SIZE = 1_108_627
+          EXPECTED_SHA256 = "c1288571ee8da91afa27ca5c49191aacefe82123df294c11f58ca047d0ced769"
+          TENANT_ID = "1fd359a4-cb4e-412d-81a1-79f36166cafc"
+
+          root = Path("out/carlton/visual")
+          private = root / "private"
+          sanitized = root / "sanitized"
+          target = private / "March-2026-reference.pdf"
+
+          session = requests.Session()
+          session.headers.update({
+              "User-Agent": "Mozilla/5.0 (compatible; Chaptera-Carlton-Visual-Oracle/1.0)",
+              "Accept": "*/*",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache",
+          })
+          response = session.get(
+              PAGE,
+              params={"chaptera_visual_oracle": os.environ.get("GITHUB_RUN_ID", str(time.time_ns()))},
+              timeout=30,
+          )
+          response.raise_for_status()
+          raw = response.text
+
+          needle = '"name":"' + PUBLIC_NAME + '"'
+          idx = raw.find(needle)
+          if idx < 0:
+              raise SystemExit(f"{PUBLIC_NAME}: absent from School Jotter hydration state")
+          window = raw[max(0, idx - 1200):min(len(raw), idx + 18000)]
+
+          file_match = re.search(
+              r'"file":\{"id":"([^"]+)","name":"' + re.escape(PUBLIC_NAME) + r'"',
+              window,
+          )
+          if not file_match:
+              raise SystemExit("March PDF file id missing")
+          file_id = file_match.group(1)
+          if file_id != EXPECTED_ID:
+              raise SystemExit(f"March PDF file id drift: {file_id} != {EXPECTED_ID}")
+
+          size_match = re.search(
+              r'"name":"' + re.escape(PUBLIC_NAME) + r'".*?"size":(\d+)',
+              window,
+              flags=re.S,
+          )
+          if not size_match:
+              raise SystemExit("March PDF declared size missing")
+          declared_size = int(size_match.group(1))
+          if declared_size != EXPECTED_SIZE:
+              raise SystemExit(
+                  f"March PDF declared size drift: {declared_size} != {EXPECTED_SIZE}"
+              )
+
+          origin_match = re.search(
+              r'"url":\{"origin":"((?:\\.|[^"\\])*)"',
+              window,
+              flags=re.S,
+          )
+          hydrated_origin = (
+              json.loads('"' + origin_match.group(1) + '"')
+              if origin_match
+              else None
+          )
+
+          stable_s3 = (
+              "https://sj3-bucket-media.s3.eu-west-1.amazonaws.com/"
+              f"{file_id[:2]}/{file_id}"
+          )
+          docs_by_id = (
+              f"https://docs-cdn.schooljotter3.com/{TENANT_ID}/"
+              f"{file_id}/{file_id}.pdf"
+          )
+          docs_by_name = (
+              f"https://docs-cdn.schooljotter3.com/{TENANT_ID}/"
+              f"{file_id}/" + requests.utils.quote(PUBLIC_NAME)
+          )
+          candidates = [stable_s3, docs_by_id, docs_by_name]
+          if hydrated_origin:
+              candidates.append(hydrated_origin)
+
+          acquired = None
+          for candidate in candidates:
+              digest = hashlib.sha256()
+              size = 0
+              try:
+                  with session.get(
+                      candidate,
+                      timeout=(10, 90),
+                      stream=True,
+                      allow_redirects=True,
+                  ) as download:
+                      if download.status_code != 200:
+                          continue
+                      with target.open("wb") as out:
+                          for chunk in download.iter_content(1024 * 1024):
+                              if not chunk:
+                                  continue
+                              size += len(chunk)
+                              if size > EXPECTED_SIZE:
+                                  raise SystemExit("March PDF exceeded exact expected size")
+                              digest.update(chunk)
+                              out.write(chunk)
+                  if size != EXPECTED_SIZE:
+                      target.unlink(missing_ok=True)
+                      continue
+                  sha256 = digest.hexdigest()
+                  if sha256 != EXPECTED_SHA256:
+                      target.unlink(missing_ok=True)
+                      raise SystemExit(
+                          f"March PDF SHA drift: {sha256} != {EXPECTED_SHA256}"
+                      )
+                  acquired = {
+                      "file_id": file_id,
+                      "size": size,
+                      "sha256": sha256,
+                      "source_host": requests.utils.urlparse(candidate).hostname,
+                  }
+                  break
+              except requests.RequestException:
+                  target.unlink(missing_ok=True)
+
+          if acquired is None:
+              raise SystemExit("all exact March PDF public download candidates failed")
+
+          (sanitized / "reference-acquisition.json").write_text(
+              json.dumps(
+                  {
+                      "schema": "chaptera.carlton-march-reference-acquisition.v1",
+                      **acquired,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "REFERENCE PDF ACQUIRED "
+              f"id={file_id} size={acquired['size']} sha256={acquired['sha256']}"
+          )
+          PY
+
+      - name: Emit current Rar Viewer Scene packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin fixed-pdf-scene-packet -- \
+            out/carlton/exact/March-2026.pub \
+            out/carlton/visual/private/March-2026-scene-packet.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          packet = json.loads(
+              Path("out/carlton/visual/private/March-2026-scene-packet.json").read_text()
+          )
+          assert packet["schema_version"] == "chaptera.fixed-pdf-scene-packet.v1"
+          assert packet["source_sha256"] == "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3"
+          assert len(packet["scene"]["surfaces"]) == 3
+          assert "viewer.page_projection.family_profile_applied" in set(
+              packet["viewer_diagnostic_codes"]
+          )
+          print(
+              "CURRENT VIEWER SCENE PASS "
+              f"surfaces={len(packet['scene']['surfaces'])} "
+              f"nodes={len(packet['scene']['nodes'])}"
+          )
+          PY
+
+      - name: Checkout pinned source-neutral PDF backend
+        uses: actions/checkout@v5
+        with:
+          repository: HeisLuka/yab
+          ref: efb0becbb5119692d7f4ad33ee0753bf7fe82aae
+          path: _yab_pdf_engine
+
+      - name: Render Carlton baseline through existing source-neutral PDF backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path _yab_pdf_engine/Cargo.toml \
+            -p pub-pdf --example scene_packet_pdf -- \
+            out/carlton/visual/private/March-2026-scene-packet.json \
+            /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+            out/carlton/visual/private/March-2026-chaptera-baseline.pdf \
+            out/carlton/visual/sanitized/renderer.json
+
+          qpdf --check out/carlton/visual/private/March-2026-chaptera-baseline.pdf
+          test "$(pdfinfo out/carlton/visual/private/March-2026-chaptera-baseline.pdf | awk '/^Pages:/ {print $2}')" = "3"
+          test "$(pdfinfo out/carlton/visual/private/March-2026-reference.pdf | awk '/^Pages:/ {print $2}')" = "3"
+
+      - name: Compare Chaptera baseline with exact published reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("tools").resolve()))
+          from pdf_reference_diff_v1 import compare_pdfs
+
+          private = Path("out/carlton/visual/private")
+          sanitized = Path("out/carlton/visual/sanitized")
+          receipt = compare_pdfs(
+              private / "March-2026-chaptera-baseline.pdf",
+              private / "March-2026-reference.pdf",
+          )
+          if receipt["page_count"] != {"candidate": 3, "reference": 3, "match": True}:
+              raise SystemExit(f"unexpected visual-oracle page count: {receipt['page_count']!r}")
+          if receipt["reference_sha256"] != "c1288571ee8da91afa27ca5c49191aacefe82123df294c11f58ca047d0ced769":
+              raise SystemExit("reference PDF identity drifted before comparison")
+          (sanitized / "visual-diff.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(
+              "CARLTON VISUAL DIFF COMPLETE "
+              + " ".join(
+                  f"p{page['page_index'] + 1}="
+                  f"{page['diff']['significant_fraction']:.6f}"
+                  for page in receipt["pages"]
+                  if page["diff"].get("raster_size_match")
+              )
+          )
+          PY
+
+      - name: Build sanitized Carlton baseline visual receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/visual/sanitized")
+          renderer = json.loads((root / "renderer.json").read_text())
+          diff = json.loads((root / "visual-diff.json").read_text())
+          acquisition = json.loads((root / "reference-acquisition.json").read_text())
+
+          if renderer["source_sha256"] != "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3":
+              raise SystemExit("renderer source identity mismatch")
+          if renderer["summary"]["page_count"] != 3:
+              raise SystemExit(f"renderer page count drift: {renderer['summary']['page_count']}")
+          if acquisition["sha256"] != diff["reference_sha256"]:
+              raise SystemExit("reference acquisition/comparator identity mismatch")
+
+          pages = []
+          for page in diff["pages"]:
+              visual = page["diff"]
+              pages.append({
+                  "page_index": page["page_index"] + 1,
+                  "page_boxes_match": page["page_boxes_match"],
+                  "raster_size_match": visual["raster_size_match"],
+                  "raw_changed_pixel_count": visual.get("raw_changed_pixel_count"),
+                  "noise_only_pixel_count": visual.get("noise_only_pixel_count"),
+                  "significant_pixel_count": visual.get("significant_pixel_count"),
+                  "significant_fraction": visual.get("significant_fraction"),
+                  "noise_only_fraction": visual.get("noise_only_fraction"),
+                  "mean_abs_channel_delta": visual.get("mean_abs_channel_delta"),
+                  "max_channel_delta": visual.get("max_channel_delta"),
+                  "significant_bbox": visual.get("significant_bbox"),
+                  "region_count": len(visual.get("regions", [])),
+                  "regions": visual.get("regions", []),
+              })
+
+          pdf_diag_counts = {}
+          for diagnostic in renderer["pdf"].get("diagnostics", []):
+              code = diagnostic["code"]
+              pdf_diag_counts[code] = pdf_diag_counts.get(code, 0) + 1
+
+          receipt = {
+              "schema": "chaptera.carlton-march-baseline-visual-oracle.v1",
+              "source_pub_sha256": renderer["source_sha256"],
+              "reference_pdf_sha256": diff["reference_sha256"],
+              "candidate_pdf_sha256": diff["candidate_sha256"],
+              "page_count": 3,
+              "viewer_family_profile_applied": (
+                  "viewer.page_projection.family_profile_applied"
+                  in renderer["input"]["viewer_diagnostic_codes"]
+              ),
+              "renderer": {
+                  "schema_version": renderer["schema_version"],
+                  "surface_count": renderer["input"]["surface_count"],
+                  "node_count": renderer["input"]["node_count"],
+                  "paint_count": renderer["input"]["paint_count"],
+                  "image_resource_count": renderer["input"]["image_resource_count"],
+                  "story_count": renderer["input"]["story_count"],
+                  "story_frame_count": renderer["input"]["story_frame_count"],
+                  "typography": renderer["typography"],
+                  "summary": renderer["summary"],
+                  "pdf_diagnostic_code_counts": pdf_diag_counts,
+              },
+              "visual_comparator": diff["renderer"],
+              "pages": pages,
+              "claims": {
+                  "baseline_unedited_current_viewer": True,
+                  "editor_current_state_export": False,
+                  "publisher_visual_parity": False,
+                  "visual_differences_are_localized_not_ranked": True,
+                  "raw_source_text_emitted": False,
+                  "raw_image_bytes_emitted": False,
+              },
+          }
+          (root / "baseline-visual-receipt.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          print("CARLTON BASELINE VISUAL RECEIPT")
+          print(json.dumps({
+              "candidate_pdf_sha256": receipt["candidate_pdf_sha256"],
+              "renderer_summary": receipt["renderer"]["summary"],
+              "text_skip_reasons": receipt["renderer"]["typography"]["skipped_reason_counts"],
+              "page_significant_fractions": [
+                  page["significant_fraction"] for page in pages
+              ],
+              "page_boxes_match": [
+                  page["page_boxes_match"] for page in pages
+              ],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload sanitized Carlton baseline visual oracle
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-march-baseline-visual-oracle
+          path: |
+            out/carlton/visual/sanitized/reference-acquisition.json
+            out/carlton/visual/sanitized/renderer.json
+            out/carlton/visual/sanitized/visual-diff.json
+            out/carlton/visual/sanitized/baseline-visual-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload short-lived Carlton baseline visual artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-march-baseline-visual-private
+          path: |
+            out/carlton/visual/private/March-2026-chaptera-baseline.pdf
+            out/carlton/visual/private/March-2026-reference.pdf
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
       - name: Upload Reader/Viewer presentation-consumer receipts
         uses: actions/upload-artifact@v4
