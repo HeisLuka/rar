@@ -7,6 +7,10 @@ on:
     paths:
       - ".github/branch-cleanup/2026-09-28-updater-safe-delete.txt"
       - ".github/workflows/branch-gc-safe-20260928.yml"
+  pull_request:
+    paths:
+      - ".github/branch-cleanup/2026-09-28-updater-safe-delete.txt"
+      - ".github/workflows/branch-gc-safe-20260928.yml"
   workflow_dispatch:
 
 permissions:
