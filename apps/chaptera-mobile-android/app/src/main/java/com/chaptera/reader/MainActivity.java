@@ -18,6 +18,12 @@ import org.json.JSONObject;
 
 public final class MainActivity extends Activity {
     private static final int OPEN_DOCUMENT = 1001;
+    private static final String RESUME_PREFS = "chaptera_reader_resume_v1";
+    private static final String PREF_URI = "uri";
+    private static final String PREF_PAGE = "page";
+    private static final String PREF_ZOOM = "zoom";
+    private static final String PREF_PAN_X = "pan_x";
+    private static final String PREF_PAN_Y = "pan_y";
 
     private TextView status;
     private TextView diagnosticsView;
@@ -30,6 +36,7 @@ public final class MainActivity extends Activity {
     private String documentName = "Local PUB";
     private String fidelity = "unknown";
     private Uri lastUri;
+    private Uri currentUri;
     private String lastDiagnosticJson;
 
     @Override
@@ -148,7 +155,11 @@ public final class MainActivity extends Activity {
         setContentView(root);
 
         Uri handedOff = getIntent() == null ? null : getIntent().getData();
-        if (handedOff != null) openUri(handedOff);
+        if (handedOff != null) {
+            openUri(handedOff, null);
+        } else {
+            resumeLastDocument();
+        }
     }
 
     private void chooseDocument() {
@@ -176,6 +187,10 @@ public final class MainActivity extends Activity {
     }
 
     private void openUri(Uri uri) {
+        openUri(uri, null);
+    }
+
+    private void openUri(Uri uri, ResumeState resume) {
         lastUri = uri;
         clearFailureUi();
         try {
@@ -191,7 +206,9 @@ public final class MainActivity extends Activity {
                 lastDiagnosticJson = NativeReader.failureDiagnosticJson(bytes);
                 FailurePresentation failure = FailurePresentation.fromDiagnosticJson(lastDiagnosticJson);
                 showFailure(failure);
+                if (resume != null) clearResumeState();
                 closeCurrentSession();
+                currentUri = null;
                 canvas.setPage(null);
                 return;
             }
@@ -210,15 +227,29 @@ public final class MainActivity extends Activity {
             currentPage = 0;
             documentName = displayName(uri);
             fidelity = receipt.optString("fidelity", "unknown");
+            currentUri = uri;
             showDiagnostics(receipt.optJSONArray("diagnostics"));
             renderPage(0);
+
+            if (resume != null) {
+                int restoredPage = Math.max(0, Math.min(resume.pageIndex, pageCount - 1));
+                if (restoredPage != 0) {
+                    renderPage(restoredPage);
+                }
+                canvas.restoreViewport(resume.zoom, resume.panX, resume.panY);
+                persistResumeState();
+            }
         } catch (SecurityException denied) {
             showFailure(FailurePresentation.accessDenied());
+            clearResumeState();
             closeCurrentSession();
+            currentUri = null;
             canvas.setPage(null);
         } catch (Exception error) {
             showFailure(FailurePresentation.providerUnavailable(error.getMessage()));
+            if (resume != null) clearResumeState();
             closeCurrentSession();
+            currentUri = null;
             canvas.setPage(null);
         }
     }
@@ -246,6 +277,7 @@ public final class MainActivity extends Activity {
             );
             previousPage.setEnabled(currentPage > 0);
             nextPage.setEnabled(currentPage + 1 < pageCount);
+            persistResumeState();
         } catch (Exception error) {
             status.setText("Could not decode render plan: " + error.getMessage());
         }
@@ -318,6 +350,56 @@ public final class MainActivity extends Activity {
         if (pageJump != null) {
             pageJump.setText("");
             pageJump.setEnabled(false);
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        persistResumeState();
+        super.onStop();
+    }
+
+    private void resumeLastDocument() {
+        android.content.SharedPreferences prefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
+        String rawUri = prefs.getString(PREF_URI, null);
+        if (rawUri == null || rawUri.isEmpty()) return;
+
+        ResumeState state = new ResumeState(
+            prefs.getInt(PREF_PAGE, 0),
+            prefs.getFloat(PREF_ZOOM, 1f),
+            prefs.getFloat(PREF_PAN_X, 0f),
+            prefs.getFloat(PREF_PAN_Y, 0f)
+        );
+        openUri(Uri.parse(rawUri), state);
+    }
+
+    private void persistResumeState() {
+        if (sessionId <= 0L || currentUri == null || canvas == null) return;
+        getSharedPreferences(RESUME_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(PREF_URI, currentUri.toString())
+            .putInt(PREF_PAGE, currentPage)
+            .putFloat(PREF_ZOOM, canvas.getZoom())
+            .putFloat(PREF_PAN_X, canvas.getPanXOffset())
+            .putFloat(PREF_PAN_Y, canvas.getPanYOffset())
+            .apply();
+    }
+
+    private void clearResumeState() {
+        getSharedPreferences(RESUME_PREFS, MODE_PRIVATE).edit().clear().apply();
+    }
+
+    private static final class ResumeState {
+        final int pageIndex;
+        final float zoom;
+        final float panX;
+        final float panY;
+
+        ResumeState(int pageIndex, float zoom, float panX, float panY) {
+            this.pageIndex = pageIndex;
+            this.zoom = zoom;
+            this.panX = panX;
+            this.panY = panY;
         }
     }
 
