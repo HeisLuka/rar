@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 pub const PUB_PROJECTION_CONTEXT_SCHEMA_V1: &str = "chaptera.pub-projection-context.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomerPageProjectionV1 {
+    pub source_page_id: String,
+    pub source_page_seq_num: u32,
+    pub source_document_ordinal: usize,
+    pub evidence_profile: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MasterProjectionRelationV1 {
     pub source_page_id: String,
     pub source_page_seq_num: u32,
@@ -30,6 +38,8 @@ pub struct PubProjectionContextV1 {
     pub master_relations: Vec<MasterProjectionRelationV1>,
     #[serde(default)]
     pub cmo_relations: Vec<CmoProjectionRelationV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub customer_pages: Vec<CustomerPageProjectionV1>,
 }
 
 impl Default for PubProjectionContextV1 {
@@ -38,6 +48,7 @@ impl Default for PubProjectionContextV1 {
             schema_version: PUB_PROJECTION_CONTEXT_SCHEMA_V1.to_owned(),
             master_relations: Vec::new(),
             cmo_relations: Vec::new(),
+            customer_pages: Vec::new(),
         }
     }
 }
@@ -48,6 +59,7 @@ impl PubProjectionContextV1 {
             schema_version: PUB_PROJECTION_CONTEXT_SCHEMA_V1.to_owned(),
             master_relations: Vec::new(),
             cmo_relations,
+            customer_pages: Vec::new(),
         }
     }
 
@@ -56,7 +68,23 @@ impl PubProjectionContextV1 {
             schema_version: PUB_PROJECTION_CONTEXT_SCHEMA_V1.to_owned(),
             master_relations,
             cmo_relations: Vec::new(),
+            customer_pages: Vec::new(),
         }
+    }
+
+    pub fn with_customer_pages(customer_pages: Vec<CustomerPageProjectionV1>) -> Self {
+        Self {
+            schema_version: PUB_PROJECTION_CONTEXT_SCHEMA_V1.to_owned(),
+            master_relations: Vec::new(),
+            cmo_relations: Vec::new(),
+            customer_pages,
+        }
+    }
+
+    pub fn customer_page_ids(&self) -> impl Iterator<Item = &str> {
+        self.customer_pages
+            .iter()
+            .map(|page| page.source_page_id.as_str())
     }
 
     pub fn cmo_relations_for_target_qsid(
@@ -108,6 +136,15 @@ mod tests {
         assert_eq!(context.schema_version, PUB_PROJECTION_CONTEXT_SCHEMA_V1);
         assert!(context.master_relations.is_empty());
         assert!(context.cmo_relations.is_empty());
+        assert!(context.customer_pages.is_empty());
+        assert_eq!(
+            serde_json::to_value(&context).expect("serialize context"),
+            serde_json::json!({
+                "schema_version": PUB_PROJECTION_CONTEXT_SCHEMA_V1,
+                "master_relations": [],
+                "cmo_relations": []
+            })
+        );
     }
 
     #[test]
@@ -125,6 +162,35 @@ mod tests {
 
         assert_eq!(orders, vec![0, 2]);
         assert!(context.master_relations.is_empty());
+    }
+
+    #[test]
+    fn customer_page_projection_preserves_explicit_order() {
+        let pages = vec![
+            CustomerPageProjectionV1 {
+                source_page_id: "40000000-0000-4000-8000-000000000002".to_owned(),
+                source_page_seq_num: 266,
+                source_document_ordinal: 1,
+                evidence_profile: "fixture_profile".to_owned(),
+            },
+            CustomerPageProjectionV1 {
+                source_page_id: "40000000-0000-4000-8000-000000000003".to_owned(),
+                source_page_seq_num: 323,
+                source_document_ordinal: 2,
+                evidence_profile: "fixture_profile".to_owned(),
+            },
+        ];
+        let context = PubProjectionContextV1::with_customer_pages(pages);
+
+        assert_eq!(
+            context.customer_page_ids().collect::<Vec<_>>(),
+            vec![
+                "40000000-0000-4000-8000-000000000002",
+                "40000000-0000-4000-8000-000000000003"
+            ]
+        );
+        assert!(context.master_relations.is_empty());
+        assert!(context.cmo_relations.is_empty());
     }
 
     #[test]
