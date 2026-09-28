@@ -58,7 +58,7 @@ public final class LocalOpenInstrumentedTest {
     }
 
     @Test
-    public void sharedSessionExposesExactEmbeddedImageBytes() throws Exception {
+    public void sharedSessionMaterializesExactEmbeddedImageThroughBoundedDecode() throws Exception {
         byte[] fixture = readAsset("SampleNewsletter.pub");
         String receiptWire = NativeReader.openSessionJson(fixture);
         assertFalse("session open failed: " + receiptWire, receiptWire.startsWith("ERR:"));
@@ -82,12 +82,11 @@ public final class LocalOpenInstrumentedTest {
                     org.json.JSONObject image = nodes.getJSONObject(i).optJSONObject("image");
                     if (image == null) continue;
                     String resourceId = image.getString("resource_id");
-                    byte[] encoded = NativeReader.imageResourceBytes(sessionId, resourceId);
-                    assertTrue("embedded image bytes must be non-empty", encoded != null && encoded.length > 0);
-                    assertTrue(
-                        "embedded image bytes must decode on Android",
-                        android.graphics.BitmapFactory.decodeByteArray(encoded, 0, encoded.length) != null
-                    );
+                    byte[] admitted = NativeReader.imageResourceArgb8(sessionId, resourceId);
+                    assertTrue("admitted image envelope must be non-empty", admitted != null && admitted.length > 16);
+                    android.graphics.Bitmap bitmap = PubCanvasView.bitmapFromAdmittedArgb8(admitted);
+                    assertTrue("bounded image decode must produce a positive width", bitmap.getWidth() > 0);
+                    assertTrue("bounded image decode must produce a positive height", bitmap.getHeight() > 0);
                     foundImage = true;
                     break;
                 }

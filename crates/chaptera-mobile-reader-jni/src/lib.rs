@@ -91,18 +91,50 @@ fn page_render_plan_json(session_id: i64, page_index: usize) -> Result<String, S
     serde_json::to_string(&plan).map_err(|error| error.to_string())
 }
 
-fn image_resource_bytes(session_id: i64, resource_key: &str) -> Result<Vec<u8>, String> {
+const MOBILE_ARGB_ENVELOPE_MAGIC: &[u8; 8] = b"CHARGB1\0";
+
+fn image_resource_argb_envelope(session_id: i64, resource_key: &str) -> Result<Vec<u8>, String> {
     let guard = sessions()
         .lock()
         .map_err(|_| "mobile Reader session registry is poisoned".to_owned())?;
     let document = guard
         .get(&session_id)
         .ok_or_else(|| format!("unknown mobile Reader session {session_id}"))?;
-    document
-        .image_resource_bytes_by_key(resource_key)
-        .map_err(|error| error.to_string())?
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| format!("image resource {resource_key} is unavailable"))
+    let image = document
+        .admitted_image_resource_by_key(resource_key)
+        .map_err(|error| format!("IMAGE_DECODE:{}:{}", error.code, error.detail))?
+        .ok_or_else(|| format!("image resource {resource_key} is unavailable"))?;
+
+    let width = usize::try_from(image.width_px)
+        .map_err(|_| "admitted image width does not fit address space".to_owned())?;
+    let height = usize::try_from(image.height_px)
+        .map_err(|_| "admitted image height does not fit address space".to_owned())?;
+    let pixels = width
+        .checked_mul(height)
+        .ok_or_else(|| "admitted image pixel count overflow".to_owned())?;
+    if image.argb8888.len() != pixels {
+        return Err(format!(
+            "admitted ARGB pixel count {} does not match {}x{}",
+            image.argb8888.len(),
+            width,
+            height
+        ));
+    }
+
+    let pixel_bytes = pixels
+        .checked_mul(4)
+        .ok_or_else(|| "admitted image byte count overflow".to_owned())?;
+    let capacity = 16usize
+        .checked_add(pixel_bytes)
+        .ok_or_else(|| "admitted image envelope size overflow".to_owned())?;
+    let mut envelope = Vec::with_capacity(capacity);
+    envelope.extend_from_slice(MOBILE_ARGB_ENVELOPE_MAGIC);
+    envelope.extend_from_slice(&image.width_px.to_be_bytes());
+    envelope.extend_from_slice(&image.height_px.to_be_bytes());
+    for pixel in image.argb8888 {
+        envelope.extend_from_slice(&pixel.to_be_bytes());
+    }
+    Ok(envelope)
 }
 
 fn java_string(env: JNIEnv<'_>, value: &str) -> jstring {
@@ -164,7 +196,7 @@ pub extern "system" fn Java_com_chaptera_reader_NativeReader_pageRenderPlanJson(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_chaptera_reader_NativeReader_imageResourceBytes(
+pub extern "system" fn Java_com_chaptera_reader_NativeReader_imageResourceArgb8(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     session_id: jlong,
@@ -177,17 +209,20 @@ pub extern "system" fn Java_com_chaptera_reader_NativeReader_imageResourceBytes(
             return ptr::null_mut();
         }
     };
-    let bytes = match image_resource_bytes(session_id, &resource_key) {
-        Ok(bytes) => bytes,
+    let envelope = match image_resource_argb_envelope(session_id, &resource_key) {
+        Ok(envelope) => envelope,
         Err(error) => {
             throw_illegal_state(&mut env, error);
             return ptr::null_mut();
         }
     };
-    match env.byte_array_from_slice(&bytes) {
+    match env.byte_array_from_slice(&envelope) {
         Ok(array) => array.into_raw(),
         Err(error) => {
-            throw_illegal_state(&mut env, format!("failed to allocate image byte array: {error}"));
+            throw_illegal_state(
+                &mut env,
+                format!("failed to allocate admitted image envelope: {error}"),
+            );
             ptr::null_mut()
         }
     }

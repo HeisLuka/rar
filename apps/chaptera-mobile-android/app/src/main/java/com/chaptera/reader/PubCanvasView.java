@@ -2,7 +2,6 @@ package com.chaptera.reader;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -10,6 +9,8 @@ import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Map;
 import org.json.JSONArray;
@@ -18,7 +19,9 @@ import org.json.JSONObject;
 final class PubCanvasView extends View {
     private JSONObject page;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final byte[] ARGB_ENVELOPE_MAGIC = new byte[]{'C', 'H', 'A', 'R', 'G', 'B', '1', 0};
     private final Map<String, Bitmap> imageBitmaps = new HashMap<>();
+    private final Map<String, String> imageDiagnostics = new HashMap<>();
     private final ScaleGestureDetector scaleDetector;
     private float userScale = 1f;
     private float panX;
@@ -46,6 +49,7 @@ final class PubCanvasView extends View {
     void setPage(JSONObject page, long sessionId) {
         this.page = page;
         imageBitmaps.clear();
+        imageDiagnostics.clear();
         userScale = 1f;
         panX = 0f;
         panY = 0f;
@@ -60,12 +64,11 @@ final class PubCanvasView extends View {
                     String resourceId = image.optString("resource_id", "");
                     if (resourceId.isEmpty() || imageBitmaps.containsKey(resourceId)) continue;
                     try {
-                        byte[] encoded = NativeReader.imageResourceBytes(sessionId, resourceId);
-                        if (encoded == null || encoded.length == 0) continue;
-                        Bitmap bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
-                        if (bitmap != null) imageBitmaps.put(resourceId, bitmap);
-                    } catch (RuntimeException ignored) {
-                        // Viewer diagnostics remain the authority for missing/partial image fidelity.
+                        byte[] admitted = NativeReader.imageResourceArgb8(sessionId, resourceId);
+                        Bitmap bitmap = bitmapFromAdmittedArgb8(admitted);
+                        imageBitmaps.put(resourceId, bitmap);
+                    } catch (RuntimeException error) {
+                        imageDiagnostics.put(resourceId, boundedImageDiagnosticCode(error));
                     }
                 }
             }
@@ -128,10 +131,27 @@ final class PubCanvasView extends View {
 
             JSONObject image = node.optJSONObject("image");
             if (image != null) {
-                Bitmap bitmap = imageBitmaps.get(image.optString("resource_id", ""));
+                String resourceId = image.optString("resource_id", "");
+                Bitmap bitmap = imageBitmaps.get(resourceId);
                 if (bitmap != null) {
                     paint.setStyle(Paint.Style.FILL);
                     canvas.drawBitmap(bitmap, null, rect, paint);
+                } else {
+                    String diagnostic = imageDiagnostics.get(resourceId);
+                    if (diagnostic != null) {
+                        paint.setStyle(Paint.Style.STROKE);
+                        paint.setStrokeWidth(1f);
+                        paint.setColor(Color.DKGRAY);
+                        canvas.drawRect(rect, paint);
+                        paint.setStyle(Paint.Style.FILL);
+                        paint.setTextSize(Math.max(10f, Math.min(18f, 12f * userScale)));
+                        canvas.drawText(
+                            "Image unavailable (" + diagnostic + ")",
+                            rect.left + 2f,
+                            rect.top + Math.max(12f, paint.getTextSize()),
+                            paint
+                        );
+                    }
                 }
             }
 
@@ -161,6 +181,56 @@ final class PubCanvasView extends View {
                 }
             }
         }
+    }
+
+    static Bitmap bitmapFromAdmittedArgb8(byte[] envelope) {
+        if (envelope == null || envelope.length < 16) {
+            throw new IllegalArgumentException("admitted image envelope is truncated");
+        }
+        for (int i = 0; i < ARGB_ENVELOPE_MAGIC.length; i++) {
+            if (envelope[i] != ARGB_ENVELOPE_MAGIC[i]) {
+                throw new IllegalArgumentException("admitted image envelope magic mismatch");
+            }
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(envelope).order(ByteOrder.BIG_ENDIAN);
+        buffer.position(8);
+        int width = buffer.getInt();
+        int height = buffer.getInt();
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("admitted image dimensions must be positive");
+        }
+
+        long pixelCountLong = (long) width * (long) height;
+        if (pixelCountLong > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("admitted image pixel count exceeds Android array limit");
+        }
+        long expectedLength = 16L + pixelCountLong * 4L;
+        if (expectedLength != envelope.length) {
+            throw new IllegalArgumentException("admitted image envelope length mismatch");
+        }
+
+        int[] colors = new int[(int) pixelCountLong];
+        for (int i = 0; i < colors.length; i++) {
+            colors[i] = buffer.getInt();
+        }
+        return Bitmap.createBitmap(colors, width, height, Bitmap.Config.ARGB_8888);
+    }
+
+    String imageDiagnosticForResource(String resourceId) {
+        return imageDiagnostics.get(resourceId);
+    }
+
+    private static String boundedImageDiagnosticCode(RuntimeException error) {
+        String message = error.getMessage();
+        if (message == null || message.isEmpty()) return "image_backend_error";
+        int marker = message.indexOf("IMAGE_DECODE:");
+        if (marker < 0) return "image_backend_error";
+        String rest = message.substring(marker + "IMAGE_DECODE:".length());
+        int separator = rest.indexOf(':');
+        String code = separator < 0 ? rest : rest.substring(0, separator);
+        if (code.isEmpty() || code.length() > 80) return "image_decode_rejected";
+        return code;
     }
 
     @Override

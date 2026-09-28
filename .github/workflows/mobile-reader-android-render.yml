@@ -87,6 +87,10 @@ jobs:
             echo "mobile Reader common path must not request INTERNET permission"
             exit 1
           fi
+          if grep -R --fixed-string 'BitmapFactory.decodeByteArray' apps/chaptera-mobile-android/app/src/main; then
+            echo "Android production image path must consume bounded admitted pixels, not raw encoded PUB image bytes"
+            exit 1
+          fi
 
       - name: Run content-URI offline acceptance on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
