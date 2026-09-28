@@ -51,8 +51,8 @@ jobs:
       - name: Check shared render plan
         run: cargo test --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml
 
-      - name: Render Reader page 2 from current shared stack
-        run: cargo test -p chaptera-desktop --features reader-only golden_sample_newsletter_reader_page_2_uses_shared_typography_render_plan -- --ignored --nocapture
+      - name: Render pinned Publisher-reference customer page 1
+        run: cargo test -p chaptera-desktop --features reader-only golden_sample_newsletter_reference_customer_page_1_uses_shared_typography_render_plan -- --ignored --nocapture
 
       - uses: actions/upload-artifact@v4
         if: always()
