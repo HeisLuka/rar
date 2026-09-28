@@ -1,0 +1,68 @@
+name: Editor Created Story Edit Rust V1
+
+on:
+  push:
+    branches:
+      - editor-created-story-edit-rust-01
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/tests/create_text_box_v1.rs"
+      - "crates/chaptera-text-input-adapter/src/domain.rs"
+      - "apps/chaptera-desktop/src/text_session.rs"
+      - ".github/workflows/editor-created-story-edit-rust-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Format native created-Story slice
+        run: >-
+          rustfmt --edition 2024 --check
+          vendor/producer-a/crates/pub-editor/src/lib.rs
+          vendor/producer-a/crates/pub-editor/tests/create_text_box_v1.rs
+          crates/chaptera-text-input-adapter/src/domain.rs
+          apps/chaptera-desktop/src/text_session.rs
+
+      - name: Check native input adapter
+        run: cargo check --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets
+
+      - name: Clippy native input adapter
+        run: cargo clippy --manifest-path crates/chaptera-text-input-adapter/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test CreateTextBox provenance lifecycle
+        run: cargo test --manifest-path vendor/producer-a/crates/pub-editor/Cargo.toml --test create_text_box_v1
+
+      - name: Test native edit-domain adapter
+        run: cargo test --manifest-path crates/chaptera-text-input-adapter/Cargo.toml
+
+      - name: Acquire pinned Apache POI SampleNewsletter
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="${RUNNER_TEMP}/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"             --output "${fixture}"
+          test "$(sha256sum "${fixture}" | cut -d' ' -f1)" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          test "$(wc -c < "${fixture}" | tr -d ' ')" = "291840"
+          echo "CHAPTERA_SAMPLE_NEWSLETTER=${fixture}" >> "${GITHUB_ENV}"
+
+      - name: Prove empty created Story first typing on real PUB
+        run: >-
+          cargo test -p chaptera-desktop
+          real_sample_newsletter_created_empty_story_enters_at_zero_and_accepts_first_typing
+          -- --nocapture
