@@ -1,0 +1,38 @@
+name: Viewer canonical scene-instance adapter V1
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "crates/chaptera-scene-instance/**"
+      - ".github/workflows/viewer-scene-instance-adapter-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+      - name: Prove canonical typed instance survives Viewer render-plan handoff
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml --features projected-scene-instances projected_instance_preserves_canonical_scene_authority -- --exact
+
+      - name: Preserve default vendor Viewer dependency boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.85.0 --profile minimal
+          cargo +1.85.0 check --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer

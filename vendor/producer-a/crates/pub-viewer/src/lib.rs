@@ -8,12 +8,16 @@
 //! part of the Viewer contract.
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(feature = "projected-scene-instances")]
+use chaptera_scene_instance::SceneInstanceV1;
 use pub_layout::{
     BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
     BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, ResolvedPhysicalNode,
     project_bounded, resolve_bounded_geometry, resolve_bounded_text_flow,
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
+#[cfg(feature = "projected-scene-instances")]
+use pub_model::RectEmu;
 use pub_model::{
     Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
@@ -149,6 +153,21 @@ impl ViewerDocument {
     }
 }
 
+/// Lossless Viewer-side geometry adapter for the canonical Chaptera visual-instance
+/// authority. Identity/projection kind stay owned by `chaptera-scene-instance`;
+/// Viewer adds only resolved paint geometry and optional target Story/frame lookup.
+#[cfg(feature = "projected-scene-instances")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerProjectedSceneInstanceV1 {
+    pub scene_instance: SceneInstanceV1,
+    pub bounds: RectEmu,
+    pub transform: Affine2D,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_story_id: Option<StoryId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_frame_node_id: Option<NodeId>,
+}
+
 /// First real visual Viewer handoff.
 ///
 /// `document` owns application order/text/diagnostics. `scene` is the
@@ -168,6 +187,9 @@ pub struct ViewerGeometryDocument {
     pub text_fragments: Vec<ViewerTextFragment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typography_runs: Vec<ViewerTypographyRun>,
+    #[cfg(feature = "projected-scene-instances")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projected_instances: Vec<ViewerProjectedSceneInstanceV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ViewerEmbeddedImage>,
 }
@@ -718,6 +740,8 @@ pub fn open_mature_0x2c_geometry(
         story_frames,
         text_fragments,
         typography_runs,
+        #[cfg(feature = "projected-scene-instances")]
+        projected_instances: Vec::new(),
         images,
     })
 }
@@ -1574,6 +1598,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -1721,6 +1747,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.scene.nodes.clone();
@@ -2143,6 +2171,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2245,6 +2275,8 @@ mod tests {
             story_frames: initial_frames.clone(),
             text_fragments: initial_fragments,
             typography_runs: Vec::new(),
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
 
@@ -2308,6 +2340,8 @@ mod tests {
             story_frames: Vec::new(),
             text_fragments: Vec::new(),
             typography_runs: Vec::new(),
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             images: Vec::new(),
         };
         let before = visual.clone();

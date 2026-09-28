@@ -5,8 +5,13 @@ edition.workspace=true
 rust-version.workspace=true
 license.workspace=true
 
+[features]
+default=[]
+projected-scene-instances=["dep:chaptera-scene-instance"]
+
 [dependencies]
 anyhow.workspace=true
+chaptera-scene-instance={path="../../../../crates/chaptera-scene-instance",optional=true}
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
 pub-presentation-profile={path="../../../../crates/pub-presentation-profile",default-features=false}

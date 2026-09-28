@@ -4,6 +4,10 @@
 //! It deliberately contains no egui types, EditorSession state, parser-private
 //! carrier names, source offsets, or mutable authoring commands.
 
+#[cfg(feature = "projected-scene-instances")]
+use chaptera_scene_instance::SceneInstanceV1;
+#[cfg(feature = "projected-scene-instances")]
+use pub_model::CanonicalId;
 use pub_model::{Affine2D, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
 use pub_viewer::ViewerGeometryDocument;
 use serde::{Deserialize, Serialize};
@@ -21,7 +25,12 @@ pub struct PageRenderPlanV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRenderPlanV1 {
+    /// Semantic origin identity. Projected visuals retain this origin and carry
+    /// their separate canonical visual authority in `scene_instance`.
     pub node_id: NodeId,
+    #[cfg(feature = "projected-scene-instances")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_instance: Option<SceneInstanceV1>,
     pub bounds: RectEmu,
     pub transform: Affine2D,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +80,8 @@ pub struct RenderTypographyRunV1 {
 pub enum RenderPlanErrorV1 {
     PageIndexOutOfBounds { page_index: usize },
     PageSurfaceMissing { page_id: PageId },
+    #[cfg(feature = "projected-scene-instances")]
+    ProjectedInstanceIdentityInvalid { field: &'static str },
 }
 
 impl fmt::Display for RenderPlanErrorV1 {
@@ -81,6 +92,10 @@ impl fmt::Display for RenderPlanErrorV1 {
             }
             Self::PageSurfaceMissing { page_id } => {
                 write!(formatter, "viewer page {page_id:?} has no resolved surface")
+            }
+            #[cfg(feature = "projected-scene-instances")]
+            Self::ProjectedInstanceIdentityInvalid { field } => {
+                write!(formatter, "projected scene instance carries invalid {field}")
             }
         }
     }
@@ -105,7 +120,7 @@ pub fn build_page_render_plan_v1(
         .ok_or(RenderPlanErrorV1::PageSurfaceMissing { page_id: page.id })?;
 
     let parent_origin = page.id.into_canonical();
-    let nodes = visual
+    let mut nodes = visual
         .scene
         .nodes
         .iter()
@@ -169,6 +184,8 @@ pub fn build_page_render_plan_v1(
 
             NodeRenderPlanV1 {
                 node_id: node.origin,
+                #[cfg(feature = "projected-scene-instances")]
+                scene_instance: None,
                 bounds: node.bounds,
                 transform: node.transform.clone(),
                 solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
@@ -182,7 +199,111 @@ pub fn build_page_render_plan_v1(
                 text,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    #[cfg(feature = "projected-scene-instances")]
+    {
+        for projected in &visual.projected_instances {
+            let target_page = projected
+                .scene_instance
+                .target_page_id
+                .parse::<CanonicalId>()
+                .map(PageId::from_canonical)
+                .map_err(|_| RenderPlanErrorV1::ProjectedInstanceIdentityInvalid {
+                    field: "target_page_id",
+                })?;
+            if target_page != page.id {
+                continue;
+            }
+
+            let origin_node_id = projected
+                .scene_instance
+                .origin_node_id
+                .parse::<CanonicalId>()
+                .map(NodeId::from_canonical)
+                .map_err(|_| RenderPlanErrorV1::ProjectedInstanceIdentityInvalid {
+                    field: "origin_node_id",
+                })?;
+
+            let story_authority_id = projected
+                .scene_instance
+                .story_authority_id
+                .as_deref()
+                .map(|value| {
+                    value
+                        .parse::<CanonicalId>()
+                        .map(StoryId::from_canonical)
+                        .map_err(|_| RenderPlanErrorV1::ProjectedInstanceIdentityInvalid {
+                            field: "story_authority_id",
+                        })
+                })
+                .transpose()?;
+
+            let paint = visual
+                .paints
+                .iter()
+                .find(|paint| paint.node_id == origin_node_id);
+            let image = visual
+                .images
+                .iter()
+                .find(|image| image.node_ids.contains(&origin_node_id))
+                .map(|image| RenderImageRefV1 {
+                    resource_id: image.resource_id,
+                    mime: image.mime.clone(),
+                });
+            let text = story_authority_id.and_then(|story_id| {
+                let story = visual
+                    .document
+                    .stories
+                    .iter()
+                    .find(|story| story.id == story_id)?;
+                let scalar_end = u32::try_from(story.text.chars().count()).ok()?;
+                let mut typography = visual
+                    .typography_runs
+                    .iter()
+                    .filter(|run| run.story_id == story_id)
+                    .filter(|run| run.applies_to_story_text(&story.text))
+                    .filter_map(|run| {
+                        let scalar_start = run.scalar_start;
+                        let scalar_end = run.scalar_end.min(scalar_end);
+                        (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
+                            scalar_start,
+                            scalar_end,
+                            source_font_name: run.source_font_name.clone(),
+                            text_size_emu: run.text_size_emu,
+                            font_inherited: run.font_inherited,
+                            size_inherited: run.size_inherited,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                typography.sort_by_key(|run| (run.scalar_start, run.scalar_end, run.text_size_emu));
+                Some(RenderTextFragmentV1 {
+                    story_id,
+                    scalar_start: 0,
+                    scalar_end,
+                    text: story.text.clone(),
+                    line_count: 0,
+                    typography,
+                })
+            });
+
+            nodes.push(NodeRenderPlanV1 {
+                node_id: origin_node_id,
+                scene_instance: Some(projected.scene_instance.clone()),
+                bounds: projected.bounds,
+                transform: projected.transform.clone(),
+                solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
+                solid_line: paint
+                    .and_then(|paint| paint.solid_line.as_ref())
+                    .map(|line| RenderSolidLineV1 {
+                        rgb: line.rgb,
+                        width_emu: line.width_emu,
+                    }),
+                image,
+                text,
+            });
+        }
+    }
 
     Ok(PageRenderPlanV1 {
         schema_version: PAGE_RENDER_PLAN_SCHEMA_V1.to_owned(),
@@ -280,6 +401,8 @@ mod tests {
                 text: "hello".into(),
                 line_count: 1,
             }],
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             typography_runs: vec![ViewerTypographyRun {
                 story_id,
                 scalar_start: 0,
@@ -307,6 +430,8 @@ mod tests {
         assert_eq!(plan.schema_version, PAGE_RENDER_PLAN_SCHEMA_V1);
         assert_eq!(plan.nodes.len(), 1);
         let node = &plan.nodes[0];
+        #[cfg(feature = "projected-scene-instances")]
+        assert!(node.scene_instance.is_none());
         assert_eq!(node.solid_fill_rgb, Some([1, 2, 3]));
         assert_eq!(
             node.solid_line.as_ref().map(|line| line.rgb),
@@ -326,6 +451,59 @@ mod tests {
         assert_eq!(typography[0].scalar_end, 2);
         assert_eq!(typography[0].text_size_emu, 24 * 12_700);
         assert!(typography[0].size_inherited);
+    }
+
+    #[cfg(feature = "projected-scene-instances")]
+    #[test]
+    fn projected_instance_preserves_canonical_scene_authority() {
+        use chaptera_scene_instance::{
+            SCENE_INSTANCE_SCHEMA_V1, SceneInstanceV1, SceneProjectionKindV1,
+        };
+        use pub_viewer::ViewerProjectedSceneInstanceV1;
+
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let origin_node_id = visual.scene.nodes[0].origin;
+        let story_id = visual.document.stories[0].id;
+        let canonical_instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:canonical-scene-instance-test".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: origin_node_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: Some(story_id.as_canonical().to_string()),
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+        let projected_bounds = RectEmu::new(
+            LengthEmu::new(50),
+            LengthEmu::new(60),
+            LengthEmu::new(700),
+            LengthEmu::new(800),
+        );
+        visual.projected_instances.push(ViewerProjectedSceneInstanceV1 {
+            scene_instance: canonical_instance.clone(),
+            bounds: projected_bounds,
+            transform: Affine2D::identity(),
+            target_story_id: None,
+            target_frame_node_id: None,
+        });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        assert_eq!(plan.nodes.len(), 2);
+        let projected = plan
+            .nodes
+            .iter()
+            .find(|node| node.scene_instance.is_some())
+            .expect("projected scene instance");
+        assert_eq!(projected.node_id, origin_node_id);
+        assert_eq!(projected.bounds, projected_bounds);
+        assert_eq!(projected.scene_instance.as_ref(), Some(&canonical_instance));
+        assert_eq!(
+            projected.text.as_ref().map(|text| text.text.as_str()),
+            Some("hello")
+        );
     }
 
     #[test]
