@@ -44,8 +44,9 @@ use pub_odg::{
     add_embedded_images_to_odg, project_resolved_graph_to_odg, write_odg,
 };
 use pub_reader::{
-    PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame, build_mature_0x2c_source_graph,
-    materialize_bounded_simple_table_cells, resolve_pub_source_graph,
+    PubResolvedGraph, PubResolvedNodePayload, PubResolvedStoryFrame,
+    build_mature_0x2c_source_graph, materialize_bounded_simple_table_cells,
+    resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1734,7 +1735,9 @@ impl EditorSession {
                 .iter()
                 .position(|operation| matches!(operation, EditOperation::CreateTextBox { .. }))
             {
-                return Err(EditorProjectError::LegacyProjectCarriesCreateTextBoxOperation { index });
+                return Err(
+                    EditorProjectError::LegacyProjectCarriesCreateTextBoxOperation { index },
+                );
             }
         }
         if project.schema_version != EDITOR_PROJECT_VERSION_V0_11 && project.identity.is_some() {
@@ -3083,13 +3086,7 @@ fn replay_canonical_operation(
             bounds,
             text_preset,
         } => session
-            .create_text_box(
-                *node_id,
-                *story_id,
-                *page_id,
-                *bounds,
-                text_preset.clone(),
-            )
+            .create_text_box(*node_id, *story_id, *page_id, *bounds, text_preset.clone())
             .map_err(|error| EditorProjectError::Operation { index, error }),
         EditOperation::CreateShape { .. } => session
             .consume_canonical_create_shape(expected.clone())
@@ -4130,10 +4127,9 @@ fn apply_inverse(
         } => {
             let expected_story = empty_editor_story(*story_id);
             let expected_node = authored_text_box_node_v1(*node_id, *story_id, *page_id, *bounds);
-            let page_has_exact_child = graph
-                .pages
-                .get(page_id)
-                .is_some_and(|page| page.children.iter().filter(|id| **id == *node_id).count() == 1);
+            let page_has_exact_child = graph.pages.get(page_id).is_some_and(|page| {
+                page.children.iter().filter(|id| **id == *node_id).count() == 1
+            });
             if graph.stories.get(story_id) != Some(&expected_story)
                 || graph.nodes.get(node_id) != Some(&expected_node)
                 || !page_has_exact_child
