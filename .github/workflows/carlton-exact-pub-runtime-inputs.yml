@@ -1526,6 +1526,63 @@ jobs:
           )
           PY
 
+      - name: Emit active Reader Cmo authority bridge receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/carlton/reader-cmo-bridge
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --features cmo-authority-bridge \
+            --bin cmo_projection_bridge_receipt -- \
+            out/carlton/exact/March-2026.pub \
+            out/carlton/reader-cmo-bridge/march.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --features cmo-authority-bridge \
+            --bin cmo_projection_bridge_receipt -- \
+            out/carlton/exact/December-2025.pub \
+            out/carlton/reader-cmo-bridge/december.json
+
+      - name: Gate active Reader Cmo authority bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/reader-cmo-bridge")
+          march = json.loads((root / "march.json").read_text())
+          december = json.loads((root / "december.json").read_text())
+
+          assert march["schema"] == "chaptera.reader-cmo-authority-bridge.v1", march
+          assert march["active_graph_identity_parity"] is True, march
+          assert march["relation_count"] == 9, march
+          assert march["target_count"] == 4, march
+          assert sorted({row["target_qsid"] for row in march["relations"]}) == [49, 120, 216, 218], march
+
+          assert december["schema"] == "chaptera.reader-cmo-authority-bridge.v1", december
+          assert december["active_graph_identity_parity"] is True, december
+          assert december["relation_count"] == 21, december
+          assert december["target_count"] == 6, december
+          assert sorted({row["target_qsid"] for row in december["relations"]}) == [49, 120, 139, 170, 192, 218], december
+
+          print(
+              "READER CMO AUTHORITY BRIDGE EXACT PASS "
+              "March=9/4 December=21/6 identity_parity=true"
+          )
+          PY
+
+      - name: Upload active Reader Cmo authority bridge receipts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: carlton-reader-cmo-authority-bridge
+          path: out/carlton/reader-cmo-bridge
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload Reader/Viewer presentation-consumer receipts
         uses: actions/upload-artifact@v4
         if: success()
