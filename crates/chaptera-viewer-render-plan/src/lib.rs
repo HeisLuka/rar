@@ -4,8 +4,14 @@
 //! It deliberately contains no egui types, EditorSession state, parser-private
 //! carrier names, source offsets, or mutable authoring commands.
 
+#[cfg(feature = "projected-scene-instances")]
+use chaptera_scene_instance::{SceneInstanceV1, SceneProjectionKindV1};
+#[cfg(feature = "projected-scene-instances")]
+use pub_model::CanonicalId;
 use pub_model::{Affine2D, NodeId, PageId, RectEmu, ResourceId, Size2D, StoryId};
 use pub_viewer::ViewerGeometryDocument;
+#[cfg(feature = "projected-scene-instances")]
+use pub_viewer::ViewerProjectedSceneInstanceV1;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -22,6 +28,9 @@ pub struct PageRenderPlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRenderPlanV1 {
     pub node_id: NodeId,
+    #[cfg(feature = "projected-scene-instances")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_scene_instance: Option<SceneInstanceV1>,
     pub bounds: RectEmu,
     pub transform: Affine2D,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -69,8 +78,21 @@ pub struct RenderTypographyRunV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderPlanErrorV1 {
-    PageIndexOutOfBounds { page_index: usize },
-    PageSurfaceMissing { page_id: PageId },
+    PageIndexOutOfBounds {
+        page_index: usize,
+    },
+    PageSurfaceMissing {
+        page_id: PageId,
+    },
+    #[cfg(feature = "projected-scene-instances")]
+    ProjectedIdentityInvalid {
+        field: &'static str,
+        value: String,
+    },
+    #[cfg(feature = "projected-scene-instances")]
+    ProjectedKindUnsupported {
+        instance_id: String,
+    },
 }
 
 impl fmt::Display for RenderPlanErrorV1 {
@@ -82,11 +104,127 @@ impl fmt::Display for RenderPlanErrorV1 {
             Self::PageSurfaceMissing { page_id } => {
                 write!(formatter, "viewer page {page_id:?} has no resolved surface")
             }
+            #[cfg(feature = "projected-scene-instances")]
+            Self::ProjectedIdentityInvalid { field, value } => {
+                write!(
+                    formatter,
+                    "projected {field} is not canonical identity: {value}"
+                )
+            }
+            #[cfg(feature = "projected-scene-instances")]
+            Self::ProjectedKindUnsupported { instance_id } => {
+                write!(
+                    formatter,
+                    "projected instance {instance_id} has unsupported projection kind"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for RenderPlanErrorV1 {}
+
+#[cfg(feature = "projected-scene-instances")]
+fn suppress_projected_object_marker_glyphs(text: &str) -> String {
+    text.chars()
+        .map(|ch| if ch == '\u{FFFC}' { '\u{200B}' } else { ch })
+        .collect()
+}
+
+#[cfg(feature = "projected-scene-instances")]
+fn clip_render_text_at_story_scalar_end(fragment: &mut RenderTextFragmentV1, scalar_end: u32) {
+    let clipped_end = fragment.scalar_end.min(scalar_end);
+    if clipped_end <= fragment.scalar_start {
+        fragment.scalar_end = fragment.scalar_start;
+        fragment.text.clear();
+        fragment.typography.clear();
+        fragment.line_count = 0;
+        return;
+    }
+    if clipped_end == fragment.scalar_end {
+        return;
+    }
+
+    let keep = usize::try_from(clipped_end - fragment.scalar_start)
+        .expect("u32 scalar span fits usize on supported targets");
+    fragment.text = fragment.text.chars().take(keep).collect();
+    fragment.scalar_end = clipped_end;
+    fragment.line_count = 0;
+    for run in &mut fragment.typography {
+        run.scalar_end = run.scalar_end.min(clipped_end);
+    }
+    fragment
+        .typography
+        .retain(|run| run.scalar_start < run.scalar_end);
+}
+
+#[cfg(feature = "projected-scene-instances")]
+fn parse_node_id(value: &str, field: &'static str) -> Result<NodeId, RenderPlanErrorV1> {
+    value
+        .parse::<CanonicalId>()
+        .map(NodeId::from_canonical)
+        .map_err(|_| RenderPlanErrorV1::ProjectedIdentityInvalid {
+            field,
+            value: value.to_owned(),
+        })
+}
+
+#[cfg(feature = "projected-scene-instances")]
+fn parse_story_id(value: &str, field: &'static str) -> Result<StoryId, RenderPlanErrorV1> {
+    value
+        .parse::<CanonicalId>()
+        .map(StoryId::from_canonical)
+        .map_err(|_| RenderPlanErrorV1::ProjectedIdentityInvalid {
+            field,
+            value: value.to_owned(),
+        })
+}
+
+#[cfg(feature = "projected-scene-instances")]
+fn projected_text(
+    visual: &ViewerGeometryDocument,
+    instance: &ViewerProjectedSceneInstanceV1,
+) -> Result<Option<RenderTextFragmentV1>, RenderPlanErrorV1> {
+    let Some(story_text) = instance.scene_instance.story_authority_id.as_deref() else {
+        return Ok(None);
+    };
+    let story_id = parse_story_id(story_text, "story_authority_id")?;
+    let Some(story) = visual
+        .document
+        .stories
+        .iter()
+        .find(|story| story.id == story_id)
+    else {
+        return Ok(None);
+    };
+    let scalar_end = u32::try_from(story.text.chars().count()).unwrap_or(u32::MAX);
+    let typography = visual
+        .typography_runs
+        .iter()
+        .filter(|run| run.story_id == story_id)
+        .filter(|run| run.applies_to_story_text(&story.text))
+        .filter_map(|run| {
+            let scalar_start = run.scalar_start.min(scalar_end);
+            let scalar_end = run.scalar_end.min(scalar_end);
+            (scalar_start < scalar_end).then(|| RenderTypographyRunV1 {
+                scalar_start,
+                scalar_end,
+                source_font_name: run.source_font_name.clone(),
+                text_size_emu: run.text_size_emu,
+                font_inherited: run.font_inherited,
+                size_inherited: run.size_inherited,
+            })
+        })
+        .collect();
+    Ok(Some(RenderTextFragmentV1 {
+        story_id,
+        scalar_start: 0,
+        scalar_end,
+        text: story.text.clone(),
+        line_count: 0,
+        typography,
+    }))
+}
 
 pub fn build_page_render_plan_v1(
     visual: &ViewerGeometryDocument,
@@ -105,42 +243,36 @@ pub fn build_page_render_plan_v1(
         .ok_or(RenderPlanErrorV1::PageSurfaceMissing { page_id: page.id })?;
 
     let parent_origin = page.id.into_canonical();
-    let nodes = visual
+    let mut nodes = visual
         .scene
         .nodes
         .iter()
         .filter(|node| node.parent_origin == parent_origin)
         .map(|node| {
-            let paint = visual
-                .paints
-                .iter()
-                .find(|paint| paint.node_id == node.origin);
-            let image = visual
-                .images
-                .iter()
-                .find(|image| image.node_ids.contains(&node.origin))
-                .map(|image| RenderImageRefV1 {
-                    resource_id: image.resource_id,
-                    mime: image.mime.clone(),
-                });
-            let text = visual
+            let mut text = visual
                 .text_fragments
                 .iter()
                 .find(|fragment| fragment.frame_id == node.origin)
-                .map(|fragment| {
-                    let current_story_text = visual
-                        .document
-                        .stories
-                        .iter()
-                        .find(|story| story.id == fragment.story_id)
-                        .map(|story| story.text.as_str());
-                    let mut typography = visual
+                .map(|fragment| RenderTextFragmentV1 {
+                    story_id: fragment.story_id,
+                    scalar_start: fragment.scalar_start,
+                    scalar_end: fragment.scalar_end,
+                    text: fragment.text.clone(),
+                    line_count: fragment.line_count,
+                    typography: visual
                         .typography_runs
                         .iter()
                         .filter(|run| run.story_id == fragment.story_id)
                         .filter(|run| {
-                            current_story_text
-                                .is_some_and(|text| run.applies_to_story_text(text))
+                            run.applies_to_story_text(
+                                visual
+                                    .document
+                                    .stories
+                                    .iter()
+                                    .find(|story| story.id == fragment.story_id)
+                                    .map(|story| story.text.as_str())
+                                    .unwrap_or_default(),
+                            )
                         })
                         .filter_map(|run| {
                             let scalar_start = run.scalar_start.max(fragment.scalar_start);
@@ -154,21 +286,49 @@ pub fn build_page_render_plan_v1(
                                 size_inherited: run.size_inherited,
                             })
                         })
-                        .collect::<Vec<_>>();
-                    typography.sort_by_key(|run| (run.scalar_start, run.scalar_end, run.text_size_emu));
-
-                    RenderTextFragmentV1 {
-                        story_id: fragment.story_id,
-                        scalar_start: fragment.scalar_start,
-                        scalar_end: fragment.scalar_end,
-                        text: fragment.text.clone(),
-                        line_count: fragment.line_count,
-                        typography,
-                    }
+                        .collect(),
                 });
-
+            #[cfg(feature = "projected-scene-instances")]
+            {
+                let projected_for_frame = visual.projected_instances.iter().filter(|projected| {
+                    projected.scene_instance.target_page_id == page.id.as_canonical().to_string()
+                        && projected.target_frame_node_id == node.origin
+                });
+                let mut has_projection = false;
+                let mut paint_scalar_end = None::<u32>;
+                for projected in projected_for_frame {
+                    has_projection = true;
+                    if let Some(candidate) = projected.target_frame_paint_scalar_end {
+                        paint_scalar_end = Some(
+                            paint_scalar_end.map_or(candidate, |current| current.min(candidate)),
+                        );
+                    }
+                }
+                if let Some(rendered) = text.as_mut() {
+                    if let Some(scalar_end) = paint_scalar_end {
+                        clip_render_text_at_story_scalar_end(rendered, scalar_end);
+                    }
+                    if has_projection {
+                        rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
+                    }
+                }
+            }
+            let paint = visual
+                .paints
+                .iter()
+                .find(|paint| paint.node_id == node.origin);
+            let image = visual
+                .images
+                .iter()
+                .find(|image| image.node_ids.contains(&node.origin))
+                .map(|image| RenderImageRefV1 {
+                    resource_id: image.resource_id,
+                    mime: image.mime.clone(),
+                });
             NodeRenderPlanV1 {
                 node_id: node.origin,
+                #[cfg(feature = "projected-scene-instances")]
+                projected_scene_instance: None,
                 bounds: node.bounds,
                 transform: node.transform.clone(),
                 solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
@@ -182,7 +342,57 @@ pub fn build_page_render_plan_v1(
                 text,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    #[cfg(feature = "projected-scene-instances")]
+    for projected in visual.projected_instances.iter().filter(|projected| {
+        projected.scene_instance.target_page_id == page.id.as_canonical().to_string()
+    }) {
+        if projected.scene_instance.projection_kind != SceneProjectionKindV1::CmoStorySlot {
+            return Err(RenderPlanErrorV1::ProjectedKindUnsupported {
+                instance_id: projected.scene_instance.instance_id.clone(),
+            });
+        }
+        let origin_node_id =
+            parse_node_id(&projected.scene_instance.origin_node_id, "origin_node_id")?;
+        let paint = visual
+            .paints
+            .iter()
+            .find(|paint| paint.node_id == origin_node_id);
+        let image = visual
+            .images
+            .iter()
+            .find(|image| image.node_ids.contains(&origin_node_id))
+            .map(|image| RenderImageRefV1 {
+                resource_id: image.resource_id,
+                mime: image.mime.clone(),
+            });
+        let node = NodeRenderPlanV1 {
+            node_id: origin_node_id,
+            projected_scene_instance: Some(projected.scene_instance.clone()),
+            bounds: projected.bounds,
+            transform: projected.transform.clone(),
+            solid_fill_rgb: paint.and_then(|paint| paint.solid_fill_rgb),
+            solid_line: paint
+                .and_then(|paint| paint.solid_line.as_ref())
+                .map(|line| RenderSolidLineV1 {
+                    rgb: line.rgb,
+                    width_emu: line.width_emu,
+                }),
+            image,
+            text: projected_text(visual, projected)?,
+        };
+
+        let insert_at = nodes
+            .iter()
+            .position(|candidate| {
+                candidate.projected_scene_instance.is_none()
+                    && candidate.node_id == projected.target_frame_node_id
+            })
+            .map(|index| index + 1)
+            .unwrap_or(nodes.len());
+        nodes.insert(insert_at, node);
+    }
 
     Ok(PageRenderPlanV1 {
         schema_version: PAGE_RENDER_PLAN_SCHEMA_V1.to_owned(),
@@ -195,6 +405,10 @@ pub fn build_page_render_plan_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "projected-scene-instances")]
+    use chaptera_scene_instance::{
+        SCENE_INSTANCE_SCHEMA_V1, SceneInstanceV1, SceneProjectionKindV1,
+    };
     use pub_layout::{
         BoundedLayoutEnvironment, BoundedResolvedScene, ResolvedPhysicalNode, ResolvedSurface,
     };
@@ -280,6 +494,8 @@ mod tests {
                 text: "hello".into(),
                 line_count: 1,
             }],
+            #[cfg(feature = "projected-scene-instances")]
+            projected_instances: Vec::new(),
             typography_runs: vec![ViewerTypographyRun {
                 story_id,
                 scalar_start: 0,
@@ -326,6 +542,161 @@ mod tests {
         assert_eq!(typography[0].scalar_end, 2);
         assert_eq!(typography[0].text_size_emu, 24 * 12_700);
         assert!(typography[0].size_inherited);
+    }
+
+    #[cfg(feature = "projected-scene-instances")]
+    #[test]
+    fn canonical_cmo_scene_instance_reaches_render_plan_without_new_identity() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let origin_node_id = visual.scene.nodes[0].origin;
+        let story_id = visual.document.stories[0].id;
+        // Canonical instance derivation is owned and tested by
+        // chaptera-scene-instance and by the exact Cmo slot-flow consumer.
+        // This seam test proves Viewer/render-plan preserves that already-owned
+        // typed authority verbatim instead of deriving a second identity.
+        let instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:scene-instance-authority-fixture".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: origin_node_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: Some(story_id.as_canonical().to_string()),
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+        visual
+            .projected_instances
+            .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
+                scene_instance: instance.clone(),
+                target_frame_node_id: origin_node_id,
+                target_frame_paint_scalar_end: None,
+                bounds: RectEmu::new(
+                    LengthEmu::new(50),
+                    LengthEmu::new(60),
+                    LengthEmu::new(70),
+                    LengthEmu::new(80),
+                ),
+                transform: Affine2D::identity(),
+            });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        let projected = plan
+            .nodes
+            .iter()
+            .find(|node| node.projected_scene_instance.is_some())
+            .expect("projected node");
+        assert_eq!(
+            projected
+                .projected_scene_instance
+                .as_ref()
+                .map(|value| value.instance_id.as_str()),
+            Some(instance.instance_id.as_str())
+        );
+        assert_eq!(projected.node_id, origin_node_id);
+    }
+
+    #[cfg(feature = "projected-scene-instances")]
+    #[test]
+    fn projected_slot_suppresses_only_marker_glyphs_and_keeps_scalar_count() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let frame_id = visual.scene.nodes[0].origin;
+        let source = "\u{FFFC}\r\u{FFFC}\r\u{FFFC}am.";
+        visual.document.stories[0].text = source.to_owned();
+        visual.text_fragments[0].text = source.to_owned();
+        visual.text_fragments[0].scalar_end =
+            u32::try_from(source.chars().count()).expect("bounded fixture");
+        let instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:marker-suppression-instance-fixture".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: frame_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: None,
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+        visual
+            .projected_instances
+            .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
+                scene_instance: instance,
+                target_frame_node_id: frame_id,
+                target_frame_paint_scalar_end: None,
+                bounds: visual.scene.nodes[0].bounds,
+                transform: Affine2D::identity(),
+            });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        let direct = plan
+            .nodes
+            .iter()
+            .find(|node| node.projected_scene_instance.is_none() && node.node_id == frame_id)
+            .expect("direct frame");
+        let rendered = &direct.text.as_ref().expect("text").text;
+        assert!(!rendered.contains('\u{FFFC}'));
+        assert_eq!(rendered.chars().count(), source.chars().count());
+        assert!(rendered.ends_with("am."));
+    }
+
+    #[cfg(feature = "projected-scene-instances")]
+    #[test]
+    fn proven_first_nonfit_clips_direct_target_paint_without_mutating_story() {
+        let mut visual = fixture();
+        let page_id = visual.document.pages[0].id;
+        let frame_id = visual.scene.nodes[0].origin;
+        let source = "\u{FFFC}\rX\u{FFFC}tail";
+        visual.document.stories[0].text = source.to_owned();
+        visual.text_fragments[0].text = source.to_owned();
+        visual.text_fragments[0].scalar_end =
+            u32::try_from(source.chars().count()).expect("bounded fixture");
+
+        let instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:first-nonfit-paint-fixture".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: frame_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: None,
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+        visual
+            .projected_instances
+            .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
+                scene_instance: instance,
+                target_frame_node_id: frame_id,
+                target_frame_paint_scalar_end: Some(3),
+                bounds: visual.scene.nodes[0].bounds,
+                transform: Affine2D::identity(),
+            });
+
+        let plan = build_page_render_plan_v1(&visual, 0).expect("render plan");
+        let direct = plan
+            .nodes
+            .iter()
+            .find(|node| node.projected_scene_instance.is_none() && node.node_id == frame_id)
+            .expect("direct frame");
+        let rendered = direct
+            .text
+            .as_ref()
+            .expect("pre-boundary direct text remains");
+        assert_eq!(rendered.scalar_start, 0);
+        assert_eq!(rendered.scalar_end, 3);
+        assert_eq!(rendered.text, "\u{200B}\rX");
+        assert!(
+            rendered
+                .typography
+                .iter()
+                .all(|run| run.scalar_end <= rendered.scalar_end)
+        );
+        assert_eq!(
+            visual.document.stories[0].text, source,
+            "paint clipping must not mutate canonical Viewer Story text"
+        );
     }
 
     #[test]
