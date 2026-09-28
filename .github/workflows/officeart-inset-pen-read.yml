@@ -1,0 +1,31 @@
+name: OfficeArt InsetPen raw observation
+
+on:
+  pull_request:
+    paths:
+      - "tools/officeart-inset-pen-read/**"
+      - "vendor/producer-a/crates/pub-escher/**"
+      - "docs/officeart-inset-pen-read-01.md"
+      - ".github/workflows/officeart-inset-pen-read.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt
+      - name: Format
+        run: cargo fmt --manifest-path tools/officeart-inset-pen-read/Cargo.toml --check
+      - name: Test source-free InsetPen observations
+        run: cargo test --manifest-path tools/officeart-inset-pen-read/Cargo.toml

@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "officeart-inset-pen-read"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "officeart-inset-pen-read"
+path = "src/main.rs"
+
+[dependencies]
+pub-core = { path = "../../vendor/producer-a/crates/pub-core" }
+pub-escher = { path = "../../vendor/producer-a/crates/pub-escher" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
