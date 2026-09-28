@@ -1,0 +1,35 @@
+name: Chaptera PUB Check web
+
+on:
+  pull_request:
+    paths:
+      - "apps/pub-check-web/**"
+      - ".github/workflows/pub-check-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/pub-check-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/pub-check-web/package-lock.json
+      - name: Install
+        run: npm install --package-lock-only && npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+        env:
+          BLOB_READ_WRITE_TOKEN: vercel_blob_rw_test_placeholder
+          CHECKER_ADMIN_TOKEN: checker_admin_test_placeholder
+          CRON_SECRET: cron_test_placeholder
