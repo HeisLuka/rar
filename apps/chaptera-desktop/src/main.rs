@@ -7245,6 +7245,233 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(not(feature = "reader-only"))]
+    #[test]
+    #[ignore = "runtime GUI evidence requires pinned CHAPTERA_SAMPLE_NEWSLETTER"]
+    fn gui_textbox_tool_creates_focuses_and_types_into_one_new_story() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let fixture_source = std::env::var_os("CHAPTERA_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_SAMPLE_NEWSLETTER must point to the pinned Apache POI fixture");
+        let original = fs::read(&fixture_source).expect("read pinned SampleNewsletter fixture");
+        let root = std::env::temp_dir().join(format!(
+            "chaptera-gui-textbox-create-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create TextBox GUI temp directory");
+        let fixture = root.join("SampleNewsletter.pub");
+        fs::write(&fixture, &original).expect("write TextBox GUI PUB fixture");
+
+        let fixture_for_app = fixture.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(48)
+            .build_eframe(move |cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage)
+            });
+        harness.step();
+
+        let operations_before = harness
+            .state()
+            .editor
+            .as_ref()
+            .expect("editor loaded")
+            .operations()
+            .len();
+
+        let (zero_point, drag_start, drag_end) = {
+            let canvas = harness
+                .get_by_label("Document canvas")
+                .raw_bounds()
+                .expect("document canvas has screen bounds");
+            let app = harness.state();
+            let visual = app.visual.as_ref().expect("visual loaded");
+            let page = visual
+                .document
+                .pages
+                .get(app.selected_page)
+                .expect("selected page");
+            let surface = visual
+                .scene
+                .surfaces
+                .iter()
+                .find(|surface| surface.origin == page.id)
+                .expect("selected page has surface");
+            let viewport = egui::vec2(
+                (canvas.x1 - canvas.x0) as f32,
+                (canvas.y1 - canvas.y0) as f32,
+            );
+            let scene_scale = fitted_scale(
+                surface.size.width.get(),
+                surface.size.height.get(),
+                viewport,
+            )
+            .expect("selected page fits");
+            let page_width = surface.size.width.get() as f32 * scene_scale;
+            let page_height = surface.size.height.get() as f32 * scene_scale;
+            let page_left = ((canvas.x0 + canvas.x1) as f32 - page_width) / 2.0;
+            let page_top = ((canvas.y0 + canvas.y1) as f32 - page_height) / 2.0;
+
+            let doc_start_x = surface.size.width.get() / 5;
+            let doc_start_y = surface.size.height.get() / 5;
+            let doc_end_x = doc_start_x + surface.size.width.get() / 4;
+            let doc_end_y = doc_start_y + surface.size.height.get() / 8;
+            let start = egui::pos2(
+                page_left + doc_start_x as f32 * scene_scale,
+                page_top + doc_start_y as f32 * scene_scale,
+            );
+            let end = egui::pos2(
+                page_left + doc_end_x as f32 * scene_scale,
+                page_top + doc_end_y as f32 * scene_scale,
+            );
+            (start, start, end)
+        };
+
+        // A zero-size release is an explicit one-shot no-op and must return to Select.
+        harness.get_by_label("Text Box").click();
+        harness.step();
+        assert_eq!(
+            harness.state().canvas_tool_state.active_tool,
+            textbox_create_tool_v1()
+        );
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(zero_point),
+            egui::Event::PointerButton {
+                pos: zero_point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+            egui::Event::PointerButton {
+                pos: zero_point,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .editor
+                .as_ref()
+                .expect("editor")
+                .operations()
+                .len(),
+            operations_before,
+            "zero-size TextBox gesture must not create a document revision"
+        );
+        assert_eq!(
+            harness.state().canvas_tool_state.active_tool,
+            select_tool_v1()
+        );
+        assert!(harness.state().canvas_box_draw.is_none());
+
+        // Positive drag commits exactly one CreateTextBox and immediately focuses its empty Story.
+        harness.get_by_label("Text Box").click();
+        harness.step();
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(drag_start),
+            egui::Event::PointerButton {
+                pos: drag_start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]);
+        harness.step();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(drag_end));
+        harness.step();
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: drag_end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.step();
+        harness.step();
+
+        let (created_node_id, created_story_id) = {
+            let app = harness.state();
+            let editor = app.editor.as_ref().expect("editor");
+            assert_eq!(editor.operations().len(), operations_before + 1);
+            let (node_id, story_id) = match editor.operations().last() {
+                Some(pub_editor::EditOperation::CreateTextBox {
+                    node_id, story_id, ..
+                }) => (*node_id, *story_id),
+                other => panic!("expected one CreateTextBox operation, got {other:?}"),
+            };
+            assert_eq!(editor.graph().stories[&story_id].text, "");
+            assert!(
+                app.visual
+                    .as_ref()
+                    .expect("visual")
+                    .scene
+                    .nodes
+                    .iter()
+                    .any(|node| node.origin == node_id),
+                "accepted CreateTextBox must be materialized in the current Viewer scene"
+            );
+            let mode = app
+                .text_mode
+                .as_ref()
+                .expect("accepted TextBox enters direct text mode");
+            assert_eq!(mode.story_id, story_id);
+            assert_eq!(mode.frame_id, node_id);
+            assert_eq!(mode.selection.focus_scalar, 0);
+            assert_eq!(app.canvas_tool_state.active_tool, select_tool_v1());
+            assert!(app.canvas_box_draw.is_none());
+            (node_id, story_id)
+        };
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("Hello".to_owned()));
+        harness.step();
+        harness.step();
+
+        {
+            let app = harness.state();
+            let editor = app.editor.as_ref().expect("editor");
+            assert_eq!(editor.operations().len(), operations_before + 2);
+            assert!(matches!(
+                editor.operations().last(),
+                Some(pub_editor::EditOperation::ReplaceStoryRange {
+                    story_id,
+                    replacement_text,
+                    ..
+                }) if *story_id == created_story_id && replacement_text == "Hello"
+            ));
+            assert_eq!(editor.graph().stories[&created_story_id].text, "Hello");
+            assert!(
+                app.visual
+                    .as_ref()
+                    .expect("visual")
+                    .scene
+                    .nodes
+                    .iter()
+                    .any(|node| node.origin == created_node_id)
+            );
+        }
+
+        assert_eq!(
+            fs::read(&fixture).expect("re-read source PUB"),
+            original,
+            "TextBox authoring must not mutate source PUB bytes"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn source_path_argument_is_optional() {
         let path = std::path::Path::new("example.pub");
