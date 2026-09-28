@@ -85,6 +85,7 @@ const MAX_NUMERIC_ZOOM: f32 = 4.00;
 const PAGE_THUMBNAIL_MAX_WIDTH: f32 = 116.0;
 const PAGE_THUMBNAIL_MAX_HEIGHT: f32 = 148.0;
 const SOURCE_REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
+const SOURCE_EXACT_REVALIDATE_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
@@ -784,6 +785,7 @@ struct ViewerApp {
     open_state: OpenStateAuthority,
     committed_source: Option<CommittedSourceState>,
     source_revalidate_after: Option<Instant>,
+    source_exact_revalidate_after: Option<Instant>,
     visual: Option<ViewerGeometryDocument>,
     selected_page: usize,
     page_frame_cache: BTreeMap<usize, Rc<CachedPageFrameWork>>,
@@ -842,6 +844,7 @@ impl ViewerApp {
             open_state: OpenStateAuthority::default(),
             committed_source: None,
             source_revalidate_after: None,
+            source_exact_revalidate_after: None,
             visual: None,
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
@@ -1231,7 +1234,9 @@ impl ViewerApp {
             file_stamp: source_file_stamp,
             freshness: SourceFreshness::Current,
         });
-        self.source_revalidate_after = Some(Instant::now() + SOURCE_REVALIDATE_INTERVAL);
+        let now = Instant::now();
+        self.source_revalidate_after = Some(now + SOURCE_REVALIDATE_INTERVAL);
+        self.source_exact_revalidate_after = Some(now + SOURCE_EXACT_REVALIDATE_INTERVAL);
         self.visual = Some(visual);
         self.selected_page = 0;
         self.page_frame_cache.clear();
@@ -1341,14 +1346,20 @@ impl ViewerApp {
         };
 
         // Metadata is only the cheap change signal. Exact SHA-256 remains the
-        // committed source identity whenever the signal moves. Adversarial
-        // Windows path/file-identity races remain owned by CHAPTERA-WIN-PATH-IDENTITY-01.
+        // committed source identity whenever the signal moves, and is also
+        // revalidated periodically so a same-length replacement that preserves
+        // mtime cannot remain current forever. Adversarial Windows path/file-
+        // identity races remain owned by CHAPTERA-WIN-PATH-IDENTITY-01.
         let metadata_is_strongly_unchanged = previous_stamp.is_some_and(|stamp| {
             stamp.modified.is_some()
                 && stamp.byte_len == observed_stamp.byte_len
                 && stamp.modified == observed_stamp.modified
         });
-        if metadata_is_strongly_unchanged {
+        let now = Instant::now();
+        let exact_revalidation_due = self
+            .source_exact_revalidate_after
+            .is_none_or(|deadline| now >= deadline);
+        if metadata_is_strongly_unchanged && !exact_revalidation_due {
             return;
         }
 
@@ -1365,6 +1376,7 @@ impl ViewerApp {
             Err(_) => SourceFreshness::ReloadRequiredUnavailable,
         };
 
+        self.source_exact_revalidate_after = Some(now + SOURCE_EXACT_REVALIDATE_INTERVAL);
         if let Some(source) = self.committed_source.as_mut() {
             source.freshness = freshness;
             if freshness == SourceFreshness::Current {
@@ -5568,6 +5580,7 @@ mod tests {
             open_state: OpenStateAuthority::default(),
             committed_source: None,
             source_revalidate_after: None,
+            source_exact_revalidate_after: None,
             visual: None,
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
@@ -5630,6 +5643,7 @@ mod tests {
             open_state: OpenStateAuthority::default(),
             committed_source: None,
             source_revalidate_after: None,
+            source_exact_revalidate_after: None,
             visual: None,
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
@@ -5907,6 +5921,7 @@ mod tests {
             open_state: OpenStateAuthority::default(),
             committed_source: None,
             source_revalidate_after: None,
+            source_exact_revalidate_after: None,
             visual: Some(visual),
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
