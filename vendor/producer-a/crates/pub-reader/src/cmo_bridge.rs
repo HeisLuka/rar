@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use super::{
-    CONTENTS_STREAM_PATH, FIELD_STORY_ID, PubResolvedGraph, RAW_TYPE_SHAPE, build_reference_index,
+    CONTENTS_STREAM_PATH, FIELD_STORY_ID, PubResolvedGraph, PubSourceGraph, RAW_TYPE_SHAPE, build_reference_index,
     chunk_for_reference, single_parent_seq, single_raw_type, unique_reference_by_raw_type,
 };
 
@@ -44,6 +44,7 @@ pub struct PubCmoProjectionBridgeV1 {
 pub fn build_mature_0x2c_cmo_projection_bridge_v1(
     bytes: &[u8],
     source_hash: Sha256Digest,
+    source_graph: &PubSourceGraph,
     graph: &PubResolvedGraph,
 ) -> Result<PubCmoProjectionBridgeV1> {
     let contents = pub_cfb::read_stream_reader(Cursor::new(bytes), CONTENTS_STREAM_PATH)
@@ -163,7 +164,7 @@ pub fn build_mature_0x2c_cmo_projection_bridge_v1(
 
     let mut targets = Vec::with_capacity(target_qsids.len());
     for target_qsid in target_qsids {
-        let target_frames = graph
+        let source_frames = source_graph
             .nodes
             .values()
             .filter_map(|node| {
@@ -171,23 +172,32 @@ pub fn build_mature_0x2c_cmo_projection_bridge_v1(
                     .story_frame
                     .as_ref()
                     .filter(|frame| frame.text_id == target_qsid)
-                    .map(|_| node.payload.contents_seq_num)
+                    .map(|frame| (node.payload.contents_seq_num, frame.story_id))
             })
+            .collect::<Vec<_>>();
+        let target_frames = source_frames
+            .iter()
+            .map(|(seq_num, _)| *seq_num)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-
-        let target_story = graph
+        let target_story_ids = source_frames
+            .iter()
+            .filter_map(|(_, story_id)| *story_id)
+            .collect::<BTreeSet<_>>();
+        if target_story_ids.len() != 1 {
+            bail!(
+                "target Qsid {target_qsid} resolves to {} canonical Stories",
+                target_story_ids.len()
+            );
+        }
+        let target_story_id = *target_story_ids
+            .first()
+            .expect("one target Story checked");
+        let target_story = source_graph
             .stories
-            .values()
-            .find(|story| {
-                graph.nodes.values().any(|node| {
-                    node.payload.story_frame.as_ref().is_some_and(|frame| {
-                        frame.text_id == target_qsid && frame.story_id == Some(story.id)
-                    })
-                })
-            })
-            .with_context(|| format!("target Qsid {target_qsid} has no active Reader Story"))?;
+            .get(&target_story_id)
+            .with_context(|| format!("target Qsid {target_qsid} Story is absent from source graph"))?;
         let object_marker_count = target_story
             .text
             .chars()
