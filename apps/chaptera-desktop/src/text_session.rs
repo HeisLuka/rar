@@ -6,8 +6,7 @@ use chaptera_text_caret_map_adapter::{CaretStopV1, resolve_story_position_v1};
 use chaptera_text_input_adapter::{
     TextInputCommitV1, apply_keyboard_command_and_lower_v1,
     domain::{
-        StoryEditDomainV1, StoryProvenanceHintV1, derive_editor_story_edit_domain_v1,
-        to_interaction_domain_v1,
+        StoryEditDomainV1, derive_editor_story_edit_domain_auto_v1, to_interaction_domain_v1,
     },
     keyboard::KeyboardCommandV1,
     replace_selection_with_external_text_v1,
@@ -71,8 +70,7 @@ fn build_layout(
 }
 
 fn derive_domain(editor: &EditorSession, story_id: StoryId) -> Result<StoryEditDomainV1, String> {
-    derive_editor_story_edit_domain_v1(editor, story_id, StoryProvenanceHintV1::ImportedAuto)
-        .map_err(|error| error.to_string())
+    derive_editor_story_edit_domain_auto_v1(editor, story_id).map_err(|error| error.to_string())
 }
 
 fn resolve_post_edit_stop(
@@ -311,7 +309,10 @@ pub fn focus_caret(mode: &DesktopTextMode) -> Option<&CaretStopV1> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pub_editor::{EditOperation, Sha256Digest, open_mature_0x2c_editor};
+    use pub_editor::{
+        AuthoringTextPresetV1, EditOperation, LengthEmu, RectEmu, Sha256Digest,
+        open_mature_0x2c_editor,
+    };
     use sha2::{Digest, Sha256};
     use std::{env, fs};
 
@@ -388,6 +389,94 @@ mod tests {
             fs::read(path).expect("re-read source PUB"),
             original,
             "direct text editing must not mutate source PUB bytes"
+        );
+    }
+
+    #[test]
+    fn real_sample_newsletter_created_empty_story_enters_at_zero_and_accepts_first_typing() {
+        let Some(path) = env::var_os("CHAPTERA_SAMPLE_NEWSLETTER") else {
+            eprintln!(
+                "CHAPTERA_SAMPLE_NEWSLETTER not set; dedicated direct-text gate owns real evidence"
+            );
+            return;
+        };
+
+        let original = fs::read(&path).expect("read pinned SampleNewsletter");
+        let digest = Sha256::digest(&original);
+        let mut digest_bytes = [0_u8; 32];
+        digest_bytes.copy_from_slice(&digest);
+        let source_hash = Sha256Digest::from_bytes(digest_bytes);
+        let mut editor =
+            open_mature_0x2c_editor(&original, source_hash).expect("open real SampleNewsletter");
+
+        let page_id = *editor
+            .graph()
+            .pages
+            .keys()
+            .next()
+            .expect("real fixture has one page");
+        let frame_id: NodeId = serde_json::from_str("\"01890f47-0d00-7abc-8def-0123456789ab\"")
+            .expect("fixed UUIDv7 frame id");
+        let story_id: StoryId = serde_json::from_str("\"01890f47-0d01-7abc-8def-0123456789ab\"")
+            .expect("fixed UUIDv7 Story id");
+        let preset = AuthoringTextPresetV1 {
+            resource_id: fallback_resource::RESOURCE_ID.to_owned(),
+            font_fingerprint_sha256: fallback_resource::EXPECTED_SHA256.to_owned(),
+            face_index: 0,
+            font_size_emu: LengthEmu::new(fallback_resource::FONT_SIZE_EMU),
+            line_height_emu: LengthEmu::new(fallback_resource::LINE_HEIGHT_EMU),
+        };
+        editor
+            .create_text_box(
+                frame_id,
+                story_id,
+                page_id,
+                RectEmu::new(
+                    LengthEmu::new(100_000),
+                    LengthEmu::new(100_000),
+                    LengthEmu::new(2_000_000),
+                    LengthEmu::new(600_000),
+                ),
+                preset,
+            )
+            .expect("create one source-free Chaptera TextFrame+Story");
+
+        let operations_before_entry = editor.operations().len();
+        let mut mode = enter_explicit_text_mode(&editor, story_id, frame_id)
+            .expect("enter empty created Story");
+        assert_eq!(
+            mode.domain.provenance,
+            chaptera_text_input_adapter::domain::StoryProvenanceV1::ChapteraCreated
+        );
+        assert_eq!(mode.session.selection.anchor_scalar, 0);
+        assert_eq!(mode.session.selection.focus_scalar, 0);
+        assert_eq!(mode.session.selection.projection_state, "layout_pending");
+        assert!(focus_caret(&mode).is_none());
+        assert_eq!(
+            editor.operations().len(),
+            operations_before_entry,
+            "entering the empty Story remains transient"
+        );
+
+        replace_external_text(&mut editor, &mut mode, "X")
+            .expect("first typed scalar uses ordinary ReplaceStoryRange");
+        assert_eq!(editor.graph().stories[&story_id].text, "X");
+        assert!(matches!(
+            editor.operations().last(),
+            Some(EditOperation::ReplaceStoryRange { story_id: id, .. }) if *id == story_id
+        ));
+        assert_eq!(
+            mode.domain.provenance,
+            chaptera_text_input_adapter::domain::StoryProvenanceV1::ChapteraCreated
+        );
+        assert_eq!(mode.session.selection.focus_scalar, 1);
+        assert!(focus_caret(&mode).is_some());
+
+        assert_eq!(editor.source_hash(), source_hash);
+        assert_eq!(
+            fs::read(path).expect("re-read source PUB"),
+            original,
+            "Chaptera-created Story typing must not mutate source PUB bytes"
         );
     }
 }
