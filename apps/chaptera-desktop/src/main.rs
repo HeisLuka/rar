@@ -5322,10 +5322,11 @@ mod tests {
                         editor
                             .can_move_node_to(hit.node_id, bounds.x, bounds.y)
                             .ok()?;
+                        // Select through the exact object boundary. Interior clicks on
+                        // admitted TextFrames now intentionally enter text mode; the boundary
+                        // remains object-owned and is the correct route to resize handles.
                         let point = pub_interaction::DocumentPoint::new(
-                            pub_editor::LengthEmu::new(
-                                hit.bounds.x.get() + hit.bounds.width.get() / 2,
-                            ),
+                            hit.bounds.x,
                             pub_editor::LengthEmu::new(
                                 hit.bounds.y.get() + hit.bounds.height.get() / 2,
                             ),
