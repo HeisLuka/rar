@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub const PACKET_VERSION: &str = "chaptera.suite-handoff.v1";
@@ -61,12 +61,74 @@ pub struct HandoffAcceptance {
     pub source_path_serialized: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub struct AdmittedSource {
+    display_path: PathBuf,
+    locator_path: PathBuf,
+    file: File,
+    bytes: Vec<u8>,
+    sha256: String,
+}
+
+impl AdmittedSource {
+    pub fn open(path: &Path) -> Result<Self, String> {
+        require_pub_path(path)?;
+        let display_path = path.to_path_buf();
+        let locator_path = fs::canonicalize(path)
+            .map_err(|error| format!("canonicalize {}: {error}", path.display()))?;
+        let mut file = File::open(&locator_path)
+            .map_err(|error| format!("open {}: {error}", locator_path.display()))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| format!("read {}: {error}", locator_path.display()))?;
+        let sha256 = sha256_bytes(&bytes);
+        Ok(Self {
+            display_path,
+            locator_path,
+            file,
+            bytes,
+            sha256,
+        })
+    }
+
+    pub fn display_path(&self) -> &Path {
+        &self.display_path
+    }
+
+    pub fn locator_path(&self) -> &Path {
+        &self.locator_path
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    fn rehash_opened_file(&self) -> Result<String, String> {
+        let mut file = self.file.try_clone().map_err(|error| {
+            format!(
+                "duplicate admitted source handle {}: {error}",
+                self.display_path.display()
+            )
+        })?;
+        file.seek(SeekFrom::Start(0)).map_err(|error| {
+            format!(
+                "seek admitted source handle {}: {error}",
+                self.display_path.display()
+            )
+        })?;
+        hash_reader(&mut file, &self.display_path)
+    }
+}
+
+#[derive(Debug)]
 pub struct ValidatedHandoff {
     packet: HandoffPacket,
     packet_sha256: String,
-    source_path: PathBuf,
-    source_before_sha256: String,
+    source: AdmittedSource,
 }
 
 impl ValidatedHandoff {
@@ -75,7 +137,19 @@ impl ValidatedHandoff {
     }
 
     pub fn source_path(&self) -> &Path {
-        &self.source_path
+        self.source.locator_path()
+    }
+
+    pub fn source_display_path(&self) -> &Path {
+        self.source.display_path()
+    }
+
+    pub fn source_bytes(&self) -> &[u8] {
+        self.source.bytes()
+    }
+
+    pub fn source_sha256(&self) -> &str {
+        self.source.sha256()
     }
 }
 
@@ -86,20 +160,28 @@ fn lower_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-pub fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn hash_reader(reader: &mut impl Read, label: &Path) -> Result<String, String> {
     let mut digest = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
-        let count = file
+        let count = reader
             .read(&mut buffer)
-            .map_err(|error| format!("read {}: {error}", path.display()))?;
+            .map_err(|error| format!("read {}: {error}", label.display()))?;
         if count == 0 {
             break;
         }
         digest.update(&buffer[..count]);
     }
     Ok(format!("{:x}", digest.finalize()))
+}
+
+pub fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    hash_reader(&mut file, path)
 }
 
 fn require_pub_path(path: &Path) -> Result<(), String> {
@@ -149,10 +231,21 @@ pub fn create_reader_handoff(
     reader_supported: bool,
     rescue_eligible: bool,
 ) -> Result<HandoffPacket, String> {
-    require_pub_path(source_path)?;
-    let canonical = fs::canonicalize(source_path)
-        .map_err(|error| format!("canonicalize {}: {error}", source_path.display()))?;
-    let source_sha256 = sha256_file(&canonical)?;
+    let source = AdmittedSource::open(source_path)?;
+    create_reader_handoff_from_admitted(
+        &source,
+        target_product_id,
+        reader_supported,
+        rescue_eligible,
+    )
+}
+
+pub fn create_reader_handoff_from_admitted(
+    source: &AdmittedSource,
+    target_product_id: &str,
+    reader_supported: bool,
+    rescue_eligible: bool,
+) -> Result<HandoffPacket, String> {
     let (requested_job, capability, loss_state) =
         route_for_target(target_product_id, reader_supported, rescue_eligible)?;
 
@@ -162,8 +255,8 @@ pub fn create_reader_handoff(
         target_product_id: target_product_id.to_owned(),
         requested_job: requested_job.to_owned(),
         source: HandoffSource {
-            path: canonical.display().to_string(),
-            sha256: source_sha256,
+            path: source.locator_path().display().to_string(),
+            sha256: source.sha256().to_owned(),
             kind: "pub".to_owned(),
         },
         context: HandoffContext {
@@ -266,16 +359,14 @@ pub fn load_for_receiver(
         format!("{:x}", digest.finalize())
     };
     let source_path = PathBuf::from(&packet.source.path);
-    require_pub_path(&source_path)?;
-    let source_before_sha256 = sha256_file(&source_path)?;
-    if source_before_sha256 != packet.source.sha256 {
+    let source = AdmittedSource::open(&source_path)?;
+    if source.sha256() != packet.source.sha256 {
         return Err("handoff source identity changed after sender admission".to_owned());
     }
     Ok(ValidatedHandoff {
         packet,
         packet_sha256,
-        source_path,
-        source_before_sha256,
+        source,
     })
 }
 
@@ -286,8 +377,10 @@ pub fn finish_acceptance(
     if !receiver_capability_admitted {
         return Err("receiver capability gate declined this handoff".to_owned());
     }
-    let source_after_sha256 = sha256_file(&validated.source_path)?;
-    if source_after_sha256 != validated.source_before_sha256 {
+    let source_after_sha256 = validated.source.rehash_opened_file()?;
+    if source_after_sha256 != validated.source.sha256
+        || source_after_sha256 != validated.packet.source.sha256
+    {
         return Err("handoff source identity changed during receiver admission".to_owned());
     }
     Ok(HandoffAcceptance {
@@ -296,7 +389,7 @@ pub fn finish_acceptance(
         receiver_product_id: validated.packet.target_product_id,
         requested_job: validated.packet.requested_job,
         handoff_packet_sha256: validated.packet_sha256,
-        source_sha256: validated.source_before_sha256,
+        source_sha256: source_after_sha256,
         source_unchanged: true,
         receiver_capability_admitted: true,
         mutable_document_state_received: false,
@@ -380,6 +473,73 @@ mod tests {
             packet.context.capability,
             "reader_failure_recovery_eligible"
         );
+        fs::remove_file(source).ok();
+    }
+
+    #[test]
+    fn admitted_source_keeps_exact_bytes_when_path_bytes_change_later() {
+        let source = temp_pub("admitted-bytes");
+        let admitted = AdmittedSource::open(&source).expect("admit source");
+        let original = admitted.bytes().to_vec();
+        let original_sha = admitted.sha256().to_owned();
+
+        fs::write(&source, b"changed after admission").expect("mutate source path");
+
+        assert_eq!(admitted.bytes(), original.as_slice());
+        assert_eq!(admitted.sha256(), original_sha);
+        assert_ne!(
+            admitted.rehash_opened_file().expect("rehash opened handle"),
+            original_sha,
+            "in-place mutation of the already-opened file must be detected"
+        );
+        fs::remove_file(source).ok();
+    }
+
+    #[test]
+    fn reader_packet_uses_already_admitted_bytes_without_path_reopen() {
+        let source = temp_pub("sender-admitted");
+        let admitted = AdmittedSource::open(&source).expect("admit source");
+        let admitted_sha = admitted.sha256().to_owned();
+        fs::write(&source, b"replacement after sender admission").expect("mutate path");
+
+        let packet = create_reader_handoff_from_admitted(
+            &admitted,
+            EDITOR_PRODUCT_ID,
+            true,
+            false,
+        )
+        .expect("packet from admitted source");
+        assert_eq!(packet.source.sha256, admitted_sha);
+        fs::remove_file(source).ok();
+    }
+
+    #[test]
+    fn receiver_capability_can_consume_exact_admitted_bytes_before_final_handle_check() {
+        let source = temp_pub("receiver-admitted");
+        let packet =
+            create_reader_handoff(&source, EDITOR_PRODUCT_ID, true, false).expect("packet");
+        let packet_path = source.with_extension("handoff.json");
+        write_packet(&packet, &packet_path).expect("write packet");
+
+        let validated =
+            load_for_receiver(&packet_path, EDITOR_PRODUCT_ID).expect("receiver admission");
+        let admitted_bytes = validated.source_bytes().to_vec();
+        fs::write(&source, b"changed during receiver capability").expect("mutate source");
+
+        assert_eq!(validated.source_bytes(), admitted_bytes.as_slice());
+        let error = finish_acceptance(validated, true)
+            .expect_err("opened-handle mutation must fail final acceptance");
+        assert!(error.contains("identity changed"));
+        fs::remove_file(source).ok();
+        fs::remove_file(packet_path).ok();
+    }
+
+    #[test]
+    fn unicode_source_name_is_not_part_of_source_identity() {
+        let source = temp_pub("Издатель-資料-é");
+        let admitted = AdmittedSource::open(&source).expect("unicode path admission");
+        assert_eq!(admitted.sha256(), sha256_bytes(admitted.bytes()));
+        assert!(admitted.display_path().extension().is_some());
         fs::remove_file(source).ok();
     }
 
