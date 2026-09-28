@@ -49,11 +49,12 @@ pub use intake_protocol::{
     exact_file_intake_eligible, validate_intake_capability_request, validate_intake_receipt,
 };
 use pub_contents::{
+    BLOCK_TYPE_FIXED_8, BLOCK_TYPE_REFERENCE_U32, BLOCK_TYPE_U32,
     CONTENTS_RAW_TYPE_STORY_CATALOG, Contents0x2cChunk, Contents0x2cChunkReference,
     DOCUMENT_PAGE_LIST_ID, RawContentsBlock, RawContentsBlockBody, parse_0x2c_header,
     parse_confirmed_0x2c_chunk, parse_confirmed_0x2c_trailer_root, parse_confirmed_chunk_reference,
     parse_confirmed_document_page_list, parse_confirmed_margins_page_extent,
-    parse_confirmed_mature_story_catalog,
+    parse_confirmed_mature_story_catalog, parse_confirmed_oid_identity_payload,
 };
 use pub_core::{RawSpan, StreamPath};
 use pub_escher::{
@@ -122,6 +123,35 @@ const ROLE_NODE: &str = "cdm.node";
 const ROLE_STORY: &str = "cdm.story";
 
 pub type PubSourceGraph = SourceGraph<PubNodePayload, (), (), (), String>;
+
+pub const PUB_PAGE_ROLE_OBSERVATION_SCHEMA_V1: &str =
+    "chaptera.pub-page-role-observation.v1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubPageRoleObservationReceipt {
+    pub schema: String,
+    pub document_page_list_entry_count: usize,
+    pub confirmed_page_count: usize,
+    pub special_entry_count: usize,
+    pub pages: Vec<PubPageRoleObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubPageRoleObservation {
+    pub document_ordinal: usize,
+    pub contents_seq_num: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid_dword0: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid_dword1: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_master_seq_num: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pgt_type: Option<u32>,
+    pub child_raw_type_counts: BTreeMap<u16, usize>,
+    pub shape_child_count: usize,
+    pub group_child_count: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PubSourceGraphBuild {
@@ -398,6 +428,129 @@ pub enum PubBridgeDiagnostic {
         layout_key: Option<u32>,
         reason: String,
     },
+}
+
+/// Emits source-free PAGE-role evidence without classifying customer-visible pages.
+///
+/// Oid, applied-master state, PgtType and child inventory remain independent
+/// axes here. No single axis is promoted to a universal visible-page rule.
+pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
+    mut reader: R,
+) -> Result<PubPageRoleObservationReceipt> {
+    reader.seek(SeekFrom::Start(0))?;
+    let mut pub_bytes = Vec::new();
+    reader.read_to_end(&mut pub_bytes)?;
+
+    let contents =
+        pub_cfb::read_stream_reader(Cursor::new(pub_bytes.as_slice()), CONTENTS_STREAM_PATH)
+            .with_context(|| format!("read {CONTENTS_STREAM_PATH}"))?;
+    let contents_stream = StreamPath(CONTENTS_STREAM_PATH.into());
+    let header = parse_0x2c_header(contents_stream.clone(), &contents)
+        .context("parse mature-0x2C Contents header for PAGE-role observation")?;
+    let trailer = parse_confirmed_0x2c_trailer_root(&contents, &header)
+        .context("parse mature-0x2C Contents trailer for PAGE-role observation")?;
+    let references = build_reference_index(&contents, &trailer.directory)?;
+
+    let document_reference =
+        unique_reference_by_raw_type(&references, RAW_TYPE_DOCUMENT, "DOCUMENT")?;
+    let document_chunk =
+        chunk_for_reference(contents_stream.clone(), &contents, document_reference)?;
+    let page_list_block = unique_block(&document_chunk, DOCUMENT_PAGE_LIST_ID)?.clone();
+    let page_list = parse_confirmed_document_page_list(&contents, page_list_block)
+        .context("parse DOCUMENT PageList for PAGE-role observation")?;
+
+    let mut pages = Vec::new();
+    let mut special_entry_count = 0_usize;
+
+    for (document_ordinal, entry) in page_list.entries.iter().enumerate() {
+        let Some(reference) = references.get(&entry.handle) else {
+            continue;
+        };
+        match single_raw_type(reference) {
+            Some(RAW_TYPE_PAGE_LIST_SPECIAL) => {
+                special_entry_count += 1;
+                continue;
+            }
+            Some(RAW_TYPE_PAGE) => {}
+            _ => continue,
+        }
+
+        let chunk = chunk_for_reference(contents_stream.clone(), &contents, reference)?;
+        let mut oid = None;
+        let mut applied_master_seq_num = None;
+        let mut pgt_type = None;
+
+        for field in &chunk.fields {
+            match (field.id, field.block_type) {
+                (0x06, BLOCK_TYPE_FIXED_8) => {
+                    if oid.is_some() {
+                        bail!("PAGE {} repeats OplPd.Oid field0x06", entry.handle);
+                    }
+                    let parsed = parse_confirmed_oid_identity_payload(field.clone())
+                        .context("parse exact OplPd.Oid field0x06")?;
+                    oid = Some((parsed.dword0, parsed.dword1));
+                }
+                (0x0d, BLOCK_TYPE_REFERENCE_U32) => {
+                    if applied_master_seq_num.is_some() {
+                        bail!(
+                            "PAGE {} repeats OplPd.OhpdMaster field0x0D",
+                            entry.handle
+                        );
+                    }
+                    let RawContentsBlockBody::U32 { value, .. } = field.body else {
+                        bail!("PAGE {} field0x0D has inconsistent body", entry.handle);
+                    };
+                    applied_master_seq_num = Some(value);
+                }
+                (0x10, BLOCK_TYPE_U32) => {
+                    if pgt_type.is_some() {
+                        bail!("PAGE {} repeats OplPd.PgtType field0x10", entry.handle);
+                    }
+                    let RawContentsBlockBody::U32 { value, .. } = field.body else {
+                        bail!("PAGE {} field0x10 has inconsistent body", entry.handle);
+                    };
+                    pgt_type = Some(value);
+                }
+                _ => {}
+            }
+        }
+
+        let mut child_raw_type_counts = BTreeMap::<u16, usize>::new();
+        for child in references.values() {
+            if single_parent_seq(child) != Some(entry.handle) {
+                continue;
+            }
+            if let Some(raw_type) = single_raw_type(child) {
+                *child_raw_type_counts.entry(raw_type).or_insert(0) += 1;
+            }
+        }
+
+        pages.push(PubPageRoleObservation {
+            document_ordinal,
+            contents_seq_num: entry.handle,
+            oid_dword0: oid.map(|value| value.0),
+            oid_dword1: oid.map(|value| value.1),
+            applied_master_seq_num,
+            pgt_type,
+            shape_child_count: child_raw_type_counts
+                .get(&RAW_TYPE_SHAPE)
+                .copied()
+                .unwrap_or(0),
+            group_child_count: child_raw_type_counts
+                .get(&RAW_TYPE_GROUP)
+                .copied()
+                .unwrap_or(0),
+            child_raw_type_counts,
+        });
+    }
+
+    Ok(PubPageRoleObservationReceipt {
+        schema: PUB_PAGE_ROLE_OBSERVATION_SCHEMA_V1.to_owned(),
+        document_page_list_entry_count: page_list.entries.len(),
+        confirmed_page_count: pages.len(),
+        special_entry_count,
+        pages,
+    })
 }
 
 /// Canonical source key for a physical mature-0x2C Contents directory slot.
