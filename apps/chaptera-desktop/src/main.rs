@@ -90,7 +90,7 @@ enum CanvasZoomMode {
     FitSelection,
 }
 
-const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains using Viewer fallback metrics; exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact typography/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
+const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Proven source font sizes, including bounded FDPP→STSH1 inheritance where admitted, affect text sizing through the shared render plan; the current renderer still uses Chaptera's pinned fallback font face rather than claiming source-font availability. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Inherited/default paint, Publisher-exact font metrics/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
 const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6902,6 +6902,96 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
+    fn golden_sample_newsletter_reader_page_2_uses_shared_typography_render_plan() {
+        use egui_kittest::Harness;
+        use sha2::{Digest, Sha256};
+
+        let fixture = std::env::var_os("CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER");
+        let output_dir = std::env::var_os("CHAPTERA_GOLDEN_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_OUT");
+        fs::create_dir_all(&output_dir).expect("create golden output directory");
+
+        let bytes = fs::read(&fixture).expect("read pinned SampleNewsletter");
+        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            source_sha256,
+            "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+            "golden fixture identity drifted"
+        );
+
+        let visual = diagnostic_sweep::open_for_product(&bytes)
+            .expect("pinned SampleNewsletter must open through product Reader path");
+        assert!(
+            !visual.typography_runs.is_empty(),
+            "Reader must expose bounded source typography"
+        );
+        assert!(
+            visual.typography_runs.iter().any(|run| run.size_inherited),
+            "golden fixture should exercise admitted inherited typography"
+        );
+        assert!(
+            visual.typography_runs.iter().any(|run| {
+                run.source_font_name == "Rockwell Condensed"
+                    && run.text_size_emu == 24 * 12_700
+            }),
+            "proven Rockwell Condensed 24pt anchor must reach Viewer"
+        );
+
+        let page_offset = 1_usize;
+        let plan = build_page_render_plan_v1(&visual, page_offset)
+            .expect("page 2 shared render plan");
+        let typography_sections = plan
+            .nodes
+            .iter()
+            .filter_map(|node| node.text.as_ref())
+            .map(|text| text.typography.len())
+            .sum::<usize>();
+        assert!(
+            typography_sections > 0,
+            "source typography must reach shared Reader render plan"
+        );
+
+        let fixture_for_app = fixture.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 820.0))
+            .with_pixels_per_point(1.0)
+            .with_max_steps(24)
+            .wgpu()
+            .build_eframe(move |cc| {
+                fallback_font::install(&cc.egui_ctx)
+                    .expect("pinned Chaptera fallback font resource must validate");
+                let mut app = ViewerApp::new_with_storage(Some(fixture_for_app), cc.storage);
+                app.selected_page = page_offset;
+                app
+            });
+        harness.step();
+
+        let image = harness.render().expect("headless Reader render must succeed");
+        let png_path = output_dir.join("samplenewsletter-page-002-reader.png");
+        image.save(&png_path).expect("write Reader golden PNG");
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.reader-golden-samplenewsletter.v2",
+            "source_sha256": source_sha256,
+            "page_number": 2,
+            "typography_run_count": visual.typography_runs.len(),
+            "render_plan_typography_sections": typography_sections,
+            "source_font_face_claimed": false,
+            "publisher_exact_reflow_claimed": false,
+            "png": "samplenewsletter-page-002-reader.png"
+        });
+        fs::write(
+            output_dir.join("samplenewsletter-reader-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize golden receipt"),
+        )
+        .expect("write golden receipt");
     }
 
     #[test]
