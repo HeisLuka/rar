@@ -71,6 +71,13 @@ class AcquisitionTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
+    def test_credential_like_query_is_rejected_before_fetch(self):
+        with self.assertRaises(ValueError):
+            self.m.validate_public_url(
+                "http://127.0.0.1/file?X-Amz-Signature=secret",
+                allow_local_http=True,
+            )
+
     def test_private_destination_rejected_without_test_override(self):
         with self.assertRaises(ValueError):
             self.m.validate_public_url("https://127.0.0.1/private")
