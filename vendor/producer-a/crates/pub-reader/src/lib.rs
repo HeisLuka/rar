@@ -497,19 +497,19 @@ pub fn analyze_mature_0x2c_page_roles<R: Read + Seek>(
                             entry.handle
                         );
                     }
-                    let RawContentsBlockBody::U32 { value, .. } = field.body else {
+                    let RawContentsBlockBody::U32 { value, .. } = &field.body else {
                         bail!("PAGE {} field0x0D has inconsistent body", entry.handle);
                     };
-                    applied_master_seq_num = Some(value);
+                    applied_master_seq_num = Some(*value);
                 }
                 (0x10, BLOCK_TYPE_U32) => {
                     if pgt_type.is_some() {
                         bail!("PAGE {} repeats OplPd.PgtType field0x10", entry.handle);
                     }
-                    let RawContentsBlockBody::U32 { value, .. } = field.body else {
+                    let RawContentsBlockBody::U32 { value, .. } = &field.body else {
                         bail!("PAGE {} field0x10 has inconsistent body", entry.handle);
                     };
-                    pgt_type = Some(value);
+                    pgt_type = Some(*value);
                 }
                 _ => {}
             }
