@@ -2800,6 +2800,25 @@ mod tests {
             .expect("known SampleNewsletter SHA-256")
     }
 
+    #[test]
+    fn typography_utf16_to_scalar_range_is_surrogate_safe() {
+        let text = "A😀B";
+        assert_eq!(utf16_range_to_scalar_range(text, 1, 3), Some((1, 2)));
+        assert_eq!(utf16_range_to_scalar_range(text, 0, 4), Some((0, 3)));
+
+        assert_eq!(
+            utf16_range_to_scalar_range(text, 1, 2),
+            None,
+            "end inside the emoji surrogate pair must fail closed"
+        );
+        assert_eq!(
+            utf16_range_to_scalar_range(text, 2, 3),
+            None,
+            "start inside the emoji surrogate pair must fail closed"
+        );
+        assert_eq!(utf16_range_to_scalar_range(text, 3, 1), None);
+    }
+
     fn crop_test_span(offset: u64, len: u64) -> RawSpan {
         RawSpan {
             stream: StreamPath("Escher/EscherStm".to_owned()),
