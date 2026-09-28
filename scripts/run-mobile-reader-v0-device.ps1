@@ -113,6 +113,23 @@ function Invoke-AdbText {
     return $result.Text
 }
 
+function Get-DeviceFileSha256 {
+    param(
+        [string]$DeviceSerial,
+        [string]$Path
+    )
+
+    $hash = Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "toybox", "sha256sum", $Path)
+    if ($hash.ExitCode -ne 0) {
+        throw "DEVICE_SHA256_FAILED:$Path"
+    }
+    $match = [regex]::Match($hash.Text, "^[0-9a-fA-F]{64}")
+    if (-not $match.Success) {
+        throw "DEVICE_SHA256_UNREADABLE:$Path"
+    }
+    return $match.Value.ToLowerInvariant()
+}
+
 function Test-ChapteraUsefulPage {
     param(
         [string]$DeviceSerial,
@@ -242,6 +259,7 @@ $ResolverUsefulPageVisible = $false
 $GrantResumeState = "not_run"
 $GrantResumeUsefulPage = $false
 $TransientGrantStateCleared = $false
+$ResolverSourceHashUnchanged = $false
 
 if ($V0Exit -eq 0) {
     $ResolverName = "ChapteraResolverProbe.pub"
@@ -254,13 +272,23 @@ if ($V0Exit -eq 0) {
         $ResolverExit = 1
         $ResolverState = "resolver_stage_failed"
     } else {
+        $ResolverExpectedHash = ($Fixtures | Where-Object { $_.Name -eq "SampleNewsletter.pub" } | Select-Object -First 1).Sha256
+        $ResolverHashBefore = Get-DeviceFileSha256 -DeviceSerial $Serial -Path $DeviceResolverPath
+        if ($ResolverHashBefore -ne $ResolverExpectedHash) {
+            $ResolverExit = 13
+            $ResolverState = "resolver_source_hash_mismatch_before"
+        }
         $DocumentId = [System.Uri]::EscapeDataString("primary:Download/$ResolverName")
         $ResolverUri = "content://com.android.externalstorage.documents/document/$DocumentId"
-        $query = Invoke-AdbRaw @(
+        if ($ResolverExit -ne 0) {
+            $query = [pscustomobject]@{ ExitCode = 1; Text = "" }
+        } else {
+            $query = Invoke-AdbRaw @(
             "-s", $Serial, "shell", "content", "query",
             "--uri", $ResolverUri,
             "--projection", "_display_name:mime_type"
-        )
+            )
+        }
 
         if ($query.ExitCode -ne 0) {
             $ResolverExit = 2
@@ -391,6 +419,22 @@ if ($V0Exit -eq 0) {
         }
     }
 
+    if ($ResolverState -ne "resolver_stage_failed") {
+        try {
+            $ResolverHashAfter = Get-DeviceFileSha256 -DeviceSerial $Serial -Path $DeviceResolverPath
+            $ResolverSourceHashUnchanged = ($ResolverHashAfter -eq $ResolverExpectedHash)
+            if (-not $ResolverSourceHashUnchanged -and $ResolverExit -eq 0) {
+                $ResolverExit = 14
+                $ResolverState = "resolver_source_hash_changed"
+            }
+        } catch {
+            if ($ResolverExit -eq 0) {
+                $ResolverExit = 15
+                $ResolverState = "resolver_source_hash_after_unreadable"
+            }
+        }
+    }
+
     Invoke-AdbRaw @("-s", $Serial, "shell", "rm", "-f", $DeviceResolverPath) | Out-Null
 }
 
@@ -448,6 +492,7 @@ $receiptObject = [ordered]@{
         uri_grant_after_process_death = $GrantResumeState
         resumed_useful_page = $GrantResumeUsefulPage
         transient_grant_stale_resume_cleared = $TransientGrantStateCleared
+        resolver_source_hash_unchanged = $ResolverSourceHashUnchanged
     }
     physical_perf_exit_code = [int]$PerfExit
     wifi_observation = $WifiObservation
