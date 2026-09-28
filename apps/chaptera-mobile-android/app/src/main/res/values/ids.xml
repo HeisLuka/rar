@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="reader_status" type="id" />
+    <item name="reader_diagnostics" type="id" />
+    <item name="reader_previous_page" type="id" />
+    <item name="reader_next_page" type="id" />
     <item name="reader_canvas" type="id" />
 </resources>
