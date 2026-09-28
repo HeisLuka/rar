@@ -18,9 +18,8 @@ use pub_model::{
     Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
 };
 use pub_presentation_profile::{
-    CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1,
-    CarltonPresentationProfileInputV1, carlton_admitted_carrier_page_seq_nums_v1,
-    select_carlton_customer_page_seq_nums_v1,
+    CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
+    carlton_admitted_carrier_page_seq_nums_v1, select_carlton_customer_page_seq_nums_v1,
 };
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
@@ -826,8 +825,7 @@ fn select_viewer_pages(
     };
 
     let source_sha256 = source_hash.to_string();
-    let Some(carrier_page_seq_nums) =
-        carlton_admitted_carrier_page_seq_nums_v1(&source_sha256)
+    let Some(carrier_page_seq_nums) = carlton_admitted_carrier_page_seq_nums_v1(&source_sha256)
     else {
         return generic();
     };
@@ -962,9 +960,8 @@ fn viewer_document_from_pipeline(
             raw_page_count,
             customer_page_count,
         } => {
-            diagnostics.retain(|diagnostic| {
-                diagnostic.code != "viewer.page_projection.roles_unresolved"
-            });
+            diagnostics
+                .retain(|diagnostic| diagnostic.code != "viewer.page_projection.roles_unresolved");
             diagnostics.push(ViewerDiagnostic {
                 code: "viewer.page_projection.family_profile_applied".to_owned(),
                 severity: ViewerDiagnosticSeverity::Info,
