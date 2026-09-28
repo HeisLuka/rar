@@ -8,12 +8,14 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 anyhow = "1"
 chaptera-image-decode-contract = { path = "../chaptera-image-decode-contract" }
+chaptera-untrusted-pub-scan = { path = "../chaptera-untrusted-pub-scan" }
 chaptera-viewer-render-plan = { path = "../chaptera-viewer-render-plan" }
 pub-model = { path = "../../vendor/producer-a/crates/pub-model" }
 pub-viewer = { path = "../../vendor/producer-a/crates/pub-viewer" }
 sha2 = "0.10"
 
 [dev-dependencies]
+cfb = "0.14"
 png = "=0.18.1"
 
 [workspace]
