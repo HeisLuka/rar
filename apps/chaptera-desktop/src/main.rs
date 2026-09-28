@@ -101,11 +101,7 @@ fn build_desktop_page_render_plan(
     visual: &ViewerGeometryDocument,
     page_index: usize,
 ) -> Result<PageRenderPlanV1, RenderPlanErrorV1> {
-    build_page_render_plan_with_text_layout_v1(
-        visual,
-        page_index,
-        &desktop_text_font_resource(),
-    )
+    build_page_render_plan_with_text_layout_v1(visual, page_index, &desktop_text_font_resource())
 }
 
 fn text_layout_disposition_counts(plan: &PageRenderPlanV1) -> (usize, usize) {
@@ -118,10 +114,14 @@ fn text_layout_disposition_counts(plan: &PageRenderPlanV1) -> (usize, usize) {
         .filter_map(|text| text.layout.as_ref())
     {
         match &layout.disposition {
-            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::SharedResolved { .. } => {
+            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::SharedResolved {
+                ..
+            } => {
                 shared += 1;
             }
-            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::BackendFallback { .. } => {
+            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::BackendFallback {
+                ..
+            } => {
                 fallback += 1;
             }
         }
