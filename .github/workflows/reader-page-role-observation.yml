@@ -73,12 +73,35 @@ jobs:
               raise SystemExit(f"raw PAGE order drifted: {actual!r}")
 
           customer_reference = [266, 323, 352, 381]
+          customer_oid_order = [
+              [page["oid_dword0"], page["oid_dword1"]]
+              for page in physical["pages"]
+              if page["contents_seq_num"] in customer_reference
+          ]
+          decoded_page_lists = [
+              field["pgids"]
+              for controlling in physical.get("controlling", [])
+              for field in controlling.get("fields", [])
+              if field["id"] == 6
+          ]
+          if not decoded_page_lists:
+              raise SystemExit("SampleNewsletter has no decoded OplControlling PageList")
+          for index, pgids in enumerate(decoded_page_lists):
+              if pgids != customer_oid_order:
+                  raise SystemExit(
+                      f"OplControlling PageList[{index}] disagrees with Publisher customer Oid order: "
+                      f"{pgids!r} != {customer_oid_order!r}"
+                  )
+
           comparison = {
               "schema": "chaptera.reader-page-role-reference.v1",
               "source_sha256": os.environ["SOURCE_SHA256"],
               "raw_page_seq_nums": actual,
               "publisher_reference_customer_seq_nums": customer_reference,
               "publisher_reference_basis": "recorded same-source side-by-side Publisher page crosswalk",
+              "customer_oid_order": customer_oid_order,
+              "decoded_oplcontrolling_page_lists": decoded_page_lists,
+              "pgid_customer_order_exact_match": True,
               "classification_promoted": False,
               "pages": [
                   {
