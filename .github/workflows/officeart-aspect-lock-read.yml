@@ -27,4 +27,4 @@ jobs:
       - name: Format
         run: cargo fmt --manifest-path tools/officeart-aspect-lock-read/Cargo.toml --check
       - name: Test source-free aspect-lock observations
-        run: cargo test --manifest-path tools/officeart-aspect-lock-read/Cargo.toml --locked
+        run: cargo test --manifest-path tools/officeart-aspect-lock-read/Cargo.toml
