@@ -1,0 +1,9 @@
+[package]
+name = "chaptera-update-ui-state"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+
+[lib]
+path = "src/lib.rs"
