@@ -473,6 +473,42 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_wire_shape_matches_canonical_rar_250_contract() {
+        let text = "abc abc";
+        let snapshot = build_text_find_snapshot_v1(
+            "rev:1",
+            text,
+            &domain(text),
+            TextFindExtentV1::FullEditableStory,
+            "abc",
+        )
+        .unwrap();
+        let value = serde_json::to_value(snapshot).unwrap();
+        let object = value.as_object().unwrap();
+        let keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            BTreeSet::from([
+                "protocol_version",
+                "policy_version",
+                "revision_id",
+                "story_id",
+                "query",
+                "extent_start_scalar",
+                "extent_end_scalar",
+                "matches",
+            ])
+        );
+        assert_eq!(object["protocol_version"], "chaptera.text-find-snapshot.v1");
+        assert_eq!(object["policy_version"], "chaptera.text-find-policy.v1");
+        assert_eq!(object["revision_id"], "rev:1");
+        assert_eq!(object["story_id"], "story:1");
+        assert_eq!(object["query"], "abc");
+        assert_eq!(object["extent_start_scalar"], 0);
+        assert_eq!(object["extent_end_scalar"], 7);
+    }
+
+    #[test]
     fn exact_search_is_scalar_based_and_non_overlapping() {
         let text = "aaa😀aa";
         let snapshot = build_text_find_snapshot_v1(
