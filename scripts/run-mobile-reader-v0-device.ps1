@@ -290,7 +290,9 @@ if ($V0Exit -eq 0) {
             )
         }
 
-        if ($query.ExitCode -ne 0) {
+        if ($ResolverExit -ne 0) {
+            # Preserve the earlier staging/hash failure classification.
+        } elseif ($query.ExitCode -ne 0) {
             $ResolverExit = 2
             $ResolverState = "resolver_provider_query_failed"
         } else {
