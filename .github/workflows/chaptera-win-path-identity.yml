@@ -59,16 +59,43 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          function Invoke-ChapteraNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments
+            )
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $FilePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($argument in $Arguments) {
+              [void]$psi.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $psi
+            if (-not $process.Start()) { throw "failed to launch $FilePath" }
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($stdout) { Write-Host $stdout.TrimEnd() }
+            if ($stderr) { Write-Host $stderr.TrimEnd() }
+            return [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout
+              Stderr = $stderr
+            }
+          }
           $dir = Join-Path $env:CHAPTERA_PATH_ID_ROOT "資料-Издатель-café"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           $source = Join-Path $dir "публикация-資料.pub"
           Copy-Item $env:CHAPTERA_PATH_ID_FIXTURE $source -Force
           $packet = Join-Path $env:CHAPTERA_PATH_ID_ROOT "unicode.packet.json"
           $receipt = Join-Path $env:CHAPTERA_PATH_ID_ROOT "unicode.acceptance.json"
-          & (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") --handoff-create-v1 chaptera.editor $source $packet
-          if ($LASTEXITCODE -ne 0) { throw "Reader rejected admitted Unicode PUB path" }
-          & (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") --handoff-accept-v1 $packet $receipt
-          if ($LASTEXITCODE -ne 0) { throw "Editor rejected admitted Unicode PUB handoff" }
+          $reader = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") @("--handoff-create-v1","chaptera.editor",$source,$packet)
+          if ($reader.ExitCode -ne 0) { throw "Reader rejected admitted Unicode PUB path: $($reader.Stderr)" }
+          $editor = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") @("--handoff-accept-v1",$packet,$receipt)
+          if ($editor.ExitCode -ne 0) { throw "Editor rejected admitted Unicode PUB handoff: $($editor.Stderr)" }
           $accepted = Get-Content $receipt -Raw | ConvertFrom-Json
           if ($accepted.source_sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "Unicode receipt source identity mismatch" }
 
@@ -76,6 +103,33 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          function Invoke-ChapteraNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments
+            )
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $FilePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($argument in $Arguments) {
+              [void]$psi.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $psi
+            if (-not $process.Start()) { throw "failed to launch $FilePath" }
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($stdout) { Write-Host $stdout.TrimEnd() }
+            if ($stderr) { Write-Host $stderr.TrimEnd() }
+            return [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout
+              Stderr = $stderr
+            }
+          }
           $deep = Join-Path $env:CHAPTERA_PATH_ID_ROOT "deep"
           for ($i = 0; $i -lt 12; $i++) {
             $deep = Join-Path $deep ("segment-{0:D2}-abcdefghijklmnop" -f $i)
@@ -87,18 +141,16 @@ jobs:
 
           $packet = Join-Path $env:CHAPTERA_PATH_ID_ROOT "long.packet.json"
           $receipt = Join-Path $env:CHAPTERA_PATH_ID_ROOT "long.acceptance.json"
-          $stderr = Join-Path $env:CHAPTERA_PATH_ID_ROOT "long.stderr.txt"
-          $reader = Start-Process -FilePath (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") -ArgumentList @("--handoff-create-v1","chaptera.editor",$source,$packet) -Wait -PassThru -RedirectStandardError $stderr
+          $reader = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") @("--handoff-create-v1","chaptera.editor",$source,$packet)
           if ($reader.ExitCode -eq 0) {
-            & (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") --handoff-accept-v1 $packet $receipt
-            if ($LASTEXITCODE -ne 0) { throw "Editor rejected long-path handoff after Reader accepted it" }
+            $editor = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") @("--handoff-accept-v1",$packet,$receipt)
+            if ($editor.ExitCode -ne 0) { throw "Editor rejected long-path handoff after Reader accepted it: $($editor.Stderr)" }
             $accepted = Get-Content $receipt -Raw | ConvertFrom-Json
             if ($accepted.source_sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "long-path receipt source identity mismatch" }
             $outcome = "accepted"
           } else {
-            $errorText = Get-Content $stderr -Raw
-            if ($errorText -notmatch "source_path_platform_unsupported") {
-              throw "long path failed without typed platform error: $errorText"
+            if ($reader.Stderr -notmatch "source_path_platform_unsupported") {
+              throw "long path failed without typed platform error: $($reader.Stderr)"
             }
             $outcome = "typed_host_policy_reject"
           }
@@ -109,6 +161,33 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          function Invoke-ChapteraNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments
+            )
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $FilePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($argument in $Arguments) {
+              [void]$psi.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $psi
+            if (-not $process.Start()) { throw "failed to launch $FilePath" }
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($stdout) { Write-Host $stdout.TrimEnd() }
+            if ($stderr) { Write-Host $stderr.TrimEnd() }
+            return [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout
+              Stderr = $stderr
+            }
+          }
           $a = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction-a"
           $b = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction-b"
           $link = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction-current"
@@ -122,8 +201,8 @@ jobs:
           $packet = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction.packet.json"
           $receipt = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction.acceptance.json"
 
-          & (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") --handoff-create-v1 chaptera.editor $source $packet
-          if ($LASTEXITCODE -ne 0) { throw "Reader failed junction source admission" }
+          $reader = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") @("--handoff-create-v1","chaptera.editor",$source,$packet)
+          if ($reader.ExitCode -ne 0) { throw "Reader failed junction source admission: $($reader.Stderr)" }
           $packetBody = Get-Content $packet -Raw | ConvertFrom-Json
           if ($packetBody.source.sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "sender did not bind original junction target bytes" }
 
@@ -132,8 +211,8 @@ jobs:
           cmd /c mklink /J "$link" "$b"
           if ($LASTEXITCODE -ne 0) { throw "failed to retarget source junction" }
 
-          & (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") --handoff-accept-v1 $packet $receipt
-          if ($LASTEXITCODE -ne 0) { throw "Editor followed retargeted junction instead of canonical sender locator" }
+          $editor = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") @("--handoff-accept-v1",$packet,$receipt)
+          if ($editor.ExitCode -ne 0) { throw "Editor followed retargeted junction instead of canonical sender locator: $($editor.Stderr)" }
           $accepted = Get-Content $receipt -Raw | ConvertFrom-Json
           if ($accepted.source_sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "junction receipt identity changed" }
 
