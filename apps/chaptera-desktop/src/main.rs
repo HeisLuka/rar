@@ -24,7 +24,10 @@ use chaptera_scene_instance::{
     GeometrySyncPolicyV1, ObjectMutationKindV1, SceneInstanceV1, admit_object_mutation_v1,
     direct_page_local_instance_v1, geometry_sync_policy_v1,
 };
-use chaptera_viewer_render_plan::build_page_render_plan_v1;
+use chaptera_viewer_render_plan::{
+    ExplicitRenderTextFontResourceV1, PageRenderPlanV1, RenderPlanErrorV1,
+    build_page_render_plan_v1, build_page_render_plan_with_text_layout_v1,
+};
 use eframe::egui;
 use pub_interaction::{
     MoveTransaction, ResizeCommit, ResizeHandle, ResizePointerDown, ResizeTransaction,
@@ -83,6 +86,49 @@ const MAX_NUMERIC_ZOOM: f32 = 4.00;
 const PAGE_THUMBNAIL_MAX_WIDTH: f32 = 116.0;
 const PAGE_THUMBNAIL_MAX_HEIGHT: f32 = 148.0;
 
+fn desktop_text_font_resource() -> ExplicitRenderTextFontResourceV1<'static> {
+    ExplicitRenderTextFontResourceV1 {
+        resource_id: chaptera_desktop_fallback_font_resource::RESOURCE_ID,
+        expected_sha256: chaptera_desktop_fallback_font_resource::EXPECTED_SHA256,
+        face_index: 0,
+        default_font_size_emu: chaptera_desktop_fallback_font_resource::FONT_SIZE_EMU,
+        default_line_height_emu: chaptera_desktop_fallback_font_resource::LINE_HEIGHT_EMU,
+        bytes: chaptera_desktop_fallback_font_resource::bytes(),
+    }
+}
+
+fn build_desktop_page_render_plan(
+    visual: &ViewerGeometryDocument,
+    page_index: usize,
+) -> Result<PageRenderPlanV1, RenderPlanErrorV1> {
+    build_page_render_plan_with_text_layout_v1(
+        visual,
+        page_index,
+        &desktop_text_font_resource(),
+    )
+}
+
+fn text_layout_disposition_counts(plan: &PageRenderPlanV1) -> (usize, usize) {
+    let mut shared = 0_usize;
+    let mut fallback = 0_usize;
+    for layout in plan
+        .nodes
+        .iter()
+        .filter_map(|node| node.text.as_ref())
+        .filter_map(|text| text.layout.as_ref())
+    {
+        match &layout.disposition {
+            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::SharedResolved { .. } => {
+                shared += 1;
+            }
+            chaptera_viewer_render_plan::RenderTextLayoutDispositionV1::BackendFallback { .. } => {
+                fallback += 1;
+            }
+        }
+    }
+    (shared, fallback)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CanvasZoomMode {
     Percent,
@@ -92,7 +138,7 @@ enum CanvasZoomMode {
 }
 
 const GEOMETRY_WARNING: &str = "Partial preview: bounded semantic text may be painted across proven explicit linked-frame chains. Proven source font sizes, including bounded FDPP→STSH1 inheritance where admitted, affect text sizing through the shared render plan; the current renderer still uses Chaptera's pinned fallback font face rather than claiming source-font availability. Exact embedded PNG/JPEG images and complete explicit shape-local solid fill/line state may also be painted. Other inherited/default styling beyond admitted font/size, Publisher-exact font metrics/reflow, image crop/fit, gradients/patterns, effects, and transforms are not faithfully painted yet.";
-const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current egui desktop preview and is visibly clipped. This is a preview-only warning using the UI font/metrics; it is not Publisher-native overset or reflow evidence.";
+const PREVIEW_TEXT_CLIP_WARNING: &str = "Text exceeds the height of at least one frame in the current desktop preview and is visibly clipped. Admitted single-frame homogeneous text uses shared resolved line breaks; other cases still use explicit backend fallback. This is preview evidence, not Publisher-native overset or exact reflow evidence.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ViewerLoadFailureKind {
@@ -3474,7 +3520,7 @@ impl ViewerApp {
             return;
         };
 
-        let render_plan = match build_page_render_plan_v1(visual, self.selected_page) {
+        let render_plan = match build_desktop_page_render_plan(visual, self.selected_page) {
             Ok(plan) => plan,
             Err(error) => {
                 ui.colored_label(
@@ -4536,7 +4582,7 @@ fn paint_page_thumbnail(
     let Some(page) = visual.document.pages.get(page_index) else {
         return;
     };
-    let Ok(render_plan) = build_page_render_plan_v1(visual, page_index) else {
+    let Ok(render_plan) = build_desktop_page_render_plan(visual, page_index) else {
         return;
     };
     if render_plan.page_size.width.get() <= 0 || render_plan.page_size.height.get() <= 0 {
@@ -4819,7 +4865,7 @@ mod tests {
         assert!(source.contains("Page {} thumbnail"));
         assert!(source.contains("paint_page_thumbnail"));
         assert!(source.contains("with_clip_rect(page_rect)"));
-        assert!(source.contains("build_page_render_plan_v1(visual, page_index)"));
+        assert!(source.contains("build_desktop_page_render_plan(visual, page_index)"));
         assert!(source.contains("for node in &render_plan.nodes"));
         assert!(source.contains("PageNavigated"));
     }
@@ -7541,6 +7587,8 @@ mod tests {
         clipped_text_nodes: usize,
         source_typography_sections: usize,
         fallback_typography_sections: usize,
+        shared_resolved_layout_frames: usize,
+        backend_fallback_frames: usize,
         projected_text_metrics: BTreeMap<String, render_backend::TextPaintMetrics>,
     }
 
@@ -7555,6 +7603,8 @@ mod tests {
                 clipped_text_nodes: 0,
                 source_typography_sections: 0,
                 fallback_typography_sections: 0,
+                shared_resolved_layout_frames: 0,
+                backend_fallback_frames: 0,
                 projected_text_metrics: BTreeMap::new(),
             }
         }
@@ -7609,13 +7659,15 @@ mod tests {
     impl eframe::App for GoldenPageOnlyApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.ensure_image_textures(ctx);
-            let render_plan = build_page_render_plan_v1(&self.visual, self.page_index)
+            let render_plan = build_desktop_page_render_plan(&self.visual, self.page_index)
                 .expect("clean golden page render plan");
             let scene_scale = 144.0_f32 / 914_400.0_f32;
             self.painted_text_nodes = 0;
             self.clipped_text_nodes = 0;
             self.source_typography_sections = 0;
             self.fallback_typography_sections = 0;
+            self.shared_resolved_layout_frames = 0;
+            self.backend_fallback_frames = 0;
             self.projected_text_metrics.clear();
 
             egui::CentralPanel::default()
@@ -7660,6 +7712,11 @@ mod tests {
                             self.painted_text_nodes += 1;
                             self.source_typography_sections += metrics.source_typography_sections;
                             self.fallback_typography_sections += metrics.fallback_sections;
+                            if metrics.shared_resolved_layout {
+                                self.shared_resolved_layout_frames += 1;
+                            } else {
+                                self.backend_fallback_frames += 1;
+                            }
                             if outcome.text_clipped {
                                 self.clipped_text_nodes += 1;
                             }
@@ -7761,7 +7818,7 @@ mod tests {
         for (page_index, expected_projected_node_count) in
             projected_page_counts.iter().copied().enumerate()
         {
-            let plan = build_page_render_plan_v1(&visual, page_index)
+            let plan = build_desktop_page_render_plan(&visual, page_index)
                 .expect("current Reader page render plan");
             let projected_node_count = plan
                 .nodes
@@ -7811,6 +7868,8 @@ mod tests {
             assert_eq!(image.width(), width_px, "golden raster width drift");
             assert_eq!(image.height(), height_px, "golden raster height drift");
             let executed = harness.state();
+            let (planned_shared_resolved_layout_frames, planned_backend_fallback_frames) =
+                text_layout_disposition_counts(&plan);
             let projected_instance_receipts = plan
                 .nodes
                 .iter()
@@ -7894,9 +7953,13 @@ mod tests {
                 "image_node_count": plan.nodes.iter().filter(|node| node.image.is_some()).count(),
                 "text_node_count": plan.nodes.iter().filter(|node| node.text.is_some()).count(),
                 "typography_sections": typography_sections,
+                "planned_shared_resolved_layout_frames": planned_shared_resolved_layout_frames,
+                "planned_backend_fallback_frames": planned_backend_fallback_frames,
                 "executed_text_node_count": executed.painted_text_nodes,
                 "executed_source_typography_sections": executed.source_typography_sections,
                 "executed_fallback_typography_sections": executed.fallback_typography_sections,
+                "shared_resolved_layout_frames": executed.shared_resolved_layout_frames,
+                "backend_fallback_frames": executed.backend_fallback_frames,
                 "clipped_text_node_count": executed.clipped_text_nodes,
                 "png": filename,
             }));
@@ -7915,6 +7978,7 @@ mod tests {
             "family_profile_applied": true,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
+            "text_layout_authority": "shared_resolved_when_admitted_else_backend_fallback",
             "viewer_diagnostic_codes": visual
                 .document
                 .diagnostics
@@ -7985,7 +8049,7 @@ mod tests {
         // Fixture-only crosswalk: raw Viewer Page 2 is Publisher customer page 1 for this exact pinned SHA.
         // This must never be reused as generic PAGE-role logic.
         let page_offset = 1_usize;
-        let plan = build_page_render_plan_v1(&visual, page_offset)
+        let plan = build_desktop_page_render_plan(&visual, page_offset)
             .expect("reference customer page 1 shared render plan");
         let typography_sections = plan
             .nodes
@@ -7996,6 +8060,12 @@ mod tests {
         assert!(
             typography_sections > 0,
             "source typography must reach shared Reader render plan"
+        );
+        let (shared_resolved_layout_frames, backend_fallback_frames) =
+            text_layout_disposition_counts(&plan);
+        assert!(
+            shared_resolved_layout_frames > 0,
+            "SampleNewsletter must exercise at least one shared resolved text-layout frame"
         );
 
         let fixture_for_app = fixture.clone();
@@ -8029,8 +8099,11 @@ mod tests {
             "typography_run_count": visual.typography_runs.len(),
             "inherited_typography_run_count": inherited_typography_run_count,
             "render_plan_typography_sections": typography_sections,
+            "shared_resolved_layout_frames": shared_resolved_layout_frames,
+            "backend_fallback_frames": backend_fallback_frames,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
+            "text_layout_authority": "shared_resolved_when_admitted_else_backend_fallback",
             "png": "samplenewsletter-reference-customer-page-001-reader.png"
         });
         fs::write(
