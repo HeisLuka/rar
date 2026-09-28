@@ -8,12 +8,14 @@ const origin = process.env.CHAPTERA_SECURE_ORIGIN;
 const providerOrigin = process.env.CHAPTERA_OIDC_PROVIDER_ORIGIN;
 const receiptPath = process.env.CHAPTERA_SECURE_RECEIPT;
 const screenshotPath = process.env.CHAPTERA_SECURE_SCREENSHOT;
+const repositoryHeadSha = process.env.CHAPTERA_HEAD_SHA;
 
 for (const [name, value] of Object.entries({
   CHAPTERA_SECURE_ORIGIN: origin,
   CHAPTERA_OIDC_PROVIDER_ORIGIN: providerOrigin,
   CHAPTERA_SECURE_RECEIPT: receiptPath,
   CHAPTERA_SECURE_SCREENSHOT: screenshotPath,
+  CHAPTERA_HEAD_SHA: repositoryHeadSha,
 })) {
   if (!value) throw new Error(name + " is required");
 }
@@ -53,6 +55,10 @@ async function main() {
     viewport: { width: 1280, height: 800 },
   });
   const page = await context.newPage();
+  const browserRequests = [];
+  page.on("request", (request) => {
+    browserRequests.push(request.url());
+  });
 
   try {
     await page.goto(
@@ -188,10 +194,21 @@ async function main() {
       throw new Error("logout did not remove browser Chaptera session cookie");
     }
 
+    const directAppPrefix = "http://127.0.0.1:18082";
+    const directAppRequests = browserRequests.filter((url) =>
+      url.startsWith(directAppPrefix),
+    );
+    if (directAppRequests.length !== 0) {
+      throw new Error(
+        "browser used direct Chaptera app port: " +
+        JSON.stringify(directAppRequests),
+      );
+    }
+
     const receipt = {
       schema: "chaptera.secure-origin-oidc-browser.receipt.v1",
       task: "LOCAL-WEB-JOURNEY-01 / Phase C-C secure-origin identity",
-      git_sha: process.env.GITHUB_SHA ?? "unknown",
+      git_sha: repositoryHeadSha,
       public_safe: true,
       browser: {
         name: "chromium",
@@ -219,7 +236,8 @@ async function main() {
       same_origin_logout_status: logout.status,
       post_logout_session_status: afterLogout.status,
       cookie_removed_after_logout: cookieRemoved,
-      direct_app_port_used_by_browser: false,
+      browser_request_count: browserRequests.length,
+      direct_app_port_used_by_browser: directAppRequests.length !== 0,
       production_hostname_claim: false,
       external_invited_identity_claim: false,
       s3_source_ingress_claim: false,
