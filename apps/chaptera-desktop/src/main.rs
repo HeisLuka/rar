@@ -777,6 +777,70 @@ struct CachedPageFrameWork {
     resizable_nodes: BTreeMap<String, (pub_editor::NodeId, pub_editor::RectEmu)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuthoringSyncScope {
+    text_projection: bool,
+    created_scene: bool,
+    geometry: bool,
+    search: bool,
+    invalidate_frame_cache: bool,
+}
+
+impl AuthoringSyncScope {
+    const TEXT: Self = Self {
+        text_projection: true,
+        created_scene: false,
+        geometry: false,
+        search: true,
+        invalidate_frame_cache: true,
+    };
+    const GEOMETRY: Self = Self {
+        text_projection: false,
+        created_scene: false,
+        geometry: true,
+        search: false,
+        invalidate_frame_cache: true,
+    };
+    const IMAGE_RESOURCE: Self = Self {
+        text_projection: false,
+        created_scene: false,
+        geometry: false,
+        search: false,
+        invalidate_frame_cache: false,
+    };
+    const TOPOLOGY: Self = Self {
+        text_projection: true,
+        created_scene: true,
+        geometry: true,
+        search: true,
+        invalidate_frame_cache: true,
+    };
+
+    fn for_operation(operation: &pub_editor::EditOperation) -> Self {
+        match operation {
+            pub_editor::EditOperation::ReplaceStoryRange { .. }
+            | pub_editor::EditOperation::ReplaceStoryText { .. }
+            | pub_editor::EditOperation::ReplaceTableCellText { .. } => Self::TEXT,
+            pub_editor::EditOperation::MoveNode { .. }
+            | pub_editor::EditOperation::MoveNodes { .. }
+            | pub_editor::EditOperation::ResizeNode { .. }
+            | pub_editor::EditOperation::ResizeNodes { .. } => Self::GEOMETRY,
+            pub_editor::EditOperation::ReplaceImage { .. } => Self::IMAGE_RESOURCE,
+            pub_editor::EditOperation::BreakTextFrameForwardLink { .. }
+            | pub_editor::EditOperation::CreateTextBox { .. }
+            | pub_editor::EditOperation::CreateShape { .. } => Self::TOPOLOGY,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct AuthoringSyncCounters {
+    text_projection_refreshes: u64,
+    created_scene_syncs: u64,
+    geometry_syncs: u64,
+    search_refreshes: u64,
+}
+
 struct ViewerApp {
     source_path: Option<PathBuf>,
     open_state: OpenStateAuthority,
@@ -784,6 +848,7 @@ struct ViewerApp {
     selected_page: usize,
     page_frame_cache: BTreeMap<usize, Rc<CachedPageFrameWork>>,
     page_frame_cache_builds: u64,
+    authoring_sync_counters: AuthoringSyncCounters,
     canvas_selection: SceneSelectionState,
     canvas_drag: Option<MoveTransaction>,
     canvas_resize: Option<ResizeTransaction>,
@@ -840,6 +905,7 @@ impl ViewerApp {
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
             page_frame_cache_builds: 0,
+            authoring_sync_counters: AuthoringSyncCounters::default(),
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
@@ -2191,6 +2257,13 @@ impl ViewerApp {
                 self.page_frame_cache_builds
             ));
             ui.label(format!(
+                "Authoring syncs: text={} scene={} geometry={} search={}",
+                self.authoring_sync_counters.text_projection_refreshes,
+                self.authoring_sync_counters.created_scene_syncs,
+                self.authoring_sync_counters.geometry_syncs,
+                self.authoring_sync_counters.search_refreshes
+            ));
+            ui.label(format!(
                 "Engine: {}",
                 visual.scene.environment.engine_revision
             ));
@@ -2651,8 +2724,9 @@ impl ViewerApp {
                 .expect("editor presence checked above")
                 .replace_story_text(story_id, replacement);
             match outcome {
-                Ok(_) => self.finish_authoring_change(
+                Ok(operation) => self.finish_authoring_change(
                     "Applied Story edit in the authoring session. Source PUB bytes were not written.",
+                    AuthoringSyncScope::for_operation(&operation),
                 ),
                 Err(error) => {
                     self.edit_status = Some(format!("Edit rejected: {} ({})", error, error.code()));
@@ -2738,9 +2812,10 @@ impl ViewerApp {
                 .expect("editor presence checked above")
                 .replace_table_cell_text(target.node_id, target.cell_id, replacement);
             match outcome {
-                Ok(_) => {
+                Ok(operation) => {
                     self.finish_authoring_change(
                         "Applied TABLE cell edit in the authoring session. Source PUB bytes were not written.",
+                        AuthoringSyncScope::for_operation(&operation),
                     );
                     if let Some(updated) = self.editor.as_ref().and_then(|editor| {
                         editor
@@ -2775,14 +2850,45 @@ impl ViewerApp {
         }
     }
 
-    fn finish_authoring_change(&mut self, status: &str) {
+    fn finish_authoring_change(&mut self, status: &str, scope: AuthoringSyncScope) {
         self.canvas_drag = None;
         self.canvas_resize = None;
-        self.page_frame_cache.clear();
-        let text_projection_refresh = self.sync_visual_stories_from_editor();
-        let created_node_scene_sync = self.sync_visual_created_text_boxes_from_editor();
-        self.sync_visual_geometry_from_editor();
-        self.refresh_search();
+        if scope.invalidate_frame_cache {
+            self.page_frame_cache.clear();
+        }
+
+        let text_projection_refresh = if scope.text_projection {
+            self.authoring_sync_counters.text_projection_refreshes = self
+                .authoring_sync_counters
+                .text_projection_refreshes
+                .saturating_add(1);
+            self.sync_visual_stories_from_editor()
+        } else {
+            Ok(())
+        };
+
+        let created_node_scene_sync = if scope.created_scene {
+            self.authoring_sync_counters.created_scene_syncs = self
+                .authoring_sync_counters
+                .created_scene_syncs
+                .saturating_add(1);
+            self.sync_visual_created_text_boxes_from_editor()
+        } else {
+            Ok(())
+        };
+
+        if scope.geometry {
+            self.authoring_sync_counters.geometry_syncs =
+                self.authoring_sync_counters.geometry_syncs.saturating_add(1);
+            self.sync_visual_geometry_from_editor();
+        }
+
+        if scope.search {
+            self.authoring_sync_counters.search_refreshes =
+                self.authoring_sync_counters.search_refreshes.saturating_add(1);
+            self.refresh_search();
+        }
+
         self.export_preview = None;
         self.project_status = Some("Editor project has unsaved changes.".to_owned());
         self.edit_status = Some(match (text_projection_refresh, created_node_scene_sync) {
@@ -2804,9 +2910,13 @@ impl ViewerApp {
             .editor
             .as_mut()
             .expect("editor presence checked above")
-            .undo();
+            .undo()
+            .cloned();
         match outcome {
-            Ok(_) => self.finish_authoring_change("Undo restored the previous authoring state."),
+            Ok(operation) => self.finish_authoring_change(
+                "Undo restored the previous authoring state.",
+                AuthoringSyncScope::for_operation(&operation),
+            ),
             Err(error) => {
                 self.edit_status = Some(format!("Undo unavailable: {} ({})", error, error.code()));
             }
@@ -2818,9 +2928,13 @@ impl ViewerApp {
             .editor
             .as_mut()
             .expect("editor presence checked above")
-            .redo();
+            .redo()
+            .cloned();
         match outcome {
-            Ok(_) => self.finish_authoring_change("Redo restored the edited authoring state."),
+            Ok(operation) => self.finish_authoring_change(
+                "Redo restored the edited authoring state.",
+                AuthoringSyncScope::for_operation(&operation),
+            ),
             Err(error) => {
                 self.edit_status = Some(format!("Redo unavailable: {} ({})", error, error.code()));
             }
@@ -3171,7 +3285,7 @@ impl ViewerApp {
             .map_err(|error| {
                 format!("Replace image is unavailable: {} ({})", error, error.code())
             })?;
-        candidate
+        let operation = candidate
             .replace_image(node_id, replacement_asset)
             .map_err(|error| format!("Replace image rejected: {} ({})", error, error.code()))?;
 
@@ -3182,6 +3296,7 @@ impl ViewerApp {
         self.editor = Some(candidate);
         self.finish_authoring_change(
             "Replaced the selected image in the Chaptera project. Source PUB bytes were not written.",
+            AuthoringSyncScope::for_operation(&operation),
         );
         Ok(())
     }
@@ -3247,8 +3362,9 @@ impl ViewerApp {
                     .map_err(|error| format!("Move rejected: {} ({})", error, error.code()))
             });
         match outcome {
-            Ok(_) => self.finish_authoring_change(
+            Ok(operation) => self.finish_authoring_change(
                 "Moved canvas object in the authoring session. One MoveNode operation was committed.",
+                AuthoringSyncScope::for_operation(&operation),
             ),
             Err(error) => {
                 self.edit_status = Some(error);
@@ -3270,8 +3386,9 @@ impl ViewerApp {
                     .map_err(|error| format!("Resize rejected: {} ({})", error, error.code()))
             });
         match outcome {
-            Ok(_) => self.finish_authoring_change(
+            Ok(operation) => self.finish_authoring_change(
                 "Resized canvas object in the authoring session. One ResizeNode operation was committed.",
+                AuthoringSyncScope::for_operation(&operation),
             ),
             Err(error) => {
                 self.edit_status = Some(error);
@@ -3322,39 +3439,41 @@ impl ViewerApp {
         }
     }
 
-    fn refresh_visual_text_projection_from_editor(&mut self) -> Result<(), String> {
-        let editor = self
-            .editor
-            .as_ref()
-            .ok_or_else(|| "Editor session is unavailable.".to_owned())?;
-        let visual = self
-            .visual
-            .as_mut()
-            .ok_or_else(|| "Viewer projection is unavailable.".to_owned())?;
-        visual
-            .refresh_text_projection_from_resolved(editor.graph())
-            .map_err(|error| format!("refresh current Story projection: {error:#}"))
-    }
-
     fn apply_canvas_text_input(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
+        let before_operations = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.operations().len())
+            .unwrap_or(0);
         let outcome = match (&mut self.editor, &mut self.text_mode) {
             (Some(editor), Some(mode)) => text_session::replace_external_text(editor, mode, text),
             _ => return,
         };
         match outcome {
-            Ok(()) => match self.refresh_visual_text_projection_from_editor() {
-                Ok(()) => self.finish_authoring_change(
-                    "Typed on the canvas through one canonical ReplaceStoryRange operation.",
-                ),
-                Err(error) => {
-                    self.edit_status = Some(format!(
-                        "Text was committed, but the canvas projection could not be refreshed: {error}"
-                    ));
+            Ok(()) => {
+                let operation = self.editor.as_ref().and_then(|editor| {
+                    if editor.operations().len() == before_operations + 1 {
+                        editor.operations().last().cloned()
+                    } else {
+                        None
+                    }
+                });
+                match operation {
+                    Some(operation) => self.finish_authoring_change(
+                        "Typed on the canvas through one canonical ReplaceStoryRange operation.",
+                        AuthoringSyncScope::for_operation(&operation),
+                    ),
+                    None => {
+                        self.edit_status = Some(
+                            "Text was committed, but the canonical operation receipt was unavailable."
+                                .to_owned(),
+                        );
+                    }
                 }
-            },
+            }
             Err(error) => {
                 self.edit_status = Some(format!("Canvas text input rejected: {error}"));
             }
@@ -3378,22 +3497,18 @@ impl ViewerApp {
         };
         match outcome {
             Ok(()) => {
-                let after_operations = self
-                    .editor
-                    .as_ref()
-                    .map(|editor| editor.operations().len())
-                    .unwrap_or(before_operations);
-                if after_operations > before_operations {
-                    match self.refresh_visual_text_projection_from_editor() {
-                        Ok(()) => self.finish_authoring_change(
-                            "Canvas text keyboard edit committed through canonical Story range authority.",
-                        ),
-                        Err(error) => {
-                            self.edit_status = Some(format!(
-                                "Text keyboard edit was committed, but the canvas projection could not be refreshed: {error}"
-                            ));
-                        }
+                let operation = self.editor.as_ref().and_then(|editor| {
+                    if editor.operations().len() == before_operations + 1 {
+                        editor.operations().last().cloned()
+                    } else {
+                        None
                     }
+                });
+                if let Some(operation) = operation {
+                    self.finish_authoring_change(
+                        "Canvas text keyboard edit committed through canonical Story range authority.",
+                        AuthoringSyncScope::for_operation(&operation),
+                    );
                 }
             }
             Err(error) => {
@@ -4885,6 +5000,49 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     #[test]
+    fn authoring_sync_scope_is_operation_scoped() {
+        let story_id: pub_editor::StoryId =
+            serde_json::from_str("\"11111111-1111-1111-1111-111111111111\"")
+                .expect("story id");
+        let node_id: pub_editor::NodeId =
+            serde_json::from_str("\"22222222-2222-2222-2222-222222222222\"")
+                .expect("node id");
+        let rect = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(1),
+            pub_editor::LengthEmu::new(2),
+            pub_editor::LengthEmu::new(3),
+            pub_editor::LengthEmu::new(4),
+        );
+
+        let text = pub_editor::EditOperation::ReplaceStoryText {
+            story_id,
+            before: "a".to_owned(),
+            after: "b".to_owned(),
+        };
+        assert_eq!(AuthoringSyncScope::for_operation(&text), AuthoringSyncScope::TEXT);
+
+        let geometry = pub_editor::EditOperation::MoveNode {
+            node_id,
+            before: rect,
+            after: rect,
+        };
+        assert_eq!(
+            AuthoringSyncScope::for_operation(&geometry),
+            AuthoringSyncScope::GEOMETRY
+        );
+
+        let image = pub_editor::EditOperation::ReplaceImage {
+            node_id,
+            before_asset: None,
+            after_asset: pub_editor::Sha256Digest::from_bytes([0x44; 32]),
+        };
+        assert_eq!(
+            AuthoringSyncScope::for_operation(&image),
+            AuthoringSyncScope::IMAGE_RESOURCE
+        );
+    }
+
+    #[test]
     fn scene_hit_index_builds_stable_bidirectional_lookup_once() {
         let node_id: pub_editor::NodeId =
             serde_json::from_str("\"22222222-2222-2222-2222-222222222222\"")
@@ -5327,6 +5485,7 @@ mod tests {
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
             page_frame_cache_builds: 0,
+            authoring_sync_counters: AuthoringSyncCounters::default(),
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
@@ -5387,6 +5546,7 @@ mod tests {
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
             page_frame_cache_builds: 0,
+            authoring_sync_counters: AuthoringSyncCounters::default(),
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
@@ -5662,6 +5822,7 @@ mod tests {
             selected_page: 0,
             page_frame_cache: BTreeMap::new(),
             page_frame_cache_builds: 0,
+            authoring_sync_counters: AuthoringSyncCounters::default(),
             canvas_selection: SceneSelectionState::default(),
             canvas_drag: None,
             canvas_resize: None,
