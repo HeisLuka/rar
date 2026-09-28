@@ -121,7 +121,8 @@ public final class MainActivity extends Activity {
 
     private void openUri(Uri uri) {
         try {
-            byte[] bytes = readBounded(uri, 128 * 1024 * 1024);
+            int maxInputBytes = Math.toIntExact(NativeReader.maxInputBytes());
+            byte[] bytes = readBounded(uri, maxInputBytes);
             String before = sha256(bytes);
             String wire = NativeReader.openSessionJson(bytes);
             String after = sha256(bytes);
