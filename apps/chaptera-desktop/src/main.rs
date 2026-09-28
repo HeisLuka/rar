@@ -7036,6 +7036,214 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    struct GoldenPageOnlyApp {
+        visual: ViewerGeometryDocument,
+        page_index: usize,
+        image_textures: BTreeMap<String, CachedImageTexture>,
+    }
+
+    impl GoldenPageOnlyApp {
+        fn new(visual: ViewerGeometryDocument, page_index: usize) -> Self {
+            Self {
+                visual,
+                page_index,
+                image_textures: BTreeMap::new(),
+            }
+        }
+
+        fn ensure_image_textures(&mut self, ctx: &egui::Context) {
+            for embedded in &self.visual.images {
+                let key = format!("{:?}", embedded.resource_id);
+                if self.image_textures.contains_key(&key) {
+                    continue;
+                }
+                let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
+                let admitted = image_decode_adapter::decode_texture_image_v1(
+                    &embedded.bytes,
+                    &embedded.mime,
+                    &expected_sha256,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "clean golden image decode failed for {} / {}: {error}",
+                        key, embedded.mime
+                    )
+                });
+                let texture = ctx.load_texture(
+                    format!("carlton-golden-{key}"),
+                    admitted.color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.image_textures.insert(
+                    key,
+                    CachedImageTexture {
+                        texture,
+                        _cache_identity_sha256: admitted.cache_identity_sha256,
+                    },
+                );
+            }
+        }
+    }
+
+    impl eframe::App for GoldenPageOnlyApp {
+        fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.ensure_image_textures(ctx);
+            let render_plan = build_page_render_plan_v1(&self.visual, self.page_index)
+                .expect("clean golden page render plan");
+            let scene_scale = 144.0_f32 / 914_400.0_f32;
+
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ctx, |ui| {
+                    let page_rect = ui.max_rect();
+                    let painter = ui.painter_at(page_rect);
+                    painter.rect_filled(page_rect, 0.0, egui::Color32::WHITE);
+
+                    for node in &render_plan.nodes {
+                        let Some(node_rect) = render_backend::physical_rect_to_egui(
+                            page_rect,
+                            scene_scale,
+                            node.bounds.x.get(),
+                            node.bounds.y.get(),
+                            node.bounds.width.get(),
+                            node.bounds.height.get(),
+                        ) else {
+                            continue;
+                        };
+                        let texture = node.image.as_ref().and_then(|image| {
+                            let key = format!("{:?}", image.resource_id);
+                            self.image_textures.get(&key)
+                        });
+                        render_backend::paint_document_node_base(
+                            &painter,
+                            node,
+                            node_rect,
+                            texture.map(|cached| cached.texture.id()),
+                        );
+                        let _ = render_backend::paint_document_node_foreground(
+                            &painter,
+                            node,
+                            node_rect,
+                            scene_scale,
+                        );
+                    }
+                });
+        }
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_GOLDEN_CARLTON_MARCH and CHAPTERA_GOLDEN_CARLTON_OUT"]
+    fn golden_carlton_march_clean_pages_use_current_reader_render_backend() {
+        use egui_kittest::Harness;
+        use sha2::{Digest, Sha256};
+
+        const RASTER_DPI: f64 = 144.0;
+        const EMU_PER_INCH: f64 = 914_400.0;
+
+        let fixture = std::env::var_os("CHAPTERA_GOLDEN_CARLTON_MARCH")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_CARLTON_MARCH");
+        let output_dir = std::env::var_os("CHAPTERA_GOLDEN_CARLTON_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_CARLTON_OUT");
+        fs::create_dir_all(&output_dir).expect("create Carlton golden output directory");
+
+        let bytes = fs::read(&fixture).expect("read exact Carlton March PUB");
+        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            source_sha256,
+            "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+            "Carlton March source identity drifted"
+        );
+
+        let visual = diagnostic_sweep::open_for_product(&bytes)
+            .expect("exact Carlton March must open through current product Reader");
+        assert_eq!(visual.document.pages.len(), 3, "Carlton product page count");
+        assert_eq!(visual.scene.surfaces.len(), 3, "Carlton product surface count");
+        assert!(
+            visual
+                .document
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "viewer.page_projection.family_profile_applied"),
+            "exact Carlton family presentation profile must be active before visual rendering"
+        );
+
+        let mut page_receipts = Vec::new();
+        for page_index in 0..visual.document.pages.len() {
+            let plan = build_page_render_plan_v1(&visual, page_index)
+                .expect("current Reader page render plan");
+            let width_px = ((plan.page_size.width.get() as f64 * RASTER_DPI / EMU_PER_INCH)
+                .round()
+                .max(1.0)) as u32;
+            let height_px = ((plan.page_size.height.get() as f64 * RASTER_DPI / EMU_PER_INCH)
+                .round()
+                .max(1.0)) as u32;
+
+            let visual_for_app = visual.clone();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width_px as f32, height_px as f32))
+                .with_pixels_per_point(1.0)
+                .with_max_steps(12)
+                .wgpu()
+                .build_eframe(move |cc| {
+                    fallback_font::install(&cc.egui_ctx)
+                        .expect("pinned Chaptera fallback font resource must validate");
+                    GoldenPageOnlyApp::new(visual_for_app, page_index)
+                });
+            harness.step();
+
+            let image = harness
+                .render()
+                .expect("headless clean Reader page render must succeed");
+            assert_eq!(image.width(), width_px, "golden raster width drift");
+            assert_eq!(image.height(), height_px, "golden raster height drift");
+            let filename = format!("carlton-march-reader-page-{:03}.png", page_index + 1);
+            image
+                .save(output_dir.join(&filename))
+                .expect("write Carlton clean Reader page PNG");
+
+            let typography_sections = plan
+                .nodes
+                .iter()
+                .filter_map(|node| node.text.as_ref())
+                .map(|text| text.typography.len())
+                .sum::<usize>();
+            page_receipts.push(serde_json::json!({
+                "page_number": page_index + 1,
+                "page_id": visual.document.pages[page_index].id,
+                "width_emu": plan.page_size.width.get(),
+                "height_emu": plan.page_size.height.get(),
+                "raster_width_px": width_px,
+                "raster_height_px": height_px,
+                "node_count": plan.nodes.len(),
+                "typography_sections": typography_sections,
+                "png": filename,
+            }));
+        }
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.reader-golden-carlton-march.v1",
+            "source_sha256": source_sha256,
+            "page_count": visual.document.pages.len(),
+            "scene_surface_count": visual.scene.surfaces.len(),
+            "raster_dpi": RASTER_DPI as u32,
+            "render_backend": "chaptera-desktop-egui-document-paint",
+            "shell_ui_rendered": false,
+            "selection_overlay_rendered": false,
+            "preview_warning_overlay_rendered": false,
+            "family_profile_applied": true,
+            "source_font_face_claimed": false,
+            "publisher_exact_reflow_claimed": false,
+            "pages": page_receipts,
+        });
+        fs::write(
+            output_dir.join("carlton-march-reader-golden-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize Carlton golden receipt"),
+        )
+        .expect("write Carlton golden receipt");
+    }
+
     #[test]
     #[ignore = "requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
     fn golden_sample_newsletter_reference_customer_page_1_uses_shared_typography_render_plan() {
