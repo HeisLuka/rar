@@ -621,10 +621,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(
-            selection.customer_page_seq_nums,
-            vec![266, 323, 352, 381]
-        );
+        assert_eq!(selection.customer_page_seq_nums, vec![266, 323, 352, 381]);
         assert_eq!(selection.raw_page_count, 8);
     }
 
@@ -642,12 +639,11 @@ mod tests {
 
     #[test]
     fn reference_profile_drift_fails_closed_and_unknown_hash_is_ignored() {
-        assert!(select_reference_fixture_customer_page_seq_nums_v1(
-            &"11".repeat(32),
-            &[263, 266],
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            select_reference_fixture_customer_page_seq_nums_v1(&"11".repeat(32), &[263, 266],)
+                .unwrap()
+                .is_none()
+        );
 
         assert!(matches!(
             select_reference_fixture_customer_page_seq_nums_v1(
