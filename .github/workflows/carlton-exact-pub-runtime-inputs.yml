@@ -7,6 +7,7 @@ on:
       - "crates/pub-model/**"
       - "crates/pub-presentation-profile/**"
       - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
       - ".github/workflows/carlton-exact-pub-runtime-inputs.yml"
   workflow_dispatch:
 
@@ -1439,6 +1440,47 @@ jobs:
           )
           PY
 
+      - name: Emit exact Carlton Viewer page projection receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- out/carlton/exact/March-2026.pub \
+               out/carlton/exact/March-2026-viewer-page-projection.json
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml \
+            --bin page-projection-receipt \
+            -- out/carlton/exact/December-2025.pub \
+               out/carlton/exact/December-2025-viewer-page-projection.json
+          cat out/carlton/exact/March-2026-viewer-page-projection.json
+          cat out/carlton/exact/December-2025-viewer-page-projection.json
+
+      - name: Gate Carlton family profile consumption in Viewer navigation and layout
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          root = Path("out/carlton/exact")
+          march = json.loads((root / "March-2026-viewer-page-projection.json").read_text())
+          december = json.loads((root / "December-2025-viewer-page-projection.json").read_text())
+
+          assert march["viewer_page_count"] == 3, march
+          assert march["scene_surface_count"] == 3, march
+          assert march["viewer_page_indices"] == [1, 2, 3], march
+          assert "viewer.page_projection.family_profile_applied" in set(march["diagnostic_codes"]), march
+          assert "viewer.page_projection.roles_unresolved" not in set(march["diagnostic_codes"]), march
+
+          assert december["viewer_page_count"] == 5, december
+          assert december["scene_surface_count"] == 5, december
+          assert december["viewer_page_indices"] == [1, 2, 3, 4, 5], december
+          assert "viewer.page_projection.family_profile_applied" in set(december["diagnostic_codes"]), december
+          assert "viewer.page_projection.roles_unresolved" not in set(december["diagnostic_codes"]), december
+
+          print("CARLTON VIEWER PROJECTION PASS March=3/3 December=5/5")
+
       - name: Upload exact runtime inputs
         uses: actions/upload-artifact@v4
         if: success()
@@ -1453,6 +1495,7 @@ jobs:
             out/carlton/exact/*-plccmob-source-input.json
             out/carlton/exact/*-cfb-manifest.json
             out/carlton/exact/plccmob-runtime-extraction.json
+            out/carlton/exact/*-viewer-page-projection.json
             out/carlton/exact/manifest.json
           if-no-files-found: error
           retention-days: 1
