@@ -856,6 +856,14 @@ fn project_carlton_march_cmo_instances(
         .iter()
         .map(|relation| relation.target_qsid)
         .collect::<BTreeSet<_>>();
+    let expected_target_qsids = BTreeSet::from([49_u32, 120, 216, 218]);
+    if target_qsids != expected_target_qsids {
+        return Err(anyhow!(
+            "exact Carlton March Cmo target set changed: expected {:?}, got {:?}",
+            expected_target_qsids,
+            target_qsids
+        ));
+    }
     let mut projected = Vec::new();
 
     for target_qsid in target_qsids {
@@ -929,6 +937,17 @@ fn project_carlton_march_cmo_instances(
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let expected_markers: &[u32] = match target_qsid {
+            120 | 216 | 218 => &[0],
+            49 => &[0, 3, 5, 7, 9, 11],
+            _ => unreachable!("exact target set checked above"),
+        };
+        if object_marker_scalars != expected_markers {
+            return Err(anyhow!(
+                "exact Carlton March Cmo markers changed for Qsid {target_qsid}: expected {expected_markers:?}, got {object_marker_scalars:?}"
+            ));
+        }
+
         let frame_count = graph
             .nodes
             .values()
@@ -991,6 +1010,44 @@ fn project_carlton_march_cmo_instances(
             },
         )
         .with_context(|| format!("resolve Carlton March Cmo target Qsid {target_qsid}"))?;
+
+        let expected_visible_cmo_ids: &[u32] = match target_qsid {
+            218 => &[1],
+            120 => &[6],
+            216 => &[5],
+            49 => &[7],
+            _ => unreachable!("exact target set checked above"),
+        };
+        let visible_cmo_ids = output
+            .visible_slots
+            .iter()
+            .map(|slot| slot.cmo_id)
+            .collect::<Vec<_>>();
+        if visible_cmo_ids != expected_visible_cmo_ids {
+            return Err(anyhow!(
+                "exact Carlton March visible Cmo prefix changed for Qsid {target_qsid}: expected {expected_visible_cmo_ids:?}, got {visible_cmo_ids:?}"
+            ));
+        }
+        if output.scaling_applied || output.skip_to_fit || output.carrier_reparent_count != 0 {
+            return Err(anyhow!(
+                "exact Carlton March Cmo slot-flow violated no-scale/no-skip/no-reparent law for Qsid {target_qsid}"
+            ));
+        }
+        if target_qsid == 49
+            && (!output.overset.story_overset
+                || output.overset.first_nonfitting_slot_index != Some(1)
+                || output.overset.first_nonfitting_scalar_index != Some(3))
+        {
+            return Err(anyhow!(
+                "exact Carlton March q49 first-nonfit discriminator changed: {:?}",
+                output.overset
+            ));
+        }
+        if target_qsid != 49 && output.overset.story_overset {
+            return Err(anyhow!(
+                "exact Carlton March single-slot target Qsid {target_qsid} unexpectedly overset"
+            ));
+        }
 
         for slot in output.visible_slots {
             let origin_node_id =
