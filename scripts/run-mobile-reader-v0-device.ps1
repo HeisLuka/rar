@@ -139,6 +139,39 @@ function Test-ChapteraUsefulPage {
     return $false
 }
 
+function Get-ChapteraWindowText {
+    param([string]$DeviceSerial)
+
+    $dump = Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "uiautomator", "dump", "/sdcard/chaptera-window.xml")
+    if ($dump.ExitCode -ne 0) {
+        return ""
+    }
+    $xml = Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "cat", "/sdcard/chaptera-window.xml")
+    Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "rm", "-f", "/sdcard/chaptera-window.xml") | Out-Null
+    if ($xml.ExitCode -ne 0) {
+        return ""
+    }
+    return $xml.Text
+}
+
+function Restart-ChapteraWithoutIntent {
+    param([string]$DeviceSerial)
+
+    Invoke-AdbRaw @("-s", $DeviceSerial, "shell", "am", "force-stop", "com.chaptera.reader") | Out-Null
+    Start-Sleep -Milliseconds 500
+    $launch = Invoke-AdbRaw @(
+        "-s", $DeviceSerial, "shell", "monkey",
+        "-p", "com.chaptera.reader",
+        "-c", "android.intent.category.LAUNCHER",
+        "1"
+    )
+    if ($launch.ExitCode -ne 0) {
+        return $false
+    }
+    Start-Sleep -Seconds 2
+    return $true
+}
+
 $deviceRows = @(& adb devices 2>$null) |
     Select-Object -Skip 1 |
     ForEach-Object { $_.Trim() } |
@@ -206,6 +239,9 @@ $ResolverMime = ""
 $ResolverChapteraOffered = $false
 $ResolverUnqualifiedIntent = $false
 $ResolverUsefulPageVisible = $false
+$GrantResumeState = "not_run"
+$GrantResumeUsefulPage = $false
+$TransientGrantStateCleared = $false
 
 if ($V0Exit -eq 0) {
     $ResolverName = "ChapteraResolverProbe.pub"
@@ -311,6 +347,50 @@ if ($V0Exit -eq 0) {
         }
     }
 
+    if ($ResolverExit -eq 0) {
+        Write-Host "Checking URI grant behavior across Chaptera process death"
+        if (-not (Restart-ChapteraWithoutIntent -DeviceSerial $Serial)) {
+            $ResolverExit = 9
+            $ResolverState = "resume_relaunch_failed"
+            $GrantResumeState = "relaunch_failed"
+        } else {
+            $resumeText = Get-ChapteraWindowText -DeviceSerial $Serial
+            $resumedSameDocument = (
+                $resumeText -match [regex]::Escape($ResolverName) -and
+                $resumeText -match "page 1/" -and
+                $resumeText -match "offline local open"
+            )
+            if ($resumedSameDocument) {
+                $GrantResumeState = "uri_grant_survived_process_death"
+                $GrantResumeUsefulPage = $true
+            } elseif (
+                $resumeText -match "File access is no longer available" -or
+                $resumeText -match "Could not read this local file"
+            ) {
+                $GrantResumeState = "transient_grant_failed_honestly"
+                if (-not (Restart-ChapteraWithoutIntent -DeviceSerial $Serial)) {
+                    $ResolverExit = 10
+                    $ResolverState = "resume_clear_relaunch_failed"
+                } else {
+                    $clearedText = Get-ChapteraWindowText -DeviceSerial $Serial
+                    if (
+                        $clearedText -match "Open a local \.pub file" -and
+                        $clearedText -notmatch [regex]::Escape($ResolverName)
+                    ) {
+                        $TransientGrantStateCleared = $true
+                    } else {
+                        $ResolverExit = 11
+                        $ResolverState = "transient_grant_stale_resume_not_cleared"
+                    }
+                }
+            } else {
+                $ResolverExit = 12
+                $ResolverState = "resume_after_process_death_unclassified"
+                $GrantResumeState = "unclassified"
+            }
+        }
+    }
+
     Invoke-AdbRaw @("-s", $Serial, "shell", "rm", "-f", $DeviceResolverPath) | Out-Null
 }
 
@@ -365,6 +445,9 @@ $receiptObject = [ordered]@{
         chaptera_offered = $ResolverChapteraOffered
         unqualified_view_intent = $ResolverUnqualifiedIntent
         useful_page_visible = $ResolverUsefulPageVisible
+        uri_grant_after_process_death = $GrantResumeState
+        resumed_useful_page = $GrantResumeUsefulPage
+        transient_grant_stale_resume_cleared = $TransientGrantStateCleared
     }
     physical_perf_exit_code = [int]$PerfExit
     wifi_observation = $WifiObservation
