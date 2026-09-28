@@ -7061,6 +7061,15 @@ mod tests {
             visual: ViewerGeometryDocument,
             page_index: usize,
         ) -> Self {
+            // egui_kittest's RawInput defaults to a deliberately tiny 2048px
+            // texture ceiling even though its wgpu device setup supports larger
+            // 2D textures. Carlton contains an exact 2480x2835 embedded image,
+            // so bind the headless input contract to the renderer capability
+            // before uploading the same decoded image bytes the Reader uses.
+            cc.egui_ctx.input_mut(|input| {
+                input.max_texture_side = 8192;
+                input.raw.max_texture_side = Some(8192);
+            });
             fallback_font::install(&cc.egui_ctx)
                 .expect("pinned Chaptera fallback font resource must validate");
 
