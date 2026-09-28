@@ -480,7 +480,9 @@ pub fn open_mature_0x2c_geometry(
 ) -> Result<ViewerGeometryDocument> {
     let pipeline = build_mature_0x2c_pipeline(bytes)?;
     let mut document = viewer_document_from_pipeline(bytes.len(), &pipeline)?;
-    let authoring = bounded_authoring_slice_from_resolved(&pipeline.resolved.graph)?;
+    let effective_page_ids = document.pages.iter().map(|page| page.id).collect::<Vec<_>>();
+    let authoring =
+        bounded_authoring_slice_from_resolved_pages(&pipeline.resolved.graph, &effective_page_ids)?;
     let projection = project_bounded(authoring);
 
     document
@@ -781,9 +783,14 @@ fn viewer_document_from_pipeline(
 pub fn bounded_authoring_slice_from_resolved(
     graph: &PubResolvedGraph,
 ) -> Result<BoundedAuthoringSlice> {
-    let pages = graph
-        .document
-        .pages
+    bounded_authoring_slice_from_resolved_pages(graph, &graph.document.pages)
+}
+
+fn bounded_authoring_slice_from_resolved_pages(
+    graph: &PubResolvedGraph,
+    page_ids: &[PageId],
+) -> Result<BoundedAuthoringSlice> {
+    let pages = page_ids
         .iter()
         .map(|page_id| {
             graph
@@ -794,9 +801,15 @@ pub fn bounded_authoring_slice_from_resolved(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let page_origins = page_ids
+        .iter()
+        .map(|page_id| page_id.into_canonical())
+        .collect::<BTreeSet<_>>();
+
     let node_geometry = graph
         .nodes
         .values()
+        .filter(|node| page_origins.contains(&node.header.parent_id))
         .map(|node| BoundedNodeGeometryInput {
             node_id: node.header.id,
             parent_origin: node.header.parent_id,
@@ -810,6 +823,7 @@ pub fn bounded_authoring_slice_from_resolved(
     let story_frames = graph
         .nodes
         .values()
+        .filter(|node| page_origins.contains(&node.header.parent_id))
         .filter_map(|node| {
             let frame = node.payload.story_frame.as_ref()?;
             let story_id = frame.story_id?;
