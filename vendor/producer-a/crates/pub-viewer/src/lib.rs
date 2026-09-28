@@ -1972,7 +1972,12 @@ mod tests {
                     source_hash,
                     byte_len: 1,
                 },
-                pages: Vec::new(),
+                pages: vec![ViewerPage {
+                    index: 1,
+                    id: page_id,
+                    width_emu: graph.pages[&page_id].size.width.get(),
+                    height_emu: graph.pages[&page_id].size.height.get(),
+                }],
                 stories: vec![ViewerStory {
                     id: story_id,
                     text: graph.stories[&story_id].text.clone(),
@@ -2021,6 +2026,7 @@ mod tests {
     #[test]
     fn viewer_text_projection_refresh_reflows_same_explicit_linked_chain() {
         let mut graph = linked_resolved_graph_fixture("ABCDEFGHI");
+        let page_id = graph.document.pages[0];
         let story_id = *graph.stories.keys().next().expect("fixture story");
         let projection =
             project_bounded(bounded_authoring_slice_from_resolved(&graph).expect("projection"));
@@ -2068,7 +2074,12 @@ mod tests {
                     source_hash,
                     byte_len: 1,
                 },
-                pages: Vec::new(),
+                pages: vec![ViewerPage {
+                    index: 1,
+                    id: page_id,
+                    width_emu: graph.pages[&page_id].size.width.get(),
+                    height_emu: graph.pages[&page_id].size.height.get(),
+                }],
                 stories: vec![ViewerStory {
                     id: story_id,
                     text: "ABCDEFGHI".to_owned(),
