@@ -2677,10 +2677,8 @@ impl ViewerApp {
                 self.text_mode = Some(mode);
                 self.canvas_drag = None;
                 self.canvas_resize = None;
-                self.edit_status = Some(
-                    "Text editing activated from an admitted interior canvas click."
-                        .to_owned(),
-                );
+                self.edit_status =
+                    Some("Text editing activated from an admitted interior canvas click.".to_owned());
             }
             Err(error) => {
                 self.edit_status = Some(format!(
@@ -3422,12 +3420,8 @@ impl ViewerApp {
                                 editor.can_replace_story_text(fragment.story_id).is_ok()
                             })
                         {
-                            text_activation_request = Some((
-                                fragment.story_id,
-                                hit.node_id,
-                                page_id_text.clone(),
-                                point,
-                            ));
+                            text_activation_request =
+                                Some((fragment.story_id, hit.node_id, page_id_text.clone(), point));
                         }
                     } else {
                         canvas_hit = None;
@@ -6775,30 +6769,25 @@ mod tests {
                     );
                     let right = node.bounds.right()?.get();
                     let bottom = node.bounds.bottom()?.get();
-                    let point = probe
-                        .layout
-                        .caret_map
-                        .caret_stops
-                        .iter()
-                        .find_map(|stop| {
-                            if stop.frame_id != fragment.frame_id.as_canonical().to_string()
-                                || stop.page_id != page_id_text
-                            {
-                                return None;
-                            }
-                            let y = stop.page_y_top_emu
-                                + (stop.page_y_bottom_emu - stop.page_y_top_emu) / 2;
-                            (stop.page_x_emu > node.bounds.x.get()
-                                && stop.page_x_emu < right
-                                && y > node.bounds.y.get()
-                                && y < bottom)
-                                .then(|| {
-                                    pub_interaction::DocumentPoint::new(
-                                        pub_editor::LengthEmu::new(stop.page_x_emu),
-                                        pub_editor::LengthEmu::new(y),
-                                    )
-                                })
-                        })?;
+                    let point = probe.layout.caret_map.caret_stops.iter().find_map(|stop| {
+                        if stop.frame_id != fragment.frame_id.as_canonical().to_string()
+                            || stop.page_id != page_id_text
+                        {
+                            return None;
+                        }
+                        let y = stop.page_y_top_emu
+                            + (stop.page_y_bottom_emu - stop.page_y_top_emu) / 2;
+                        (stop.page_x_emu > node.bounds.x.get()
+                            && stop.page_x_emu < right
+                            && y > node.bounds.y.get()
+                            && y < bottom)
+                            .then(|| {
+                                pub_interaction::DocumentPoint::new(
+                                    pub_editor::LengthEmu::new(stop.page_x_emu),
+                                    pub_editor::LengthEmu::new(y),
+                                )
+                            })
+                    })?;
                     hit_index
                         .topmost_at(point)
                         .filter(|top| top.node_id == fragment.frame_id)
