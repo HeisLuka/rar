@@ -7,7 +7,7 @@
 use chaptera_viewer_render_plan::{NodeRenderPlanV1, RenderTextFragmentV1};
 use eframe::egui;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct TextPaintMetrics {
     pub layout_section_count: usize,
     pub source_typography_sections: usize,
