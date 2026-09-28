@@ -174,6 +174,12 @@ pub struct ViewerProjectedSceneInstanceV1 {
     pub scene_instance: SceneInstanceV1,
     /// Paint placement metadata only; not an identity authority.
     pub target_frame_node_id: NodeId,
+    /// Exact composition proof: visible direct target-frame text is empty after
+    /// object-marker removal or is fully duplicated by one admitted visible
+    /// carrier Story. This permits paint suppression without mutating the
+    /// canonical target Story or inventing a generic Cmo interleave law.
+    #[serde(default)]
+    pub target_frame_text_fully_covered: bool,
     pub bounds: RectEmu,
     pub transform: Affine2D,
 }
@@ -1631,6 +1637,33 @@ fn project_carlton_march_cmo_instances(
             ));
         }
 
+        let target_visible_residual = target_story
+            .text
+            .chars()
+            .filter(|ch| !matches!(ch, '\u{FFFC}' | '\r' | '\n'))
+            .collect::<String>();
+        let target_visible_residual = target_visible_residual.trim();
+        let target_frame_text_fully_covered = target_visible_residual.is_empty()
+            || output.visible_slots.iter().any(|slot| {
+                let Some(carrier_story_id) = slot.carrier_story_id.as_deref() else {
+                    return false;
+                };
+                let Ok(carrier_story_id) =
+                    parse_projected_story_id(carrier_story_id, "visible Cmo carrier_story_id")
+                else {
+                    return false;
+                };
+                graph
+                    .stories
+                    .get(&carrier_story_id)
+                    .is_some_and(|story| story.text.trim().ends_with(target_visible_residual))
+            });
+        if !target_frame_text_fully_covered {
+            return Err(anyhow!(
+                "exact Carlton March target Qsid {target_qsid} contains visible direct text not covered by the admitted visible carrier Story"
+            ));
+        }
+
         for slot in output.visible_slots {
             let origin_node_id =
                 parse_projected_node_id(&slot.carrier_node_id, "visible Cmo carrier_node_id")?;
@@ -1697,6 +1730,7 @@ fn project_carlton_march_cmo_instances(
             projected.push(ViewerProjectedSceneInstanceV1 {
                 scene_instance,
                 target_frame_node_id,
+                target_frame_text_fully_covered,
                 bounds,
                 transform: carrier.header.transform.clone(),
             });
