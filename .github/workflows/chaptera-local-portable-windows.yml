@@ -235,7 +235,11 @@ jobs:
           $launcher = Join-Path $env:CHAPTERA_CLEAN_ROOT "Start-Chaptera-Local.cmd"
           $quoted = [char]34 + $launcher + [char]34
           $arguments = "/d /c call $quoted --no-browser --smoke"
-          $process = Start-Process -FilePath $cmd -ArgumentList $arguments -Wait -PassThru
+          $stdout = Join-Path $env:RUNNER_TEMP "chaptera-portable-smoke.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "chaptera-portable-smoke.stderr.log"
+          $process = Start-Process -FilePath $cmd -ArgumentList $arguments -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
           if ($process.ExitCode -ne 0) { throw "portable full-stack smoke failed: $($process.ExitCode)" }
 
       - name: Prove packaged MoveNode Scene Undo path
