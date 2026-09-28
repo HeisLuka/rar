@@ -7038,7 +7038,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
-    fn golden_sample_newsletter_reader_page_2_uses_shared_typography_render_plan() {
+    fn golden_sample_newsletter_reader_page_1_uses_shared_typography_render_plan() {
         use egui_kittest::Harness;
         use sha2::{Digest, Sha256};
 
@@ -7086,7 +7086,7 @@ mod tests {
             "proven Rockwell Condensed 24pt anchor must reach Viewer"
         );
 
-        let page_offset = 1_usize;
+        let page_offset = 0_usize;
         let plan =
             build_page_render_plan_v1(&visual, page_offset).expect("page 2 shared render plan");
         let typography_sections = plan
@@ -7118,19 +7118,19 @@ mod tests {
         let image = harness
             .render()
             .expect("headless Reader render must succeed");
-        let png_path = output_dir.join("samplenewsletter-page-002-reader.png");
+        let png_path = output_dir.join("samplenewsletter-page-001-reader.png");
         image.save(&png_path).expect("write Reader golden PNG");
 
         let receipt = serde_json::json!({
             "schema": "chaptera.reader-golden-samplenewsletter.v2",
             "source_sha256": source_sha256,
-            "page_number": 2,
+            "page_number": 1,
             "typography_run_count": visual.typography_runs.len(),
             "inherited_typography_run_count": inherited_typography_run_count,
             "render_plan_typography_sections": typography_sections,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
-            "png": "samplenewsletter-page-002-reader.png"
+            "png": "samplenewsletter-page-001-reader.png"
         });
         fs::write(
             output_dir.join("samplenewsletter-reader-receipt.json"),
