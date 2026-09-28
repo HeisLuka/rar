@@ -346,9 +346,9 @@ mod tests {
     };
     use pub_model::{Affine2D, CanonicalId, LengthEmu, RectEmu, Sha256Digest, Size2D};
     #[cfg(feature = "projected-scene-instances")]
-    use pub_model::CmoProjectionRelationV1;
-    #[cfg(feature = "projected-scene-instances")]
-    use chaptera_scene_instance::cmo_story_slot_instance_v1;
+    use chaptera_scene_instance::{
+        SCENE_INSTANCE_SCHEMA_V1, SceneInstanceV1, SceneProjectionKindV1,
+    };
     use pub_viewer::{
         ViewerDocument, ViewerEmbeddedImage, ViewerNodePaint, ViewerPage, ViewerSolidLine,
         ViewerSource, ViewerTextFragment, ViewerTypographyRun, viewer_story_text_sha256,
@@ -487,24 +487,21 @@ mod tests {
         let page_id = visual.document.pages[0].id;
         let origin_node_id = visual.scene.nodes[0].origin;
         let story_id = visual.document.stories[0].id;
-        let relation = CmoProjectionRelationV1 {
-            source_order: 0,
-            cmo_id: 7,
-            carrier_ohpo: 1,
-            carrier_cmo_id: 7,
-            target_qsid: 49,
-            carrier_node_id: origin_node_id.as_canonical().to_string(),
-            carrier_story_id: Some(story_id.as_canonical().to_string()),
-            target_story_id: story_id.as_canonical().to_string(),
-            target_frame_node_id: Some(origin_node_id.as_canonical().to_string()),
+        // Canonical instance derivation is owned and tested by
+        // chaptera-scene-instance and by the exact Cmo slot-flow consumer.
+        // This seam test proves Viewer/render-plan preserves that already-owned
+        // typed authority verbatim instead of deriving a second identity.
+        let instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:scene-instance-authority-fixture".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: origin_node_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: Some(story_id.as_canonical().to_string()),
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
         };
-        let instance = cmo_story_slot_instance_v1(
-            &relation,
-            &page_id.as_canonical().to_string(),
-            0,
-            0,
-        )
-        .expect("canonical Cmo scene instance");
         visual.projected_instances.push(pub_viewer::ViewerProjectedSceneInstanceV1 {
             scene_instance: instance.clone(),
             target_frame_node_id: origin_node_id,
@@ -545,24 +542,17 @@ mod tests {
         visual.text_fragments[0].text = source.to_owned();
         visual.text_fragments[0].scalar_end =
             u32::try_from(source.chars().count()).expect("bounded fixture");
-        let relation = CmoProjectionRelationV1 {
-            source_order: 0,
-            cmo_id: 7,
-            carrier_ohpo: 1,
-            carrier_cmo_id: 7,
-            target_qsid: 49,
-            carrier_node_id: frame_id.as_canonical().to_string(),
-            carrier_story_id: None,
-            target_story_id: story_id.as_canonical().to_string(),
-            target_frame_node_id: Some(frame_id.as_canonical().to_string()),
+        let instance = SceneInstanceV1 {
+            schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:marker-suppression-instance-fixture".to_owned(),
+            projection_kind: SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: frame_id.as_canonical().to_string(),
+            target_page_id: page_id.as_canonical().to_string(),
+            source_parent_origin: None,
+            story_authority_id: None,
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
         };
-        let instance = cmo_story_slot_instance_v1(
-            &relation,
-            &page_id.as_canonical().to_string(),
-            0,
-            0,
-        )
-        .expect("canonical instance");
         visual.projected_instances.push(pub_viewer::ViewerProjectedSceneInstanceV1 {
             scene_instance: instance,
             target_frame_node_id: frame_id,
