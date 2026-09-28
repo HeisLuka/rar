@@ -92,6 +92,30 @@ jobs:
           target.write_text(json.dumps(comparison, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           print(target.read_text(encoding="utf-8"))
 
+      - name: Acquire pinned SampleBrochure control
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/SampleBrochure.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub" \
+            --output "$fixture"
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          expected="ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87"
+          test "$actual" = "$expected"
+          echo "CHAPTERA_PAGE_ROLE_BROCHURE=$fixture" >> "$GITHUB_ENV"
+
+      - name: Emit independent SampleBrochure PAGE observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet \
+            --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml \
+            --bin page-role-receipt \
+            -- "$CHAPTERA_PAGE_ROLE_BROCHURE" \
+            "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role-samplebrochure.json"
+          cat "$CHAPTERA_PAGE_ROLE_OUT/physical-page-role-samplebrochure.json"
+
       - uses: actions/upload-artifact@v4
         with:
           name: reader-page-role-samplenewsletter
