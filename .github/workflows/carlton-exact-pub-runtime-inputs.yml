@@ -83,7 +83,7 @@ jobs:
 
           # Capture the current public frontend bundle's route vocabulary so a stale
           # SSR presign can be replaced by the live file API instead of blind retries.
-          bundle_match = re.search(r'<script[^>]+src="(main-[^"]+\\.js)"', raw)
+          bundle_match = re.search(r'<script[^>]+src="(main-[^"]+\.js)"', raw)
           if bundle_match:
               bundle_url = requests.compat.urljoin(PAGE, bundle_match.group(1))
               bundle = session.get(bundle_url, timeout=30)
