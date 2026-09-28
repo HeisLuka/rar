@@ -5,6 +5,10 @@ edition.workspace=true
 rust-version.workspace=true
 license.workspace=true
 
+[features]
+default=[]
+cmo-slot-compose=["dep:chaptera-layout-projection","pub-reader/cmo-authority-bridge"]
+
 [dependencies]
 anyhow.workspace=true
 pub-layout={path="../pub-layout"}
