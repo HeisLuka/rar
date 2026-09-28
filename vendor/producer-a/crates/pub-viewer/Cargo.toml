@@ -11,7 +11,7 @@ anyhow.workspace=true
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
 pub-presentation-profile={path="../../../../crates/pub-presentation-profile",default-features=false}
-pub-reader={path="../pub-reader"}
+pub-reader={path="../pub-reader",features=["cmo-authority-bridge"]}
 serde.workspace=true
 serde_json.workspace=true
 sha2.workspace=true
