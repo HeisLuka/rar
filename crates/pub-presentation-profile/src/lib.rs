@@ -1,6 +1,10 @@
 use pub_model::derive_pub_page_id_v1;
 use serde::{Deserialize, Serialize};
-use std::{\n    collections::{BTreeMap, BTreeSet},\n    error::Error,\n    fmt,\n};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 pub const CARLTON_PRESENTATION_INPUT_SCHEMA_V1: &str =
     "chaptera.carlton-presentation-profile-input.v1";
@@ -94,7 +98,10 @@ pub enum CarltonPresentationError {
     EmptyPageSet,
     DuplicateDocumentOrdinal(usize),
     DuplicatePageSeqNum(u32),
-    CustomerCountMismatch {\n        expected: usize,\n        observed: usize,\n    },
+    CustomerCountMismatch {
+        expected: usize,
+        observed: usize,
+    },
     MissingMasterTarget,
     MultipleMasterTargets(Vec<u32>),
     MasterTargetMissingFromPages(u32),
@@ -110,7 +117,9 @@ impl fmt::Display for CarltonPresentationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SchemaVersionMismatch => write!(f, "Carlton presentation input schema mismatch"),
-            Self::UnsupportedSourceHash => {\n                write!(f, "source is not an admitted Carlton family control")\n            }
+            Self::UnsupportedSourceHash => {
+                write!(f, "source is not an admitted Carlton family control")
+            }
             Self::EmptyPageSet => write!(f, "Carlton presentation input has no PAGE evidence"),
             Self::DuplicateDocumentOrdinal(value) => {
                 write!(f, "duplicate Carlton document ordinal {value}")
@@ -122,28 +131,45 @@ impl fmt::Display for CarltonPresentationError {
                 f,
                 "Carlton customer-page count mismatch: expected {expected}, observed {observed}"
             ),
-            Self::MissingMasterTarget => {\n                write!(f, "Carlton family evidence has no applied-master target")\n            }
+            Self::MissingMasterTarget => {
+                write!(f, "Carlton family evidence has no applied-master target")
+            }
             Self::MultipleMasterTargets(values) => {
-                write!(\n                    f,\n                    "Carlton family evidence has multiple master targets: {values:?}"\n                )
+                write!(
+                    f,
+                    "Carlton family evidence has multiple master targets: {values:?}"
+                )
             }
             Self::MasterTargetMissingFromPages(value) => {
-                write!(\n                    f,\n                    "Carlton master target PAGE {value} is absent from PAGE evidence"\n                )
+                write!(
+                    f,
+                    "Carlton master target PAGE {value} is absent from PAGE evidence"
+                )
             }
             Self::MasterLooksCustomerVisible(value) => write!(
                 f,
                 "Carlton master PAGE {value} unexpectedly satisfies the family customer Oid rule"
             ),
             Self::UnknownCarrierPage(value) => {
-                write!(\n                    f,\n                    "Carlton Cmo carrier PAGE {value} is absent from PAGE evidence"\n                )
+                write!(
+                    f,
+                    "Carlton Cmo carrier PAGE {value} is absent from PAGE evidence"
+                )
             }
             Self::CarrierCustomerOverlap(value) => write!(
                 f,
                 "Carlton Cmo carrier PAGE {value} also satisfies the customer-page rule"
             ),
             Self::CarrierMasterOverlap(value) => {
-                write!(\n                    f,\n                    "Carlton Cmo carrier PAGE {value} is also the master PAGE"\n                )
+                write!(
+                    f,
+                    "Carlton Cmo carrier PAGE {value} is also the master PAGE"
+                )
             }
-            Self::CustomerMissingExpectedMaster {\n                page_seq_num,\n                expected_master,\n            } => write!(
+            Self::CustomerMissingExpectedMaster {
+                page_seq_num,
+                expected_master,
+            } => write!(
                 f,
                 "Carlton customer PAGE {page_seq_num} does not apply expected master PAGE {expected_master}"
             ),
@@ -237,7 +263,9 @@ pub fn build_carlton_presentation_manifest_v1(
         .copied()
         .ok_or(CarltonPresentationError::MasterTargetMissingFromPages(master_seq))?;
     if master_page.oid_dword0 == Some(2) {
-        return Err(CarltonPresentationError::MasterLooksCustomerVisible(\n            master_seq,\n        ));
+        return Err(CarltonPresentationError::MasterLooksCustomerVisible(
+            master_seq,
+        ));
     }
 
     let mut carrier_set = BTreeSet::new();
