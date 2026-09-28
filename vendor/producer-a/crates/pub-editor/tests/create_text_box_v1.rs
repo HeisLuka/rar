@@ -43,8 +43,8 @@ fn rect() -> RectEmu {
 fn preset() -> AuthoringTextPresetV1 {
     AuthoringTextPresetV1 {
         resource_id: "chaptera.desktop.fallback-font.ubuntu-light.v1".into(),
-        font_fingerprint_sha256:
-            "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70".into(),
+        font_fingerprint_sha256: "80307b8da7649aa4ee4d484b232140e3ce1ec0ca093073d3c53c8f5a5ced7a70"
+            .into(),
         face_index: 0,
         font_size_emu: LengthEmu::new(114_300),
         line_height_emu: LengthEmu::new(142_875),
@@ -106,7 +106,11 @@ fn create_text_box_is_atomic_then_uses_existing_story_edit_history() {
     assert!(matches!(create, EditOperation::CreateTextBox { .. }));
     assert_eq!(session.operations().len(), 1);
 
-    let node = session.graph().nodes.get(&text_node_id()).expect("text frame");
+    let node = session
+        .graph()
+        .nodes
+        .get(&text_node_id())
+        .expect("text frame");
     assert_eq!(node.kind, pub_model::NodeKind::TextFrame);
     assert_eq!(node.header.bounds, rect());
     assert_eq!(
@@ -117,7 +121,12 @@ fn create_text_box_is_atomic_then_uses_existing_story_edit_history() {
         Some(story_id())
     );
     assert_eq!(
-        session.graph().stories.get(&story_id()).expect("Story").text,
+        session
+            .graph()
+            .stories
+            .get(&story_id())
+            .expect("Story")
+            .text,
         ""
     );
     assert_eq!(
@@ -130,7 +139,12 @@ fn create_text_box_is_atomic_then_uses_existing_story_edit_history() {
         .expect("ordinary Story edit");
     assert!(matches!(edit, EditOperation::ReplaceStoryRange { .. }));
     assert_eq!(
-        session.graph().stories.get(&story_id()).expect("Story").text,
+        session
+            .graph()
+            .stories
+            .get(&story_id())
+            .expect("Story")
+            .text,
         "Hello"
     );
     assert_eq!(session.operations().len(), 2);
@@ -188,7 +202,13 @@ fn create_text_box_rejects_invalid_identity_bounds_and_collisions() {
         .create_text_box(text_node_id(), story_id(), page_id(), rect(), preset())
         .expect("first create");
     assert!(matches!(
-        session.create_text_box(text_node_id(), canonical_id("01890f47-0c02-7abc-8def-0123456789ab"), page_id(), rect(), preset()),
+        session.create_text_box(
+            text_node_id(),
+            canonical_id("01890f47-0c02-7abc-8def-0123456789ab"),
+            page_id(),
+            rect(),
+            preset()
+        ),
         Err(EditorError::CreateTextBoxNodeIdCollision { .. })
     ));
 }
