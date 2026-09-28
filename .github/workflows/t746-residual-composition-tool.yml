@@ -1,0 +1,24 @@
+name: T746 residual composition tool
+
+on:
+  pull_request:
+    paths:
+      - "tools/pub-research/verify_t746_residual_composition.py"
+      - "tools/test_t746_residual_composition.py"
+      - ".github/workflows/t746-residual-composition-tool.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run source-free T746 verifier tests
+        run: python -m unittest tools.test_t746_residual_composition
