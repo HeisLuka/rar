@@ -6,6 +6,9 @@
 //! the same Reader pipeline used by the desktop product.
 
 use anyhow::Result;
+
+mod image_decode;
+pub use image_decode::{MobileAdmittedImageV1, MobileImageDecodeError, decode_mobile_image_v1};
 pub use chaptera_viewer_render_plan::{PageRenderPlanV1, RenderPlanErrorV1};
 use chaptera_viewer_render_plan::build_page_render_plan_v1;
 pub use pub_model::ResourceId;
@@ -91,6 +94,31 @@ impl MobileReaderDocumentV1 {
             .parse::<pub_model::CanonicalId>()
             .map_err(|error| anyhow::anyhow!("invalid render resource id: {error}"))?;
         Ok(self.image_resource_bytes(ResourceId::from_canonical(canonical)))
+    }
+
+    /// Resolves and decodes one Viewer image resource through the shared bounded
+    /// image-decode contract before exposing Android-ready ARGB8888 pixels.
+    pub fn admitted_image_resource_by_key(
+        &self,
+        resource_key: &str,
+    ) -> std::result::Result<Option<MobileAdmittedImageV1>, MobileImageDecodeError> {
+        let canonical = resource_key
+            .parse::<pub_model::CanonicalId>()
+            .map_err(|error| MobileImageDecodeError {
+                code: "invalid_resource_id".to_owned(),
+                detail: format!("invalid render resource id: {error}"),
+            })?;
+        let resource_id = ResourceId::from_canonical(canonical);
+        let Some(image) = self
+            .visual
+            .images
+            .iter()
+            .find(|image| image.resource_id == resource_id)
+        else {
+            return Ok(None);
+        };
+
+        decode_mobile_image_v1(&image.bytes, &image.mime).map(Some)
     }
 }
 
