@@ -121,7 +121,14 @@ public final class MainActivity extends Activity {
 
     private void openUri(Uri uri) {
         try {
-            byte[] bytes = readBounded(uri, 128 * 1024 * 1024);
+            int maxInputBytes = Math.toIntExact(NativeReader.maxInputBytes());
+            Long declaredBytes = declaredSize(uri);
+            if (declaredBytes != null && declaredBytes > maxInputBytes) {
+                throw new IllegalArgumentException(
+                    "file exceeds local Reader size limit before read (" + declaredBytes + " bytes)"
+                );
+            }
+            byte[] bytes = readBounded(uri, maxInputBytes);
             String before = sha256(bytes);
             String wire = NativeReader.openSessionJson(bytes);
             String after = sha256(bytes);
@@ -246,6 +253,23 @@ public final class MainActivity extends Activity {
             }
             return output.toByteArray();
         }
+    }
+
+    private Long declaredSize(Uri uri) {
+        try (android.database.Cursor cursor = getContentResolver().query(
+            uri, new String[]{OpenableColumns.SIZE}, null, null, null
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (index >= 0 && !cursor.isNull(index)) {
+                    long size = cursor.getLong(index);
+                    if (size >= 0L) return size;
+                }
+            }
+        } catch (Exception ignored) {
+            // Unknown provider metadata falls back to the streaming read bound below.
+        }
+        return null;
     }
 
     private String displayName(Uri uri) {
