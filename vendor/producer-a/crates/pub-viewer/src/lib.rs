@@ -922,7 +922,7 @@ fn apply_exact_carlton_march_cmo_slots(
 
         let input = CmoStorySlotFlowInputV1 {
             target_qsid,
-            target_page_id: target_page_id.to_string(),
+            target_page_id: target_page_id.into_canonical().to_string(),
             target_story_id: first.target_story_id.clone(),
             target_frame_node_id: first
                 .target_frame_node_id
@@ -1027,7 +1027,7 @@ fn apply_exact_carlton_march_cmo_slots(
                     ));
                 }
                 if let Some(expected_story_id) = slot.carrier_story_id.as_deref() {
-                    if carrier_story_id.to_string() != expected_story_id {
+                    if carrier_story_id.into_canonical().to_string() != expected_story_id {
                         return Err(anyhow!(
                             "visible Cmo carrier nested Story identity disagrees with projection authority"
                         ));
