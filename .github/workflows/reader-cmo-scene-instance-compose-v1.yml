@@ -1,0 +1,51 @@
+name: Reader canonical Cmo scene-instance compose V1
+
+on:
+  pull_request:
+    paths:
+      - 'vendor/producer-a/crates/pub-viewer/**'
+      - 'crates/chaptera-viewer-render-plan/**'
+      - 'apps/chaptera-desktop/**'
+      - '.github/workflows/reader-cmo-scene-instance-compose-v1.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: reader-cmo-scene-instance-compose-v1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  vendor-msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.85.0
+      - name: Keep default vendor Viewer on Rust 1.85
+        run: |
+          set -euo pipefail
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer --no-default-features
+
+  canonical-projected-render-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run canonical SceneInstance render-plan contract
+        run: |
+          set -euo pipefail
+          cargo test \
+            --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml \
+            --features projected-scene-instances \
+            tests::canonical_cmo_scene_instance_reaches_render_plan_without_new_identity \
+            -- --exact
+          cargo test \
+            --manifest-path crates/chaptera-viewer-render-plan/Cargo.toml \
+            --features projected-scene-instances \
+            tests::projected_slot_suppresses_only_marker_glyphs_and_keeps_scalar_count \
+            -- --exact
