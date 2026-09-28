@@ -14,6 +14,7 @@ pub-quill={path="../pub-quill"}
 pub-escher={path="../pub-escher"}
 pub-model={path="../pub-model"}
 pub-format-registry={path="../pub-format-registry"}
+pub-plccmob-projection={path="../../../../crates/pub-plccmob-projection"}
 serde.workspace=true
 serde_json.workspace=true
 sha2.workspace=true
