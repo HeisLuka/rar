@@ -6,6 +6,7 @@ on:
     paths:
       - "vendor/producer-a/crates/pub-contents/**"
       - "vendor/producer-a/crates/pub-reader/**"
+      - "crates/pub-model/**"
       - ".github/workflows/reader-page-role-observation.yml"
 
 concurrency:
