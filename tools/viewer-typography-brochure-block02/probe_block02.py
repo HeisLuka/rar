@@ -24,6 +24,64 @@ class ProbeError(RuntimeError):
     pass
 
 
+def parse_descriptors_strict(data: bytes) -> list[dict[str, Any]]:
+    """Parse Quill descriptor-list framing without the stale service==0x0018 bug.
+
+    The list node is service:u16 + count:u16 + next:u32. 0x0018 belongs to
+    each following 24-byte descriptor as its presence marker; real Publisher
+    fixtures commonly carry service=0x01f8 at the root.
+    """
+    current = 0x18
+    seen: set[int] = set()
+    descriptors: list[dict[str, Any]] = []
+    while current != 0xFFFFFFFF:
+        if current in seen:
+            raise ProbeError(f"cycle in Quill descriptor list at 0x{current:x}")
+        seen.add(current)
+        if current + 8 > len(data):
+            raise ProbeError(f"descriptor-list node exceeds Quill at 0x{current:x}")
+        service = donor.u16(data, current)
+        count = donor.u16(data, current + 2)
+        next_offset = donor.u32(data, current + 4)
+        cursor = current + 8
+        for _ in range(count):
+            if cursor + 24 > len(data):
+                raise ProbeError("descriptor out of bounds")
+            presence_marker = donor.u16(data, cursor)
+            if presence_marker != 0x18:
+                raise ProbeError(
+                    f"unexpected descriptor presence marker 0x{presence_marker:04x} "
+                    f"at 0x{cursor:x}"
+                )
+            name = data[cursor + 2:cursor + 6].decode("ascii", errors="replace")
+            offset = donor.u32(data, cursor + 16)
+            length = donor.u32(data, cursor + 20)
+            descriptors.append(
+                {
+                    "ordinal": len(descriptors),
+                    "descriptor_offset": cursor,
+                    "service": service,
+                    "name": name,
+                    "option_a": donor.u16(data, cursor + 6),
+                    "option_b": donor.u16(data, cursor + 8),
+                    "option_c": donor.u16(data, cursor + 10),
+                    "bit_type": data[cursor + 12:cursor + 16].decode(
+                        "ascii", errors="replace"
+                    ),
+                    "offset": offset,
+                    "length": length,
+                    "end": offset + length,
+                }
+            )
+            cursor += 24
+        current = next_offset
+
+    for desc in descriptors:
+        if int(desc["end"]) > len(data):
+            raise ProbeError(f"{desc['name']} descriptor exceeds Quill stream")
+    return descriptors
+
+
 def _hex_window(data: bytes, offset: int, before: int = 8, after: int = 24) -> dict[str, Any]:
     start = max(0, offset - before)
     end = min(len(data), offset + after)
@@ -69,6 +127,8 @@ def parse_one(
                 "type": block_type,
                 "candidate_payload_width": width02,
                 "context": context,
+                "style_end": limit,
+                "payload_hex": data[data_offset:block_end].hex(" "),
                 "window": _hex_window(data, start),
             }
         )
@@ -218,6 +278,41 @@ def validate_candidate(
         raise ProbeError("candidate parse saw no type 0x02 occurrences")
 
     unique_offsets = sorted({row["offset"] for row in observations})
+    followers: list[dict[str, Any]] = []
+    for row in observations:
+        follower_start = int(row["offset"]) + 2 + width02
+        style_end = int(row["style_end"])
+        if follower_start >= style_end:
+            continue
+        scratch: list[dict[str, Any]] = []
+        try:
+            follower, _ = parse_one(
+                data,
+                follower_start,
+                style_end,
+                width02,
+                scratch,
+                str(row["context"]) + "/candidate-follower",
+            )
+        except ProbeError as exc:
+            followers.append(
+                {
+                    "target_offset": row["offset"],
+                    "parse_error": str(exc),
+                }
+            )
+            continue
+        followers.append(
+            {
+                "target_offset": row["offset"],
+                "start": follower["start"],
+                "id": follower["id"],
+                "type": follower["type"],
+                "data_length": follower["data_length"],
+                "value": follower["value"],
+            }
+        )
+
     return {
         "width": width02,
         "occurrence_count": len(observations),
@@ -225,6 +320,7 @@ def validate_candidate(
         "styles_with_target": styles_with_target,
         "offsets": unique_offsets,
         "observations": observations,
+        "followers": followers,
     }
 
 
@@ -244,7 +340,7 @@ def main() -> int:
             raise SystemExit("missing Quill/QuillSub/CONTENTS")
         quill = ole.openstream(path).read()
 
-    descriptors = donor.parse_descriptors(quill)
+    descriptors = parse_descriptors_strict(quill)
     story_catalog = donor.parse_story_catalog(quill, descriptors)
     spans = fdpc_style_spans(quill, descriptors)
 
@@ -294,6 +390,24 @@ def main() -> int:
                 "occurrences": row["occurrence_count"],
                 "styles": row["styles_with_target"],
                 "offsets": [hex(value) for value in row["offsets"]],
+                "followers": [
+                    {
+                        "target_offset": hex(int(f["target_offset"])),
+                        "id": (
+                            hex(int(f["id"]))
+                            if "id" in f
+                            else None
+                        ),
+                        "type": (
+                            hex(int(f["type"]))
+                            if "type" in f
+                            else None
+                        ),
+                        "value": f.get("value"),
+                        "parse_error": f.get("parse_error"),
+                    }
+                    for f in row["followers"]
+                ],
             }
             for row in candidates
         ],
