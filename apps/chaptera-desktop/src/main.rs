@@ -3455,6 +3455,11 @@ impl ViewerApp {
                                         if let Some(bounds) = commit.bounds {
                                             textbox_create_request = Some((page.id, bounds));
                                         }
+                                    } else {
+                                        textbox_error = Some(
+                                            "Text Box creation produced no positive rectangle; no document revision was created."
+                                                .to_owned(),
+                                        );
                                     }
                                     match activate_canvas_tool_v1(
                                         &next_canvas_tool_state,
