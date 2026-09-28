@@ -294,8 +294,7 @@ pub fn build_page_render_plan_v1(
             #[cfg(feature = "projected-scene-instances")]
             {
                 let projected_for_frame = visual.projected_instances.iter().filter(|projected| {
-                    projected.scene_instance.target_page_id
-                        == page.id.as_canonical().to_string()
+                    projected.scene_instance.target_page_id == page.id.as_canonical().to_string()
                         && projected.target_frame_node_id == node.origin
                 });
                 let mut has_projection = false;
@@ -684,7 +683,10 @@ mod tests {
             .iter()
             .find(|node| node.projected_scene_instance.is_none() && node.node_id == frame_id)
             .expect("direct frame");
-        let rendered = direct.text.as_ref().expect("pre-boundary direct text remains");
+        let rendered = direct
+            .text
+            .as_ref()
+            .expect("pre-boundary direct text remains");
         assert_eq!(rendered.scalar_start, 0);
         assert_eq!(rendered.scalar_end, 3);
         assert_eq!(rendered.text, "\u{200B}\rX");
