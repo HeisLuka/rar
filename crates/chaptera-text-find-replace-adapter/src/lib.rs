@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 pub const TEXT_FIND_SNAPSHOT_VERSION_V1: &str = "chaptera.text-find-snapshot.v1";
+pub const TEXT_FIND_POLICY_VERSION_V1: &str = "chaptera.text-find-policy.v1";
 pub const STORY_FIND_REPLACE_PLAN_VERSION_V1: &str = "chaptera.story-find-replace-plan.v1";
 pub const TEXT_PROGRAMMATIC_JUMP_INTENT_VERSION_V1: &str =
     "chaptera.text-programmatic-jump-intent.v1";
@@ -55,13 +56,12 @@ pub struct TextFindMatchV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextFindSnapshotV1 {
     pub protocol_version: String,
-    pub base_revision_id: String,
+    pub policy_version: String,
+    pub revision_id: String,
     pub story_id: String,
-    pub edit_domain_id: String,
-    pub story_text_sha256: String,
-    pub extent: TextFindExtentV1,
-    pub canonical_query: String,
-    pub query_sha256: String,
+    pub query: String,
+    pub extent_start_scalar: u32,
+    pub extent_end_scalar: u32,
     pub matches: Vec<TextFindMatchV1>,
 }
 
@@ -74,10 +74,13 @@ pub enum TextFindDirectionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextProgrammaticJumpIntentV1 {
     pub protocol_version: String,
+    pub document_id: String,
+    pub revision_id: String,
     pub story_id: String,
-    pub base_revision_id: String,
     pub start_scalar: u32,
     pub end_scalar: u32,
+    pub selection_mode: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,7 +177,7 @@ fn resolve_extent(
                 || *end_scalar > editable_end
             {
                 return Err(TextFindReplaceError::new(
-                    "invalid_search_extent",
+                    "invalid_extent",
                     "explicit Find range must be non-empty and wholly inside editable Story content",
                 ));
             }
@@ -190,8 +193,8 @@ fn validate_story_against_domain(
     let len = scalar_len(story_text)?;
     if len != domain.raw_scalar_len {
         return Err(TextFindReplaceError::new(
-            "stale_story",
-            "Story scalar length disagrees with StoryEditDomainV1",
+            "find_snapshot_stale",
+            "StoryEditDomain no longer matches Story length",
         ));
     }
     Ok(())
@@ -269,13 +272,12 @@ pub fn build_text_find_snapshot_v1(
 
     Ok(TextFindSnapshotV1 {
         protocol_version: TEXT_FIND_SNAPSHOT_VERSION_V1.to_owned(),
-        base_revision_id: base_revision_id.to_owned(),
+        policy_version: TEXT_FIND_POLICY_VERSION_V1.to_owned(),
+        revision_id: base_revision_id.to_owned(),
         story_id: domain.story_id.clone(),
-        edit_domain_id: edit_domain_id_v1(domain),
-        story_text_sha256: sha256_hex(story_text.as_bytes()),
-        extent,
-        canonical_query: query.clone(),
-        query_sha256: sha256_hex(query.as_bytes()),
+        query,
+        extent_start_scalar: extent_start,
+        extent_end_scalar: extent_end,
         matches,
     })
 }
@@ -287,18 +289,35 @@ pub fn validate_text_find_snapshot_v1(
     current_domain: &StoryEditDomainV1,
 ) -> Result<(), TextFindReplaceError> {
     if snapshot.protocol_version != TEXT_FIND_SNAPSHOT_VERSION_V1
-        || snapshot.base_revision_id != current_revision_id
+        || snapshot.policy_version != TEXT_FIND_POLICY_VERSION_V1
+        || snapshot.revision_id != current_revision_id
         || snapshot.story_id != current_domain.story_id
-        || snapshot.edit_domain_id != edit_domain_id_v1(current_domain)
-        || snapshot.story_text_sha256 != sha256_hex(current_story_text.as_bytes())
     {
         return Err(TextFindReplaceError::new(
             "find_snapshot_stale",
-            "Find snapshot no longer belongs to the current Story revision/domain/text",
+            "snapshot revision/story identity changed",
         ));
     }
     validate_story_against_domain(current_story_text, current_domain)?;
-    resolve_extent(current_domain, &snapshot.extent)?;
+    let (editable_start, editable_end) = editable_bounds(current_domain)?;
+    if snapshot.extent_start_scalar < editable_start
+        || snapshot.extent_end_scalar > editable_end
+    {
+        return Err(TextFindReplaceError::new(
+            "find_snapshot_stale",
+            "snapshot extent is no longer editable",
+        ));
+    }
+    for item in &snapshot.matches {
+        if scalar_slice(current_story_text, item.start_scalar, item.end_scalar)
+            != Some(item.matched_text.as_str())
+        {
+            return Err(TextFindReplaceError::new(
+                "find_snapshot_stale",
+                "snapshot match no longer equals canonical Story",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -327,6 +346,7 @@ pub fn navigate_text_find_snapshot_v1(
 }
 
 pub fn programmatic_jump_intent_for_match_v1(
+    document_id: &str,
     snapshot: &TextFindSnapshotV1,
     ordinal: u32,
 ) -> Result<TextProgrammaticJumpIntentV1, TextFindReplaceError> {
@@ -342,12 +362,21 @@ pub fn programmatic_jump_intent_for_match_v1(
                 "match ordinal is absent from this immutable snapshot",
             )
         })?;
+    if document_id.is_empty() {
+        return Err(TextFindReplaceError::new(
+            "invalid_jump",
+            "document_id is required",
+        ));
+    }
     Ok(TextProgrammaticJumpIntentV1 {
-        protocol_version: TEXT_PROGRAMMATIC_JUMP_INTENT_VERSION_V1.to_owned(),
+        protocol_version: "chaptera.text-programmatic-jump.v1".to_owned(),
+        document_id: document_id.to_owned(),
+        revision_id: snapshot.revision_id.clone(),
         story_id: snapshot.story_id.clone(),
-        base_revision_id: snapshot.base_revision_id.clone(),
         start_scalar: item.start_scalar,
         end_scalar: item.end_scalar,
+        selection_mode: "exact_range".to_owned(),
+        reason: "find_result".to_owned(),
     })
 }
 
@@ -431,10 +460,10 @@ pub fn build_story_find_replace_plan_v1(
 
     Ok(StoryFindReplacePlanV1 {
         protocol_version: STORY_FIND_REPLACE_PLAN_VERSION_V1.to_owned(),
-        base_revision_id: snapshot.base_revision_id.clone(),
+        base_revision_id: snapshot.revision_id.clone(),
         story_id: snapshot.story_id.clone(),
-        edit_domain_id: snapshot.edit_domain_id.clone(),
-        story_text_sha256: snapshot.story_text_sha256.clone(),
+        edit_domain_id: edit_domain_id_v1(current_domain),
+        story_text_sha256: sha256_hex(current_story_text.as_bytes()),
         replacement_text: replacement,
         edits,
     })
@@ -689,8 +718,10 @@ mod tests {
             "abc",
         )
         .unwrap();
-        let jump = programmatic_jump_intent_for_match_v1(&snapshot, 1).unwrap();
+        let jump = programmatic_jump_intent_for_match_v1("doc:1", &snapshot, 1).unwrap();
         assert_eq!((jump.start_scalar, jump.end_scalar), (4, 7));
         assert_eq!(jump.story_id, "story:1");
+        assert_eq!(jump.protocol_version, "chaptera.text-programmatic-jump.v1");
+        assert_eq!(jump.selection_mode, "exact_range");
     }
 }
