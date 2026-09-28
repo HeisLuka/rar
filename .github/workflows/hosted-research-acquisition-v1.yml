@@ -1,0 +1,115 @@
+name: Hosted Research Acquisition V1
+
+on:
+  pull_request:
+    paths:
+      - "tools/research-runner/acquire_public.py"
+      - "tools/research-runner/tests/test_acquire_public.py"
+      - "tools/research-runner/experiments/hosted-public-acquisition-v1.manifest.json"
+      - "tools/validate_pub_research_receipt.py"
+      - "packages/research/pub-research-receipt/v1/**"
+      - ".github/workflows/hosted-research-acquisition-v1.yml"
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: "Repository-relative acquisition manifest path"
+        required: true
+        default: "tools/research-runner/experiments/hosted-public-acquisition-v1.manifest.json"
+        type: string
+  workflow_call:
+    inputs:
+      manifest:
+        description: "Repository-relative acquisition manifest path"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-research-acquisition-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Hosted acquisition unit tests
+        run: python tools/research-runner/tests/test_acquire_public.py
+      - name: Existing source-free receipt validator tests
+        run: python -m unittest tools.test_pub_research_receipt
+
+
+  live-smoke:
+    if: github.event_name == 'pull_request'
+    needs: selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run real public acquisition smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/research-runner/acquire_public.py \
+            --manifest tools/research-runner/experiments/hosted-public-acquisition-v1.manifest.json \
+            --output-dir out/hosted-research-live
+      - name: Validate optional source-free PUB research receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f out/hosted-research-live/pub-research-receipt.json ]; then
+            python tools/validate_pub_research_receipt.py out/hosted-research-live/pub-research-receipt.json
+          fi
+      - name: Upload live public acquisition receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-research-live-smoke-${{ github.run_id }}
+          path: out/hosted-research-live/**
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  acquire:
+    if: github.event_name != 'pull_request'
+    needs: selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MANIFEST: ${{ inputs.manifest }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate manifest path
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$MANIFEST" in
+            /*|*".."*) echo "unsafe manifest path" >&2; exit 2 ;;
+          esac
+          test -f "$MANIFEST"
+      - name: Run bounded public acquisition
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf out/hosted-research
+          python tools/research-runner/acquire_public.py \
+            --manifest "$MANIFEST" \
+            --output-dir out/hosted-research
+      - name: Validate optional source-free PUB research receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f out/hosted-research/pub-research-receipt.json ]; then
+            python tools/validate_pub_research_receipt.py out/hosted-research/pub-research-receipt.json
+          fi
+      - name: Upload bounded acquisition receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-research-acquisition-${{ github.run_id }}
+          path: out/hosted-research/**
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

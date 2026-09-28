@@ -1,0 +1,40 @@
+{
+  "manifest_version": "chaptera.hosted-public-acquisition.v1",
+  "task_key": "HOSTED-RESEARCH-RUNNER-01",
+  "pub_task_id": "PUB-HOSTED-RESEARCH-RUNNER-01",
+  "run_id": "PUB-RUN-1045",
+  "scope": "Public acquisition transport integration smoke; no format-semantic claim.",
+  "limitations": [
+    "Acquisition/provenance evidence only; no format-semantic promotion.",
+    "External archive availability is not controlled by Chaptera."
+  ],
+  "sources": [
+    {
+      "id": "example-home",
+      "kind": "https",
+      "url": "https://example.com/",
+      "max_bytes": 200000,
+      "timeout_seconds": 60,
+      "required": true
+    },
+    {
+      "id": "ia-publisher-2002-metadata",
+      "kind": "https",
+      "url": "https://archive.org/metadata/X08-20172",
+      "max_bytes": 5000000,
+      "timeout_seconds": 120,
+      "required": false
+    },
+    {
+      "id": "example-wayback",
+      "kind": "wayback_cdx",
+      "target_url": "example.com/*",
+      "from": "2000",
+      "to": "2026",
+      "limit": 5,
+      "max_bytes": 500000,
+      "timeout_seconds": 60,
+      "required": false
+    }
+  ]
+}
