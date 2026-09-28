@@ -1,0 +1,101 @@
+name: ENGINE-COPY-LEDGER-INSTRUMENT-01
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-layout-invalidation/src/runtime.rs"
+      - "crates/chaptera-layout-invalidation/src/bin/copy_ledger_geometry_probe.rs"
+      - "services/editor-api/copy_ledger_instrument_v1.py"
+      - "services/editor-api/revision_store.py"
+      - "tools/run_copy_ledger_instrumentation_v1.py"
+      - "tools/copy_ledger_v1.py"
+      - "tools/optimization_receipt_v1.py"
+      - "vendor/producer-a/crates/pub-editor/src/lib.rs"
+      - "vendor/producer-a/crates/pub-editor/src/bin/copy_ledger_replace_image_export.rs"
+      - "vendor/producer-a/crates/pub-reader/src/lib.rs"
+      - "vendor/producer-a/crates/pub-reader/src/bin/copy_ledger_open_parse.rs"
+      - ".github/workflows/engine-copy-ledger-instrument-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  copy-ledger-instrument:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python instrumentation
+        run: |
+          python -m py_compile services/editor-api/copy_ledger_instrument_v1.py
+          python -m py_compile services/editor-api/revision_store.py
+          python -m py_compile tools/run_copy_ledger_instrumentation_v1.py
+          python tools/test_copy_ledger_v1.py
+          python tools/test_optimization_receipt_v1.py
+
+      - name: Check root layout instrumentation
+        run: |
+          cargo fmt -p chaptera-layout-invalidation -- --check
+          cargo check -p chaptera-layout-invalidation --bin copy_ledger_geometry_probe
+          cargo clippy -p chaptera-layout-invalidation --bin copy_ledger_geometry_probe -- -D warnings
+
+      - name: Check Producer A instrumentation
+        run: |
+          cargo fmt --manifest-path vendor/producer-a/Cargo.toml -p pub-reader -p pub-editor -- --check
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-reader --bin copy_ledger_open_parse
+          cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --bin copy_ledger_replace_image_export
+          cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-reader --bin copy_ledger_open_parse -- -D warnings
+          cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-editor --bin copy_ledger_replace_image_export -- -D warnings
+
+      - name: Acquire pinned Apache POI public fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/copy-ledger-instrument
+          fixture="target/copy-ledger-instrument/SampleNewsletter.pub"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" \
+            --output "$fixture"
+          test "$(wc -c < "$fixture")" -eq 291840
+          actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          test "$actual" = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          echo "COPY_LEDGER_FIXTURE=$fixture" >> "$GITHUB_ENV"
+
+      - name: Run five-scenario copy ledger
+        run: |
+          python tools/run_copy_ledger_instrumentation_v1.py \
+            --fixture "$COPY_LEDGER_FIXTURE" \
+            --output target/copy-ledger-instrument/receipt.json
+
+      - name: Verify hosted authority fence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("target/copy-ledger-instrument/receipt.json")
+          receipt = json.loads(p.read_text(encoding="utf-8"))
+          assert receipt["receipt_version"] == "chaptera.copy-ledger.v1"
+          assert receipt["evidence_authority"]["technology_decision_allowed"] is False
+          stages = {event["stage_id"] for event in receipt["events"]}
+          expected = {"open_parse", "move_node", "small_story_edit", "geometry_only_reflow", "replace_image_export"}
+          assert stages == expected, (stages, expected)
+          raw = p.read_text(encoding="utf-8")
+          assert "SampleNewsletter.pub" not in raw
+          print(json.dumps({"event_count": len(receipt["events"]), "stages": sorted(stages)}, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-copy-ledger-instrument-v1
+          path: target/copy-ledger-instrument/receipt.json
+          if-no-files-found: error
