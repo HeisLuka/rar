@@ -1,0 +1,41 @@
+name: Chaptera update candidate extraction
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-update-trust/**"
+      - "crates/chaptera-update-candidate/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/chaptera-update-candidate.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path crates/chaptera-update-candidate/Cargo.toml -- --check
+
+      - name: Lint candidate boundary
+        run: cargo clippy -p chaptera-update-candidate --all-targets -- -D warnings
+
+      - name: Test candidate extraction boundary
+        run: cargo test -p chaptera-update-candidate --all-targets -- --nocapture
