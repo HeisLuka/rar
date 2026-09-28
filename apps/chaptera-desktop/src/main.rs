@@ -7038,6 +7038,7 @@ mod tests {
 
 
     const CARLTON_VISUAL_GOLDEN_DPI: f32 = 144.0;
+    const CARLTON_VISUAL_GOLDEN_MAX_TEXTURE_SIDE: usize = 4096;
 
     fn carlton_golden_page_pixels(visual: &ViewerGeometryDocument, page_index: usize) -> (u32, u32) {
         let plan = build_page_render_plan_v1(visual, page_index)
@@ -7052,6 +7053,7 @@ mod tests {
         visual: ViewerGeometryDocument,
         page_index: usize,
         image_textures: BTreeMap<String, CachedImageTexture>,
+        texture_upload_enabled: bool,
         clipped_node_ids: Vec<String>,
     }
 
@@ -7061,20 +7063,29 @@ mod tests {
             visual: ViewerGeometryDocument,
             page_index: usize,
         ) -> Self {
-            // egui_kittest's RawInput defaults to a deliberately tiny 2048px
-            // texture ceiling even though its wgpu device setup supports larger
-            // 2D textures. Carlton contains an exact 2480x2835 embedded image,
-            // so bind the headless input contract to the renderer capability
-            // before uploading the same decoded image bytes the Reader uses.
-            cc.egui_ctx.input_mut(|input| {
-                input.max_texture_side = 8192;
-                input.raw.max_texture_side = Some(8192);
-            });
             fallback_font::install(&cc.egui_ctx)
                 .expect("pinned Chaptera fallback font resource must validate");
 
-            let mut image_textures = BTreeMap::new();
-            for embedded in &visual.images {
+            Self {
+                visual,
+                page_index,
+                image_textures: BTreeMap::new(),
+                texture_upload_enabled: false,
+                clipped_node_ids: Vec::new(),
+            }
+        }
+
+        fn enable_texture_upload(&mut self) {
+            self.texture_upload_enabled = true;
+        }
+
+        fn ensure_image_textures(&mut self, ctx: &egui::Context) {
+            if !self.texture_upload_enabled || !self.image_textures.is_empty() {
+                return;
+            }
+
+            let max_texture_side = ctx.input(|input| input.max_texture_side);
+            for embedded in &self.visual.images {
                 let key = format!("{:?}", embedded.resource_id);
                 let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
                 let admitted = image_decode_adapter::decode_texture_image_v1(
@@ -7083,12 +7094,17 @@ mod tests {
                     &expected_sha256,
                 )
                 .expect("Carlton embedded image must pass the same Reader decode adapter");
-                let texture = cc.egui_ctx.load_texture(
+                let [width, height] = admitted.color_image.size;
+                assert!(
+                    width <= max_texture_side && height <= max_texture_side,
+                    "Carlton golden image {width}x{height} exceeds active egui texture limit {max_texture_side}"
+                );
+                let texture = ctx.load_texture(
                     format!("carlton-reader-golden-{key}"),
                     admitted.color_image,
                     egui::TextureOptions::LINEAR,
                 );
-                image_textures.insert(
+                self.image_textures.insert(
                     key,
                     CachedImageTexture {
                         texture,
@@ -7096,18 +7112,12 @@ mod tests {
                     },
                 );
             }
-
-            Self {
-                visual,
-                page_index,
-                image_textures,
-                clipped_node_ids: Vec::new(),
-            }
         }
     }
 
     impl eframe::App for CarltonReaderGoldenPageApp {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.ensure_image_textures(ctx);
             self.clipped_node_ids.clear();
             let page = self
                 .visual
@@ -7265,6 +7275,13 @@ mod tests {
                 .build_eframe(move |cc| {
                     CarltonReaderGoldenPageApp::new(cc, visual_for_app, page_index)
                 });
+            // Harness construction runs initial frames immediately with RawInput's
+            // portable 2048px default. Delay real embedded-image uploads until the
+            // next frame, after binding the test input to a bounded capability that
+            // covers Carlton's proven 2480x2835 image without resampling it.
+            harness.input_mut().max_texture_side =
+                Some(CARLTON_VISUAL_GOLDEN_MAX_TEXTURE_SIDE);
+            harness.state_mut().enable_texture_upload();
             harness.step();
 
             let image = harness
