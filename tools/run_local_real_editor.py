@@ -15,7 +15,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import venv
 
 DEV_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROOT = pathlib.Path(os.environ.get("CHAPTERA_LOCAL_RUNTIME_ROOT", DEV_ROOT)).resolve()
@@ -80,6 +79,8 @@ def ensure_python() -> pathlib.Path:
                 "packaged Python runtime is missing the vendored jsonschema dependency closure"
             )
         return python
+
+    import venv
 
     python = python_in_venv()
     if not python.exists():
