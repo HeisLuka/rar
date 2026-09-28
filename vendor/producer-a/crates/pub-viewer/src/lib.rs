@@ -174,12 +174,11 @@ pub struct ViewerProjectedSceneInstanceV1 {
     pub scene_instance: SceneInstanceV1,
     /// Paint placement metadata only; not an identity authority.
     pub target_frame_node_id: NodeId,
-    /// Exact composition proof: direct target-frame text within the native
-    /// slot-flow visible scalar prefix contains no paintable text after object
-    /// markers/line breaks are ignored. Text beyond the authoritative first
-    /// non-fitting scalar remains canonical source text but is overset.
-    #[serde(default)]
-    pub target_frame_text_fully_covered: bool,
+    /// Story-global direct-paint cutoff from native Cmo slot-flow.
+    /// Scalars at or after this authoritative first-nonfitting boundary remain
+    /// canonical source text but are overset and must not paint in the target frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_frame_paint_scalar_end: Option<u32>,
     pub bounds: RectEmu,
     pub transform: Affine2D,
 }
@@ -1639,27 +1638,10 @@ fn project_carlton_march_cmo_instances(
 
         let target_story_scalar_count = u32::try_from(target_story.text.chars().count())
             .context("Cmo target Story scalar count exceeds u32")?;
-        let visible_scalar_end = output
-            .overset
-            .first_nonfitting_scalar_index
-            .unwrap_or(target_story_scalar_count);
-        if visible_scalar_end > target_story_scalar_count {
+        let target_frame_paint_scalar_end = output.overset.first_nonfitting_scalar_index;
+        if target_frame_paint_scalar_end.is_some_and(|value| value > target_story_scalar_count) {
             return Err(anyhow!(
                 "exact Carlton March target Qsid {target_qsid} overset scalar exceeds Story length"
-            ));
-        }
-        let visible_scalar_end =
-            usize::try_from(visible_scalar_end).context("Cmo visible scalar count exceeds usize")?;
-        let target_visible_residual = target_story
-            .text
-            .chars()
-            .take(visible_scalar_end)
-            .filter(|ch| !matches!(ch, '\u{FFFC}' | '\r' | '\n'))
-            .collect::<String>();
-        let target_frame_text_fully_covered = target_visible_residual.trim().is_empty();
-        if !target_frame_text_fully_covered {
-            return Err(anyhow!(
-                "exact Carlton March target Qsid {target_qsid} contains visible direct text before the authoritative Cmo overset boundary"
             ));
         }
 
@@ -1729,7 +1711,7 @@ fn project_carlton_march_cmo_instances(
             projected.push(ViewerProjectedSceneInstanceV1 {
                 scene_instance,
                 target_frame_node_id,
-                target_frame_text_fully_covered,
+                target_frame_paint_scalar_end,
                 bounds,
                 transform: carrier.header.transform.clone(),
             });

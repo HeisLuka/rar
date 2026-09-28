@@ -4350,6 +4350,80 @@ mod tests {
     }
 
     #[test]
+    fn projected_visual_identity_wins_mixed_topmost_hit_without_mutation_admission() {
+        let direct_node_id: pub_editor::NodeId = serde_json::from_value(serde_json::json!(
+            "11111111-1111-1111-1111-111111111111"
+        ))
+        .expect("direct NodeId fixture");
+        let projected_origin_node_id: pub_editor::NodeId =
+            serde_json::from_value(serde_json::json!(
+                "22222222-2222-2222-2222-222222222222"
+            ))
+            .expect("projected origin NodeId fixture");
+        let bounds = pub_editor::RectEmu::new(
+            pub_editor::LengthEmu::new(10),
+            pub_editor::LengthEmu::new(20),
+            pub_editor::LengthEmu::new(100),
+            pub_editor::LengthEmu::new(80),
+        );
+        let projected_instance = SceneInstanceV1 {
+            schema_version: chaptera_scene_instance::SCENE_INSTANCE_SCHEMA_V1.to_owned(),
+            instance_id: "sha256:projected-hit-fixture".to_owned(),
+            projection_kind: chaptera_scene_instance::SceneProjectionKindV1::CmoStorySlot,
+            origin_node_id: projected_origin_node_id.as_canonical().to_string(),
+            target_page_id: "33333333-3333-3333-3333-333333333333".to_owned(),
+            source_parent_origin: None,
+            story_authority_id: None,
+            cmo_slot_index: Some(0),
+            cmo_scalar_index: Some(0),
+        };
+
+        let hit_index = SceneHitTestIndex::new(vec![
+            SceneHitEntry {
+                instance_id: "sha256:direct-hit-fixture".to_owned(),
+                node_id: direct_node_id,
+                bounds,
+                z_order: 0,
+                paint_order: 0,
+            },
+            SceneHitEntry {
+                instance_id: projected_instance.instance_id.clone(),
+                node_id: projected_origin_node_id,
+                bounds,
+                z_order: 0,
+                paint_order: 1,
+            },
+        ]);
+        let point = pub_interaction::DocumentPoint::new(
+            pub_editor::LengthEmu::new(50),
+            pub_editor::LengthEmu::new(50),
+        );
+        let top = hit_index.topmost_at(point).expect("overlapping visual hit");
+        assert_eq!(
+            top.instance_id.as_str(),
+            projected_instance.instance_id.as_str()
+        );
+        assert_eq!(top.node_id, projected_origin_node_id);
+        assert_eq!(
+            hit_index.node_for_instance(&projected_instance.instance_id),
+            Some(projected_origin_node_id)
+        );
+
+        for mutation in [
+            ObjectMutationKindV1::MoveNode,
+            ObjectMutationKindV1::ResizeNode,
+            ObjectMutationKindV1::ReplaceImage,
+        ] {
+            let admission = admit_object_mutation_v1(&projected_instance, mutation);
+            assert!(!admission.admitted);
+            assert_eq!(
+                admission.origin_node_id.as_deref(),
+                Some(projected_instance.origin_node_id.as_str())
+            );
+        }
+    }
+
+    #[test]
     fn desktop_pages_surface_exposes_live_thumbnail_navigation() {
         let source = include_str!("main.rs");
         assert!(source.contains("Page {} thumbnail"));
@@ -7369,6 +7443,8 @@ mod tests {
                             .to_string(),
                         "cmo_slot_index": instance.cmo_slot_index,
                         "cmo_scalar_index": instance.cmo_scalar_index,
+                        "target_frame_paint_scalar_end": viewer_projected
+                            .target_frame_paint_scalar_end,
                         "story_authority_present": instance.story_authority_id.is_some(),
                         "target_frame_bounds_emu": [
                             target_frame.bounds.x.get(),

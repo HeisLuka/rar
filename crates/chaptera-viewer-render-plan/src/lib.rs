@@ -132,6 +132,33 @@ fn suppress_projected_object_marker_glyphs(text: &str) -> String {
 }
 
 #[cfg(feature = "projected-scene-instances")]
+fn clip_render_text_at_story_scalar_end(fragment: &mut RenderTextFragmentV1, scalar_end: u32) {
+    let clipped_end = fragment.scalar_end.min(scalar_end);
+    if clipped_end <= fragment.scalar_start {
+        fragment.scalar_end = fragment.scalar_start;
+        fragment.text.clear();
+        fragment.typography.clear();
+        fragment.line_count = 0;
+        return;
+    }
+    if clipped_end == fragment.scalar_end {
+        return;
+    }
+
+    let keep = usize::try_from(clipped_end - fragment.scalar_start)
+        .expect("u32 scalar span fits usize on supported targets");
+    fragment.text = fragment.text.chars().take(keep).collect();
+    fragment.scalar_end = clipped_end;
+    fragment.line_count = 0;
+    for run in &mut fragment.typography {
+        run.scalar_end = run.scalar_end.min(clipped_end);
+    }
+    fragment
+        .typography
+        .retain(|run| run.scalar_start < run.scalar_end);
+}
+
+#[cfg(feature = "projected-scene-instances")]
 fn parse_node_id(value: &str, field: &'static str) -> Result<NodeId, RenderPlanErrorV1> {
     value
         .parse::<CanonicalId>()
@@ -272,17 +299,22 @@ pub fn build_page_render_plan_v1(
                         && projected.target_frame_node_id == node.origin
                 });
                 let mut has_projection = false;
-                let mut text_fully_covered = false;
+                let mut paint_scalar_end = None::<u32>;
                 for projected in projected_for_frame {
                     has_projection = true;
-                    text_fully_covered |= projected.target_frame_text_fully_covered;
+                    if let Some(candidate) = projected.target_frame_paint_scalar_end {
+                        paint_scalar_end = Some(
+                            paint_scalar_end.map_or(candidate, |current| current.min(candidate)),
+                        );
+                    }
                 }
-                if text_fully_covered {
-                    text = None;
-                } else if has_projection
-                    && let Some(rendered) = text.as_mut()
-                {
-                    rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
+                if let Some(rendered) = text.as_mut() {
+                    if let Some(scalar_end) = paint_scalar_end {
+                        clip_render_text_at_story_scalar_end(rendered, scalar_end);
+                    }
+                    if has_projection {
+                        rendered.text = suppress_projected_object_marker_glyphs(&rendered.text);
+                    }
                 }
             }
             let paint = visual
@@ -543,7 +575,7 @@ mod tests {
             .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
                 scene_instance: instance.clone(),
                 target_frame_node_id: origin_node_id,
-                target_frame_text_fully_covered: false,
+                target_frame_paint_scalar_end: None,
                 bounds: RectEmu::new(
                     LengthEmu::new(50),
                     LengthEmu::new(60),
@@ -596,7 +628,7 @@ mod tests {
             .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
                 scene_instance: instance,
                 target_frame_node_id: frame_id,
-                target_frame_text_fully_covered: false,
+                target_frame_paint_scalar_end: None,
                 bounds: visual.scene.nodes[0].bounds,
                 transform: Affine2D::identity(),
             });
@@ -615,12 +647,11 @@ mod tests {
 
     #[cfg(feature = "projected-scene-instances")]
     #[test]
-    fn proven_carrier_coverage_suppresses_direct_target_text_without_mutating_story() {
+    fn proven_first_nonfit_clips_direct_target_paint_without_mutating_story() {
         let mut visual = fixture();
         let page_id = visual.document.pages[0].id;
         let frame_id = visual.scene.nodes[0].origin;
-        let story_id = visual.document.stories[0].id;
-        let source = "\u{FFFC}\r\u{FFFC}tail";
+        let source = "\u{FFFC}\rX\u{FFFC}tail";
         visual.document.stories[0].text = source.to_owned();
         visual.text_fragments[0].text = source.to_owned();
         visual.text_fragments[0].scalar_end =
@@ -628,12 +659,12 @@ mod tests {
 
         let instance = SceneInstanceV1 {
             schema_version: SCENE_INSTANCE_SCHEMA_V1.to_owned(),
-            instance_id: "sha256:covered-target-text-fixture".to_owned(),
+            instance_id: "sha256:first-nonfit-paint-fixture".to_owned(),
             projection_kind: SceneProjectionKindV1::CmoStorySlot,
             origin_node_id: frame_id.as_canonical().to_string(),
             target_page_id: page_id.as_canonical().to_string(),
             source_parent_origin: None,
-            story_authority_id: Some(story_id.as_canonical().to_string()),
+            story_authority_id: None,
             cmo_slot_index: Some(0),
             cmo_scalar_index: Some(0),
         };
@@ -642,7 +673,7 @@ mod tests {
             .push(pub_viewer::ViewerProjectedSceneInstanceV1 {
                 scene_instance: instance,
                 target_frame_node_id: frame_id,
-                target_frame_text_fully_covered: true,
+                target_frame_paint_scalar_end: Some(3),
                 bounds: visual.scene.nodes[0].bounds,
                 transform: Affine2D::identity(),
             });
@@ -653,13 +684,19 @@ mod tests {
             .iter()
             .find(|node| node.projected_scene_instance.is_none() && node.node_id == frame_id)
             .expect("direct frame");
+        let rendered = direct.text.as_ref().expect("pre-boundary direct text remains");
+        assert_eq!(rendered.scalar_start, 0);
+        assert_eq!(rendered.scalar_end, 3);
+        assert_eq!(rendered.text, "\u{200B}\rX");
         assert!(
-            direct.text.is_none(),
-            "fully covered direct target text must not be painted twice"
+            rendered
+                .typography
+                .iter()
+                .all(|run| run.scalar_end <= rendered.scalar_end)
         );
         assert_eq!(
             visual.document.stories[0].text, source,
-            "paint suppression must not mutate canonical Viewer Story text"
+            "paint clipping must not mutate canonical Viewer Story text"
         );
     }
 
