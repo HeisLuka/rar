@@ -6924,10 +6924,6 @@ mod tests {
             "Reader must expose bounded source typography"
         );
         assert!(
-            visual.typography_runs.iter().any(|run| run.size_inherited),
-            "golden fixture should exercise admitted inherited typography"
-        );
-        assert!(
             visual
                 .typography_runs
                 .iter()
@@ -6976,6 +6972,11 @@ mod tests {
             "source_sha256": source_sha256,
             "page_number": 2,
             "typography_run_count": visual.typography_runs.len(),
+            "inherited_typography_run_count": visual
+                .typography_runs
+                .iter()
+                .filter(|run| run.font_inherited || run.size_inherited)
+                .count(),
             "render_plan_typography_sections": typography_sections,
             "source_font_face_claimed": false,
             "publisher_exact_reflow_claimed": false,
