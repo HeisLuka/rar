@@ -8,6 +8,9 @@
 //! part of the Viewer contract.
 
 use anyhow::{Context, Result, anyhow};
+use chaptera_layout_projection::{
+    CarrierExtentV1, CmoSlotFlowOutputV1, CmoStorySlotFlowInputV1, resolve_cmo_slot_flow_v1,
+};
 use pub_layout::{
     BoundedAuthoringSlice, BoundedNodeGeometryInput, BoundedTextFlowEnvironment,
     BoundedTextMetrics, ProjectionDiagnostic, ResolveDiagnostic, ResolvedPhysicalNode,
@@ -15,7 +18,8 @@ use pub_layout::{
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
-    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+    Affine2D, LengthEmu, NodeId, NodeKind, PageId, RectEmu, ResourceId, Sha256Digest, StoryFrame,
+    StoryId,
 };
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
@@ -29,8 +33,9 @@ pub use pub_reader::{
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
-    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, analyze_mature_0x2c_page_roles,
-    build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
+    PubCmoProjectionBridgeV1, PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild,
+    analyze_mature_0x2c_page_roles, build_failure_envelope,
+    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_cmo_projection_bridge_v1,
     build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -45,6 +50,8 @@ pub const VIEWER_FAILURE_REPORT_SCHEMA_V0_1: &str = "chaptera-viewer-failure-rep
 pub const VIEWER_FALLBACK_TEXT_METRICS_REVISION_V0_1: &str = "viewer-fallback-text-metrics-v0.1";
 const VIEWER_FALLBACK_SCALAR_ADVANCE_EMU_V0_1: i64 = 57_150;
 const VIEWER_FALLBACK_LINE_HEIGHT_EMU_V0_1: i64 = 142_875;
+const CARLTON_MARCH_SHA256_V1: &str =
+    "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerFailureDiagnosticReport {
@@ -542,8 +549,23 @@ pub fn open_mature_0x2c_geometry(
         .iter()
         .map(|page| page.id)
         .collect::<Vec<_>>();
-    let authoring =
+    let mut authoring =
         bounded_authoring_slice_from_resolved_pages(&pipeline.resolved.graph, &effective_page_ids)?;
+    let mut cmo_slot_outputs = Vec::new();
+    if pipeline.source_hash.to_string() == CARLTON_MARCH_SHA256_V1 {
+        let bridge = build_mature_0x2c_cmo_projection_bridge_v1(
+            bytes,
+            pipeline.source_hash,
+            &pipeline.source.graph,
+            &pipeline.resolved.graph,
+        )
+        .context("build admitted Carlton March Cmo projection bridge for Viewer")?;
+        cmo_slot_outputs = apply_exact_carlton_march_cmo_slots(
+            &mut authoring,
+            &pipeline.resolved.graph,
+            &bridge,
+        )?;
+    }
     let projection = project_bounded(authoring);
 
     document
@@ -593,10 +615,34 @@ pub fn open_mature_0x2c_geometry(
         })
         .collect::<Vec<_>>();
 
-    let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
+    let (mut text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
     document
         .diagnostics
         .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+    if !cmo_slot_outputs.is_empty() {
+        let target_story_ids = cmo_slot_outputs
+            .iter()
+            .map(|output| parse_vendor_story_id(&output.target_story_id, "Cmo target Story"))
+            .collect::<Result<BTreeSet<_>>>()?;
+        text_fragments.retain(|fragment| !target_story_ids.contains(&fragment.story_id));
+
+        let visible_slot_count = cmo_slot_outputs
+            .iter()
+            .map(|output| output.visible_slots.len())
+            .sum::<usize>();
+        let overset_target_count = cmo_slot_outputs
+            .iter()
+            .filter(|output| output.overset.story_overset)
+            .count();
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.cmo.story_slot_projection_applied".to_owned(),
+            severity: ViewerDiagnosticSeverity::Info,
+            message: format!(
+                "Admitted source-backed Story object-slot projection materialized {visible_slot_count} visible carrier instance(s) across {} target Story frame(s); {overset_target_count} target Story(s) retain authoritative slot overset. Canonical target Story text remains unchanged and U+FFFC markers are not painted as glyphs.",
+                cmo_slot_outputs.len()
+            ),
+        });
+    }
     if !text_fragments.is_empty() {
         document
             .diagnostics
@@ -720,6 +766,270 @@ pub fn open_mature_0x2c_geometry(
         typography_runs,
         images,
     })
+}
+
+
+fn parse_vendor_node_id(value: &str, label: &str) -> Result<NodeId> {
+    let canonical = value
+        .parse::<pub_model::CanonicalId>()
+        .map_err(|error| anyhow!("{label} is not a canonical vendor NodeId: {error:?}"))?;
+    Ok(NodeId::from_canonical(canonical))
+}
+
+fn parse_vendor_story_id(value: &str, label: &str) -> Result<StoryId> {
+    let canonical = value
+        .parse::<pub_model::CanonicalId>()
+        .map_err(|error| anyhow!("{label} is not a canonical vendor StoryId: {error:?}"))?;
+    Ok(StoryId::from_canonical(canonical))
+}
+
+fn exact_carlton_march_marker_scalars(target_qsid: u32, text: &str) -> Result<Vec<u32>> {
+    let markers = text
+        .chars()
+        .enumerate()
+        .filter_map(|(index, ch)| {
+            (ch == '\u{FFFC}').then(|| u32::try_from(index).context("Story scalar index exceeds u32"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let expected: &[u32] = match target_qsid {
+        218 | 120 | 216 => &[0],
+        49 => &[0, 3, 5, 7, 9, 11],
+        other => {
+            return Err(anyhow!(
+                "exact Carlton March Cmo projection received unadmitted target Qsid {other}"
+            ));
+        }
+    };
+    if markers != expected {
+        return Err(anyhow!(
+            "exact Carlton March Cmo marker contract changed for target Qsid {target_qsid}: expected {expected:?}, got {markers:?}"
+        ));
+    }
+    Ok(markers)
+}
+
+fn apply_exact_carlton_march_cmo_slots(
+    authoring: &mut BoundedAuthoringSlice,
+    graph: &PubResolvedGraph,
+    bridge: &PubCmoProjectionBridgeV1,
+) -> Result<Vec<CmoSlotFlowOutputV1>> {
+    let context = &bridge.output.context;
+    let targets = context
+        .cmo_relations
+        .iter()
+        .map(|relation| relation.target_qsid)
+        .collect::<BTreeSet<_>>();
+    if targets != BTreeSet::from([49, 120, 216, 218]) {
+        return Err(anyhow!(
+            "exact Carlton March Cmo target set changed: {targets:?}"
+        ));
+    }
+
+    let mut outputs = Vec::with_capacity(targets.len());
+    for target_qsid in targets {
+        let relations = context
+            .cmo_relations
+            .iter()
+            .filter(|relation| relation.target_qsid == target_qsid)
+            .collect::<Vec<_>>();
+        let first = relations
+            .first()
+            .context("Cmo target has no projection relations")?;
+
+        let target_story_id =
+            parse_vendor_story_id(&first.target_story_id, "Cmo target Story")?;
+        let target_frame_node_id = parse_vendor_node_id(
+            first
+                .target_frame_node_id
+                .as_deref()
+                .context("Cmo target frame identity is unresolved")?,
+            "Cmo target frame",
+        )?;
+        let target_story = graph
+            .stories
+            .get(&target_story_id)
+            .with_context(|| format!("Cmo target Story {target_story_id:?} is absent"))?;
+        let target_frame = graph
+            .nodes
+            .get(&target_frame_node_id)
+            .with_context(|| format!("Cmo target frame {target_frame_node_id:?} is absent"))?;
+        let target_page_id = graph
+            .pages
+            .keys()
+            .copied()
+            .find(|page_id| page_id.into_canonical() == target_frame.header.parent_id)
+            .with_context(|| {
+                format!(
+                    "Cmo target frame {target_frame_node_id:?} is not parented by a resolved page"
+                )
+            })?;
+
+        let frame_count = u32::try_from(
+            graph
+                .nodes
+                .values()
+                .filter(|node| {
+                    node.payload
+                        .story_frame
+                        .as_ref()
+                        .and_then(|frame| frame.story_id)
+                        == Some(target_story_id)
+                })
+                .count(),
+        )
+        .context("Cmo target frame count exceeds u32")?;
+        let object_marker_scalars =
+            exact_carlton_march_marker_scalars(target_qsid, &target_story.text)?;
+
+        let carrier_extents = relations
+            .iter()
+            .map(|relation| -> Result<CarrierExtentV1> {
+                let carrier_node_id =
+                    parse_vendor_node_id(&relation.carrier_node_id, "Cmo carrier node")?;
+                let carrier = graph.nodes.get(&carrier_node_id).with_context(|| {
+                    format!("Cmo carrier node {carrier_node_id:?} is absent")
+                })?;
+                let nested_cmo = relation.carrier_story_id.as_ref().is_some_and(|story_id| {
+                    context
+                        .cmo_relations
+                        .iter()
+                        .any(|candidate| candidate.target_story_id == *story_id)
+                });
+                Ok(CarrierExtentV1 {
+                    carrier_node_id: relation.carrier_node_id.clone(),
+                    width_emu: carrier.header.bounds.width.get(),
+                    height_emu: carrier.header.bounds.height.get(),
+                    nested_cmo,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let input = CmoStorySlotFlowInputV1 {
+            target_qsid,
+            target_page_id: target_page_id.to_string(),
+            target_story_id: first.target_story_id.clone(),
+            target_frame_node_id: first
+                .target_frame_node_id
+                .clone()
+                .context("Cmo target frame identity is unresolved")?,
+            frame_count,
+            host_width_emu: target_frame.header.bounds.width.get(),
+            host_height_emu: target_frame.header.bounds.height.get(),
+            object_marker_scalars,
+            // Exact March target forms start with their admitted object slot.
+            // q49's second slot is already a strict width+height non-fit even
+            // with zero inter-slot text height, so omitting CR line advance is
+            // a conservative lower-bound for the visible prefix rather than a
+            // new text-flow heuristic.
+            text_lines: Vec::new(),
+            carrier_extents,
+        };
+        let output = resolve_cmo_slot_flow_v1(context, &input).map_err(|error| {
+            anyhow!("exact Carlton March native Cmo slot-flow rejected target: {error}")
+        })?;
+
+        let expected_visible: &[u32] = match target_qsid {
+            218 => &[1],
+            120 => &[6],
+            216 => &[5],
+            49 => &[7],
+            _ => unreachable!("target set checked above"),
+        };
+        let visible_cmo_ids = output
+            .visible_slots
+            .iter()
+            .map(|slot| slot.cmo_id)
+            .collect::<Vec<_>>();
+        if visible_cmo_ids != expected_visible {
+            return Err(anyhow!(
+                "exact Carlton March visible Cmo prefix changed for target Qsid {target_qsid}: expected {expected_visible:?}, got {visible_cmo_ids:?}"
+            ));
+        }
+        if output.scaling_applied || output.skip_to_fit || output.carrier_reparent_count != 0 {
+            return Err(anyhow!(
+                "exact Carlton March Cmo slot-flow violated no-scale/no-skip/no-reparent contract"
+            ));
+        }
+        if target_qsid == 49
+            && (!output.overset.story_overset
+                || output.overset.first_nonfitting_slot_index != Some(1))
+        {
+            return Err(anyhow!(
+                "exact Carlton March Illness overset discriminator changed"
+            ));
+        }
+
+        for slot in &output.visible_slots {
+            let carrier_node_id =
+                parse_vendor_node_id(&slot.carrier_node_id, "visible Cmo carrier node")?;
+            if authoring
+                .node_geometry
+                .iter()
+                .any(|node| node.node_id == carrier_node_id)
+            {
+                return Err(anyhow!(
+                    "visible Cmo carrier {carrier_node_id:?} would collide with an existing customer-page node"
+                ));
+            }
+            let carrier = graph.nodes.get(&carrier_node_id).with_context(|| {
+                format!("visible Cmo carrier {carrier_node_id:?} is absent")
+            })?;
+            let x = target_frame
+                .header
+                .bounds
+                .x
+                .get()
+                .checked_add(slot.resolved_x_emu)
+                .context("Cmo projected x overflow")?;
+            let y = target_frame
+                .header
+                .bounds
+                .y
+                .get()
+                .checked_add(slot.resolved_y_emu)
+                .context("Cmo projected y overflow")?;
+            authoring.node_geometry.push(BoundedNodeGeometryInput {
+                node_id: carrier_node_id,
+                parent_origin: target_page_id.into_canonical(),
+                bounds: RectEmu::new(
+                    LengthEmu::new(x),
+                    LengthEmu::new(y),
+                    LengthEmu::new(slot.resolved_width_emu),
+                    LengthEmu::new(slot.resolved_height_emu),
+                ),
+                transform: carrier.header.transform.clone(),
+            });
+
+            if let Some(source_frame) = carrier.payload.story_frame.as_ref() {
+                let carrier_story_id = source_frame
+                    .story_id
+                    .context("visible Cmo carrier has no resolved nested Story identity")?;
+                if source_frame.previous_frame.is_some() || source_frame.next_frame.is_some() {
+                    return Err(anyhow!(
+                        "exact Carlton March visible Cmo carrier unexpectedly uses a linked Story frame chain"
+                    ));
+                }
+                if let Some(expected_story_id) = slot.carrier_story_id.as_deref() {
+                    if carrier_story_id.to_string() != expected_story_id {
+                        return Err(anyhow!(
+                            "visible Cmo carrier nested Story identity disagrees with projection authority"
+                        ));
+                    }
+                }
+                authoring.story_frames.push(StoryFrame {
+                    story_id: carrier_story_id,
+                    frame_id: carrier_node_id,
+                    ordinal: source_frame.ordinal,
+                    previous: None,
+                    next: None,
+                });
+            }
+        }
+
+        outputs.push(output);
+    }
+
+    Ok(outputs)
 }
 
 fn viewer_fallback_text_flow_environment_v0_1() -> BoundedTextFlowEnvironment {
