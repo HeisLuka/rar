@@ -1,0 +1,41 @@
+# Git-ancestry-safe branch GC — 2026-09-29
+# Every listed ref was independently proven by the audit workflow to have its current tip reachable from main.
+# Open PR heads were excluded by the audit and are rechecked again by branch-gc.
+# Candidate count: 36
+
+agent/pub-wayback-temporal-corpus
+air-editor-publisher-parity-sweep-01-v1
+authoring-textframe-boxmodel-01
+autonomus-gh-crossgen-family-fence-01-v2
+carlton-march-census-20260924
+chatgpt-carlton-census-pack-20260924
+ci-failure-runbook-01-v1
+cloud-blob-lifecycle-v1
+cloud-source-ingress-security-scanner-v3
+editor-affine-visual-01
+editor-multi-drag-v1
+feat/authored-stack-lifecycle-v1
+feat/authoring-delete-nodes-v1
+feat/authoring-reparent-node-v1
+feat/cdm-shape-paint-v1
+feat/job-admission-permit-lifecycle-v1
+fix-editor-project-v011-revision-materializer-fixtures
+fix/cmo-scene-instance-id-parity-v1
+k8s-adoption-evidence-01-v1
+layout-projection-index-01
+layout-resolved-scene-provenance-fixture-v1
+legacy22-reader-01-v1
+mob-reader-v0-integration-01-v2
+mob-reader-v0-main-integration-01-v1
+package-self-contained-local-01-v16
+pub-check-regional-i18n-01
+reader-cmo-scene-instance-compose-01-v3
+reader-desktop-open-state-01a-v1
+reader-desktop-product-ui-01-v1
+research/corpus-container-delta-retained-20260924
+research/symbol-cache-malwarebazaar-20260924
+task/chaptera-vtpe-hosted-wave-01-v2
+task/editor-multi-resize-01
+task/render-bench-real-pub-scene-01
+viewer-paint-bridge-consume-01-v2
+web-browser-acceptance-exact-surface-01
