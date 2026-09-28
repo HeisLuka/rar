@@ -44,6 +44,15 @@ export async function POST(
   const record = await readCheck(id);
   if (!record) return Response.json({ error: 'Check not found.' }, { status: 404 });
 
+  if ((record.status === 'complete' || record.status === 'failed') && record.result) {
+    return Response.json({
+      ok: true,
+      alreadyFinalized: true,
+      status: record.status,
+      emailStatus: record.emailStatus,
+    });
+  }
+
   let result: unknown;
   try {
     result = await request.json();
