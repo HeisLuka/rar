@@ -7036,6 +7036,294 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+
+    const CARLTON_VISUAL_GOLDEN_DPI: f32 = 144.0;
+
+    fn carlton_golden_page_pixels(visual: &ViewerGeometryDocument, page_index: usize) -> (u32, u32) {
+        let plan = build_page_render_plan_v1(visual, page_index)
+            .expect("Carlton golden page must have a render plan");
+        let scale = CARLTON_VISUAL_GOLDEN_DPI / EMU_PER_INCH;
+        let width = (plan.page_size.width.get() as f32 * scale).round().max(1.0) as u32;
+        let height = (plan.page_size.height.get() as f32 * scale).round().max(1.0) as u32;
+        (width, height)
+    }
+
+    struct CarltonReaderGoldenPageApp {
+        visual: ViewerGeometryDocument,
+        page_index: usize,
+        image_textures: BTreeMap<String, CachedImageTexture>,
+    }
+
+    impl CarltonReaderGoldenPageApp {
+        fn new(
+            cc: &eframe::CreationContext<'_>,
+            visual: ViewerGeometryDocument,
+            page_index: usize,
+        ) -> Self {
+            fallback_font::install(&cc.egui_ctx)
+                .expect("pinned Chaptera fallback font resource must validate");
+
+            let mut image_textures = BTreeMap::new();
+            for embedded in &visual.images {
+                let key = format!("{:?}", embedded.resource_id);
+                let expected_sha256 = image_decode_adapter::exact_sha256_hex(&embedded.bytes);
+                let admitted = image_decode_adapter::decode_texture_image_v1(
+                    &embedded.bytes,
+                    &embedded.mime,
+                    &expected_sha256,
+                )
+                .expect("Carlton embedded image must pass the same Reader decode adapter");
+                let texture = cc.egui_ctx.load_texture(
+                    format!("carlton-reader-golden-{key}"),
+                    admitted.color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                image_textures.insert(
+                    key,
+                    CachedImageTexture {
+                        texture,
+                        _cache_identity_sha256: admitted.cache_identity_sha256,
+                    },
+                );
+            }
+
+            Self {
+                visual,
+                page_index,
+                image_textures,
+            }
+        }
+    }
+
+    impl eframe::App for CarltonReaderGoldenPageApp {
+        fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            let page = self
+                .visual
+                .document
+                .pages
+                .get(self.page_index)
+                .expect("Carlton golden page exists");
+            let render_plan = build_page_render_plan_v1(&self.visual, self.page_index)
+                .expect("Carlton golden page render plan");
+            let scene_scale = CARLTON_VISUAL_GOLDEN_DPI / EMU_PER_INCH;
+            let (width_px, height_px) =
+                carlton_golden_page_pixels(&self.visual, self.page_index);
+            let page_rect = egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width_px as f32, height_px as f32),
+            );
+            let painter = ctx
+                .layer_painter(egui::LayerId::new(
+                    egui::Order::Background,
+                    egui::Id::new("carlton-reader-golden-page"),
+                ))
+                .with_clip_rect(page_rect);
+
+            render_backend::paint_page_surface(&painter, page_rect);
+
+            let page_origin = page.id.into_canonical();
+            for node in self
+                .visual
+                .scene
+                .nodes
+                .iter()
+                .filter(|node| node.parent_origin == page_origin)
+            {
+                let Some(render_node) = render_plan
+                    .nodes
+                    .iter()
+                    .find(|planned| planned.node_id == node.origin)
+                else {
+                    continue;
+                };
+                let Some(node_rect) = render_backend::physical_rect_to_egui(
+                    page_rect,
+                    scene_scale,
+                    render_node.bounds.x.get(),
+                    render_node.bounds.y.get(),
+                    render_node.bounds.width.get(),
+                    render_node.bounds.height.get(),
+                ) else {
+                    continue;
+                };
+
+                let source_texture = render_node.image.as_ref().and_then(|image| {
+                    let key = format!("{:?}", image.resource_id);
+                    self.image_textures.get(&key)
+                });
+                render_backend::paint_document_node_base(
+                    &painter,
+                    render_node,
+                    node_rect,
+                    source_texture.map(|cached| cached.texture.id()),
+                );
+
+                // Match the current Reader canvas contract exactly: every resolved
+                // object carries the visible preview outline, and clipped text gets
+                // the same red diagnostic marker users see in the product.
+                painter.rect_stroke(
+                    node_rect,
+                    0,
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 120, 210)),
+                    egui::StrokeKind::Inside,
+                );
+
+                let paint_outcome = render_backend::paint_document_node_foreground(
+                    &painter,
+                    render_node,
+                    node_rect,
+                    scene_scale,
+                );
+                if paint_outcome.text_clipped {
+                    painter.rect_stroke(
+                        node_rect,
+                        0,
+                        egui::Stroke::new(2.0_f32, egui::Color32::RED),
+                        egui::StrokeKind::Inside,
+                    );
+                    let marker_center =
+                        node_rect.right_top() + egui::vec2(7.0_f32, -7.0_f32);
+                    painter.circle_filled(marker_center, 5.0_f32, egui::Color32::RED);
+                    painter.text(
+                        marker_center,
+                        egui::Align2::CENTER_CENTER,
+                        "!",
+                        egui::FontId::proportional(9.0_f32),
+                        egui::Color32::WHITE,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_GOLDEN_CARLTON_MARCH and CHAPTERA_GOLDEN_CARLTON_OUT"]
+    fn golden_carlton_march_reader_pages_use_current_product_paint_contract() {
+        use egui_kittest::Harness;
+        use sha2::{Digest, Sha256};
+
+        let fixture = std::env::var_os("CHAPTERA_GOLDEN_CARLTON_MARCH")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_CARLTON_MARCH");
+        let output_dir = std::env::var_os("CHAPTERA_GOLDEN_CARLTON_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_GOLDEN_CARLTON_OUT");
+        fs::create_dir_all(&output_dir).expect("create Carlton golden output directory");
+
+        let bytes = fs::read(&fixture).expect("read exact Carlton March PUB");
+        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            source_sha256,
+            "bf9cda0f632b5820ab9dbdbe1b838b2a988b2f3fdd69253c22b4fc3aef9f11c3",
+            "Carlton March source identity drifted"
+        );
+
+        let visual = diagnostic_sweep::open_for_product(&bytes)
+            .expect("exact Carlton March must open through current Reader product path");
+        assert_eq!(
+            visual.document.pages.len(),
+            3,
+            "admitted Carlton March family profile must expose exactly three Reader pages"
+        );
+        assert_eq!(
+            visual.scene.surfaces.len(),
+            3,
+            "Carlton March Reader geometry must expose exactly three surfaces"
+        );
+        assert!(
+            visual
+                .document
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "viewer.page_projection.family_profile_applied"),
+            "Carlton family presentation profile must be visibly admitted"
+        );
+
+        let mut page_receipts = Vec::new();
+        for page_index in 0..visual.document.pages.len() {
+            let (width_px, height_px) = carlton_golden_page_pixels(&visual, page_index);
+            let visual_for_app = visual.clone();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width_px as f32, height_px as f32))
+                .with_pixels_per_point(1.0)
+                .with_max_steps(24)
+                .wgpu()
+                .build_eframe(move |cc| {
+                    CarltonReaderGoldenPageApp::new(cc, visual_for_app, page_index)
+                });
+            harness.step();
+
+            let image = harness
+                .render()
+                .expect("headless Carlton Reader page render must succeed");
+            assert_eq!(image.width(), width_px);
+            assert_eq!(image.height(), height_px);
+
+            let png_name = format!("carlton-march-reader-page-{:03}.png", page_index + 1);
+            let png_path = output_dir.join(&png_name);
+            image.save(&png_path).expect("write Carlton Reader page PNG");
+            let png_bytes = fs::read(&png_path).expect("read rendered Carlton PNG");
+
+            let page = &visual.document.pages[page_index];
+            let render_plan = build_page_render_plan_v1(&visual, page_index)
+                .expect("Carlton page render plan for receipt");
+            let clipped_nodes = render_plan
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    let text = node.text.as_ref()?;
+                    let metrics = render_backend::measure_document_text(
+                        text,
+                        node.bounds,
+                        CARLTON_VISUAL_GOLDEN_DPI / EMU_PER_INCH,
+                    )?;
+                    metrics.clipped.then_some(node.node_id.as_canonical().to_string())
+                })
+                .collect::<Vec<_>>();
+
+            page_receipts.push(serde_json::json!({
+                "reader_page_number": page_index + 1,
+                "page_id": page.id.as_canonical().to_string(),
+                "width_emu": page.width_emu,
+                "height_emu": page.height_emu,
+                "raster_dpi": CARLTON_VISUAL_GOLDEN_DPI,
+                "width_px": width_px,
+                "height_px": height_px,
+                "png": png_name,
+                "png_sha256": format!("{:x}", Sha256::digest(&png_bytes)),
+                "render_plan_node_count": render_plan.nodes.len(),
+                "preview_clipped_node_ids": clipped_nodes,
+            }));
+        }
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.reader-golden-carlton-march.v1",
+            "source_sha256": source_sha256,
+            "reader_page_count": visual.document.pages.len(),
+            "scene_surface_count": visual.scene.surfaces.len(),
+            "family_profile_applied": true,
+            "renderer": {
+                "surface": "page-only current Chaptera Reader canvas paint contract",
+                "shared_render_plan": true,
+                "shared_render_backend": true,
+                "product_ui_chrome_included": false,
+                "current_object_outlines_included": true,
+                "current_clipping_markers_included": true,
+                "fallback_font_resource": true,
+                "raster_dpi": CARLTON_VISUAL_GOLDEN_DPI,
+            },
+            "source_font_face_claimed": false,
+            "publisher_exact_reflow_claimed": false,
+            "visual_equivalence_claimed": false,
+            "pages": page_receipts,
+        });
+        fs::write(
+            output_dir.join("carlton-march-reader-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize Carlton Reader golden receipt"),
+        )
+        .expect("write Carlton Reader golden receipt");
+    }
+
     #[test]
     #[ignore = "requires CHAPTERA_GOLDEN_SAMPLE_NEWSLETTER and CHAPTERA_GOLDEN_OUT"]
     fn golden_sample_newsletter_reference_customer_page_1_uses_shared_typography_render_plan() {
