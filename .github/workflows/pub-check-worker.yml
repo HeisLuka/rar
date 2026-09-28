@@ -1,0 +1,126 @@
+name: Chaptera PUB Check worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      check_id:
+        description: "Opaque Chaptera PUB check id"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pub-check-${{ inputs.check_id }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CHECK_ID: ${{ inputs.check_id }}
+      PUB_CHECK_ORIGIN: ${{ secrets.PUB_CHECK_ORIGIN }}
+      CHECKER_ADMIN_TOKEN: ${{ secrets.CHECKER_ADMIN_TOKEN }}
+      CHAPTERA_CHECKER_VERSION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Validate bounded job identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, sys
+          check_id = os.environ["CHECK_ID"]
+          origin = os.environ.get("PUB_CHECK_ORIGIN", "")
+          if not re.fullmatch(r"[0-9a-fA-F-]{36}", check_id):
+              sys.exit("invalid check id")
+          if not origin.startswith("https://") or any(c.isspace() for c in origin):
+              sys.exit("PUB_CHECK_ORIGIN must be one HTTPS origin")
+          if not os.environ.get("CHECKER_ADMIN_TOKEN"):
+              sys.exit("CHECKER_ADMIN_TOKEN is not configured")
+          PY
+
+      - name: Download admitted private PUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGIN="${PUB_CHECK_ORIGIN%/}"
+          SOURCE_URL="${ORIGIN}/api/internal/source/${CHECK_ID}"
+          curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${CHECKER_ADMIN_TOKEN}" \
+            --output "${RUNNER_TEMP}/source.pub" \
+            "${SOURCE_URL}"
+          python3 - <<'PY'
+          import os, pathlib, sys
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "source.pub"
+          size = path.stat().st_size
+          if size <= 0 or size > 64 * 1024 * 1024:
+              sys.exit(f"unexpected admitted source size: {size}")
+          PY
+
+      - name: Run the same bounded Viewer authority
+        id: checker
+        shell: bash
+        run: |
+          set -uo pipefail
+          cargo run --quiet --manifest-path tools/pub-check-cli/Cargo.toml -- \
+            "${RUNNER_TEMP}/source.pub" > "${RUNNER_TEMP}/result.json"
+          checker_exit=$?
+          echo "exit_code=${checker_exit}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Validate or replace checker receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "result.json"
+          allowed = {"compatible", "partial", "unsupported", "invalid", "failed"}
+          try:
+              raw = path.read_bytes()
+              if not raw or len(raw) > 128 * 1024:
+                  raise ValueError("missing or oversized checker receipt")
+              data = json.loads(raw)
+              if data.get("compatibility") not in allowed:
+                  raise ValueError("unsupported compatibility value")
+              if not isinstance(data.get("summary"), str) or not data["summary"].strip():
+                  raise ValueError("missing summary")
+              if len(data["summary"]) > 4000:
+                  raise ValueError("summary too large")
+          except Exception:
+              data = {
+                  "compatibility": "failed",
+                  "summary": "The checker could not complete this request reliably.",
+                  "diagnosticsCode": "pub_check.worker_failure",
+                  "limitations": [],
+                  "checkerVersion": os.environ.get("CHAPTERA_CHECKER_VERSION", "unknown"),
+              }
+              path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+          PY
+
+      - name: Return bounded result
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGIN="${PUB_CHECK_ORIGIN%/}"
+          RESULT_URL="${ORIGIN}/api/internal/result/${CHECK_ID}"
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${CHECKER_ADMIN_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data-binary "@${RUNNER_TEMP}/result.json" \
+            "${RESULT_URL}"
+
+      - name: Remove local source bytes
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/source.pub" "${RUNNER_TEMP}/result.json"
