@@ -1,0 +1,169 @@
+{
+  "schema_version": "chaptera.reader-corpus-manifest.v1",
+  "upstream": {
+    "repository": "apache/poi",
+    "commit": "942d95d85b15d0dfdb3bc9ba1b4f273f277757c8",
+    "base_url": "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher"
+  },
+  "claims": {
+    "purpose": "broad product-open and source-free structural regression corpus",
+    "visual_fidelity_oracle": false,
+    "note": "Opening successfully is not evidence of Publisher-equivalent rendering. Visual correctness requires a separate same-source Publisher/PDF/PNG oracle."
+  },
+  "fixtures": [
+    {
+      "name": "51318.pub",
+      "byte_len": 88576,
+      "sha256": "3ab75a6a9196e0a51fc9b0aa759459501c71d313030c06652aabffbae0a2ab09",
+      "family": "reference_unknown",
+      "semantic": true
+    },
+    {
+      "name": "60685.pub",
+      "byte_len": 119296,
+      "sha256": "0d3cecf0ff000a20931d0de3ebc48040bea10e03833ade3f9902f996c20e7184",
+      "family": "reference_unknown",
+      "semantic": true
+    },
+    {
+      "name": "LinkAt0And10.pub",
+      "byte_len": 64512,
+      "sha256": "c59b7160c21a531e5872e76141c4cd43a4d74f30d78401f64175467fa40c44fc",
+      "family": "hyperlink_ranges",
+      "semantic": true
+    },
+    {
+      "name": "LinkAt10.pub",
+      "byte_len": 64512,
+      "sha256": "f1b7f65cb9646fddc2cfc77a795109bb958f629e4fbf7c9fc7a4d1b045074c35",
+      "family": "hyperlink_ranges",
+      "semantic": true
+    },
+    {
+      "name": "LinkAt10And20And30.pub",
+      "byte_len": 64512,
+      "sha256": "202ac6f82e2a33ef0181158728b5c4df6781ccb105e012f520d331acafbcebf1",
+      "family": "hyperlink_ranges",
+      "semantic": true
+    },
+    {
+      "name": "LinkAt10And20And30And40.pub",
+      "byte_len": 64512,
+      "sha256": "b54068d4f82dd0ee533f2a655a7edd2acbdc02619621b32fb23cb9ce842ed669",
+      "family": "hyperlink_ranges",
+      "semantic": true
+    },
+    {
+      "name": "LinkAt10Longer.pub",
+      "byte_len": 64512,
+      "sha256": "a917a9e575f5cfc1ba8e78226981b662b06f96da2d7f2eb3e2b00a4b4f3dada5",
+      "family": "hyperlink_ranges",
+      "semantic": true
+    },
+    {
+      "name": "LinkAt20.pub",
+      "byte_len": 64512,
+      "sha256": "cec79a2bd2f6bc71dd276bd6584c34d66fa6f710d9adbed951bd9cb32c5b2fed",
+      "family": "hyperlink_ranges",
+      "semantic": true
+    },
+    {
+      "name": "Sample.pub",
+      "byte_len": 72192,
+      "sha256": "6fefdef46b87c767150878dc384549cb2d2ec2ac54de25f8ddb3a5628301107e",
+      "family": "version_chain_publisher_2007",
+      "semantic": true
+    },
+    {
+      "name": "Sample2.pub",
+      "byte_len": 72704,
+      "sha256": "c87ea7cc5606023c5fa99376631bbd45a8e9bdaba34c958057995b0e7ac8cc86",
+      "family": "text_offset_control",
+      "semantic": true
+    },
+    {
+      "name": "Sample2000.pub",
+      "byte_len": 61440,
+      "sha256": "40701ca47b26d04771cdd58467764e9ab39d3da69b59fbc529afd16d263d2f86",
+      "family": "version_chain_publisher_2000",
+      "semantic": true
+    },
+    {
+      "name": "Sample2_2010.pub",
+      "byte_len": 73216,
+      "sha256": "931ff20980b8f72aab227fa3cbe61b017be8d17c337fecb9aca3c97075940777",
+      "family": "publisher_2010_counterpart",
+      "semantic": true
+    },
+    {
+      "name": "Sample3.pub",
+      "byte_len": 72192,
+      "sha256": "424c69173ff08948c2529c8084b4ac2403f1ff1057146f4edd02fc29b44481fc",
+      "family": "text_change_control",
+      "semantic": true
+    },
+    {
+      "name": "Sample3_2010.pub",
+      "byte_len": 72704,
+      "sha256": "baa9555a72d9e4264e3fd722896e2e43b960d20b4afdb96f75cb721a6133ff91",
+      "family": "publisher_2010_counterpart",
+      "semantic": true
+    },
+    {
+      "name": "Sample4.pub",
+      "byte_len": 72192,
+      "sha256": "42195f7ad23d911219fea3ec88e66e867e9b9a6821a16dd1b535e2aa9d57a11b",
+      "family": "non_text_structural_control",
+      "semantic": true
+    },
+    {
+      "name": "Sample4_2010.pub",
+      "byte_len": 72704,
+      "sha256": "544e2043f91aed664c0a09f9ae45da42291b6730f107f99f3cdf9462ed38fb02",
+      "family": "publisher_2010_counterpart",
+      "semantic": true
+    },
+    {
+      "name": "Sample98.pub",
+      "byte_len": 61440,
+      "sha256": "8912f295ff0cd1f55b873b3b98a182218f33c420877e025d2f0fd795f12dd0c0",
+      "family": "version_chain_publisher_98",
+      "semantic": true
+    },
+    {
+      "name": "SampleBrochure.pub",
+      "byte_len": 161792,
+      "sha256": "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87",
+      "family": "complex_escher",
+      "semantic": true
+    },
+    {
+      "name": "SampleNewsletter.pub",
+      "byte_len": 291840,
+      "sha256": "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf",
+      "family": "complex_escher_quill",
+      "semantic": true
+    },
+    {
+      "name": "Sample_2010.pub",
+      "byte_len": 72704,
+      "sha256": "f0a90aa566d72eb822eb48b4f378c33007610e35f3f1b999cdb88f2c9683858b",
+      "family": "publisher_2010_counterpart",
+      "semantic": true
+    },
+    {
+      "name": "Simple.pub",
+      "byte_len": 65536,
+      "sha256": "2606f530052a818c7949b88c9bf245dbc0a74ddc6b5a60004f37b387fe4b955d",
+      "family": "simple_quill",
+      "semantic": true
+    },
+    {
+      "name": "clusterfuzz-testcase-minimized-POIHPBFFuzzer-4701121678278656.pub",
+      "byte_len": 331491,
+      "sha256": "07b48fcd8a3b85a83b054ea9722352d5269591d2482fb710002794da49f48b26",
+      "family": "robustness_adversarial",
+      "semantic": false
+    }
+  ]
+}
