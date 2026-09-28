@@ -296,6 +296,21 @@ mod tests {
     }
 
     #[test]
+    fn mobile_failure_diagnostics_preserve_shared_not_pub_for_plain_text() {
+        let diagnostic = mobile_failure_diagnostic_json(b"plain text is not a Publisher document")
+            .expect("plain text diagnostic");
+
+        let json: serde_json::Value =
+            serde_json::from_str(&diagnostic).expect("valid shared failure diagnostic JSON");
+        assert_eq!(
+            json["schema_version"],
+            "chaptera-viewer-failure-report/v0.1"
+        );
+        assert_eq!(json["envelope"]["intake_class"], "not_pub");
+        assert!(json.get("admission").is_none());
+    }
+
+    #[test]
     fn mobile_failure_diagnostics_do_not_reparse_policy_rejected_cfb() {
         let two_streams = cfb_fixture(&[("A", b"x"), ("B", b"y")]);
         let diagnostic = mobile_failure_diagnostic_json_with_policy(
