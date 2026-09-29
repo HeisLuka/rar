@@ -204,7 +204,9 @@ jobs:
           }
 
           Stop-Process -Id $a.Id -Force
-          Wait-Process -Id $a.Id
+          if (-not $a.WaitForExit(10000)) {
+            throw "activation A did not terminate after Stop-Process"
+          }
           Start-Sleep -Milliseconds 250
           $b.Refresh()
           if ($b.HasExited) {
