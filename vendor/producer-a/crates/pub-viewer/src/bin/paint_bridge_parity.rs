@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 use std::{env, fs, io::Cursor};
 
 fn main() -> Result<()> {
-    let path = env::args()\n        .nth(1)\n        .context("usage: paint_bridge_parity <file.pub>")?;
+    let path = env::args()
+        .nth(1)
+        .context("usage: paint_bridge_parity <file.pub>")?;
     let bytes = fs::read(&path).with_context(|| format!("read {path}"))?;
 
     let digest = Sha256::digest(&bytes);
