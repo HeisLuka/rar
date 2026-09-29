@@ -24,6 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
+          components: rustfmt, clippy
 
       - name: Rustfmt donor typography path
         run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -- --check
