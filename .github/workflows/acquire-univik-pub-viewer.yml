@@ -103,3 +103,59 @@ jobs:
           name: univik-pub-viewer-acquisition
           path: out/
           retention-days: 7
+
+
+  static-inno-extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Install static Inno extractor
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y innoextract
+
+      - name: Download exact current installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/inno-extracted
+
+          curl -L --fail --retry 3             -A "Mozilla/5.0 (X11; Linux x86_64)"             -o out/setup-pub-viewer.exe             https://univik.com/dl/setup-pub-viewer.exe
+
+          actual="$(sha256sum out/setup-pub-viewer.exe | awk '{print $1}')"
+          expected="85e7f3de571ad19457ab4d222799892e9b957fe3a8fa3a39d8edffa1db3e16a9"
+          printf '%s  setup-pub-viewer.exe\n' "$actual" > out/SHA256SUMS-linux.txt
+          test "$actual" = "$expected"
+
+      - name: Extract Inno payload without executing installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          innoextract -d out/inno-extracted out/setup-pub-viewer.exe | tee out/innoextract.log
+
+          find out/inno-extracted -type f -print0 |
+            sort -z |
+            xargs -0 -r sha256sum > out/inno-file-hashes.txt
+
+          find out/inno-extracted -type f             \( -iname '*aspose*' -o -iname '*pub*' -o -iname '*publisher*' -o -iname '*.dll' -o -iname '*.exe' \)             -printf '%p\t%s\n' |
+            sort > out/inno-notable-files.txt
+
+          while IFS= read -r -d '' file; do
+            printf '===== %s =====\n' "$file"
+            file "$file" || true
+            strings -a -n 7 "$file" |
+              grep -E -i 'Aspose(\.PUB|\.Pub)?|libmspub|librevenge|writerperfect|LibreOffice|OpenOffice|Publisher|PUB Viewer|Univik|4n6' |
+              head -n 200 || true
+          done < <(find out/inno-extracted -type f \( -iname '*.dll' -o -iname '*.exe' \) -print0)             > out/binary-marker-scan.txt
+
+          cat out/inno-notable-files.txt
+          cat out/binary-marker-scan.txt
+
+      - name: Upload static Inno evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: univik-pub-viewer-inno-static
+          path: out/
+          retention-days: 7
