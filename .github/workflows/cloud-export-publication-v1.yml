@@ -29,9 +29,9 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: Run publication store tests
-        run: cargo test -p chaptera-server export_publication::
+        run: 'cargo test -p chaptera-server export_publication::'
       - name: Run export executor tests
-        run: cargo test -p chaptera-server export_executor::
+        run: 'cargo test -p chaptera-server export_executor::'
       - name: Build chaptera server
         run: cargo build -p chaptera-server
       - name: Verify migration v10
