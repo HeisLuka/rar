@@ -15,6 +15,7 @@ chaptera-layout-projection={path="../../../../crates/chaptera-layout-projection"
 chaptera-scene-instance={path="../../../../crates/chaptera-scene-instance",optional=true}
 pub-layout={path="../pub-layout"}
 pub-model={path="../pub-model"}
+pub-paint-bridge={path="../../../../crates/pub-paint-bridge"}
 pub-presentation-profile={path="../../../../crates/pub-presentation-profile",default-features=false}
 pub-reader={path="../pub-reader"}
 serde.workspace=true
