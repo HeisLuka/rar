@@ -31,11 +31,11 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: Run Blob GC tests
-        run: cargo test -p chaptera-server blob_gc::
+        run: 'cargo test -p chaptera-server blob_gc::'
       - name: Run durable blob metadata fence regressions
         run: cargo test -p chaptera-server --test sqlite_blob_metadata -- --nocapture
       - name: Run migration ownership regressions
-        run: cargo test -p chaptera-server schema_migration::
+        run: 'cargo test -p chaptera-server schema_migration::'
       - name: Build operator binary
         run: cargo build -p chaptera-server
       - name: Prove migration chain through GC fence v12
