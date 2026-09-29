@@ -1,0 +1,176 @@
+name: Acquire Univik PUB Viewer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/acquire-univik-pub-viewer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+
+          curl.exe -L --fail --retry 3 `
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" `
+            -D out/headers.txt `
+            -o out/setup-pub-viewer.exe `
+            https://univik.com/dl/setup-pub-viewer.exe
+
+          $item = Get-Item out/setup-pub-viewer.exe
+          if ($item.Length -lt 1024) {
+            throw "Downloaded file too small"
+          }
+
+          $magic = [System.IO.File]::ReadAllBytes($item.FullName)[0..1]
+          if ($magic[0] -ne 0x4d -or $magic[1] -ne 0x5a) {
+            throw "Downloaded payload is not an MZ executable"
+          }
+
+      - name: Inspect installer
+        shell: pwsh
+        run: |
+          $path = (Resolve-Path out/setup-pub-viewer.exe).Path
+          $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sig  = Get-AuthenticodeSignature $path
+          $vi   = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
+          $item = Get-Item $path
+
+          [ordered]@{
+            source_url        = "https://univik.com/dl/setup-pub-viewer.exe"
+            acquired_utc      = (Get-Date).ToUniversalTime().ToString("o")
+            size_bytes        = $item.Length
+            sha256            = $hash
+            signature_status  = [string]$sig.Status
+            signer_subject    = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { $null }
+            signer_thumbprint = if ($sig.SignerCertificate) { $sig.SignerCertificate.Thumbprint } else { $null }
+            file_version      = $vi.FileVersion
+            product_version   = $vi.ProductVersion
+            product_name      = $vi.ProductName
+            company_name      = $vi.CompanyName
+          } |
+            ConvertTo-Json |
+            Set-Content -Encoding UTF8 out/manifest.json
+
+          "$hash  setup-pub-viewer.exe" |
+            Set-Content -Encoding ASCII out/SHA256SUMS.txt
+
+          Get-Content out/manifest.json
+
+      - name: Extract package
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path out/extracted | Out-Null
+
+          7z.exe x -y `
+            "-oout/extracted" `
+            out/setup-pub-viewer.exe
+
+          Get-ChildItem out/extracted -Recurse -File |
+            Where-Object {
+              $_.Name -match "Aspose|PUB|Publisher|\.dll$|\.exe$"
+            } |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize |
+            Out-String -Width 4096 |
+            Set-Content out/notable-files.txt
+
+          Get-ChildItem out/extracted -Recurse -File |
+            ForEach-Object {
+              [pscustomobject]@{
+                Path   = $_.FullName.Substring((Resolve-Path out/extracted).Path.Length + 1)
+                Length = $_.Length
+                SHA256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              }
+            } |
+            Sort-Object Path |
+            ConvertTo-Json -Depth 3 |
+            Set-Content -Encoding UTF8 out/extracted-file-hashes.json
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: univik-pub-viewer-acquisition
+          path: out/
+          retention-days: 7
+
+
+  static-inno-extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Build patched static Inno extractor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          sudo apt-get update
+          sudo apt-get install -y             build-essential             cmake             git             libboost-date-time-dev             libboost-filesystem-dev             libboost-iostreams-dev             libboost-program-options-dev             libboost-system-dev             libbz2-dev             liblzma-dev             zlib1g-dev
+
+          git clone --filter=blob:none https://github.com/dscharrer/innoextract.git innoextract-tool
+          git -C innoextract-tool fetch origin pull/214/head
+          git -C innoextract-tool checkout 4bbe109f18419a3c68faeb013d7ae67330a4296c
+
+          cmake -S innoextract-tool -B innoextract-tool/build             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTS=OFF             -DRUN_TESTS=OFF
+          cmake --build innoextract-tool/build --parallel 2
+
+          extractor="$(find innoextract-tool/build -type f -name innoextract -perm -111 | head -n 1)"
+          test -n "$extractor"
+          "$extractor" --version | tee out/innoextract-version.txt
+          printf '%s\n' "$extractor" > out/innoextract-path.txt
+
+      - name: Download exact current installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/inno-extracted
+
+          curl -L --fail --retry 3             -A "Mozilla/5.0 (X11; Linux x86_64)"             -o out/setup-pub-viewer.exe             https://univik.com/dl/setup-pub-viewer.exe
+
+          actual="$(sha256sum out/setup-pub-viewer.exe | awk '{print $1}')"
+          expected="85e7f3de571ad19457ab4d222799892e9b957fe3a8fa3a39d8edffa1db3e16a9"
+          printf '%s  setup-pub-viewer.exe\n' "$actual" > out/SHA256SUMS-linux.txt
+          test "$actual" = "$expected"
+
+      - name: Extract Inno payload without executing installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          extractor="$(cat out/innoextract-path.txt)"
+          "$extractor" -d out/inno-extracted out/setup-pub-viewer.exe | tee out/innoextract.log
+
+          find out/inno-extracted -type f -print0 |
+            sort -z |
+            xargs -0 -r sha256sum > out/inno-file-hashes.txt
+
+          find out/inno-extracted -type f             \( -iname '*aspose*' -o -iname '*pub*' -o -iname '*publisher*' -o -iname '*.dll' -o -iname '*.exe' \)             -printf '%p\t%s\n' |
+            sort > out/inno-notable-files.txt
+
+          while IFS= read -r -d '' file; do
+            printf '===== %s =====\n' "$file"
+            file "$file" || true
+            strings -a -n 7 "$file" |
+              grep -E -i 'Aspose(\.PUB|\.Pub)?|libmspub|librevenge|writerperfect|LibreOffice|OpenOffice|Publisher|PUB Viewer|Univik|4n6' |
+              head -n 200 || true
+          done < <(find out/inno-extracted -type f \( -iname '*.dll' -o -iname '*.exe' \) -print0)             > out/binary-marker-scan.txt
+
+          cat out/inno-notable-files.txt
+          cat out/binary-marker-scan.txt
+
+      - name: Upload static Inno evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: univik-pub-viewer-inno-static
+          path: out/
+          retention-days: 7
