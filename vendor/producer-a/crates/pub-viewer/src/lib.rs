@@ -40,8 +40,8 @@ use pub_reader::build_mature_0x2c_cmo_projection_bridge_v1;
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
-    PubFamilyClassification, PubFamilyConfidence, PubFamilyProfile, PubFamilyReason, PubReaderRoute,
-    classify_failure_candidate, classify_pub_family, exact_file_intake_eligible,
+    PubFamilyClassification, PubFamilyConfidence, PubFamilyProfile, PubFamilyReason,
+    PubReaderRoute, classify_failure_candidate, classify_pub_family, exact_file_intake_eligible,
 };
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
