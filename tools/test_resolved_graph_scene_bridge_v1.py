@@ -156,6 +156,47 @@ class ResolvedGraphSceneBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ResolvedGraphSceneError, "differs"):
             compare_viewer_and_adapter_scene(broken, scene)
 
+    def test_explicit_page_slice_matches_viewer_without_changing_raw_default(self):
+        value = graph()
+        second_page = "20000000-0000-4000-8000-000000000002"
+        second_node = "10000000-0000-4000-8000-000000000002"
+        value["document"]["pages"].append(second_page)
+        value["pages"][second_page] = {
+            "id": second_page,
+            "size": {"width": 914400, "height": 1828800},
+            "bleed": None,
+            "margins": None,
+            "children": [second_node],
+        }
+        value["nodes"][second_node] = {
+            "header": {
+                "id": second_node,
+                "parent_id": second_page,
+                "bounds": {"x": 10, "y": 20, "width": 30, "height": 40},
+                "transform": {
+                    "a": "1", "b": "0", "c": "0", "d": "1",
+                    "tx": 0, "ty": 0,
+                },
+                "source_refs": [],
+            },
+            "payload": {"story_frame": None},
+        }
+
+        raw = project_resolved_graph_scene(value)
+        selected = project_resolved_graph_scene(value, page_ids=[PAGE_ID])
+
+        self.assertEqual(2, len(raw["surfaces"]))
+        self.assertEqual({PAGE_ID, second_page}, {item["origin"] for item in raw["surfaces"]})
+        self.assertEqual(2, len(raw["nodes"]))
+
+        self.assertEqual([PAGE_ID], [item["origin"] for item in selected["surfaces"]])
+        self.assertEqual([NODE_ID], [item["origin"] for item in selected["nodes"]])
+        self.assertEqual(
+            [{"authoring_origin": NODE_ID, "resolved_node_origin": NODE_ID}],
+            selected["origin_mapping"],
+        )
+
+
     def test_typed_cmo_context_withholds_carrier_until_slot_flow(self):
         scene = project_resolved_graph_scene(
             graph(),

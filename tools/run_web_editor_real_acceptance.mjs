@@ -23,7 +23,11 @@ const CANONICAL_OPERATION_ID = "9c2f8d5e-3f1b-4a57-9d40-6a7e2c11b002";
 const BEFORE = { x: 526710, y: 1191292, width: 4436165, height: 587274 };
 const AFTER = { x: 653710, y: 1445292, width: 4436165, height: 587274 };
 const EMU_PER_CSS_PX = 12700;
-const TARGET_PAN_Y_CSS_PX = -2600;
+const SAMPLE_NEWSLETTER_PAGE_HEIGHT_EMU = 10692000;
+const TARGET_PAGE_ORDER = 2;
+const TARGET_PAGE_GAP_CSS_PX = 32;
+const TARGET_PAN_Y_CSS_PX =
+  -TARGET_PAGE_ORDER * (SAMPLE_NEWSLETTER_PAGE_HEIGHT_EMU / EMU_PER_CSS_PX + TARGET_PAGE_GAP_CSS_PX);
 
 function canonicalJson(value) {
   if (Array.isArray(value)) {

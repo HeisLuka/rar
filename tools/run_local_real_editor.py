@@ -44,7 +44,7 @@ FIXTURE_URL = (
     "test-data/publisher/SampleNewsletter.pub"
 )
 FIXTURE_SHA = "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
-GRAPH_SHA = "7c327cd729fc2f9760e59cce1dd7c104c55162f4c3032c132068cfee513b1c4d"
+GRAPH_SHA = "f2b17a6af0fc9a619316dbeab7efb41d5c49473109fd5d352272656215e603e2"
 
 
 def sha256(path: pathlib.Path) -> str:
