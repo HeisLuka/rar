@@ -1,0 +1,40 @@
+# Residual safe branch GC wave 2 — 2026-09-29
+# Inclusion requires exact current tip SHA plus one of:
+# - merged PR head already on main;
+# - exact superseded predecessor with merged successor;
+# - execution/provenance-only branch whose result is durably recorded elsewhere.
+# Runtime guard rechecks default/current/open-PR heads and exact SHA before deletion.
+# Candidate count: 21
+
+# Fresh Reader/Desktop heads now merged to main.
+reader-active-content-inert-01a-v2 2c755f523284249ace580add766fca4aab0f9a88  # PR #1259 merged
+reader-desktop-resume-01b-v1 7caf59f42afe9692cf75840399598c7e4f99b2c6  # PR #1255 merged
+reader-desktop-open-state-01b-v2 6901579aac8006b66707c368d546c3d9ad7f86e4  # PR #1254 merged
+reader-desktop-resume-01a-v2 6845e1d40c0be347f5b745ba2dc7cd00e5e0179f  # PR #1253 merged
+desktop-pub-sandbox-win-01a-protocol-v2 582c059ac4e3c466eb0491b26d4e993108d29832  # PR #1260 merged
+
+# Exact predecessors superseded by those merged fresh-main replays.
+reader-active-content-inert-01a-v1 0b5772e0384e8faf41f97185d18bc662d87d3f0f  # PR #1256 -> merged #1259
+reader-desktop-resume-01a-v1 1bd7e9da14dd06871921f7fe5edc4f6881fb52f6  # PR #1234 -> merged #1253
+desktop-pub-sandbox-win-01a-protocol-v1 29f08e002e57bfa0c96d62e11c17507c2871efd0  # PR #1257 -> merged #1260
+
+# Completed cleanup/provenance heads.
+ops/postmerge-residual-gc-20260929 01197c7d67cc1b33ea427a50fd9ab1569c706fe1  # PR #1252 merged
+ops/completed-tail-gc-20260929 359d9587b51445acd3986433419c6b86c93b7d4e  # PR #1258 execution-only; receipt recorded
+
+# Explicit duplicate/temporary/execution-only historical heads.
+desktop-thumbnail-cache-type-main-v1 d5ece74a407ef7aa11154c378542ee1731dc5e56  # PR #1000 duplicate; canonical #989 merged
+package-mobile-reader-test-bundle-01 2d4df3f28e9392d70113870f128acb5d4aa2ff2d  # PR #1100 temporary packaging only
+viewer-typography-default-inherit-01-v3 1a38ff113ac2e80d18d055ba696d9f6c3826e46e  # PR #871 execution-only; result recorded in Notion
+
+# Visual evidence stack classified in Notion as superseded/provenance.
+chaptera-golden-model-samplenewsletter-v1 17a815063b61cd02f7cfa30b51651e8c5dcd3a39  # PR #929; superseded by current typography chain
+chaptera-golden-model-fidelity-01 98d13e38314a9c9cdc7af2c120edd80033a0a26f  # PR #930; superseded by current typography chain
+chaptera-visual-corpus-stand-01-v1 ebcd25651b08a2ec2db6d4476d8e9618b71eaf8e  # PR #934 current branch tip; superseded visual predecessor
+chaptera-visual-iteration-02-v1 739a2df31cf92daaf430980323935f153da4a240  # PR #937; superseded by shared layout/render authority
+
+# Carlton predecessors with canonical successors already merged.
+carlton-viewer-presentation-consumer-01-v1 551e176569953d6f2029fc619886073a00296322  # PR #1081 -> merged #1082
+carlton-reader-visual-golden-01-v1 20c28d104b5248632f1bfaff24ced0b2b4bafe31  # PR #1092 -> merged #1097
+carlton-cmo-identity-bridge-01-v1 9b9e889c712bf9493e54b088f5666c4356d1db5e  # PR #1104; full Cmo compose merged #1221
+carlton-cmo-identity-bridge-01-v2 cbb0c3caca2445ed648c5e920371841b1504537b  # PR #1108; full Cmo compose merged #1221
