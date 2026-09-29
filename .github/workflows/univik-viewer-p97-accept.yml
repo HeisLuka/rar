@@ -139,15 +139,126 @@ jobs:
           $exe | Set-Content out/viewer-exe-path.txt
           Get-FileHash $exe -Algorithm SHA256 | Format-List | Out-String | Set-Content out/viewer-exe-hash.txt
 
-      - name: Launch exact P97 fixture and capture bounded UI evidence
+      - name: Open exact P97 fixture through Viewer UI and capture bounded evidence
         shell: pwsh
         continue-on-error: true
         run: |
           $exe=Get-Content out/viewer-exe-path.txt
           $pub=(Resolve-Path out/OPNHOUS.PUB).Path
-          $proc=Start-Process -FilePath $exe -ArgumentList ('"' + $pub + '"') -PassThru
+          $proc=Start-Process -FilePath $exe -PassThru
           "pid=$($proc.Id)" | Set-Content out/runtime.txt
           "launch_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content out/runtime.txt
+
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+          Add-Type -AssemblyName System.Windows.Forms
+
+          $deadline=(Get-Date).AddSeconds(15)
+          do {
+            Start-Sleep -Milliseconds 500
+            $proc.Refresh()
+          } while (-not $proc.HasExited -and $proc.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
+
+          if ($proc.HasExited -or $proc.MainWindowHandle -eq 0) {
+            "open_ui=main_window_missing" | Set-Content out/ui-open.txt
+          } else {
+            $root=[System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+            $buttons=$root.FindAll(
+              [System.Windows.Automation.TreeScope]::Descendants,
+              [System.Windows.Automation.Condition]::TrueCondition
+            )
+            $openButton=$null
+            for($i=0;$i -lt $buttons.Count;$i++) {
+              $e=$buttons.Item($i)
+              try {
+                if ($e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                    $e.Current.Name -eq 'Open PUB File' -and $e.Current.IsEnabled) {
+                  $openButton=$e
+                  break
+                }
+              } catch {}
+            }
+            if (-not $openButton) {
+              "open_ui=open_button_not_found" | Set-Content out/ui-open.txt
+            } else {
+              $invoke=$openButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+              $invoke.Invoke()
+              "open_ui=open_button_invoked" | Set-Content out/ui-open.txt
+
+              $dialog=$null
+              $deadline=(Get-Date).AddSeconds(10)
+              do {
+                Start-Sleep -Milliseconds 500
+                $windows=[System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                  [System.Windows.Automation.TreeScope]::Children,
+                  [System.Windows.Automation.Condition]::TrueCondition
+                )
+                for($w=0;$w -lt $windows.Count;$w++) {
+                  $candidate=$windows.Item($w)
+                  try {
+                    if ($candidate.Current.ProcessId -eq $proc.Id -and
+                        $candidate.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and
+                        $candidate.Current.NativeWindowHandle -ne $proc.MainWindowHandle) {
+                      $dialog=$candidate
+                      break
+                    }
+                  } catch {}
+                }
+              } while (-not $dialog -and (Get-Date) -lt $deadline)
+
+              if (-not $dialog) {
+                "dialog=not_found" | Add-Content out/ui-open.txt
+              } else {
+                "dialog_name=$($dialog.Current.Name)" | Add-Content out/ui-open.txt
+                $desc=$dialog.FindAll(
+                  [System.Windows.Automation.TreeScope]::Descendants,
+                  [System.Windows.Automation.Condition]::TrueCondition
+                )
+                $fileEdit=$null
+                $openDialogButton=$null
+                for($k=0;$k -lt $desc.Count;$k++) {
+                  $e=$desc.Item($k)
+                  try {
+                    if (-not $fileEdit -and
+                        $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+                        ($e.Current.AutomationId -eq '1148' -or $e.Current.Name -match '(?i)file name')) {
+                      $fileEdit=$e
+                    }
+                    if (-not $openDialogButton -and
+                        $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                        $e.Current.Name -match '^(?i)open$') {
+                      $openDialogButton=$e
+                    }
+                  } catch {}
+                }
+
+                if ($fileEdit) {
+                  try {
+                    $value=$fileEdit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                    $value.SetValue($pub)
+                    "file_path=set_via_valuepattern" | Add-Content out/ui-open.txt
+                  } catch {
+                    $fileEdit.SetFocus()
+                    [System.Windows.Forms.SendKeys]::SendWait($pub)
+                    "file_path=set_via_sendkeys" | Add-Content out/ui-open.txt
+                  }
+                }
+
+                if ($openDialogButton) {
+                  $openInvoke=$openDialogButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+                  $openInvoke.Invoke()
+                  "dialog_submit=invoke_open" | Add-Content out/ui-open.txt
+                } elseif ($fileEdit) {
+                  $fileEdit.SetFocus()
+                  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+                  "dialog_submit=enter" | Add-Content out/ui-open.txt
+                } else {
+                  "dialog_submit=no_filename_control" | Add-Content out/ui-open.txt
+                }
+              }
+            }
+          }
+
           Start-Sleep -Seconds 12
           $proc.Refresh()
           "has_exited=$($proc.HasExited)" | Add-Content out/runtime.txt
@@ -155,8 +266,7 @@ jobs:
             "main_window_handle=$($proc.MainWindowHandle)" | Add-Content out/runtime.txt
             "main_window_title=$($proc.MainWindowTitle)" | Add-Content out/runtime.txt
           }
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationTypes
+
           $rows=New-Object System.Collections.Generic.List[object]
           if (-not $proc.HasExited -and $proc.MainWindowHandle -ne 0) {
             $root=[System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
@@ -168,9 +278,9 @@ jobs:
           }
           $rows | ConvertTo-Json -Depth 3 | Set-Content -Encoding UTF8 out/uia-tree.json
           $rows | Format-Table -AutoSize | Out-String -Width 4096 | Set-Content out/uia-tree.txt
+
           try {
             Add-Type -AssemblyName System.Drawing
-            Add-Type -AssemblyName System.Windows.Forms
             $bounds=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
             $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
             $g=[System.Drawing.Graphics]::FromImage($bmp)
@@ -178,11 +288,19 @@ jobs:
             $bmp.Save((Join-Path (Resolve-Path out).Path 'screen.png'),[System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose()
           } catch { $_ | Out-String | Set-Content out/screenshot-error.txt }
+
           $names=($rows | ForEach-Object { $_.Name }) -join "\n"
           $verdict='not_comparable'
           if ($names -match '(?i)unsupported|cannot open|failed|error') { $verdict='rejection_observed' }
           elseif ($names -match '(?i)OPNHOUS|page\s*1|1\s*/\s*4|page\s*of') { $verdict='open_ui_observed' }
-          [ordered]@{verdict=$verdict;exact_fixture_sha256='0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c';expected_authoritative_pages=4;process_exited=$proc.HasExited;main_window_title=if(-not $proc.HasExited){$proc.MainWindowTitle}else{$null};note='Process/window evidence alone does not prove visual fidelity.'} | ConvertTo-Json | Set-Content -Encoding UTF8 out/verdict.json
+          [ordered]@{
+            verdict=$verdict
+            exact_fixture_sha256='0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c'
+            expected_authoritative_pages=4
+            process_exited=$proc.HasExited
+            main_window_title=if(-not $proc.HasExited){$proc.MainWindowTitle}else{$null}
+            note='UI-open evidence is admission/page-navigation evidence only; it does not prove visual fidelity.'
+          } | ConvertTo-Json | Set-Content -Encoding UTF8 out/verdict.json
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 
       - name: Record post-run registry state
