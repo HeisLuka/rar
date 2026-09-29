@@ -112,11 +112,14 @@ def project_for_scene(
     graph: dict[str, Any],
     project: dict[str, Any],
     projection_context: dict[str, Any],
+    *,
+    page_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     current_graph = apply_project_to_resolved_graph(graph, project)
     scene = project_resolved_graph_scene(
         current_graph,
         context=scene_supported_context(projection_context),
+        page_ids=page_ids,
     )
     return current_graph, scene
 
@@ -253,6 +256,18 @@ def main() -> int:
             )
         projection_context = sidecar["context"]
         projection_context_state = sidecar_state(sidecar)
+        viewer_pages = viewer.get("document", {}).get("pages")
+        if not isinstance(viewer_pages, list):
+            raise SampleNewsletterSceneEngineError(
+                "Viewer receipt document.pages must be an array"
+            )
+        viewer_page_ids = []
+        for index, page in enumerate(viewer_pages):
+            if not isinstance(page, dict) or not isinstance(page.get("id"), str):
+                raise SampleNewsletterSceneEngineError(
+                    f"Viewer receipt document.pages[{index}].id is required"
+                )
+            viewer_page_ids.append(page["id"])
         args.state_dir.mkdir(parents=True, exist_ok=True)
 
         if args.action == "baseline":
@@ -261,7 +276,12 @@ def main() -> int:
                     "baseline requires launcher-verified fixture"
                 )
             project = baseline_project(source_hash)
-            _, scene = project_for_scene(graph, project, projection_context)
+            _, scene = project_for_scene(
+                graph,
+                project,
+                projection_context,
+                page_ids=viewer_page_ids,
+            )
             equivalence = compare_viewer_and_adapter_scene(viewer, scene)
             candidate = move_candidate(
                 graph,
@@ -323,7 +343,12 @@ def main() -> int:
                     "commit does not match pinned Producer B MoveNode"
                 )
             result = append_operation(base_project, operation)
-            _, scene = project_for_scene(graph, result, projection_context)
+            _, scene = project_for_scene(
+                graph,
+                result,
+                projection_context,
+                page_ids=viewer_page_ids,
+            )
             (args.state_dir / REDO_STATE).write_text(
                 json.dumps(operation, sort_keys=True, separators=(",", ":")) + "\n",
                 encoding="utf-8",
@@ -377,7 +402,12 @@ def main() -> int:
                 operation = load_json(redo_path, "redo operation")
                 result["operations"] = list(copy.deepcopy(operations)) + [operation]
                 result["schema_version"] = "pub-editor-v0.4"
-            _, scene = project_for_scene(graph, result, projection_context)
+            _, scene = project_for_scene(
+                graph,
+                result,
+                projection_context,
+                page_ids=viewer_page_ids,
+            )
             return emit({
                 "resulting_project": result,
                 "scene_state": compact_scene_state(
@@ -398,7 +428,12 @@ def main() -> int:
         project = payload.get("project")
         if not isinstance(project, dict):
             raise SampleNewsletterSceneEngineError("replay project missing")
-        _, scene = project_for_scene(graph, project, projection_context)
+        _, scene = project_for_scene(
+                graph,
+                project,
+                projection_context,
+                page_ids=viewer_page_ids,
+            )
         return emit({
             "replayed_project": copy.deepcopy(project),
             "scene_state": compact_scene_state(
