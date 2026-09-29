@@ -8554,6 +8554,35 @@ mod tests {
             }
         }
 
+        let viewer_font_names = visual
+            .typography_runs
+            .iter()
+            .map(|run| run.source_font_name.clone())
+            .collect::<BTreeSet<_>>();
+        let precondition_receipt = serde_json::json!({
+            "schema": "chaptera.reader-embedded-font-precondition.v1",
+            "source_pub_sha256": source_sha256,
+            "source_font_name_expected": SOURCE_FONT_NAME,
+            "viewer_story_count": visual.document.stories.len(),
+            "viewer_story_frame_count": visual.story_frames.len(),
+            "viewer_text_fragment_count": visual.text_fragments.len(),
+            "viewer_typography_run_count": visual.typography_runs.len(),
+            "viewer_distinct_source_font_names": viewer_font_names,
+            "source_family_candidate_frames": source_family_candidate_frames,
+            "viewer_diagnostic_codes": visual
+                .document
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.clone())
+                .collect::<Vec<_>>(),
+        });
+        fs::write(
+            output_dir.join("reader-embedded-font-precondition.json"),
+            serde_json::to_vec_pretty(&precondition_receipt)
+                .expect("serialize embedded-font precondition receipt"),
+        )
+        .expect("write embedded-font precondition receipt");
+
         assert!(
             source_family_candidate_frames > 0,
             "current Reader must expose at least one exact Times New Roman source-owned frame"
