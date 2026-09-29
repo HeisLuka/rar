@@ -1,5 +1,6 @@
 import { del, get, list, put } from '@vercel/blob';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { SupportedCountry, SupportedLocale } from './i18n';
 
 export const CHECK_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -28,6 +29,8 @@ export type CheckRecord = {
   id: string;
   publicToken: string;
   email: string;
+  locale?: SupportedLocale;
+  country?: SupportedCountry;
   source: {
     url: string;
     pathname: string;
