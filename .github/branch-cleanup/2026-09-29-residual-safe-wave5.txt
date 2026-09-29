@@ -1,0 +1,10 @@
+# Residual safe branch GC wave 5 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 6
+
+ops/residual-gc-wave4-20260929 50bdbe23b1de8df4be5bea40a86294b6eeec85cd  # PR #1272 cleanup head; GC completed and PR closed unmerged
+local-oidc-provider-fixture-02 7a9761aa199dd6803008ec4c9536e5b4ec2f1d43  # PR #1096 donor; semantics replayed and merged via fresh-main #1102
+research/corpus-publisher2000-scsite-datafiles-01 2dec527c90aaec77d74e44f322c58077e0701f1d  # PR #754 bounded research locator; history retained as provenance
+research/corpus-publisher2000-course-tech-alt-datafiles-01 ca97601db766b933aa82ecf11b41597bbf830e0c  # PR #756 bounded research locator; history retained as provenance
+mob-reader-generic-pub-openwith-01-v1 1c013a2f76e83ab28c42503fd885edb762054989  # PR #1120 superseded by fresh-main #1261
+mob-reader-generic-pub-openwith-01-v2 863e4355c244a82f41ddf6eb2640db7a147af508  # PR #1261 merged to main
