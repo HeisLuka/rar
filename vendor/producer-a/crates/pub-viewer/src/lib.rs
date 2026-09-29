@@ -21,10 +21,15 @@ use pub_layout::{
 };
 pub use pub_layout::{BoundedLayoutEnvironment, BoundedResolvedScene};
 use pub_model::{
-    Affine2D, LengthEmu, NodeId, NodeKind, PageId, ResourceId, Sha256Digest, StoryFrame, StoryId,
+    Affine2D, AuthorityClass, LengthEmu, Node, NodeId, NodeKind, PageId, ReadConfidence,
+    ResourceId, Sha256Digest, SourceRole, StoryFrame, StoryId,
 };
 #[cfg(feature = "cmo-slot-compose")]
 use pub_model::{CanonicalId, RectEmu};
+use pub_paint_bridge::{
+    PubExplicitFillSourceV1, PubExplicitLineSourceV1, PubExplicitShapePaintSourceV1,
+    PubPaintSourceProvenanceV1, PubPaintSourceRoleV1, project_explicit_source_paint_to_viewer_v1,
+};
 use pub_presentation_profile::{
     CARLTON_PRESENTATION_INPUT_SCHEMA_V1, CarltonPageEvidenceV1, CarltonPresentationProfileInputV1,
     carlton_admitted_carrier_page_seq_nums_v1, reference_fixture_profile_known_v1,
@@ -40,9 +45,10 @@ pub use pub_reader::{
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
-    PubResolvedGraph, PubResolvedGraphBuild, PubSourceGraphBuild, analyze_mature_0x2c_page_roles,
-    build_failure_envelope, build_mature_0x2c_asset_export_bundle_from_bytes,
-    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
+    PubResolvedGraph, PubResolvedGraphBuild, PubResolvedNodePayload, PubSourceGraphBuild,
+    analyze_mature_0x2c_page_roles, build_failure_envelope,
+    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
+    derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -413,6 +419,61 @@ pub struct ViewerSolidLine {
     pub width_emu: i64,
 }
 
+fn viewer_node_paint_from_canonical_bridge(
+    node: &Node<PubResolvedNodePayload>,
+) -> Result<Option<ViewerNodePaint>> {
+    let source_ref = node.header.source_refs.iter().find(|source_ref| {
+        source_ref.path.as_deref() == Some("SpContainer/FOPT")
+            && source_ref.authority == AuthorityClass::Authoritative
+            && source_ref.confidence == Some(ReadConfidence::Exact)
+            && matches!(
+                source_ref.role,
+                SourceRole::Semantic | SourceRole::Projection
+            )
+    });
+    let Some(source_ref) = source_ref else {
+        return Ok(None);
+    };
+
+    let source = PubExplicitShapePaintSourceV1 {
+        fill: PubExplicitFillSourceV1 {
+            solid: node.payload.explicit_paint.fill.solid,
+            color_rgb: node.payload.explicit_paint.fill.color_rgb,
+            visible: node.payload.explicit_paint.fill.visible,
+        },
+        line: PubExplicitLineSourceV1 {
+            color_rgb: node.payload.explicit_paint.line.color_rgb,
+            width_emu: node.payload.explicit_paint.line.width_emu,
+            visible: node.payload.explicit_paint.line.visible,
+        },
+    };
+    let provenance = PubPaintSourceProvenanceV1 {
+        format: source_ref.format.clone(),
+        adapter_version: source_ref.adapter_version.clone(),
+        source_hash_hex: source_ref.source_hash.to_string(),
+        carrier: source_ref.carrier.clone(),
+        object_key: source_ref.object_key.clone(),
+        path: source_ref.path.clone(),
+        role: match source_ref.role {
+            SourceRole::Semantic => PubPaintSourceRoleV1::Semantic,
+            SourceRole::Projection => PubPaintSourceRoleV1::Projection,
+            _ => return Ok(None),
+        },
+    };
+
+    let projected = project_explicit_source_paint_to_viewer_v1(&source, provenance)
+        .map_err(|error| anyhow!("canonical paint bridge rejected Viewer node paint: {error:?}"))?;
+
+    Ok(projected.map(|paint| ViewerNodePaint {
+        node_id: node.header.id,
+        solid_fill_rgb: paint.solid_fill_rgb,
+        solid_line: paint.solid_line.map(|line| ViewerSolidLine {
+            rgb: line.rgb,
+            width_emu: line.width_emu,
+        }),
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewerStoryFrame {
     pub story_id: StoryId,
@@ -587,32 +648,10 @@ pub fn open_mature_0x2c_geometry(
         .graph
         .nodes
         .values()
-        .filter_map(|node| {
-            let paint = &node.payload.explicit_paint;
-            let solid_fill_rgb = (paint.fill.solid && paint.fill.visible == Some(true))
-                .then_some(paint.fill.color_rgb)
-                .flatten();
-            let solid_line = match (
-                paint.line.visible,
-                paint.line.color_rgb,
-                paint.line.width_emu,
-            ) {
-                (Some(true), Some(rgb), Some(width_emu)) if width_emu > 0 => {
-                    Some(ViewerSolidLine { rgb, width_emu })
-                }
-                _ => None,
-            };
-
-            if solid_fill_rgb.is_none() && solid_line.is_none() {
-                None
-            } else {
-                Some(ViewerNodePaint {
-                    node_id: node.header.id,
-                    solid_fill_rgb,
-                    solid_line,
-                })
-            }
-        })
+        .map(viewer_node_paint_from_canonical_bridge)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect::<Vec<_>>();
 
     let story_frames = projection
