@@ -1,0 +1,59 @@
+# Stale explicit-obsolete branch GC — 2026-09-29
+# Inclusion: >72h old, no open PR, current tip exactly equals a closed non-merged PR head,
+# and that PR explicitly marks the work execution-only / superseded / obsolete / do-not-merge / provenance-only.
+# Format: <branch> <expected_sha>  # evidence
+# Candidate count: 53
+
+chore/chaptera-server-schema-rustfmt-20260925 b161fbf1654db96dca8d6d9ad348edbb1ba7c5c8  # PR #645; title-superseded
+ci-rust-1-98-clippy-fix-01 5ef19cad31bd09d64bc737611ffe817ce7473f14  # PR #354; body-explicit
+feat/authoring-hyperlink-v1 04943465ca81a5b9b2b631f6516cbc3a21cdc9fc  # PR #330; body-explicit
+fidelity-reference-pdf-01-v1 52355e2d4a8d881c811f920583cfcc43236e8a39  # PR #103; body-explicit
+layout-prepared-paragraph-01 5a906409a13b3d1f31f654aec95ccf027cac8a9a  # PR #239; body-explicit
+ops/corpus-cfb-physical-lineage-exec-20260924 63f60ea799a26bea99f4b96b36bbc6694eccad11  # PR #267; body-explicit
+ops/corpus-cfb-physical-lineage-exec-r2-20260924 f5fe3eef25c3be9768f02cdab5c572bef8d81f63  # PR #271; body-explicit
+ops/corpus-cfb-physical-lineage-exec-r3-20260924 4d2ef99c0f8a11c0e5f1f86e3fcffa6637026051  # PR #274; body-explicit
+ops/corpus-lineage-rank-exec-20260924 cf3962864681ec741722bb030c50554239428397  # PR #256; body-explicit
+ops/corpus-lineage-rank-exec-r2-20260924 1a627f281b638757933cb180f590b26b40a292ab  # PR #258; body-explicit
+ops/corpus-novelty-delta129-exec-20260924 fff9ee010a8f3ccdd0e8508411aa6fd17ae0a314  # PR #217; body-explicit
+ops/corpus-novelty-delta407-exec-20260924 960b91a62362f1323f5055a19008bba442849964  # PR #216; body-explicit
+ops/corpus-novelty-phase2-exec-20260924 f69fa0f976463a37e645abe20fb00c91395bc18c  # PR #188; body-explicit
+ops/corpus-physical-dup-classify-exec-20260925 614a1040b3feefcfab89edd42dd7fdb0b5ebdb38  # PR #290; body-explicit
+research/4n6-pub-prov-01 b7602b4969477dea864009c03ca5e3d2fc5446c9  # PR #563; body-explicit
+research/corpus-new-pub-docstore-ramble-01 10f1a25cb42a3700403a4eb3a4ec19e424882c10  # PR #613; body-explicit
+research/corpus-new-pub-docstore-tguide-01 f012153f6b73ada463074b111a704ae2551984b3  # PR #641; body-explicit
+research/corpus-new-pub-edu-gov-01 257d99b3d070170e91292332ba72297f42655511  # PR #570; body-explicit
+research/corpus-new-pub-edu-live-01 30fe7ca54665d3831dcf8df19a5edfb8492b961c  # PR #611; body-explicit
+research/corpus-new-pub-edu-live-batch-02 9cfe309e109814010648b619d6e32dbd1f4493f1  # PR #614; body-explicit
+research/corpus-new-pub-edu-uncw-01 d1ff4c766864e9b735efe8d864b935b333885866  # PR #607; body-explicit
+research/corpus-new-pub-live-batch-03 116169ce9f722e5faf4c0611ffee6bdc7c2ad682  # PR #615; body-explicit
+research/corpus-new-pub-runningoffice2000-publish-01 5b3bcd1b662a3a17bdddf4ad70a6e713fd21c2fa  # PR #634; body-explicit
+research/corpus-new-pub-training-2000-hrefs-01 b5e26ddcb97129af55b884ffc06714135e199822  # PR #608; body-explicit
+research/corpus-new-pub-training-2000-locator-01 4d038361347bdfb72a281037818505fe4dc47404  # PR #601; body-explicit
+research/corpus-new-pub-training-intuit-xp-recovery-01 849c36e42b15e6bd07d6a2cf1b3f799f25ce7a2a  # PR #646; body-explicit
+research/corpus-new-pub-training-office2000-href-01 084aaf55fc99f38d42d57b5238fe077a4c2df9a7  # PR #624; body-explicit
+research/corpus-new-pub-training-officexp-iso-scan-01 17bfd7319f5fcadb2cd961b3d3d40d5066b7b479  # PR #648; body-explicit
+research/corpus-new-pub-training-officexp-sbs-01 3aa1a2b32a14ef09f674d1b8b18198fcb76b4182  # PR #612; body-explicit
+research/corpus-new-pub-training-oreilly-isbn12945-01 cb13372ed54bf09c2907dd6688ab03da8fc4948b  # PR #688; body-explicit
+research/corpus-new-pub-version-labelled-01 e805c8aaf83cd4b193cb778c45d61549ca8d23a4  # PR #568; body-explicit
+research/corpus-office2000-8in1-sbs-locator-01 4f1f251a353ae56527070b49917e3378ee249b76  # PR #712; body-explicit
+research/corpus-oreilly-isbn12945-html-01 17c6501b7f3dd834e697c0c7b3d9f486038feb64  # PR #703; body-explicit
+research/corpus-p2000-sbs-mspress-links-02 7c48599b7231139e62261926b798763fea4ec1ff  # PR #742; body-explicit
+research/corpus-producer-major-dsi-positive-01 5d973edf81eb1f80135ffe0c5f59c03b6e66da47  # PR #502; body-explicit
+research/corpus-pspp-page-links-02 634a5fec23d3564a6c27975cfea267f2136e63c2  # PR #725; body-explicit
+research/corpus-pspp-second-level-03 fdff4572d5fc97846776bdf1e0a9cd8836f0d962  # PR #739; body-explicit
+research/corpus-pspp-training-kit-locator-01 f7b2653051d5da33ccb89ea1ca0a59236bd1664d  # PR #710; body-explicit
+research/corpus-publisher2000-quickcourse-locator-01 4844ac77867d31df0893efcf41281492ede0136c  # PR #707; body-explicit
+research/corpus-publisher2000-sbs-locator-01 784154fcac5c5928a0e66cbd196a7d5d1d3a680d  # PR #715; body-explicit
+research/corpus-rev20-provenance-01 a312ea88e5fc3f060baea4387ed911eb74e4b2f8  # PR #514; body-explicit
+research/corpus-xver-marker23-95-97-variants-01 45241a3bec287fd0e29939d1ffd27a326aa08fa7  # PR #471; body-explicit
+research/media-o12-shellnew-mspub-01 01ee3cf0719a5dde2f474da1415f3aa6b9df8c5d  # PR #516; body-explicit
+research/media-o14-shellnew-mspub-01 d6f8b347a3cc14064fb9cbca6e4433ceb2aeb92b  # PR #517; body-explicit
+research/media-o16-shellnew-mspub-01 0fd8cbe6e05c109a40ea96044ae5ebecaca99da8  # PR #526; body-explicit
+research/publisher-rescue-prov-01 265ffcde32742364cb640502bc6b00b9c26d3e5a  # PR #558; body-explicit
+research/publisher-rescue-prov-01-inner 9d37d59966d8fa59aafc219a294d4f3c06db5c9b  # PR #561; body-explicit
+research/pubwiz-poc-p2002-xml-semantic-01 fc64b7246387ed874132f88d7d114e001d155540  # PR #521; body-explicit
+research/pubwiz-poc-xml-semantic-01-v2 68c961efa281db52ef9122be30d4ddd50db2a2a2  # PR #546; body-explicit
+research/univik-prov-01 0ae73d47d2c06f729914cee296963a208accaa2c  # PR #571; body-explicit
+research/vivadesigner-9232-9241-delta-01 033cf93358915ae4e105945920057c39fba66361  # PR #553; body-explicit
+research/vivadesigner-prov-01 7a8279ef203c2f4d42df78be124cdebd18a47f4d  # PR #544; body-explicit
+web-acceptance-real-ci 5d26f5c9c1b26039a914bab5affdf3042e253d51  # PR #373; body-explicit
