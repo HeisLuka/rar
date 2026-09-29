@@ -310,6 +310,117 @@ fn real_installed_reader_update_rollback_cycle() {
 
 
 #[cfg(windows)]
+fn wait_for_process_exit(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> Option<std::process::ExitStatus> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait().expect("poll Reader process") {
+            Some(status) => return Some(status),
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            None => return None,
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn real_installed_reader_restart_manager_quiesces_two_live_processes() {
+    let Some(root) = std::env::var_os("CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT").map(PathBuf::from)
+    else {
+        eprintln!("installed Restart Manager acceptance skipped: CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT unset");
+        return;
+    };
+    let fixture = PathBuf::from(
+        std::env::var_os("CHAPTERA_UPDATE_ACCEPT_PUB")
+            .expect("CHAPTERA_UPDATE_ACCEPT_PUB must accompany install root"),
+    );
+    let reader = root.join("current").join("chaptera-reader.exe");
+    assert!(reader.is_file(), "installed Reader executable missing");
+
+    let original_pub = fs::read(&fixture).expect("read source PUB before live Reader launch");
+
+    let mut first = Command::new(&reader)
+        .arg(&fixture)
+        .spawn()
+        .expect("launch first installed Reader");
+    let mut second = Command::new(&reader)
+        .arg(&fixture)
+        .spawn()
+        .expect("launch second installed Reader");
+
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        first.try_wait().expect("poll first Reader").is_none(),
+        "first Reader exited before quiesce"
+    );
+    assert!(
+        second.try_wait().expect("poll second Reader").is_none(),
+        "second Reader exited before quiesce"
+    );
+    assert_ne!(first.id(), second.id(), "two Reader activations reused one PID");
+
+    let report = chaptera_update_orchestrator::windows_restart_manager::quiesce_file_resource(
+        &reader,
+    )
+    .expect("Restart Manager must gracefully quiesce installed Reader processes");
+
+    let affected = report
+        .before
+        .iter()
+        .map(|process| process.pid)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        affected.contains(&first.id()),
+        "Restart Manager did not account for first Reader PID {}: {:?}",
+        first.id(),
+        report.before
+    );
+    assert!(
+        affected.contains(&second.id()),
+        "Restart Manager did not account for second Reader PID {}: {:?}",
+        second.id(),
+        report.before
+    );
+    assert!(
+        report.after.is_empty(),
+        "Restart Manager left affected Reader processes: {:?}",
+        report.after
+    );
+    assert_eq!(report.reboot_reasons_before, 0);
+    assert_eq!(report.reboot_reasons_after, 0);
+
+    let first_status = wait_for_process_exit(&mut first, std::time::Duration::from_secs(10))
+        .expect("first Reader remained alive after Restart Manager shutdown");
+    let second_status = wait_for_process_exit(&mut second, std::time::Duration::from_secs(10))
+        .expect("second Reader remained alive after Restart Manager shutdown");
+    assert!(
+        first_status.success(),
+        "first Reader did not exit cleanly: {first_status}"
+    );
+    assert!(
+        second_status.success(),
+        "second Reader did not exit cleanly: {second_status}"
+    );
+
+    assert_eq!(
+        fs::read(&fixture).expect("read source PUB after quiesce"),
+        original_pub,
+        "Reader activation/quiesce mutated source PUB"
+    );
+
+    println!(
+        "CHAPTERA_READER_RM_LIVE_RECEIPT affected_before={} first_pid={} second_pid={} affected_after=0 source_unchanged=true",
+        report.before.len(),
+        first.id(),
+        second.id(),
+    );
+}
+
+#[cfg(windows)]
 #[test]
 fn real_installed_reader_process_restart_and_file_lock_recovery_matrix() {
     let Some(root) = std::env::var_os("CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT").map(PathBuf::from) else {
