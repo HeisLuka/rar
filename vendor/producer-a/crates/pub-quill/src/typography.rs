@@ -1,5 +1,5 @@
 use crate::{QuillStoryCatalog, QuillStorySlice};
-use pub_core::{QuillSyid, RawSpan};
+use pub_core::{QuillSyid, RawSpan, StreamPath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -391,6 +391,7 @@ pub fn parse_bounded_typography(
             text_offset_source: style.text_offset_source,
             font_indices: style.font_indices,
             font_names: style.font_names,
+            script_fonts: style.script_fonts,
             text_sizes_emu: style.text_sizes_emu,
             story_intersections: intersections,
         });
@@ -402,6 +403,25 @@ pub fn parse_bounded_typography(
             "FDPC terminal UTF-16 boundary {previous_end_utf16} does not close Story corpus at {total_utf16}"
         )));
     }
+
+    let script_font_maps = ranges
+        .iter()
+        .filter(|range| !range.script_fonts.is_empty())
+        .flat_map(|range| {
+            range.story_intersections.iter().map(|intersection| {
+                QuillScriptFontMapObservation {
+                    story_index: intersection.story_index,
+                    story_syid: intersection.story_syid,
+                    story_start_utf16: intersection.story_start_utf16,
+                    story_end_utf16: intersection.story_end_utf16,
+                    fdpc_descriptor_ordinal: range.fdpc_descriptor_ordinal,
+                    fdpc_style_ordinal: range.fdpc_style_ordinal,
+                    fdpc_style_source: range.fdpc_style_source.clone(),
+                    entries: range.script_fonts.clone(),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
 
     let mut explicit_runs = Vec::new();
     // parse_block can keep archaeology moving by assuming an unknown fixed
@@ -494,6 +514,7 @@ pub fn parse_bounded_typography(
     Ok(QuillTypographyCatalog {
         font_names,
         ranges,
+        script_font_maps,
         explicit_runs,
         effective_runs,
         unknown_block_types_assumed_zero_length: unknown_block_types.into_iter().collect(),
@@ -1200,11 +1221,19 @@ fn parse_fdpc_styles(
             let style_end = checked_end(style_start, style_len, end, "FDPC style")?;
             let mut cursor = style_start + 4;
             let mut font_indices = Vec::new();
+            let mut script_fonts = Vec::new();
             let mut text_sizes_emu = Vec::new();
 
             while cursor < style_end {
                 let (block, next) = parse_block(bytes, cursor, style_end, unknown_block_types)?;
                 if block.id == FONT_INDEX_CONTAINER_ID {
+                    script_fonts.extend(extract_script_font_map(
+                        bytes,
+                        block,
+                        &stream,
+                        font_names,
+                        unknown_block_types,
+                    )?);
                     if let Some(index) =
                         extract_primary_font_index(bytes, block, unknown_block_types)?
                     {
@@ -1254,6 +1283,7 @@ fn parse_fdpc_styles(
                 },
                 font_indices,
                 font_names: joined_names,
+                script_fonts,
                 text_sizes_emu,
             });
         }
@@ -1263,6 +1293,92 @@ fn parse_fdpc_styles(
         return Err(QuillTypographyReadError::new("no FDPC styles"));
     }
     Ok(styles)
+}
+
+fn extract_script_font_map(
+    bytes: &[u8],
+    block: BlockObservation,
+    stream: &StreamPath,
+    font_names: &[String],
+    unknown_block_types: &mut BTreeSet<u8>,
+) -> Result<Vec<QuillScriptFontEntry>, QuillTypographyReadError> {
+    if !VARIABLE_BLOCK_TYPES.contains(&block.block_type) {
+        return Ok(Vec::new());
+    }
+
+    let mut cursor = block
+        .data_offset
+        .checked_add(4)
+        .ok_or_else(|| QuillTypographyReadError::new("script-font map payload offset overflows"))?;
+    let mut seen_slots = BTreeSet::new();
+    let mut entries = Vec::new();
+
+    while cursor < block.end {
+        let entry_start = cursor;
+        let (child, next) = parse_block(bytes, cursor, block.end, unknown_block_types)?;
+        if child.block_type == GENERAL_CONTAINER {
+            if !seen_slots.insert(child.id) {
+                return Err(QuillTypographyReadError::new(format!(
+                    "script-font map repeats raw script slot {}",
+                    child.id
+                )));
+            }
+
+            let inner_start = child.data_offset.checked_add(4).ok_or_else(|| {
+                QuillTypographyReadError::new("script-font entry payload offset overflows")
+            })?;
+            if inner_start >= child.end {
+                return Err(QuillTypographyReadError::new(format!(
+                    "script-font slot {} has no FONT ordinal payload",
+                    child.id
+                )));
+            }
+            let (value_block, value_end) =
+                parse_block(bytes, inner_start, child.end, unknown_block_types)?;
+            if value_end != child.end {
+                return Err(QuillTypographyReadError::new(format!(
+                    "script-font slot {} contains trailing nested payload",
+                    child.id
+                )));
+            }
+            let font_index = value_block.value.ok_or_else(|| {
+                QuillTypographyReadError::new(format!(
+                    "script-font slot {} FONT ordinal is not scalar",
+                    child.id
+                ))
+            })?;
+
+            let (font_name, disposition) = if font_index == 0xFFFF {
+                (None, QuillScriptFontEntryDisposition::UnresolvedSentinel)
+            } else if let Ok(index) = usize::try_from(font_index) {
+                if let Some(name) = font_names.get(index) {
+                    (
+                        Some(name.clone()),
+                        QuillScriptFontEntryDisposition::Resolved,
+                    )
+                } else {
+                    (None, QuillScriptFontEntryDisposition::InvalidFontOrdinal)
+                }
+            } else {
+                (None, QuillScriptFontEntryDisposition::InvalidFontOrdinal)
+            };
+
+            entries.push(QuillScriptFontEntry {
+                script_slot: child.id,
+                font_index,
+                font_name,
+                disposition,
+                source: RawSpan {
+                    stream: stream.clone(),
+                    offset: entry_start as u64,
+                    len: (next - entry_start) as u64,
+                },
+            });
+        }
+        cursor = next;
+    }
+
+    Ok(entries)
 }
 
 fn extract_primary_font_index(
