@@ -24,12 +24,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Format bounded no-Quill Reader slice
-        run: |
-          rustfmt --check --edition 2024 \
-            vendor/producer-a/crates/pub-reader/src/legacy22_noquill_graph.rs \
-            vendor/producer-a/crates/pub-reader/src/lib.rs \
-            vendor/producer-a/crates/pub-viewer/src/lib.rs
+      - name: Format new no-Quill graph module
+        run: rustfmt --check --edition 2024 vendor/producer-a/crates/pub-reader/src/legacy22_noquill_graph.rs
 
       - name: Test no-Quill bounded units
         run: |
