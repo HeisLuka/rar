@@ -122,6 +122,12 @@ impl Drop for RestartManagerSession {
 }
 
 pub fn quiesce_file_resource(resource: &Path) -> Result<QuiesceReport, String> {
+    let resource = std::path::absolute(resource).map_err(|error| {
+        format!(
+            "resolve absolute Restart Manager resource {}: {error}",
+            resource.display()
+        )
+    })?;
     if !resource.is_file() {
         return Err(format!(
             "Restart Manager resource is not a file: {}",
@@ -130,7 +136,7 @@ pub fn quiesce_file_resource(resource: &Path) -> Result<QuiesceReport, String> {
     }
 
     let session = RestartManagerSession::start()?;
-    session.register_file(resource)?;
+    session.register_file(&resource)?;
 
     let (before, reboot_reasons_before) = session.affected_processes()?;
     if reboot_reasons_before != 0 {
@@ -161,7 +167,7 @@ pub fn quiesce_file_resource(resource: &Path) -> Result<QuiesceReport, String> {
     }
 
     Ok(QuiesceReport {
-        resource: resource.to_path_buf(),
+        resource,
         before,
         after,
         reboot_reasons_before,
