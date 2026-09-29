@@ -3044,3 +3044,56 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod legacy22_exact_product_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn exact_fixture(env_name: &str, expected_sha256: &str) {
+        let path = std::env::var_os(env_name)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("{env_name} is required"));
+        let before = fs::read(&path).expect("read exact legacy fixture");
+        assert_eq!(sha256_digest(&before).unwrap().to_string(), expected_sha256);
+
+        let visual = open_pub_geometry(&before, viewer_geometry_environment_v0_1())
+            .expect("legacy fixture must open through family-dispatched Viewer product boundary");
+
+        assert_eq!(
+            visual.document.source.format_version.as_deref(),
+            Some("0x22-quill")
+        );
+        assert!(!visual.document.pages.is_empty(), "legacy Viewer pages");
+        assert!(!visual.document.stories.is_empty(), "legacy Quill stories");
+        assert!(!visual.scene.nodes.is_empty(), "legacy grounded scene nodes");
+        assert_eq!(
+            visual.document.fidelity_status(),
+            ViewerFidelityStatus::Partial,
+            "bounded legacy V1 must stay explicit about omitted object classes"
+        );
+
+        let after = fs::read(&path).expect("re-read exact legacy fixture");
+        assert_eq!(after, before, "legacy Reader path mutated source PUB");
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_SAMPLE98_PUB exact public fixture"]
+    fn exact_sample98_legacy_quill_product_open() {
+        exact_fixture(
+            "CHAPTERA_SAMPLE98_PUB",
+            "8912f295ff0cd1f55b873b3b98a182218f33c420877e025d2f0fd795f12dd0c0",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_SAMPLE2000_PUB exact public fixture"]
+    fn exact_sample2000_legacy_quill_product_open() {
+        exact_fixture(
+            "CHAPTERA_SAMPLE2000_PUB",
+            "40701ca47b26d04771cdd58467764e9ab39d3da69b59fbc529afd16d263d2f86",
+        );
+    }
+}
