@@ -1,20 +1,20 @@
-export const SUPPORTED_LOCALES = ['en-US','en-GB','fr-FR','es-ES','it-IT','de-DE'] as const;
+export const SUPPORTED_LOCALES = ['en-US','en-GB','fr-FR','es-ES','it-IT','de-DE','ru-RU'] as const;
 export type SupportedLocale = typeof SUPPORTED_LOCALES[number];
-export const SUPPORTED_COUNTRIES = ['US','GB','FR','ES','IT','DE','INTL'] as const;
+export const SUPPORTED_COUNTRIES = ['US','GB','FR','ES','IT','DE','RU','INTL'] as const;
 export type SupportedCountry = typeof SUPPORTED_COUNTRIES[number];
 
 export const COUNTRY_OPTIONS = [
   ['US','United States'],['GB','United Kingdom'],['FR','France'],
-  ['ES','España'],['IT','Italia'],['DE','Deutschland'],['INTL','International'],
+  ['ES','España'],['IT','Italia'],['DE','Deutschland'],['RU','Россия'],['INTL','International'],
 ] as const;
 
 export const LOCALE_OPTIONS = [
   ['en-US','English (US)'],['en-GB','English (UK)'],['fr-FR','Français'],
-  ['es-ES','Español'],['it-IT','Italiano'],['de-DE','Deutsch'],
+  ['es-ES','Español'],['it-IT','Italiano'],['de-DE','Deutsch'],['ru-RU','Русский'],
 ] as const;
 
 const byCountry: Record<SupportedCountry, SupportedLocale> = {
-  US:'en-US', GB:'en-GB', FR:'fr-FR', ES:'es-ES', IT:'it-IT', DE:'de-DE', INTL:'en-US',
+  US:'en-US', GB:'en-GB', FR:'fr-FR', ES:'es-ES', IT:'it-IT', DE:'de-DE', RU:'ru-RU', INTL:'en-US',
 };
 
 export function normalizeCountry(v?: string | null): SupportedCountry | null {
@@ -30,6 +30,7 @@ export function normalizeLocale(v?: string | null): SupportedLocale | null {
   if (x.startsWith('es')) return 'es-ES';
   if (x.startsWith('it')) return 'it-IT';
   if (x.startsWith('de')) return 'de-DE';
+  if (x.startsWith('ru')) return 'ru-RU';
   if (x.startsWith('en-gb')) return 'en-GB';
   if (x.startsWith('en')) return 'en-US';
   return null;
@@ -81,4 +82,6 @@ const es:Copy={...en,badge:'Comprobación PUB · vista previa',region:'Región',
 const it:Copy={...en,badge:'Verifica compatibilità PUB · anteprima',region:'Paese',language:'Lingua',detected:'Rilevato automaticamente',eyebrow:'File Microsoft Publisher',title:'Il tuo file .PUB funziona ancora?',body:'Trascina un file Publisher. Chaptera lo analizzerà in modo isolato e ti invierà via e-mail un report di compatibilità.',drop:'Trascina qui il tuo file .PUB',dropHint:'oppure fai clic per sceglierlo · massimo 64 MB',remove:'Rimuovi',email:'tu@azienda.it',submit:'Verifica il file',uploading:'Caricamento…',consent:'Confermo di avere il diritto di caricare questo file. Verrà usato solo per questa verifica e poi eliminato automaticamente.',progress:'Caricamento privato',ready:'Report di compatibilità pronto',failed:'Non è stato possibile completare la verifica',processing:'Verifica del file Publisher',queued:'Il file è in coda per la verifica',waiting:'Puoi chiudere questa pagina. Invieremo il risultato all’indirizzo e-mail indicato.',compatibility:'Compatibilità',publisherFamily:'Famiglia Publisher',emailMetric:'E-mail',emailSent:'Report inviato',emailPrepared:'Report pronto',notIdentified:'Non identificata',reliableFailure:'Il verificatore non ha prodotto un risultato affidabile.',privateTitle:'Privato per impostazione predefinita',privateBody:'Il file caricato resta privato.',evidenceTitle:'Prove, non supposizioni',evidenceBody:'Gli elementi sconosciuti o non supportati vengono segnalati chiaramente.',emailTitle:'Risultato via e-mail',emailBody:'Il report finale viene inviato solo dopo un risultato completo.',footerLeft:'Chaptera · continuità per Publisher',footerRight:'I file caricati sono temporanei e usati solo per la verifica richiesta.',errors:{pubOnly:'Scegli un file Microsoft Publisher .pub.',fileSize:'Il file deve avere una dimensione compresa tra 1 byte e 64 MB.',start:'Impossibile avviare la verifica.',upload:'Caricamento non riuscito.'}};
 const de:Copy={...en,badge:'PUB-Kompatibilitätsprüfung · Vorschau',region:'Region',language:'Sprache',detected:'Automatisch erkannt',eyebrow:'Microsoft-Publisher-Dateien',title:'Funktioniert Ihre .PUB-Datei noch?',body:'Laden Sie eine Publisher-Datei hoch. Chaptera prüft sie isoliert und sendet Ihnen per E-Mail einen Kompatibilitätsbericht.',drop:'.PUB-Datei hier ablegen',dropHint:'oder klicken und Datei auswählen · bis 64 MB',remove:'Entfernen',email:'sie@unternehmen.de',submit:'Datei prüfen',uploading:'Wird hochgeladen…',consent:'Ich bin berechtigt, diese Datei hochzuladen. Sie wird nur für diese Prüfung verarbeitet und danach automatisch gelöscht.',progress:'Privater Upload',ready:'Kompatibilitätsbericht ist fertig',failed:'Die Prüfung konnte nicht abgeschlossen werden',processing:'Publisher-Datei wird geprüft',queued:'Ihre Datei befindet sich in der Prüfwarteschlange',waiting:'Sie können diese Seite schließen. Das Ergebnis wird an die angegebene E-Mail-Adresse gesendet.',compatibility:'Kompatibilität',publisherFamily:'Publisher-Familie',emailMetric:'E-Mail',emailSent:'Bericht gesendet',emailPrepared:'Bericht erstellt',notIdentified:'Nicht erkannt',reliableFailure:'Der Prüfer konnte kein verlässliches Ergebnis erzeugen.',privateTitle:'Standardmäßig privat',privateBody:'Die hochgeladene Datei bleibt privat.',evidenceTitle:'Evidenz statt Vermutung',evidenceBody:'Unbekannte oder nicht unterstützte Bestandteile werden ausdrücklich gemeldet.',emailTitle:'Ergebnis per E-Mail',emailBody:'Der Abschlussbericht wird erst nach einem vollständigen Prüfergebnis versendet.',footerLeft:'Chaptera · Publisher-Dateien weiter nutzen',footerRight:'Hochgeladene Dateien sind temporär und werden ausschließlich für die angeforderte Prüfung verwendet.',errors:{pubOnly:'Bitte wählen Sie eine Microsoft-Publisher-Datei im Format .pub.',fileSize:'Die Datei muss zwischen 1 Byte und 64 MB groß sein.',start:'Die Prüfung konnte nicht gestartet werden.',upload:'Upload fehlgeschlagen.'}};
 
-export const COPY:Record<SupportedLocale,Copy>={'en-US':en,'en-GB':{...en,title:'Can Chaptera still open your .PUB file?'},'fr-FR':fr,'es-ES':es,'it-IT':it,'de-DE':de};
+const ru:Copy={...en,badge:'Проверка PUB · предварительная версия',region:'Страна',language:'Язык',detected:'Определено автоматически',eyebrow:'Файлы Microsoft Publisher',title:'Будет ли работать ваш файл .PUB?',body:'Перетащите файл Publisher. Chaptera проверит его в изолированной среде и пришлёт на почту отчёт: что удалось прочитать, что отображается частично и что пока не поддерживается.',drop:'Перетащите файл .PUB сюда',dropHint:'или нажмите, чтобы выбрать файл · до 64 МБ',remove:'Убрать',email:'вы@компания.ру',submit:'Проверить файл',uploading:'Загрузка…',consent:'Я подтверждаю, что имею право загрузить этот файл. Он будет использован только для проверки совместимости и автоматически удалён после срока хранения.',progress:'Приватная загрузка',ready:'Отчёт о совместимости готов',failed:'Не удалось завершить проверку',processing:'Проверяем файл Publisher',queued:'Файл поставлен в очередь на проверку',waiting:'Эту страницу можно закрыть. Результат придёт на указанный адрес электронной почты.',compatibility:'Совместимость',publisherFamily:'Версия / семейство Publisher',emailMetric:'Почта',emailSent:'Отчёт отправлен',emailPrepared:'Отчёт подготовлен',notIdentified:'Не определено',reliableFailure:'Проверка не дала достаточно надёжного результата. Мы не будем считать файл совместимым, если данных недостаточно.',privateTitle:'Приватность по умолчанию',privateBody:'Загруженный файл остаётся приватным и не публикуется в открытом доступе.',evidenceTitle:'Факты, а не догадки',evidenceBody:'Неизвестные и неподдерживаемые элементы явно отмечаются, а не считаются рабочими автоматически.',emailTitle:'Результат на почту',emailBody:'Итоговый отчёт отправляется только после завершения реальной проверки файла.',footerLeft:'Chaptera · инструменты для файлов Publisher',footerRight:'Загруженные файлы временные и используются только для запрошенной проверки.',errors:{pubOnly:'Выберите файл Microsoft Publisher в формате .pub.',fileSize:'Размер файла должен быть от 1 байта до 64 МБ.',start:'Не удалось запустить проверку.',upload:'Не удалось загрузить файл.'}};
+
+export const COPY:Record<SupportedLocale,Copy>={'en-US':en,'en-GB':{...en,title:'Can Chaptera still open your .PUB file?'},'fr-FR':fr,'es-ES':es,'it-IT':it,'de-DE':de,'ru-RU':ru};

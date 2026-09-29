@@ -17,6 +17,7 @@ const statusLabels: Record<SupportedLocale, Record<PublicStatus['status'], strin
   'es-ES': {queued:'En cola',processing:'Procesando',complete:'Completado',failed:'Error'},
   'it-IT': {queued:'In coda',processing:'In verifica',complete:'Completato',failed:'Errore'},
   'de-DE': {queued:'Warteschlange',processing:'Prüfung läuft',complete:'Fertig',failed:'Fehler'},
+  'ru-RU': {queued:'В очереди',processing:'Проверяем',complete:'Готово',failed:'Ошибка'},
 };
 const compatibilityLabels: Record<SupportedLocale, Record<NonNullable<PublicStatus['result']>['compatibility'], string>> = {
   'en-US': {compatible:'Compatible',partial:'Partial',unsupported:'Unsupported',invalid:'Invalid file',failed:'Check failed'},
@@ -25,6 +26,7 @@ const compatibilityLabels: Record<SupportedLocale, Record<NonNullable<PublicStat
   'es-ES': {compatible:'Compatible',partial:'Parcial',unsupported:'No compatible',invalid:'Archivo no válido',failed:'Error'},
   'it-IT': {compatible:'Compatibile',partial:'Parziale',unsupported:'Non supportato',invalid:'File non valido',failed:'Errore'},
   'de-DE': {compatible:'Kompatibel',partial:'Teilweise',unsupported:'Nicht unterstützt',invalid:'Ungültige Datei',failed:'Fehler'},
+  'ru-RU': {compatible:'Совместим',partial:'Частично',unsupported:'Не поддерживается',invalid:'Некорректный файл',failed:'Ошибка проверки'},
 };
 
 function setCookie(name:string,value:string){document.cookie=`${name}=${encodeURIComponent(value)}; Max-Age=31536000; Path=/; SameSite=Lax`;}
