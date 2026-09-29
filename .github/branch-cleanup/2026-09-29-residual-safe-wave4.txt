@@ -1,0 +1,8 @@
+# Residual safe branch GC wave 4 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 4
+
+ops/residual-gc-wave3-20260929 b8f1c6d5955ff43cb67affa90946f2b521c1546a  # PR #1268 closed unmerged after successful cleanup
+mob-reader-local-open-01-preclean-backup 8ff5940341438157875b3375bd9826576944d09d  # exact duplicate ref of mob-reader-local-open-01-preclean
+mob-reader-perf-01-v1 cd40ef72f0da73ac73c695295b0381f78a5c066f  # alias to closed PR #953 head; aggregate Mobile V0 landed later
+viewer-typography-inherit-project-01 86b048dcb9d6518c3a593d1d1ab59bb1762c84d3  # alias to closed PR #868 head; current typography authority landed later
