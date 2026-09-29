@@ -3295,6 +3295,129 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires CHAPTERA_EMBEDDED_FONT_PUB and CHAPTERA_EMBEDDED_FONT_OUT"]
+    fn embedded_font_fixture_quill_typography_source_receipt() {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+        use std::path::PathBuf;
+
+        const SOURCE_SHA256: &str =
+            "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048";
+
+        let fixture = std::env::var_os("CHAPTERA_EMBEDDED_FONT_PUB")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_EMBEDDED_FONT_PUB");
+        let output_dir = std::env::var_os("CHAPTERA_EMBEDDED_FONT_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_EMBEDDED_FONT_OUT");
+        fs::create_dir_all(&output_dir).expect("create embedded-font probe output directory");
+
+        let bytes = fs::read(&fixture).expect("read exact fonts.pub");
+        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(source_sha256, SOURCE_SHA256, "fonts.pub source identity drifted");
+
+        let quill =
+            pub_cfb::read_stream_reader(Cursor::new(bytes.as_slice()), QUILL_STREAM_PATH)
+                .expect("read exact Quill stream");
+        let story_catalog =
+            parse_confirmed_story_catalog(StreamPath(QUILL_STREAM_PATH.into()), &quill)
+                .expect("parse exact Quill story catalog");
+        let typography =
+            parse_bounded_typography(&quill, &story_catalog).expect("parse bounded typography");
+
+        let source_hash: Sha256Digest = SOURCE_SHA256.parse().expect("known source SHA-256");
+        let build = build_mature_0x2c_source_graph(Cursor::new(bytes.as_slice()), source_hash)
+            .expect("build current pub-reader source graph");
+
+        let explicit_runs = typography
+            .explicit_runs
+            .iter()
+            .map(|run| {
+                serde_json::json!({
+                    "story_syid": run.story_syid.0,
+                    "story_start_utf16": run.story_start_utf16,
+                    "story_end_utf16": run.story_end_utf16,
+                    "font_index": run.font_index,
+                    "font_name": run.font_name,
+                    "text_size_emu": run.text_size_emu,
+                })
+            })
+            .collect::<Vec<_>>();
+        let effective_runs = typography
+            .effective_runs
+            .iter()
+            .map(|run| {
+                serde_json::json!({
+                    "story_syid": run.story_syid.0,
+                    "story_start_utf16": run.story_start_utf16,
+                    "story_end_utf16": run.story_end_utf16,
+                    "font_index": run.font_index,
+                    "font_name": run.font_name,
+                    "font_source": run.font_source,
+                    "text_size_emu": run.text_size_emu,
+                    "text_size_source": run.text_size_source,
+                    "inherited_style_index": run.inherited_style_index,
+                    "inherited_selector_source": run.inherited_selector_source,
+                })
+            })
+            .collect::<Vec<_>>();
+        let projected_runs = build
+            .typography_runs
+            .iter()
+            .map(|run| {
+                serde_json::json!({
+                    "story_id": run.story_id,
+                    "story_utf16_start": run.story_utf16_start,
+                    "story_utf16_end": run.story_utf16_end,
+                    "story_scalar_start": run.story_scalar_start,
+                    "story_scalar_end": run.story_scalar_end,
+                    "source_font_index": run.source_font_index,
+                    "source_font_name": run.source_font_name,
+                    "text_size_emu": run.text_size_emu,
+                    "font_inherited": run.font_inherited,
+                    "size_inherited": run.size_inherited,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.embedded-font-quill-typography-source.v1",
+            "source_pub_sha256": source_sha256,
+            "story_count": story_catalog.stories.len(),
+            "font_names": typography.font_names,
+            "range_count": typography.ranges.len(),
+            "explicit_run_count": typography.explicit_runs.len(),
+            "effective_run_count": typography.effective_runs.len(),
+            "unknown_block_types_assumed_zero_length":
+                typography.unknown_block_types_assumed_zero_length,
+            "inheritance_unknown_block_types_assumed_zero_length":
+                typography.inheritance_unknown_block_types_assumed_zero_length,
+            "effective_inheritance_unavailable_reason":
+                typography.effective_inheritance_unavailable_reason,
+            "explicit_runs": explicit_runs,
+            "effective_runs": effective_runs,
+            "pub_reader_projected_typography_run_count": build.typography_runs.len(),
+            "pub_reader_projected_runs": projected_runs,
+            "pub_reader_diagnostics": build.diagnostics,
+        });
+        fs::write(
+            output_dir.join("quill-typography-source-receipt.json"),
+            serde_json::to_vec_pretty(&receipt)
+                .expect("serialize embedded-font Quill typography receipt"),
+        )
+        .expect("write embedded-font Quill typography receipt");
+
+        println!(
+            "embedded-font source typography: fonts={} ranges={} explicit={} effective={} projected={}",
+            receipt["font_names"].as_array().map_or(0, Vec::len),
+            receipt["range_count"],
+            receipt["explicit_run_count"],
+            receipt["effective_run_count"],
+            receipt["pub_reader_projected_typography_run_count"],
+        );
+    }
+
+    #[test]
     fn typography_utf16_to_scalar_range_is_surrogate_safe() {
         let text = "A😀B";
         assert_eq!(utf16_range_to_scalar_range(text, 1, 3), Some((1, 2)));
