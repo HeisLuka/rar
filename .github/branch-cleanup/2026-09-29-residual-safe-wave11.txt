@@ -1,0 +1,7 @@
+# Residual safe branch GC wave 11 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 3
+
+ops/residual-gc-wave10-20260929 2aac4ff45dd7147cb1b56acade7c3504f7bafe6f  # PR #1306 execution-only GC completed SUCCESS and closed unmerged
+execution-owner-uniqueness-01-v1 f76a89a8694c2e16d5e1ed280988ee0f3942809a  # superseded #1288; all four owned file blobs exactly equal merged #1308/current main
+execution-owner-uniqueness-01-v2 1735da6418e33539797cd56d5bd978cbb590deb5  # PR #1308 merged green as 063cc8ba52118fec5f9d701f452138ceb7036447; current tip is exact merged PR head
