@@ -3435,6 +3435,120 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires CHAPTERA_SCRIPT_FONT_MAP_FIXTURE and CHAPTERA_SCRIPT_FONT_MAP_OUT"]
+    fn exact_fonts_pub_preserves_script_font_map_without_scalar_promotion() {
+        let fixture = std::env::var_os("CHAPTERA_SCRIPT_FONT_MAP_FIXTURE")
+            .map(std::path::PathBuf::from)
+            .expect("CHAPTERA_SCRIPT_FONT_MAP_FIXTURE");
+        let output_dir = std::env::var_os("CHAPTERA_SCRIPT_FONT_MAP_OUT")
+            .map(std::path::PathBuf::from)
+            .expect("CHAPTERA_SCRIPT_FONT_MAP_OUT");
+        std::fs::create_dir_all(&output_dir).expect("create script-font-map output");
+
+        let bytes = std::fs::read(&fixture).expect("read exact fonts.pub");
+        let exact_source_hash: Sha256Digest =
+            "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048"
+                .parse()
+                .expect("known fonts.pub SHA-256");
+        let build = build_mature_0x2c_source_graph(
+            Cursor::new(bytes.as_slice()),
+            exact_source_hash,
+        )
+        .expect("build exact fonts.pub source graph");
+
+        assert!(
+            build.typography_runs.is_empty(),
+            "this preservation slice must not silently promote ScriptFonts into the legacy scalar typography path"
+        );
+        assert!(
+            !build.script_font_maps.is_empty(),
+            "exact fonts.pub must preserve at least one source script-font map"
+        );
+
+        let mut resolved_entries = 0_usize;
+        let mut unresolved_entries = 0_usize;
+        let mut invalid_entries = 0_usize;
+        let mut times_new_roman_slots = Vec::new();
+        let mut map_receipts = Vec::new();
+
+        for map in &build.script_font_maps {
+            let mut seen_slots = BTreeSet::new();
+            let entries = map
+                .entries
+                .iter()
+                .map(|entry| {
+                    assert!(
+                        seen_slots.insert(entry.script_slot),
+                        "one source ScriptFonts map must not repeat a raw script slot"
+                    );
+                    match entry.disposition {
+                        PubScriptFontEntryDisposition::Resolved => resolved_entries += 1,
+                        PubScriptFontEntryDisposition::UnresolvedSentinel => {
+                            unresolved_entries += 1
+                        }
+                        PubScriptFontEntryDisposition::InvalidFontOrdinal => invalid_entries += 1,
+                    }
+                    if entry.source_font_index == 0
+                        && entry.source_font_name.as_deref() == Some("Times New Roman")
+                    {
+                        times_new_roman_slots.push(entry.script_slot);
+                    }
+                    serde_json::json!({
+                        "script_slot": entry.script_slot,
+                        "source_font_index": entry.source_font_index,
+                        "source_font_name": entry.source_font_name,
+                        "disposition": entry.disposition,
+                    })
+                })
+                .collect::<Vec<_>>();
+            map_receipts.push(serde_json::json!({
+                "story_id": map.story_id,
+                "story_utf16_range": [map.story_utf16_start, map.story_utf16_end],
+                "story_scalar_range": [map.story_scalar_start, map.story_scalar_end],
+                "entries": entries,
+            }));
+        }
+
+        times_new_roman_slots.sort_unstable();
+        times_new_roman_slots.dedup();
+        assert!(
+            !times_new_roman_slots.is_empty(),
+            "exact fonts.pub must preserve at least one ScriptFonts slot resolving to FONT[0] Times New Roman"
+        );
+        assert_eq!(
+            invalid_entries, 0,
+            "exact positive must not invent out-of-range FONT ordinals"
+        );
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.viewer-script-font-map-exact-fixture.v1",
+            "source_pub_sha256": exact_source_hash,
+            "legacy_scalar_typography_run_count": build.typography_runs.len(),
+            "script_font_map_count": build.script_font_maps.len(),
+            "resolved_entry_count": resolved_entries,
+            "unresolved_entry_count": unresolved_entries,
+            "invalid_entry_count": invalid_entries,
+            "times_new_roman_font_ordinal": 0,
+            "times_new_roman_script_slots": times_new_roman_slots,
+            "maps": map_receipts,
+        });
+        std::fs::write(
+            output_dir.join("viewer-script-font-map-fonts-pub.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize script-font-map receipt"),
+        )
+        .expect("write script-font-map receipt");
+
+        println!(
+            "script-font exact fixture: maps={} resolved={} unresolved={} invalid={} times_new_roman_slots={:?}",
+            build.script_font_maps.len(),
+            resolved_entries,
+            unresolved_entries,
+            invalid_entries,
+            receipt["times_new_roman_script_slots"],
+        );
+    }
+
+    #[test]
     fn typography_utf16_to_scalar_range_is_surrogate_safe() {
         let text = "A😀B";
         assert_eq!(utf16_range_to_scalar_range(text, 1, 3), Some((1, 2)));
