@@ -1,0 +1,77 @@
+name: Chaptera Desktop Package Integrity V1
+
+on:
+  push:
+    branches:
+      - ci-desktop-package-integrity-01
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "apps/chaptera-desktop/**"
+      - "crates/chaptera-update-engine/**"
+      - "crates/chaptera-update-orchestrator/**"
+      - "crates/chaptera-update-handoff/**"
+      - "crates/chaptera-suite-handoff/**"
+      - "crates/chaptera-scene-instance/**"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "crates/chaptera-desktop-fallback-font-resource/**"
+      - "crates/chaptera-image-decode-contract/**"
+      - "crates/chaptera-text-caret-map-adapter/**"
+      - "crates/chaptera-text-interaction-adapter/**"
+      - "crates/chaptera-text-input-adapter/**"
+      - "crates/chaptera-desktop-shaped-flow-runtime/**"
+      - "vendor/producer-a/crates/pub-editor/**"
+      - "vendor/producer-a/crates/pub-export/**"
+      - "vendor/producer-a/crates/pub-interaction/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
+      - ".github/workflows/chaptera-desktop-package-integrity-v1.yml"
+      - ".github/workflows/chaptera-desktop-fallback-font-resource-v1.yml"
+      - ".github/workflows/editor-desktop-text-session-restore-v1.yml"
+      - ".github/workflows/viewer-editor-created-node-scene-sync-v1.yml"
+      - "tools/ci/chaptera_desktop_package_ci_audit.py"
+      - "tools/ci/chaptera_desktop_package_ci_before_v1.json"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  package-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
+
+      - name: Format Desktop package
+        run: cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml -- --check
+
+      - name: Check Desktop package
+        run: cargo check -p chaptera-desktop --all-targets
+
+      - name: Clippy Desktop package
+        run: >-
+          cargo clippy -p chaptera-desktop --all-targets --
+          -D warnings
+          -A dead_code
+          -A unused_variables
+          -A clippy::type_complexity
+          -A clippy::collapsible_if
+          -A clippy::too_many_arguments
+
+      - name: Prove Desktop CI routing
+        run: python3 tools/ci/chaptera_desktop_package_ci_audit.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-desktop-package-routing
+          path: target/ci/chaptera-desktop-package-routing-receipt.json
+          if-no-files-found: error
