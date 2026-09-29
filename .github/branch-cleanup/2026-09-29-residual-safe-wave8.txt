@@ -1,0 +1,11 @@
+# Residual safe branch GC wave 8 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 7
+
+ops/residual-gc-wave7-20260929 0e4935b36f6b02dd47b04162cb263edce03774cd  # PR #1287 cleanup head; GC completed and PR closed unmerged
+desktop-frame-render-cache-01-v1 6cb75ccdcd713a66b3c03c0a674ed3d27202c815  # early frame-cache replay; final fresh-main #1191 merged and supersedes prior generations
+desktop-frame-render-cache-01-v4 5e1dda26e162666364c947dde8f8b0130cdc1ed9  # intermediate frame-cache replay; final fresh-main #1191 merged
+mob-reader-local-open-01-preclean 8ff5940341438157875b3375bd9826576944d09d  # pre-clean stacked Mobile local-open ref; canonical task DONE/merged via #947 and later V0 integration
+mob-reader-render-01-preclean 05a183a706856b321a6784520e2516a4c813f541  # pre-clean stacked Android render ref; canonical task DONE/merged via #954 and later V0 integration
+chaptera-vtpe-locale-reader-v1 4a68338bba67852a43893cb3772d5fb102ea15a3  # old #791 product-integration head; current locale/attribution contract merged via fresh-main #907
+secure-origin-oidc-session-01 66066b6a4408a57af69dc7ac5179a6b3420e4091  # #1103 green donor replayed byte-for-byte and merged via fresh-main #1109
