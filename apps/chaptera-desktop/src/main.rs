@@ -680,15 +680,52 @@ fn main() -> eframe::Result<()> {
 }
 
 #[cfg(feature = "reader-only")]
-struct ReaderControlHooks;
+struct ReaderControlHooks {
+    install_root: PathBuf,
+    reader_relative_path: PathBuf,
+}
 
 #[cfg(feature = "reader-only")]
 impl chaptera_update_orchestrator::UpdateHooks for ReaderControlHooks {
-    fn quiesce(&mut self, _control_updater: &Path) -> std::result::Result<(), String> {
-        // Ownership of the install lock proves the front-door U1 released its
-        // mutation authority before copied U1 reaches this point. Product-level
-        // process shutdown is deliberately a later slice.
-        Ok(())
+    fn quiesce(&mut self, control_updater: &Path) -> std::result::Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            let reader = self
+                .install_root
+                .join("current")
+                .join(&self.reader_relative_path);
+            if control_updater == reader {
+                return Err(
+                    "copied control updater must execute outside the active Reader tree".to_owned(),
+                );
+            }
+            let report =
+                chaptera_update_orchestrator::windows_restart_manager::quiesce_file_resource(
+                    &reader,
+                )?;
+            let affected_pids = report
+                .before
+                .iter()
+                .map(|process| process.pid.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!(
+                "CHAPTERA_READER_RM_QUIESCE resource={} affected_before={} affected_pids={} affected_after={} reboot_before=0x{:08x} reboot_after=0x{:08x}",
+                report.resource.display(),
+                report.before.len(),
+                affected_pids,
+                report.after.len(),
+                report.reboot_reasons_before,
+                report.reboot_reasons_after,
+            );
+            Ok(())
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = control_updater;
+            Err("Reader update quiesce requires Windows Restart Manager".to_owned())
+        }
     }
 
     fn health_check(&mut self, current_tree: &Path) -> std::result::Result<(), String> {
@@ -785,7 +822,10 @@ fn run_reader_update_control(request_path: &Path) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
 
-    let mut hooks = ReaderControlHooks;
+    let mut hooks = ReaderControlHooks {
+        install_root: request.install_root.clone(),
+        reader_relative_path: request.updater_relative_path.clone(),
+    };
     orchestrator
         .continue_prepared_candidate(&mut hooks)
         .map_err(|error| error.to_string())?;
