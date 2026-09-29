@@ -1,7 +1,5 @@
 name: CLOUD-RUNTIME-PORTS-READY-01
 
-# CI registry refresh: preserve semantics while forcing workflow re-registration.
-
 on:
   pull_request:
     paths:
@@ -12,10 +10,6 @@ on:
       - "deploy/config/chaptera.prod.example.toml"
       - ".github/workflows/cloud-runtime-ports-ready-v1.yml"
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
