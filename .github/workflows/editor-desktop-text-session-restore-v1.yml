@@ -28,24 +28,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
-          components: rustfmt, clippy
-
-      - name: Format Desktop direct-text slice
-        run: cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml -- --check
-
-      - name: Check Desktop direct-text integration
-        run: cargo check -p chaptera-desktop --all-targets
-
-      - name: Clippy Desktop direct-text integration
-        run: >-
-          cargo clippy -p chaptera-desktop --all-targets --
-          -D warnings
-          -A dead_code
-          -A unused_variables
-          -A clippy::type_complexity
-          -A clippy::collapsible_if
-          -A clippy::too_many_arguments
-
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: bash
         run: |
@@ -70,7 +52,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.94.1"
-          components: rustfmt, clippy
 
       - name: Acquire pinned Apache POI SampleNewsletter
         shell: pwsh

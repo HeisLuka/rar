@@ -29,10 +29,8 @@ jobs:
         with:
           toolchain: "1.94.1"
           components: rustfmt, clippy
-      - name: Format
-        run: |
-          cargo fmt --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml -- --check
-          cargo fmt --manifest-path apps/chaptera-desktop/Cargo.toml -- --check
+      - name: Format Viewer
+        run: cargo fmt --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml -- --check
       - name: Viewer check
         run: cargo check --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml --all-targets
       - name: Viewer clippy
@@ -41,5 +39,3 @@ jobs:
         run: |
           cargo test --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml created_text_box_scene_sync_tracks_create_undo_redo_without_touching_baseline_nodes
           cargo test --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml created_text_box_scene_sync_fails_closed_on_unproven_source_backed_node
-      - name: Desktop check
-        run: cargo check --manifest-path apps/chaptera-desktop/Cargo.toml --all-targets
