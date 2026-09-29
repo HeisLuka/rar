@@ -206,4 +206,16 @@ mod tests {
         assert_eq!(wide.last(), Some(&0));
         assert_eq!(wide.iter().filter(|value| **value == 0).count(), 1);
     }
+
+
+    #[test]
+    fn current_executable_fails_closed_instead_of_requesting_self_shutdown() {
+        let executable = std::env::current_exe().expect("current test executable");
+        let error = quiesce_file_resource(&executable)
+            .expect_err("Restart Manager must not silently quiesce its own process");
+        assert!(
+            error.contains("reboot or user action"),
+            "unexpected self-detection error: {error}"
+        );
+    }
 }
