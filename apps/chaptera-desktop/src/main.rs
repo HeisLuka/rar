@@ -5434,7 +5434,7 @@ mod tests {
         let source = include_str!("main.rs");
         assert!(source.contains("diagnostic_sweep::open_for_product(&bytes)"));
         let sweep = include_str!("diagnostic_sweep.rs");
-        assert!(sweep.contains("open_mature_0x2c_geometry"));
+        assert!(sweep.contains("open_pub_geometry"));
         assert!(sweep.contains("viewer_geometry_environment_v0_1"));
     }
 
