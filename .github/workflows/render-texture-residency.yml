@@ -14,4 +14,6 @@ jobs:
       - run: python -m unittest tools/test_texture_residency_v1.py
       - run: mkdir -p target/texture-residency && python tools/run_texture_residency_bench.py | tee target/texture-residency/receipt.json
       - uses: actions/upload-artifact@v4
-        with: { name: render-texture-residency-${{ github.run_id }}, path: target/texture-residency/receipt.json }
+        with:
+          name: "render-texture-residency-${{ github.run_id }}"
+          path: target/texture-residency/receipt.json
