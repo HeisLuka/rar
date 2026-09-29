@@ -3155,6 +3155,54 @@ mod tests {
 }
 
 #[cfg(test)]
+mod legacy22_noquill_exact_product_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    #[ignore = "requires CHAPTERA_OPNHOUS_PUB exact public Publisher97 fixture"]
+    fn exact_opnhous_publisher97_noquill_product_open() {
+        let path = std::env::var_os("CHAPTERA_OPNHOUS_PUB")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_OPNHOUS_PUB is required");
+        let before = fs::read(&path).expect("read exact OPNHOUS fixture");
+        assert_eq!(before.len(), 11_264);
+        assert_eq!(
+            sha256_digest(&before).unwrap().to_string(),
+            "0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c"
+        );
+
+        let visual = open_pub_geometry(&before, viewer_geometry_environment_v0_1())
+            .expect("Publisher97 no-Quill fixture must open through product boundary");
+
+        assert_eq!(
+            visual.document.source.format_version.as_deref(),
+            Some("0x22-noquill")
+        );
+        assert_eq!(visual.document.pages.len(), 4, "authoritative Publisher97 page list");
+        assert_eq!(visual.scene.surfaces.len(), 4, "one surface per admitted page");
+        assert!(!visual.scene.nodes.is_empty(), "grounded legacy geometry");
+        assert!(
+            !visual.document.search_text("OPEN HOUSE").is_empty(),
+            "no-Quill text must be searchable"
+        );
+        assert!(
+            !visual.document.search_text("date of event").is_empty(),
+            "second grounded literal must be searchable"
+        );
+        assert!(
+            !visual.document.search_text("street address").is_empty(),
+            "third grounded literal must be searchable"
+        );
+        assert_eq!(visual.document.fidelity_status(), ViewerFidelityStatus::Partial);
+
+        let after = fs::read(&path).expect("re-read exact OPNHOUS fixture");
+        assert_eq!(after, before, "Reader path mutated source PUB");
+    }
+}
+
+#[cfg(test)]
 mod legacy22_exact_product_tests {
     use super::*;
     use std::fs;
