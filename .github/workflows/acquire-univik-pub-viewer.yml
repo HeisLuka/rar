@@ -1,0 +1,107 @@
+name: Acquire Univik PUB Viewer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/acquire-univik-pub-viewer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+
+          curl.exe -L --fail --retry 3 `
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" `
+            -D out/headers.txt `
+            -o out/setup-pub-viewer.exe `
+            https://univik.com/dl/setup-pub-viewer.exe
+
+          $item = Get-Item out/setup-pub-viewer.exe
+          if ($item.Length -lt 1024) {
+            throw "Downloaded file too small"
+          }
+
+          $magic = [System.IO.File]::ReadAllBytes($item.FullName)[0..1]
+          if ($magic[0] -ne 0x4d -or $magic[1] -ne 0x5a) {
+            throw "Downloaded payload is not an MZ executable"
+          }
+
+      - name: Inspect installer
+        shell: pwsh
+        run: |
+          $path = (Resolve-Path out/setup-pub-viewer.exe).Path
+          $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sig  = Get-AuthenticodeSignature $path
+          $vi   = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
+          $item = Get-Item $path
+
+          [ordered]@{
+            source_url        = "https://univik.com/dl/setup-pub-viewer.exe"
+            acquired_utc      = (Get-Date).ToUniversalTime().ToString("o")
+            size_bytes        = $item.Length
+            sha256            = $hash
+            signature_status  = [string]$sig.Status
+            signer_subject    = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { $null }
+            signer_thumbprint = if ($sig.SignerCertificate) { $sig.SignerCertificate.Thumbprint } else { $null }
+            file_version      = $vi.FileVersion
+            product_version   = $vi.ProductVersion
+            product_name      = $vi.ProductName
+            company_name      = $vi.CompanyName
+          } |
+            ConvertTo-Json |
+            Set-Content -Encoding UTF8 out/manifest.json
+
+          "$hash  setup-pub-viewer.exe" |
+            Set-Content -Encoding ASCII out/SHA256SUMS.txt
+
+          Get-Content out/manifest.json
+
+      - name: Extract package
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path out/extracted | Out-Null
+
+          7z.exe x -y `
+            "-oout/extracted" `
+            out/setup-pub-viewer.exe
+
+          Get-ChildItem out/extracted -Recurse -File |
+            Where-Object {
+              $_.Name -match "Aspose|PUB|Publisher|\.dll$|\.exe$"
+            } |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize |
+            Out-String -Width 4096 |
+            Set-Content out/notable-files.txt
+
+          Get-ChildItem out/extracted -Recurse -File |
+            ForEach-Object {
+              [pscustomobject]@{
+                Path   = $_.FullName.Substring((Resolve-Path out/extracted).Path.Length + 1)
+                Length = $_.Length
+                SHA256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              }
+            } |
+            Sort-Object Path |
+            ConvertTo-Json -Depth 3 |
+            Set-Content -Encoding UTF8 out/extracted-file-hashes.json
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: univik-pub-viewer-acquisition
+          path: out/
+          retention-days: 7
