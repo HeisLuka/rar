@@ -44,7 +44,9 @@ pub struct Legacy0x22Directory {
 
 impl Legacy0x22Directory {
     pub fn entry_by_object_id(&self, object_id: u16) -> Option<&Legacy0x22DirectoryEntry> {
-        self.entries.iter().find(|entry| entry.object_id == object_id)
+        self.entries
+            .iter()
+            .find(|entry| entry.object_id == object_id)
     }
 
     pub fn entries_by_parent_id(
@@ -281,7 +283,7 @@ pub fn parse_legacy_0x22_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CONTENTS_0X22_MAGIC, CONTENTS_0X2C_MAGIC};
+    use crate::{CONTENTS_0X2C_MAGIC, CONTENTS_0X22_MAGIC};
 
     fn fixture() -> Vec<u8> {
         let mut bytes = vec![0_u8; 128];
