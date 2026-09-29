@@ -4,14 +4,20 @@ on:
   pull_request:
     paths:
       - "Cargo.toml"
+      - "apps/chaptera-desktop/Cargo.toml"
+      - "apps/chaptera-desktop/src/diagnostic_sweep.rs"
+      - "apps/chaptera-desktop/src/suite_handoff_cli.rs"
       - "crates/chaptera-suite-handoff/**"
-      - "apps/chaptera-desktop/**"
       - "apps/chaptera-rescue/**"
       - "packages/product/desktop-suite/v1/handoff*.json"
       - "tools/validate_chaptera_suite_handoff.py"
       - "tools/test_validate_chaptera_suite_handoff.py"
       - ".github/workflows/chaptera-suite-handoff-v1.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
