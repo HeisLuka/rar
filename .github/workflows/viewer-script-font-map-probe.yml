@@ -38,5 +38,44 @@ jobs:
       - name: Test pub-reader
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader
 
+      - name: Acquire exact embedded-font source-binding fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/viewer-script-font-map"
+          out="${RUNNER_TEMP}/viewer-script-font-map-out"
+          mkdir -p "$root" "$out"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/fosnola/libmspub-test/master/testset/12.0/fonts.pub" \
+            --output "$root/fonts.pub"
+          before="$(shasum -a 256 "$root/fonts.pub" | awk '{print $1}')"
+          if [[ "$before" != "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048" ]]; then
+            echo "fonts.pub SHA-256 mismatch: $before" >&2
+            exit 1
+          fi
+          echo "CHAPTERA_SCRIPT_FONT_MAP_FIXTURE=$root/fonts.pub" >> "$GITHUB_ENV"
+          echo "CHAPTERA_SCRIPT_FONT_MAP_OUT=$out" >> "$GITHUB_ENV"
+          echo "CHAPTERA_SCRIPT_FONT_MAP_BEFORE_SHA=$before" >> "$GITHUB_ENV"
+
+      - name: Emit exact fonts.pub script-font preservation receipt
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader exact_fonts_pub_preserves_script_font_map_without_scalar_promotion -- --ignored --nocapture
+
+      - name: Prove exact source PUB immutability
+        shell: bash
+        run: |
+          set -euo pipefail
+          after="$(shasum -a 256 "$CHAPTERA_SCRIPT_FONT_MAP_FIXTURE" | awk '{print $1}')"
+          if [[ "$after" != "$CHAPTERA_SCRIPT_FONT_MAP_BEFORE_SHA" ]]; then
+            echo "source PUB mutated: before=$CHAPTERA_SCRIPT_FONT_MAP_BEFORE_SHA after=$after" >&2
+            exit 1
+          fi
+
       - name: Test pub-viewer
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-viewer-script-font-map
+          path: ${{ env.CHAPTERA_SCRIPT_FONT_MAP_OUT }}
+          if-no-files-found: warn
