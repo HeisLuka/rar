@@ -366,12 +366,11 @@ fn self_check() -> SelfCheck {
     }
 }
 
-fn rescue_handoff_admitted(path: &Path) -> Result<bool, String> {
-    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(matches!(
-        classify_failure_candidate(&bytes).class,
+fn rescue_handoff_admitted_bytes(bytes: &[u8]) -> bool {
+    matches!(
+        classify_failure_candidate(bytes).class,
         FailureIntakeClass::PubDamaged
-    ))
+    )
 }
 
 fn run_cli(args: &[String]) -> Result<Option<i32>, String> {
@@ -399,7 +398,7 @@ fn run_cli(args: &[String]) -> Result<Option<i32>, String> {
             &packet_path,
             chaptera_suite_handoff::RESCUE_PRODUCT_ID,
         )?;
-        let receiver_admitted = rescue_handoff_admitted(validated.source_path())?;
+        let receiver_admitted = rescue_handoff_admitted_bytes(validated.source_bytes());
         let receipt = chaptera_suite_handoff::finish_acceptance(validated, receiver_admitted)?;
         chaptera_suite_handoff::write_acceptance(&receipt, &output)?;
         println!(
@@ -524,8 +523,9 @@ mod tests {
         ));
         let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         bytes.extend_from_slice(b"Microsoft Publisher");
-        fs::write(&path, bytes).expect("write damaged classifier witness");
-        assert!(rescue_handoff_admitted(&path).expect("classify damaged witness"));
+        fs::write(&path, &bytes).expect("write damaged classifier witness");
+        let admitted = fs::read(&path).expect("read damaged classifier witness");
+        assert!(rescue_handoff_admitted_bytes(&admitted));
         fs::remove_file(path).ok();
     }
 
@@ -540,7 +540,8 @@ mod tests {
             [0x00, 0xFF, 0x10, 0x80, 0x00, 0x7F, 0xAA, 0x55, 0x13, 0x37],
         )
         .expect("write unknown witness");
-        assert!(!rescue_handoff_admitted(&path).expect("classify unknown witness"));
+        let admitted = fs::read(&path).expect("read unknown classifier witness");
+        assert!(!rescue_handoff_admitted_bytes(&admitted));
         fs::remove_file(path).ok();
     }
 
