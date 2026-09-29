@@ -171,7 +171,18 @@ class RealAcceptanceState:
     ) -> dict:
         graph, viewer = self._fresh_graph_and_viewer()
         current_graph = apply_project_to_resolved_graph(graph, project)
-        source_scene = project_resolved_graph_scene(current_graph)
+        viewer_pages = viewer.get("document", {}).get("pages")
+        if not isinstance(viewer_pages, list):
+            raise ValueError("Viewer receipt document.pages must be an array")
+        viewer_page_ids = []
+        for index, page in enumerate(viewer_pages):
+            if not isinstance(page, dict) or not isinstance(page.get("id"), str):
+                raise ValueError(f"Viewer receipt document.pages[{index}].id is required")
+            viewer_page_ids.append(page["id"])
+        source_scene = project_resolved_graph_scene(
+            current_graph,
+            page_ids=viewer_page_ids,
+        )
         if require_viewer_equivalence:
             compare_viewer_and_adapter_scene(viewer, source_scene)
         current_viewer = copy.deepcopy(viewer)
