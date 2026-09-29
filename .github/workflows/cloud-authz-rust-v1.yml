@@ -29,11 +29,11 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: Run AuthZ runtime tests
-        run: cargo test -p chaptera-server authz_runtime::
+        run: 'cargo test -p chaptera-server authz_runtime::'
       - name: Run export publication tests
-        run: cargo test -p chaptera-server export_publication::
+        run: 'cargo test -p chaptera-server export_publication::'
       - name: Run export executor tests
-        run: cargo test -p chaptera-server export_executor::
+        run: 'cargo test -p chaptera-server export_executor::'
       - name: Build chaptera server
         run: cargo build -p chaptera-server
       - name: Verify schema v11 migration
