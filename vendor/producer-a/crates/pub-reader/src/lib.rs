@@ -13,8 +13,10 @@ mod assets;
 mod cmo_bridge;
 mod failure_envelope;
 mod failure_intake;
+mod family_classifier;
 mod guide_bridge;
 mod intake_protocol;
+mod legacy22_graph;
 mod resolve;
 mod structural_base;
 mod table_bridge;
@@ -44,6 +46,10 @@ pub use failure_intake::{
     FailureIntakeClass, FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
     classify_failure_candidate,
 };
+pub use family_classifier::{
+    PubFamilyClassification, PubFamilyConfidence, PubFamilyProfile, PubFamilyReason, PubReaderRoute,
+    classify_pub_family,
+};
 pub use guide_bridge::{
     PubGroundedGuideBuild, PubGuideObservation, PubGuideProjectionDiagnostic,
     materialize_grounded_guides,
@@ -53,6 +59,10 @@ pub use intake_protocol::{
     CHAPTERA_INTAKE_RETENTION_POLICY_V1, IntakeCapabilityRequest, IntakeClusterDisposition,
     IntakeDedupeDisposition, IntakeProtocolError, IntakeReceipt, build_intake_capability_request,
     exact_file_intake_eligible, validate_intake_capability_request, validate_intake_receipt,
+};
+pub use legacy22_graph::{
+    build_legacy_0x22_quill_from_streams, build_legacy_0x22_quill_source_graph,
+    legacy22_object_key,
 };
 use pub_contents::{
     BLOCK_TYPE_FIXED_8, BLOCK_TYPE_REFERENCE_U32, BLOCK_TYPE_U32,
@@ -412,6 +422,12 @@ pub enum PubBridgeDiagnostic {
     MissingQuillStory {
         seq_num: u32,
         text_id: u32,
+    },
+    LegacyObjectNotMaterialized {
+        object_id: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_type: Option<u16>,
+        reason: String,
     },
     McldRecordCountMismatch {
         record_count: u32,

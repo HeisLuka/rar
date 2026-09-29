@@ -1,0 +1,71 @@
+name: Legacy22 Reader SourceGraph
+
+on:
+  pull_request:
+    paths:
+      - 'vendor/producer-a/crates/pub-contents/**'
+      - 'vendor/producer-a/crates/pub-reader/**'
+      - 'vendor/producer-a/crates/pub-viewer/**'
+      - 'apps/chaptera-desktop/**'
+      - '.github/workflows/legacy22-reader-sourcegraph.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  legacy22-quill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test lossless legacy directory + SourceGraph units
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-contents legacy22_directory
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader legacy22_graph
+
+      - name: Acquire exact Apache POI Publisher98/2000 fixtures
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import urllib.request
+          from pathlib import Path
+
+          base = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher"
+          fixtures = {
+              "Sample98.pub": "8912f295ff0cd1f55b873b3b98a182218f33c420877e025d2f0fd795f12dd0c0",
+              "Sample2000.pub": "40701ca47b26d04771cdd58467764e9ab39d3da69b59fbc529afd16d263d2f86",
+          }
+          out = Path("/tmp/chaptera-legacy22")
+          out.mkdir(parents=True, exist_ok=True)
+          for name, expected in fixtures.items():
+              req = urllib.request.Request(f"{base}/{name}", headers={"User-Agent": "chaptera-legacy22-reader/1.0"})
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  data = response.read()
+              actual = hashlib.sha256(data).hexdigest()
+              if actual != expected:
+                  raise SystemExit(f"{name}: SHA-256 drift {actual} != {expected}")
+              (out / name).write_bytes(data)
+              print(name, len(data), actual)
+          PY
+
+      - name: Prove exact Publisher98 Reader product-open
+        env:
+          CHAPTERA_SAMPLE98_PUB: /tmp/chaptera-legacy22/Sample98.pub
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer exact_sample98_legacy_quill_product_open -- --ignored --nocapture
+
+      - name: Prove exact Publisher2000 Reader product-open
+        env:
+          CHAPTERA_SAMPLE2000_PUB: /tmp/chaptera-legacy22/Sample2000.pub
+        run: |
+          cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer exact_sample2000_legacy_quill_product_open -- --ignored --nocapture
+
+      - name: Compile desktop Reader consumer
+        run: cargo check -p chaptera-desktop --features reader-only

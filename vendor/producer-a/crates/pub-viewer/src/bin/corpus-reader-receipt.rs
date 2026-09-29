@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use pub_viewer::{open_mature_0x2c_geometry, viewer_geometry_environment_v0_1};
+use pub_viewer::{open_pub_geometry, viewer_geometry_environment_v0_1};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{env, fs, path::PathBuf};
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
     let bytes = fs::read(&source).with_context(|| format!("read {}", source.display()))?;
     let source_sha256 = sha256_hex(&bytes);
 
-    let receipt = match open_mature_0x2c_geometry(&bytes, viewer_geometry_environment_v0_1()) {
+    let receipt = match open_pub_geometry(&bytes, viewer_geometry_environment_v0_1()) {
         Ok(visual) => {
             let mut diagnostic_codes = visual
                 .document

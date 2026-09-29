@@ -14,6 +14,7 @@ mod identity;
 mod legacy22;
 mod legacy22_cell;
 mod legacy22_chpx;
+mod legacy22_directory;
 mod legacy22_formatting;
 mod legacy22_papx;
 mod legacy22_table;
@@ -28,7 +29,7 @@ pub use block::{
     BLOCK_TYPE_CONTAINER_88, BLOCK_TYPE_CONTAINER_90, BLOCK_TYPE_CONTAINER_A0, BLOCK_TYPE_DUMMY,
     BLOCK_TYPE_EMPTY, BLOCK_TYPE_FIXED_8, BLOCK_TYPE_FIXED_16, BLOCK_TYPE_HANDLE_U32,
     BLOCK_TYPE_REFERENCE_U32, BLOCK_TYPE_U16, BLOCK_TYPE_U16_SERVICE, BLOCK_TYPE_U32,
-    CONTENTS_PACKED_FIELD_ID_MAX, BlockReadError, PackedFieldTagError, RawContentsBlock,
+    BlockReadError, CONTENTS_PACKED_FIELD_ID_MAX, PackedFieldTagError, RawContentsBlock,
     RawContentsBlockBody, decode_packed_field_tag, encode_packed_field_tag, parse_confirmed_block,
 };
 pub use cells::{
@@ -76,6 +77,10 @@ pub use legacy22_chpx::{
     Legacy0x22CharacterStyle, Legacy0x22CharacterStyleError, Legacy0x22Underline,
     decode_legacy_0x22_character_style,
 };
+pub use legacy22_directory::{
+    LEGACY_0X22_DIRECTORY_ENTRY_SIZE, LEGACY_0X22_TRAILER_POINTER_OFFSET, Legacy0x22Directory,
+    Legacy0x22DirectoryEntry, Legacy0x22DirectoryReadError, parse_legacy_0x22_directory,
+};
 pub use legacy22_formatting::{
     Legacy0x22CellStyleBoundary, Legacy0x22CharacterRun, Legacy0x22FormattingRuns,
     Legacy0x22FormattingRunsError, Legacy0x22ParagraphRun, parse_legacy_0x22_formatting_runs,
@@ -90,10 +95,10 @@ pub use legacy22_table::{
     Legacy0x22TableTextReadError, parse_legacy_0x22_table_text_map,
 };
 pub use legacy22_table_object::{
-    LEGACY_0X22_TABLE_CHUNK_TYPE, LEGACY_0X22_TRAILER_POINTER_OFFSET, Legacy0x22HorizontalMerge,
-    Legacy0x22ResolvedTable, Legacy0x22ResolvedTableCatalog, Legacy0x22TableAxisSegment,
-    Legacy0x22TableCatalog, Legacy0x22TableCatalogReadError, Legacy0x22TableChunk,
-    Legacy0x22TableListHeader, parse_legacy_0x22_resolved_tables, parse_legacy_0x22_table_catalog,
+    LEGACY_0X22_TABLE_CHUNK_TYPE, Legacy0x22HorizontalMerge, Legacy0x22ResolvedTable,
+    Legacy0x22ResolvedTableCatalog, Legacy0x22TableAxisSegment, Legacy0x22TableCatalog,
+    Legacy0x22TableCatalogReadError, Legacy0x22TableChunk, Legacy0x22TableListHeader,
+    parse_legacy_0x22_resolved_tables, parse_legacy_0x22_table_catalog,
 };
 pub use legacy22_text_info::{
     LEGACY_0X22_TEXT_INFO_CHUNK_TYPE, Legacy0x22TextInfoMap, Legacy0x22TextInfoOwnerEnd,
