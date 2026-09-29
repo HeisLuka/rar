@@ -315,6 +315,7 @@ main[data-country="FR"] { --green: #315a8a; --green-2: #eef4fb; --green-3: #d8e5
 main[data-country="ES"] { --green: #8a5a08; --green-2: #fff7e8; --green-3: #f3e2b9; }
 main[data-country="IT"] { --green: #356849; --green-2: #edf7f0; --green-3: #d7eadc; }
 main[data-country="DE"] { --green: #54524d; --green-2: #f3f2ef; --green-3: #e2e0db; }
+main[data-country="RU"] { --green: #4f5f86; --green-2: #f0f3fa; --green-3: #dce3f3; }
 
 .brandWrap { display: flex; flex-direction: column; gap: 2px; text-align: left; }
 .regionHint { color: var(--muted); font-size: 10px; letter-spacing: .03em; }
