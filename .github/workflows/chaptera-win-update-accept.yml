@@ -133,6 +133,12 @@ jobs:
           if (-not (Test-Path $installed)) { throw "installed Reader binary missing" }
           "CHAPTERA_UPDATE_ACCEPT_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Prove Restart Manager quiesces two live installed Readers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test -p chaptera-update-orchestrator --test windows_product_acceptance real_installed_reader_restart_manager_quiesces_two_live_processes -- --exact --nocapture
+
       - name: Run real installed Reader authenticated update + rollback
         shell: pwsh
         run: |
