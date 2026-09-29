@@ -13,6 +13,7 @@ mod assets;
 mod cmo_bridge;
 mod failure_envelope;
 mod failure_intake;
+mod family_classifier;
 mod guide_bridge;
 mod intake_protocol;
 mod resolve;
@@ -43,6 +44,10 @@ pub use failure_envelope::{
 pub use failure_intake::{
     FailureIntakeClass, FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
     classify_failure_candidate,
+};
+pub use family_classifier::{
+    PubFamilyClassification, PubFamilyConfidence, PubFamilyProfile, PubFamilyReason, PubReaderRoute,
+    classify_pub_family,
 };
 pub use guide_bridge::{
     PubGroundedGuideBuild, PubGuideObservation, PubGuideProjectionDiagnostic,
