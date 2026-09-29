@@ -30,6 +30,8 @@ pub struct QuillTypographyCatalog {
     pub font_names: Vec<String>,
     pub ranges: Vec<QuillTypographyRange>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_font_maps: Vec<QuillScriptFontMapObservation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub explicit_runs: Vec<QuillExplicitTypographyRun>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effective_runs: Vec<QuillEffectiveTypographyRun>,
@@ -54,6 +56,8 @@ pub struct QuillTypographyRange {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub font_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_fonts: Vec<QuillScriptFontEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_sizes_emu: Vec<u32>,
     pub story_intersections: Vec<QuillTypographyStoryIntersection>,
 }
@@ -66,6 +70,36 @@ pub struct QuillTypographyStoryIntersection {
     pub global_end_utf16: u32,
     pub story_start_utf16: u32,
     pub story_end_utf16: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuillScriptFontEntry {
+    pub script_slot: u16,
+    pub font_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_name: Option<String>,
+    pub disposition: QuillScriptFontEntryDisposition,
+    pub source: RawSpan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuillScriptFontEntryDisposition {
+    Resolved,
+    UnresolvedSentinel,
+    InvalidFontOrdinal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuillScriptFontMapObservation {
+    pub story_index: u32,
+    pub story_syid: QuillSyid,
+    pub story_start_utf16: u32,
+    pub story_end_utf16: u32,
+    pub fdpc_descriptor_ordinal: u32,
+    pub fdpc_style_ordinal: u32,
+    pub fdpc_style_source: RawSpan,
+    pub entries: Vec<QuillScriptFontEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +203,7 @@ struct StyleObservation {
     style_source: RawSpan,
     font_indices: Vec<u32>,
     font_names: Vec<String>,
+    script_fonts: Vec<QuillScriptFontEntry>,
     text_sizes_emu: Vec<u32>,
 }
 
