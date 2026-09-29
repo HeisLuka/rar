@@ -116,10 +116,9 @@ jobs:
           set -euo pipefail
           mkdir -p out
           sudo apt-get update
-          sudo apt-get install -y             build-essential             cmake             git             libboost-date-time-dev             libboost-filesystem-dev             libboost-iostreams-dev             libboost-program-options-dev             libboost-system-dev             libbz2-dev             liblzma-dev             zlib1g-dev
+          sudo apt-get install -y             build-essential             cmake             git             mono-utils             libboost-date-time-dev             libboost-filesystem-dev             libboost-iostreams-dev             libboost-program-options-dev             libboost-system-dev             libbz2-dev             liblzma-dev             zlib1g-dev
 
-          git clone --filter=blob:none https://github.com/dscharrer/innoextract.git innoextract-tool
-          git -C innoextract-tool fetch origin pull/214/head
+          git clone --filter=blob:none https://github.com/psi29a/innoextract.git innoextract-tool
           git -C innoextract-tool checkout 4bbe109f18419a3c68faeb013d7ae67330a4296c
 
           cmake -S innoextract-tool -B innoextract-tool/build             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTS=OFF             -DRUN_TESTS=OFF
@@ -167,6 +166,82 @@ jobs:
 
           cat out/inno-notable-files.txt
           cat out/binary-marker-scan.txt
+
+      - name: Inspect Viewer managed IL surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="out/inno-extracted/app/UnivikPUBViewer.exe"
+          test -f "$exe"
+
+          monodis --assemblyref "$exe" > out/viewer-assemblyrefs.txt
+          monodis --typedef "$exe" > out/viewer-typedefs.txt
+          monodis --method "$exe" > out/viewer-methods.txt
+          monodis "$exe" > out/viewer.il.txt 2> out/viewer-il-stderr.txt || true
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          src = Path("out/viewer.il.txt")
+          methods = Path("out/viewer-methods.txt")
+          types = Path("out/viewer-typedefs.txt")
+          text = src.read_text(errors="replace") if src.exists() else ""
+          mtext = methods.read_text(errors="replace")
+          ttext = types.read_text(errors="replace")
+
+          needles = [
+              "PubLegacyPositionedExtractor",
+              "PubPositionedExtractor",
+              "IsOlderThanPublisher98",
+              "IsOlderThan98Label",
+              "IsOldFormat",
+              "TryGetPageCount",
+              "RenderPage",
+              "RenderToPdfBytes",
+              "CheckLicenseRegistration",
+              "ValidateLicenseKeyInRegistry",
+              "get_IsDemo",
+              "get_IsLicensed",
+              "get_KeyValidForDays",
+              "BtnUpgrade_Click",
+              "UpgradeWindow",
+              "GetCommandLineArgs",
+              "StartupEventArgs",
+          ]
+
+          out = []
+          out.append("=== TYPE/METHOD PRESENCE ===")
+          for needle in needles:
+              th = [line for line in ttext.splitlines() if needle.lower() in line.lower()]
+              mh = [line for line in mtext.splitlines() if needle.lower() in line.lower()]
+              out.append(f"## {needle}")
+              out.extend("TYPE " + line for line in th[:20])
+              out.extend("METHOD " + line for line in mh[:40])
+
+          lines = text.splitlines()
+          out.append("\n=== TARGETED IL WINDOWS ===")
+          seen = set()
+          for needle in needles:
+              hits = [i for i, line in enumerate(lines) if needle.lower() in line.lower()]
+              for i in hits[:12]:
+                  a = max(0, i - 45)
+                  b = min(len(lines), i + 120)
+                  key = (a, b)
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  out.append(f"\n--- {needle} @ line {i+1} ---")
+                  out.extend(f"{j+1}: {lines[j]}" for j in range(a, b))
+
+          Path("out/viewer-targeted-il.txt").write_text("\n".join(out), encoding="utf-8")
+          PY
+
+          grep -E -i 'PubLegacyPositionedExtractor|IsOlderThanPublisher98|IsOldFormat|IsDemo|IsLicensed|UpgradeWindow|BtnUpgrade_Click|GetCommandLineArgs'             out/viewer-methods.txt out/viewer-typedefs.txt out/viewer-targeted-il.txt |
+            head -n 400 || true
+
+          grep -q 'PubLegacyPositionedExtractor' out/viewer-methods.txt
+          grep -q 'IsOlderThanPublisher98' out/viewer-methods.txt
 
       - name: Upload static Inno evidence
         uses: actions/upload-artifact@v4
