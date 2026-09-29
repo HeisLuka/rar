@@ -8353,8 +8353,7 @@ mod tests {
 
         const SOURCE_SHA256: &str =
             "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048";
-        const EOT_SHA256: &str =
-            "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f";
+        const EOT_SHA256: &str = "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f";
         const SOURCE_FONT_NAME: &str = "Times New Roman";
 
         let fixture = std::env::var_os("CHAPTERA_EMBEDDED_FONT_PUB")
@@ -8499,40 +8498,28 @@ mod tests {
                 let fallback_breaks = fallback_layout
                     .lines
                     .iter()
-                    .map(|line| {
-                        [
-                            line.scalar_start,
-                            line.scalar_end,
-                            line.consumed_scalar_end,
-                        ]
-                    })
+                    .map(|line| [line.scalar_start, line.scalar_end, line.consumed_scalar_end])
                     .collect::<Vec<_>>();
                 let embedded_breaks = embedded_layout
                     .lines
                     .iter()
-                    .map(|line| {
-                        [
-                            line.scalar_start,
-                            line.scalar_end,
-                            line.consumed_scalar_end,
-                        ]
-                    })
+                    .map(|line| [line.scalar_start, line.scalar_end, line.consumed_scalar_end])
                     .collect::<Vec<_>>();
                 let line_break_changed = fallback_breaks != embedded_breaks;
                 let measured_width_changed = fallback_layout.lines.len()
                     != embedded_layout.lines.len()
-                    || fallback_layout.lines.iter().zip(&embedded_layout.lines).any(
-                        |(fallback, embedded)| {
+                    || fallback_layout
+                        .lines
+                        .iter()
+                        .zip(&embedded_layout.lines)
+                        .any(|(fallback, embedded)| {
                             fallback.measured_width_emu != embedded.measured_width_emu
-                        },
-                    );
+                        });
 
                 let fallback_height_emu = i128::from(fallback_line_height_emu)
-                    * i128::try_from(fallback_layout.lines.len())
-                        .expect("line count fits i128");
+                    * i128::try_from(fallback_layout.lines.len()).expect("line count fits i128");
                 let embedded_height_emu = i128::from(embedded_line_height_emu)
-                    * i128::try_from(embedded_layout.lines.len())
-                        .expect("line count fits i128");
+                    * i128::try_from(embedded_layout.lines.len()).expect("line count fits i128");
                 let frame_height_emu = i128::from(fallback_node.bounds.height.get());
                 let fallback_clipped = fallback_height_emu > frame_height_emu;
                 let embedded_clipped = embedded_height_emu > frame_height_emu;
