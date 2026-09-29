@@ -1,0 +1,243 @@
+name: CHAPTERA-WIN-PATH-IDENTITY-01
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-suite-handoff/**"
+      - "apps/chaptera-desktop/**"
+      - "apps/chaptera-rescue/**"
+      - ".github/workflows/chaptera-win-path-identity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows-path-identity:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@9376cdc5a5e25b16da71af47712785cf06b0d6d4 # 1.94.1
+
+      - name: Test exact-open handoff authority
+        run: cargo test --manifest-path crates/chaptera-suite-handoff/Cargo.toml
+
+      - name: Build Reader and Editor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p chaptera-desktop --release --features reader-only
+          $bin = Join-Path $env:RUNNER_TEMP "path-identity-bins"
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Copy-Item "target/release/chaptera-editor.exe" (Join-Path $bin "chaptera-reader.exe") -Force
+          cargo build -p chaptera-desktop --release
+          Copy-Item "target/release/chaptera-editor.exe" (Join-Path $bin "chaptera-editor.exe") -Force
+          "CHAPTERA_PATH_ID_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Acquire pinned real PUB fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-path-identity"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $fixture = Join-Path $root "SampleNewsletter.pub"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub" -OutFile $fixture
+          $sha = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "fixture SHA-256 mismatch: $sha"
+          }
+          "CHAPTERA_PATH_ID_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_PATH_ID_FIXTURE=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_PATH_ID_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prove Unicode and combining path acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-ChapteraNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments
+            )
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $FilePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($argument in $Arguments) {
+              [void]$psi.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $psi
+            if (-not $process.Start()) { throw "failed to launch $FilePath" }
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($stdout) { Write-Host $stdout.TrimEnd() }
+            if ($stderr) { Write-Host $stderr.TrimEnd() }
+            return [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout
+              Stderr = $stderr
+            }
+          }
+          $dir = Join-Path $env:CHAPTERA_PATH_ID_ROOT "資料-Издатель-café"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $source = Join-Path $dir "публикация-資料.pub"
+          Copy-Item $env:CHAPTERA_PATH_ID_FIXTURE $source -Force
+          $packet = Join-Path $env:CHAPTERA_PATH_ID_ROOT "unicode.packet.json"
+          $receipt = Join-Path $env:CHAPTERA_PATH_ID_ROOT "unicode.acceptance.json"
+          $reader = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") @("--handoff-create-v1","chaptera.editor",$source,$packet)
+          if ($reader.ExitCode -ne 0) { throw "Reader rejected admitted Unicode PUB path: $($reader.Stderr)" }
+          $editor = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") @("--handoff-accept-v1",$packet,$receipt)
+          if ($editor.ExitCode -ne 0) { throw "Editor rejected admitted Unicode PUB handoff: $($editor.Stderr)" }
+          $accepted = Get-Content $receipt -Raw | ConvertFrom-Json
+          if ($accepted.source_sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "Unicode receipt source identity mismatch" }
+
+      - name: Prove deep long-path acceptance or typed host-policy rejection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-ChapteraNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments
+            )
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $FilePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($argument in $Arguments) {
+              [void]$psi.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $psi
+            if (-not $process.Start()) { throw "failed to launch $FilePath" }
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($stdout) { Write-Host $stdout.TrimEnd() }
+            if ($stderr) { Write-Host $stderr.TrimEnd() }
+            return [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout
+              Stderr = $stderr
+            }
+          }
+          $deep = Join-Path $env:CHAPTERA_PATH_ID_ROOT "deep"
+          for ($i = 0; $i -lt 12; $i++) {
+            $deep = Join-Path $deep ("segment-{0:D2}-abcdefghijklmnop" -f $i)
+          }
+          New-Item -ItemType Directory -Force -Path $deep | Out-Null
+          $source = Join-Path $deep "long-path-publication.pub"
+          Copy-Item $env:CHAPTERA_PATH_ID_FIXTURE $source -Force
+          if ($source.Length -le 260) { throw "constructed path is not >260 characters: $($source.Length)" }
+
+          $packet = Join-Path $env:CHAPTERA_PATH_ID_ROOT "long.packet.json"
+          $receipt = Join-Path $env:CHAPTERA_PATH_ID_ROOT "long.acceptance.json"
+          $reader = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") @("--handoff-create-v1","chaptera.editor",$source,$packet)
+          if ($reader.ExitCode -eq 0) {
+            $editor = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") @("--handoff-accept-v1",$packet,$receipt)
+            if ($editor.ExitCode -ne 0) { throw "Editor rejected long-path handoff after Reader accepted it: $($editor.Stderr)" }
+            $accepted = Get-Content $receipt -Raw | ConvertFrom-Json
+            if ($accepted.source_sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "long-path receipt source identity mismatch" }
+            $outcome = "accepted"
+          } else {
+            if ($reader.Stderr -notmatch "source_path_platform_unsupported") {
+              throw "long path failed without typed platform error: $($reader.Stderr)"
+            }
+            $outcome = "typed_host_policy_reject"
+          }
+          "CHAPTERA_LONG_PATH_CHARS=$($source.Length)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_LONG_PATH_OUTCOME=$outcome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prove junction retarget cannot replace sender-admitted source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-ChapteraNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$Arguments
+            )
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = $FilePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($argument in $Arguments) {
+              [void]$psi.ArgumentList.Add($argument)
+            }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $psi
+            if (-not $process.Start()) { throw "failed to launch $FilePath" }
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($stdout) { Write-Host $stdout.TrimEnd() }
+            if ($stderr) { Write-Host $stderr.TrimEnd() }
+            return [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout
+              Stderr = $stderr
+            }
+          }
+          $a = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction-a"
+          $b = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction-b"
+          $link = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction-current"
+          New-Item -ItemType Directory -Force -Path $a,$b | Out-Null
+          Copy-Item $env:CHAPTERA_PATH_ID_FIXTURE (Join-Path $a "source.pub") -Force
+          [IO.File]::WriteAllBytes((Join-Path $b "source.pub"), [Text.Encoding]::UTF8.GetBytes("replacement-not-a-pub"))
+
+          cmd /c mklink /J "$link" "$a"
+          if ($LASTEXITCODE -ne 0) { throw "failed to create source junction" }
+          $source = Join-Path $link "source.pub"
+          $packet = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction.packet.json"
+          $receipt = Join-Path $env:CHAPTERA_PATH_ID_ROOT "junction.acceptance.json"
+
+          $reader = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-reader.exe") @("--handoff-create-v1","chaptera.editor",$source,$packet)
+          if ($reader.ExitCode -ne 0) { throw "Reader failed junction source admission: $($reader.Stderr)" }
+          $packetBody = Get-Content $packet -Raw | ConvertFrom-Json
+          if ($packetBody.source.sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "sender did not bind original junction target bytes" }
+
+          cmd /c rmdir "$link"
+          if ($LASTEXITCODE -ne 0) { throw "failed to remove source junction" }
+          cmd /c mklink /J "$link" "$b"
+          if ($LASTEXITCODE -ne 0) { throw "failed to retarget source junction" }
+
+          $editor = Invoke-ChapteraNative (Join-Path $env:CHAPTERA_PATH_ID_BIN "chaptera-editor.exe") @("--handoff-accept-v1",$packet,$receipt)
+          if ($editor.ExitCode -ne 0) { throw "Editor followed retargeted junction instead of canonical sender locator: $($editor.Stderr)" }
+          $accepted = Get-Content $receipt -Raw | ConvertFrom-Json
+          if ($accepted.source_sha256 -ne $env:CHAPTERA_PATH_ID_SHA) { throw "junction receipt identity changed" }
+
+      - name: Emit source-free path identity receipt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:CHAPTERA_PATH_ID_ROOT "receipt.json"
+          [ordered]@{
+            schema = "chaptera.win-path-identity.v1"
+            task = "CHAPTERA-WIN-PATH-IDENTITY-01"
+            exact_open_handle_identity = $true
+            receiver_capability_uses_admitted_bytes = $true
+            final_fence_rehashes_opened_handle = $true
+            unicode_path_accepted = $true
+            combining_unicode_component_accepted = $true
+            long_path_characters = [int]$env:CHAPTERA_LONG_PATH_CHARS
+            long_path_outcome = $env:CHAPTERA_LONG_PATH_OUTCOME
+            junction_retarget_after_sender_admission_preserved_source_identity = $true
+            source_sha256 = $env:CHAPTERA_PATH_ID_SHA
+            source_bytes_serialized = $false
+          } | ConvertTo-Json | Set-Content -Encoding utf8 $out
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chaptera-win-path-identity
+          path: ${{ runner.temp }}/chaptera-path-identity/receipt.json
+          if-no-files-found: error
