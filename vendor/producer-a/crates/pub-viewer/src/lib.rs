@@ -47,9 +47,9 @@ use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubResolvedGraph, PubResolvedGraphBuild, PubResolvedNodePayload, PubSourceGraphBuild,
-    analyze_mature_0x2c_page_roles, build_failure_envelope,
-    build_legacy_0x22_quill_source_graph, build_mature_0x2c_asset_export_bundle_from_bytes,
-    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
+    analyze_mature_0x2c_page_roles, build_failure_envelope, build_legacy_0x22_quill_source_graph,
+    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
+    derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -654,8 +654,8 @@ pub fn open_legacy_0x22_quill_geometry(
     let source_hash = sha256_digest(bytes)?;
     let source = build_legacy_0x22_quill_source_graph(Cursor::new(bytes), source_hash)
         .context("build legacy-0x22+Quill PUB source graph for Viewer")?;
-    let resolved =
-        resolve_pub_source_graph(&source.graph).context("resolve legacy PUB source graph for Viewer")?;
+    let resolved = resolve_pub_source_graph(&source.graph)
+        .context("resolve legacy PUB source graph for Viewer")?;
     let page_selection = ViewerPageSelection {
         page_ids: source.effective_pages.page_ids.clone(),
         disposition: ViewerPageSelectionDisposition::GenericNoLoss,
@@ -667,7 +667,11 @@ pub fn open_legacy_0x22_quill_geometry(
         &resolved,
         &page_selection,
     )?;
-    let effective_page_ids = document.pages.iter().map(|page| page.id).collect::<Vec<_>>();
+    let effective_page_ids = document
+        .pages
+        .iter()
+        .map(|page| page.id)
+        .collect::<Vec<_>>();
     let authoring =
         bounded_authoring_slice_from_resolved_pages(&resolved.graph, &effective_page_ids)?;
     let projection = project_bounded(authoring);
@@ -3045,7 +3049,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod legacy22_exact_product_tests {
     use super::*;
@@ -3068,7 +3071,10 @@ mod legacy22_exact_product_tests {
         );
         assert!(!visual.document.pages.is_empty(), "legacy Viewer pages");
         assert!(!visual.document.stories.is_empty(), "legacy Quill stories");
-        assert!(!visual.scene.nodes.is_empty(), "legacy grounded scene nodes");
+        assert!(
+            !visual.scene.nodes.is_empty(),
+            "legacy grounded scene nodes"
+        );
         assert_eq!(
             visual.document.fidelity_status(),
             ViewerFidelityStatus::Partial,
