@@ -157,10 +157,10 @@ def scan_desktop_process_launch(repo_root: Path) -> list[str]:
 
     path, index, token = occurrences[0]
     relative = path.relative_to(repo_root)
-    if relative != Path("apps/chaptera-desktop/src/main.rs"):
+    if relative != Path("apps/chaptera-desktop/src/reader_update_control.rs"):
         return [
             f"{relative}: reviewed process launch moved outside the admitted updater "
-            "health-smoke location"
+            "health-smoke module"
         ]
 
     text = path.read_text(encoding="utf-8")
