@@ -78,8 +78,8 @@ use pub_model::{
     derive_source_canonical_id,
 };
 use pub_quill::{
-    QuillMcldReadError, QuillTypographyValueSource, parse_bounded_mcld,
-    parse_bounded_typography, parse_confirmed_story_catalog,
+    QuillMcldReadError, QuillScriptFontEntryDisposition, QuillTypographyValueSource,
+    parse_bounded_mcld, parse_bounded_typography, parse_confirmed_story_catalog,
 };
 pub use resolve::{
     PUB_RESOLVER_VERSION_V1, PubResolveDiagnostic, PubResolvedGraph, PubResolvedGraphBuild,
@@ -211,6 +211,37 @@ pub struct PubSourceGraphBuild {
     pub diagnostics: Vec<PubBridgeDiagnostic>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typography_runs: Vec<PubTypographyRun>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_font_maps: Vec<PubScriptFontMap>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PubScriptFontEntryDisposition {
+    Resolved,
+    UnresolvedSentinel,
+    InvalidFontOrdinal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubScriptFontEntry {
+    pub script_slot: u16,
+    pub source_font_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_font_name: Option<String>,
+    pub disposition: PubScriptFontEntryDisposition,
+    pub source_ref: SourceRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PubScriptFontMap {
+    pub story_id: StoryId,
+    pub story_utf16_start: u32,
+    pub story_utf16_end: u32,
+    pub story_scalar_start: u32,
+    pub story_scalar_end: u32,
+    pub entries: Vec<PubScriptFontEntry>,
+    pub source_ref: SourceRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1956,7 +1987,83 @@ pub fn build_mature_0x2c_from_streams(
     }
 
     let mut typography_runs = Vec::new();
+    let mut script_font_maps = Vec::new();
     if let Some(catalog) = typography_catalog {
+        for map in &catalog.script_font_maps {
+            let syid = map.story_syid.0;
+            let Some(story_id) = story_by_syid.get(&syid).copied() else {
+                diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                    reason: format!("script-font map references missing Story SYID {syid}"),
+                });
+                continue;
+            };
+            let Some(story) = graph.stories.get(&story_id) else {
+                diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                    reason: format!("script-font map Story {story_id:?} is absent"),
+                });
+                continue;
+            };
+            let Some((story_scalar_start, story_scalar_end)) =
+                utf16_range_to_scalar_range(&story.text, map.story_start_utf16, map.story_end_utf16)
+            else {
+                diagnostics.push(PubBridgeDiagnostic::TypographyProjectionUnavailable {
+                    reason: format!(
+                        "script-font map range {}..{} splits a UTF-16 scalar boundary for Story SYID {syid}",
+                        map.story_start_utf16, map.story_end_utf16
+                    ),
+                });
+                continue;
+            };
+
+            let object_key = quill_story_object_key(syid);
+            let entries = map
+                .entries
+                .iter()
+                .map(|entry| PubScriptFontEntry {
+                    script_slot: entry.script_slot,
+                    source_font_index: entry.font_index,
+                    source_font_name: entry.font_name.clone(),
+                    disposition: match entry.disposition {
+                        QuillScriptFontEntryDisposition::Resolved => {
+                            PubScriptFontEntryDisposition::Resolved
+                        }
+                        QuillScriptFontEntryDisposition::UnresolvedSentinel => {
+                            PubScriptFontEntryDisposition::UnresolvedSentinel
+                        }
+                        QuillScriptFontEntryDisposition::InvalidFontOrdinal => {
+                            PubScriptFontEntryDisposition::InvalidFontOrdinal
+                        }
+                    },
+                    source_ref: source_ref(
+                        &graph.source,
+                        &entry.source,
+                        Some(object_key.clone()),
+                        Some(format!("FDPC/ScriptFonts/script-slot/{}", entry.script_slot)),
+                        SourceRole::Semantic,
+                        AuthorityClass::Authoritative,
+                        ReadConfidence::Exact,
+                    ),
+                })
+                .collect::<Vec<_>>();
+
+            script_font_maps.push(PubScriptFontMap {
+                story_id,
+                story_utf16_start: map.story_start_utf16,
+                story_utf16_end: map.story_end_utf16,
+                story_scalar_start,
+                story_scalar_end,
+                entries,
+                source_ref: source_ref(
+                    &graph.source,
+                    &map.fdpc_style_source,
+                    Some(object_key),
+                    Some("FDPC/ScriptFonts".into()),
+                    SourceRole::Semantic,
+                    AuthorityClass::Authoritative,
+                    ReadConfidence::Exact,
+                ),
+            });
+        }
         if !catalog.effective_runs.is_empty() {
             for run in catalog.effective_runs {
                 let syid = run.story_syid.0;
@@ -2297,6 +2404,7 @@ pub fn build_mature_0x2c_from_streams(
         effective_pages,
         diagnostics,
         typography_runs,
+        script_font_maps,
     })
 }
 
