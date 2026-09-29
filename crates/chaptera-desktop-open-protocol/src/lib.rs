@@ -42,7 +42,7 @@ impl FrameLimitsV1 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameKindV1 {
     ControlJson,
@@ -183,7 +183,7 @@ pub enum WorkerFailureCodeV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DesktopOpenOutcomeV1 {
-    Success(DesktopOpenSuccessV1),
+    Success { payloads: DesktopOpenSuccessV1 },
     Failure { code: WorkerFailureCodeV1 },
 }
 
@@ -201,10 +201,10 @@ impl DesktopOpenResponseV1 {
             return Err(ProtocolErrorV1::SchemaMismatch);
         }
         self.source.validate()?;
-        if let DesktopOpenOutcomeV1::Success(success) = &self.outcome {
-            success.viewer_json.validate()?;
-            success.editor_graph_json.validate()?;
-            for image in &success.image_blobs {
+        if let DesktopOpenOutcomeV1::Success { payloads } = &self.outcome {
+            payloads.viewer_json.validate()?;
+            payloads.editor_graph_json.validate()?;
+            for image in &payloads.image_blobs {
                 image.validate()?;
             }
         }
@@ -409,7 +409,7 @@ pub fn decode_frames(
         validate_key(&key)?;
 
         let actual_digest = Sha256::digest(payload);
-        if actual_digest.as_slice() != &header[16..48] {
+        if actual_digest[..] != header[16..48] {
             return Err(ProtocolErrorV1::FrameHashMismatch);
         }
 
