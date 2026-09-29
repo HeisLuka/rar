@@ -651,11 +651,15 @@ fn main() -> eframe::Result<()> {
             std::process::exit(2);
         }
         let Some(path) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera-reader --reader-activation-probe-v1 SOURCE.pub RECEIPT.json HOLD_MS");
+            eprintln!(
+                "usage: chaptera-reader --reader-activation-probe-v1 SOURCE.pub RECEIPT.json HOLD_MS"
+            );
             std::process::exit(2);
         };
         let Some(receipt) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera-reader --reader-activation-probe-v1 SOURCE.pub RECEIPT.json HOLD_MS");
+            eprintln!(
+                "usage: chaptera-reader --reader-activation-probe-v1 SOURCE.pub RECEIPT.json HOLD_MS"
+            );
             std::process::exit(2);
         };
         let Some(hold_ms) = args
