@@ -23,4 +23,4 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Prove serve-side durable export jobs runtime
-        run: cargo test -p chaptera-server jobs_runtime:: -- --nocapture
+        run: 'cargo test -p chaptera-server jobs_runtime:: -- --nocapture'

@@ -56,6 +56,6 @@ jobs:
           toolchain: "1.94.1"
           components: rustfmt, clippy
       - name: Test durable exact-fence store
-        run: cargo test -p chaptera-server derived_artifacts::
+        run: 'cargo test -p chaptera-server derived_artifacts::'
       - name: Test migration chain
-        run: cargo test -p chaptera-server schema_migration::
+        run: 'cargo test -p chaptera-server schema_migration::'

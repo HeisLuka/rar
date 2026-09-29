@@ -27,7 +27,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Prove readiness lifecycle composition
-        run: cargo test -p chaptera-server runtime_readiness:: -- --nocapture
+        run: 'cargo test -p chaptera-server runtime_readiness:: -- --nocapture'
       - name: Build Chaptera
         run: cargo build -p chaptera-server
       - name: Prove configured serve reaches ready

@@ -27,8 +27,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Test quota worker adapter
-        run: cargo test -p chaptera-server quota_admission::
+        run: 'cargo test -p chaptera-server quota_admission::'
       - name: Test quota authority
-        run: cargo test -p chaptera-server quota_store::
+        run: 'cargo test -p chaptera-server quota_store::'
       - name: Test worker lifecycle regressions
-        run: cargo test -p chaptera-server job_worker::
+        run: 'cargo test -p chaptera-server job_worker::'

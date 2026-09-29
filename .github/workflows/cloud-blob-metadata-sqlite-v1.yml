@@ -29,4 +29,4 @@ jobs:
       - name: Run blob metadata repository laws
         run: cargo test -p chaptera-server --test sqlite_blob_metadata -- --nocapture
       - name: Run BlobStore regression suite
-        run: cargo test -p chaptera-server blob_store:: -- --nocapture
+        run: 'cargo test -p chaptera-server blob_store:: -- --nocapture'
