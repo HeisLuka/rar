@@ -1,0 +1,6 @@
+# Residual safe branch GC wave 9 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 2
+
+ops/residual-gc-wave8-20260929 91d144b2314085a6a7703f984da4aa9ea907549c  # PR #1290 execution-only GC completed SUCCESS; unique delta is only its consumed manifest
+research/univik-viewer-free-state-01 7d5f8365a06b44c4af7d1bf796240dac4b756ed6  # identical to current main: ahead=0 behind=0, no changed files
