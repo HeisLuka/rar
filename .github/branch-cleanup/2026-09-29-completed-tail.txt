@@ -1,0 +1,17 @@
+# Completed execution/provenance tail GC — 2026-09-29
+# Every entry was rechecked immediately before staging and is SHA-pinned.
+# Runtime also refuses default/current/open-PR heads.
+# Candidate count: 12
+
+ci-cloud-package-gate-live-probe-01 8b56f80a559b2e88c7f9ae07e52aaecd56048109  # PR #876 measurement-only; closed unmerged
+ops/closed-superseded-gc-20260929 e1965cbf5252ff41f052a25abd966008b841c828  # PR #1240 completed cleanup provenance
+research/corpus-pspp-publisher-logo-recovery-04 00ea12d495e72ce1c7bbc137efa24c5814f0df46  # PR #746 completed negative recovery; closed unmerged
+research/corpus-publisher2002-6355xd-recovery-03 d0a4bc5bc09d0bcc3024508240b5e0d01b38ec6c  # PR #748 completed negative recovery; closed unmerged
+research/corpus-publisher2002-gaskin-swf-04 f52a9d6b66037d05b295260917a7db3ba00f22bb  # PR #751 execution-only; closed unmerged
+research/corpus-publisher2002-scsite-datafiles-02 18c5b5d3f27f7b1c106fcd01ce4dc8cb97177619  # PR #747 completed probe; closed unmerged
+research/corpus-publisher2002-textbook-second-level-03 97026dda40a5630b203bd15b49ba807591a21308  # PR #749 execution-only; closed unmerged
+ops/merged-head-gc-recent-20260929 5c09665c4758d90ee656bebf948166d004ddfc68  # PR #1238 completed cleanup manifest; provenance only
+ops/merged-head-gc-older-20260929 719f2f8bf165c72e2d8166867c6e761739b545b0  # PR #1239 completed cleanup manifest; provenance only
+ops/merged-ancestor-audit-20260929 ccaeabdb2a4a9de1cb5af75596971add4323a329  # PR #1241 completed one-shot read-only audit
+ops/merged-ancestor-gc-20260929 48c877efa932505b2294db3f7404baf446d41b93  # PR #1242 completed graph cleanup manifest
+ops/stale-branch-audit-20260929 b8fc7b690317018c0b8a4b4d7c02928ea1270510  # PR #1245 completed one-shot inventory
