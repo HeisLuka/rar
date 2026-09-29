@@ -1,0 +1,91 @@
+name: Chaptera updater reboot-resume preflight
+
+on:
+  pull_request:
+    paths:
+      - "crates/chaptera-update-orchestrator/Cargo.toml"
+      - "crates/chaptera-update-orchestrator/src/bin/chaptera-update-recovery-probe.rs"
+      - "tools/chaptera-local-updater-reboot-resume.ps1"
+      - ".github/workflows/chaptera-local-updater-reboot-resume.yml"
+      - ".github/workstream-scopes/chaptera-local-updater-reboot-resume-01.md"
+  workflow_dispatch:
+
+concurrency:
+  group: chaptera-local-updater-reboot-resume-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Build recovery probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p chaptera-update-orchestrator --bin chaptera-update-recovery-probe
+
+      - name: Self-test journal-aware resume for retained and activated faults
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $probe = (Resolve-Path "target/debug/chaptera-update-recovery-probe.exe").Path
+
+          foreach ($phase in @("previous-retained","candidate-activated")) {
+            $root = Join-Path $env:RUNNER_TEMP "chaptera-updater-resume-$phase"
+            $install = Join-Path $root "install"
+            $candidate = Join-Path $root "candidate"
+            $state = Join-Path $root "state"
+
+            Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path (Join-Path $install "current"),$candidate | Out-Null
+            Set-Content -Encoding ascii -Path (Join-Path $install "current/chaptera-reader.exe") -Value "reader-A"
+            Set-Content -Encoding ascii -Path (Join-Path $install "current/payload.txt") -Value "payload-A"
+            Copy-Item -Recurse -Force (Join-Path $install "current/*") $candidate
+            Set-Content -Encoding ascii -Path (Join-Path $candidate "payload.txt") -Value "payload-B"
+
+            & ./tools/chaptera-local-updater-reboot-resume.ps1 -Mode SelfTest -InstallRoot $install -CandidateSource $candidate -FaultPhase $phase -StateRoot $state -ProbeExe $probe
+
+            $receipt = Get-Content -Raw (Join-Path $state "receipt.json") | ConvertFrom-Json
+            if ($receipt.status -ne "SELFTEST_PASS") { throw "$phase self-test failed" }
+            if ($receipt.real_reboot_observed) { throw "$phase self-test falsely claimed reboot" }
+            if ($receipt.predecessor_tree_sha256 -ne $receipt.recovered_tree_sha256) {
+              throw "$phase did not restore byte-identical predecessor"
+            }
+          }
+
+      - name: Prove real-install mutation is opt-in
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $probe = (Resolve-Path "target/debug/chaptera-update-recovery-probe.exe").Path
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-updater-mutation-safety"
+          $install = Join-Path $root "install"
+          $candidate = Join-Path $root "candidate"
+          $state = Join-Path $root "state"
+
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path (Join-Path $install "current"),$candidate | Out-Null
+          Set-Content -Encoding ascii -Path (Join-Path $install "current/chaptera-reader.exe") -Value "reader-A"
+          Copy-Item -Recurse -Force (Join-Path $install "current/*") $candidate
+
+          $before = (Get-FileHash (Join-Path $install "current/chaptera-reader.exe") -Algorithm SHA256).Hash
+          & ./tools/chaptera-local-updater-reboot-resume.ps1 -Mode Prepare -InstallRoot $install -CandidateSource $candidate -StateRoot $state -ProbeExe $probe
+          $after = (Get-FileHash (Join-Path $install "current/chaptera-reader.exe") -Algorithm SHA256).Hash
+
+          $receipt = Get-Content -Raw (Join-Path $state "receipt.json") | ConvertFrom-Json
+          if ($receipt.status -ne "MUTATION_DEFERRED_SAFETY") { throw "mutation safety gate missing" }
+          if ($receipt.product_tree_mutated) { throw "default Prepare mutated product tree" }
+          if ($before -ne $after) { throw "default Prepare changed installed bytes" }
+
+      - name: Test orchestrator suite
+        shell: pwsh
+        run: cargo test -p chaptera-update-orchestrator
