@@ -1,5 +1,7 @@
 name: CLOUD-RUNTIME-PORTS-READY-01
 
+# CI registry refresh: preserve semantics while forcing workflow re-registration.
+
 on:
   pull_request:
     paths:
