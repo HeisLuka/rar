@@ -9,6 +9,7 @@ import {
   writeCheck,
 } from '../../../lib/checks';
 import { dispatchCheck } from '../../../lib/dispatch';
+import { normalizeCountry, normalizeLocale } from '../../../lib/i18n';
 
 const MAX_BYTES = 64 * 1024 * 1024;
 
@@ -18,6 +19,8 @@ type CreateBody = {
   pathname?: string;
   filename?: string;
   byteLength?: number;
+  locale?: string;
+  country?: string;
 };
 
 function validEmail(value: string) {
@@ -42,6 +45,8 @@ export async function POST(request: Request) {
   const pathname = body.pathname?.trim() ?? '';
   const blobUrl = body.blobUrl?.trim() ?? '';
   const byteLength = body.byteLength ?? 0;
+  const locale = normalizeLocale(body.locale) ?? 'en-US';
+  const country = normalizeCountry(body.country) ?? 'INTL';
 
   if (!validEmail(email)) {
     return Response.json({ error: 'Enter a valid email address.' }, { status: 400 });
@@ -73,6 +78,8 @@ export async function POST(request: Request) {
     id,
     publicToken: makePublicToken(),
     email,
+    locale,
+    country,
     source: {
       url: blobUrl,
       pathname,
