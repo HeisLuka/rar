@@ -1,0 +1,109 @@
+name: Reader embedded font direct hosted probe
+
+on:
+  push:
+    branches:
+      - "research/reader-embedded-font-probe-01-fresh"
+    paths:
+      - ".github/workflows/reader-embedded-font-probe-direct.yml"
+      - "tools/extract_embedded_eot.py"
+      - "apps/chaptera-desktop/src/main.rs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Install EOT and desktop build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            eot2ttf \
+            fontconfig \
+            pkg-config \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libgl1-mesa-dev
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Acquire, extract and decode exact embedded font
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/chaptera-embedded-font-direct"
+          out="${RUNNER_TEMP}/chaptera-embedded-font-direct-out"
+          mkdir -p "$root" "$out"
+
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/fosnola/libmspub-test/master/testset/12.0/fonts.pub" \
+            --output "$root/fonts.pub"
+
+          python tools/extract_embedded_eot.py \
+            --pub "$root/fonts.pub" \
+            --out-eot "$root/TimesNewRoman.eot" \
+            --receipt "$out/eot-extraction.json" \
+            --expected-pub-sha256 "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048" \
+            --expected-eot-sha256 "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f" \
+            --expected-font-name "Times New Roman"
+
+          eot2ttf "$root/TimesNewRoman.eot" "$root/TimesNewRoman.ttf"
+          test -s "$root/TimesNewRoman.ttf"
+
+          family="$(fc-scan --format='%{family}\n' "$root/TimesNewRoman.ttf" | head -n 1)"
+          if [[ "$family" != *"Times New Roman"* ]]; then
+            echo "decoded font family mismatch: $family" >&2
+            exit 1
+          fi
+
+          pub_sha="$(sha256sum "$root/fonts.pub" | awk '{print $1}')"
+          ttf_sha="$(sha256sum "$root/TimesNewRoman.ttf" | awk '{print $1}')"
+          if [[ "$ttf_sha" != "24938f3f71cdf9cd1c60d13fc8a1707c58a5c3559cf0617ab3e06ee5768ddc28" ]]; then
+            echo "decoded TTF SHA mismatch: $ttf_sha" >&2
+            exit 1
+          fi
+
+          echo "CHAPTERA_EMBEDDED_FONT_PUB=$root/fonts.pub" >> "$GITHUB_ENV"
+          echo "CHAPTERA_EMBEDDED_FONT_TTF=$root/TimesNewRoman.ttf" >> "$GITHUB_ENV"
+          echo "CHAPTERA_EMBEDDED_FONT_TTF_SHA256=$ttf_sha" >> "$GITHUB_ENV"
+          echo "CHAPTERA_EMBEDDED_FONT_EOT_SHA256=9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f" >> "$GITHUB_ENV"
+          echo "CHAPTERA_EMBEDDED_FONT_OUT=$out" >> "$GITHUB_ENV"
+
+          cat > "$out/decoded-font.json" <<JSON
+          {
+            "schema": "chaptera.embedded-font-decoded-program.v1",
+            "source_pub_sha256": "$pub_sha",
+            "source_eot_sha256": "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f",
+            "decoded_program_sha256": "$ttf_sha",
+            "decoded_program_byte_len": $(stat -c %s "$root/TimesNewRoman.ttf"),
+            "font_family": "Times New Roman",
+            "decoder": "Ubuntu eot2ttf/libeot",
+            "disposition": "exact_embedded_program_for_document",
+            "original_full_font_file_claimed": false
+          }
+          JSON
+
+      - name: Run current Reader shared-layout A-B discriminator
+        run: cargo test -p chaptera-desktop --features reader-only embedded_font_exact_bytes_change_shared_reader_layout_against_fallback -- --ignored --nocapture
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-reader-embedded-font-direct-probe
+          path: ${{ env.CHAPTERA_EMBEDDED_FONT_OUT }}
+          if-no-files-found: warn
