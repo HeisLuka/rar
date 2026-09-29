@@ -1,0 +1,8 @@
+# Residual safe branch GC wave 10 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 4
+
+ops/residual-gc-wave9-20260929 8d835b6bc0c0b71b5a6e7051811b1f4a54a5c7ba  # PR #1296 execution-only GC completed SUCCESS and closed unmerged
+ci-workflow-registry-repair-01 59c258855b2078c384609ed3349c5c65db579617  # PR #1295 merged; current branch tip still equals merged PR head SHA
+ci-workflow-yaml-syntax-guard-01 00f6af8d057b5469a41aa19b06de279d7c603509  # PR #1297 merged; current branch tip still equals merged PR head SHA
+viewer-paint-bridge-consume-01-v3 13fb4a9f0c38bfe7bbe13af98a27640ca4ab9720  # PR #1292 merged; current branch tip still equals merged PR head SHA
