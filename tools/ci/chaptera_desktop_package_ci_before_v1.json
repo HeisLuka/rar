@@ -1,0 +1,45 @@
+{
+  "schema_version": "chaptera.ci.desktop-package-before.v1",
+  "representative_changed_path": "apps/chaptera-desktop/src/main.rs",
+  "historical_probe": {
+    "pull_request": 1280,
+    "head_sha": "e8e4f22cbfad90dc27afc22e005a63dd98474af4",
+    "workflow_runs": {
+      "chaptera-desktop-fallback-font-resource-v1.yml": 36538462983,
+      "editor-desktop-text-session-restore-v1.yml": 36538462900,
+      "viewer-editor-created-node-scene-sync-v1.yml": 36538462890
+    },
+    "note": "All three completed success on the representative main.rs head; this baseline records topology/command duplication, not runner-minute attribution."
+  },
+  "feature_workflows": [
+    "chaptera-desktop-fallback-font-resource-v1.yml",
+    "editor-desktop-text-session-restore-v1.yml",
+    "viewer-editor-created-node-scene-sync-v1.yml"
+  ],
+  "before_static": {
+    "chaptera-desktop-fallback-font-resource-v1.yml": {
+      "desktop_fmt": 1,
+      "desktop_check": 1,
+      "desktop_clippy": 0,
+      "main_rs_admitted": true
+    },
+    "editor-desktop-text-session-restore-v1.yml": {
+      "desktop_fmt": 1,
+      "desktop_check": 1,
+      "desktop_clippy": 1,
+      "main_rs_admitted": true
+    },
+    "viewer-editor-created-node-scene-sync-v1.yml": {
+      "desktop_fmt": 1,
+      "desktop_check": 1,
+      "desktop_clippy": 0,
+      "main_rs_admitted": true
+    }
+  },
+  "duplicated_desktop_package_commands": {
+    "fmt": 3,
+    "check": 3,
+    "clippy": 1,
+    "total": 7
+  }
+}
