@@ -11,6 +11,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: write
   pull-requests: read
@@ -64,9 +68,11 @@ jobs:
           : > target/branch-gc/deleted.txt
           : > target/branch-gc/absent.txt
           : > target/branch-gc/skipped-open-pr.txt
+          : > target/branch-gc/skipped-sha-mismatch.txt
           : > target/branch-gc/failed.txt
 
-          gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100"             --jq '.[] | select(.head.repo.full_name == "'"$GH_REPO"'") | .head.ref' |
+          gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.repo.full_name == "'"$GH_REPO"'") | .head.ref' |
             sort -u > target/branch-gc/open-heads.txt
 
           mapfile -t manifests < target/branch-gc/manifests.txt
@@ -74,9 +80,26 @@ jobs:
 
           for manifest in "${manifests[@]}"; do
             while IFS= read -r raw || [[ -n "$raw" ]]; do
-              branch="${raw%%#*}"
-              branch="$(printf '%s' "$branch" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-              [[ -z "$branch" ]] && continue
+              entry="${raw%%#*}"
+              entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+              [[ -z "$entry" ]] && continue
+
+              branch=""
+              expected_sha=""
+              extra=""
+              read -r branch expected_sha extra <<< "$entry"
+
+              if [[ -n "${extra:-}" ]]; then
+                echo "invalid manifest entry (expected: <branch> [sha]): $entry" >&2
+                printf '%s\n' "$entry" >> target/branch-gc/failed.txt
+                continue
+              fi
+
+              if [[ -n "${expected_sha:-}" ]] && [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "invalid expected SHA for $branch: $expected_sha" >&2
+                printf '%s\n' "$entry" >> target/branch-gc/failed.txt
+                continue
+              fi
 
               if [[ -n "${seen[$branch]+x}" ]]; then
                 continue
@@ -95,9 +118,16 @@ jobs:
                 continue
               fi
 
-              if ! git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+              remote_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1 {print $1}')"
+              if [[ -z "$remote_sha" ]]; then
                 echo "ABSENT $branch"
                 printf '%s\n' "$branch" >> target/branch-gc/absent.txt
+                continue
+              fi
+
+              if [[ -n "${expected_sha:-}" && "$remote_sha" != "$expected_sha" ]]; then
+                echo "SKIP sha mismatch: $branch expected=$expected_sha actual=$remote_sha"
+                printf '%s\t%s\t%s\n' "$branch" "$expected_sha" "$remote_sha" >> target/branch-gc/skipped-sha-mismatch.txt
                 continue
               fi
 
@@ -118,10 +148,11 @@ jobs:
               p = root / name
               return [x.strip() for x in p.read_text().splitlines() if x.strip()]
           receipt = {
-              "schema_version": "rar.branch-gc.v2",
+              "schema_version": "rar.branch-gc.v3",
               "deleted": lines("deleted.txt"),
               "already_absent": lines("absent.txt"),
               "skipped_open_pr": lines("skipped-open-pr.txt"),
+              "skipped_sha_mismatch": lines("skipped-sha-mismatch.txt"),
               "failed": lines("failed.txt"),
           }
           (root / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
