@@ -228,6 +228,7 @@ def project_resolved_graph_scene(
     *,
     context: dict[str, Any] | None = None,
     environment: dict[str, str] | None = None,
+    page_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(graph, dict):
         raise ResolvedGraphSceneError("resolved graph must be an object")
@@ -270,25 +271,50 @@ def project_resolved_graph_scene(
                 f"master relation target page {master_page_id} missing from graph"
             )
 
-    pages: list[dict[str, Any]] = []
-    referenced_pages = set()
+    referenced_pages: list[str] = []
+    referenced_page_set: set[str] = set()
     for index, page_id_raw in enumerate(page_order):
         page_id = require_uuid(page_id_raw, f"document.pages[{index}]")
-        if page_id in referenced_pages:
+        if page_id in referenced_page_set:
             raise ResolvedGraphSceneError(f"duplicate document page {page_id}")
-        referenced_pages.add(page_id)
+        referenced_page_set.add(page_id)
+        referenced_pages.append(page_id)
         page = pages_in.get(page_id)
         if not isinstance(page, dict):
             raise ResolvedGraphSceneError(f"missing page {page_id}")
         if require_uuid(page.get("id"), f"pages[{page_id}].id") != page_id:
             raise ResolvedGraphSceneError(f"page key/id mismatch for {page_id}")
-        if page_id not in master_page_ids:
-            pages.append({
-                "origin": page_id,
-                "size": require_size(page.get("size"), f"pages[{page_id}].size"),
-                "bleed": copy.deepcopy(page.get("bleed")),
-                "margins": copy.deepcopy(page.get("margins")),
-            })
+
+    if page_ids is None:
+        selected_page_ids = referenced_pages
+        selected_page_set = referenced_page_set
+    else:
+        if not isinstance(page_ids, list):
+            raise ResolvedGraphSceneError("page_ids must be an array")
+        selected_page_ids = []
+        selected_page_set: set[str] = set()
+        for index, page_id_raw in enumerate(page_ids):
+            page_id = require_uuid(page_id_raw, f"page_ids[{index}]")
+            if page_id in selected_page_set:
+                raise ResolvedGraphSceneError(f"duplicate selected page {page_id}")
+            if page_id not in referenced_page_set:
+                raise ResolvedGraphSceneError(
+                    f"selected page {page_id} is not a document page"
+                )
+            selected_page_set.add(page_id)
+            selected_page_ids.append(page_id)
+
+    pages: list[dict[str, Any]] = []
+    for page_id in selected_page_ids:
+        if page_id in master_page_ids:
+            continue
+        page = pages_in[page_id]
+        pages.append({
+            "origin": page_id,
+            "size": require_size(page.get("size"), f"pages[{page_id}].size"),
+            "bleed": copy.deepcopy(page.get("bleed")),
+            "margins": copy.deepcopy(page.get("margins")),
+        })
 
     # pub-layout normalizes input order by canonical identity.
     pages.sort(key=lambda item: item["origin"])
@@ -322,12 +348,20 @@ def project_resolved_graph_scene(
             ),
         }
         source_nodes[node_id] = projected
-        if parent not in master_page_ids and node_id not in cmo_carrier_node_ids:
+        if page_ids is None:
+            include_node = parent not in master_page_ids
+        else:
+            # Match Viewer bounded_authoring_slice_from_resolved_pages(): the
+            # selected presentation slice contains only direct page-owned nodes.
+            include_node = parent in selected_page_set
+        if include_node and node_id not in cmo_carrier_node_ids:
             nodes.append(projected)
 
     projected_master_instances: list[dict[str, Any]] = []
     for relation in master_relations:
         source_page_id = relation["source_page_id"]
+        if page_ids is not None and source_page_id not in selected_page_set:
+            continue
         master_page_id = relation["master_page_id"]
         master_page = pages_in[master_page_id]
         children = master_page.get("children")
