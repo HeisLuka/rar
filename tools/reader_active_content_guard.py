@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,7 @@ FORBIDDEN_RUNTIME_TOKENS = (
 NETWORK_DEPENDENCY_RE = re.compile(
     r"(?m)^\s*(reqwest|ureq|hyper|curl|webbrowser)\s*="
 )
+FORBIDDEN_NETWORK_PACKAGES = {"reqwest", "ureq", "hyper", "curl", "webbrowser"}
 
 PROCESS_LAUNCH_TOKENS = ("Command::new(", "std::process::Command::new(")
 ALLOWED_DESKTOP_PROCESS_CONTEXT = (
@@ -83,18 +85,50 @@ def scan_forbidden_runtime_tokens(repo_root: Path) -> list[str]:
     return violations
 
 
+def _production_dependency_tables(manifest: dict) -> list[tuple[str, dict]]:
+    tables: list[tuple[str, dict]] = []
+    dependencies = manifest.get("dependencies", {})
+    if isinstance(dependencies, dict):
+        tables.append(("dependencies", dependencies))
+
+    targets = manifest.get("target", {})
+    if isinstance(targets, dict):
+        for target_name, target in targets.items():
+            if not isinstance(target, dict):
+                continue
+            target_dependencies = target.get("dependencies", {})
+            if isinstance(target_dependencies, dict):
+                tables.append((f"target.{target_name}.dependencies", target_dependencies))
+    return tables
+
+
+def _declared_package_name(dependency_name: str, specification: object) -> str:
+    if isinstance(specification, dict):
+        package = specification.get("package")
+        if isinstance(package, str) and package:
+            return package
+    return dependency_name
+
+
 def scan_network_dependencies(repo_root: Path) -> list[str]:
     violations: list[str] = []
     for relative in RUNTIME_MANIFESTS:
         path = repo_root / relative
         if not path.is_file():
             raise RuntimeError(f"missing runtime manifest: {relative}")
-        text = path.read_text(encoding="utf-8")
-        for match in NETWORK_DEPENDENCY_RE.finditer(text):
-            violations.append(
-                f"{relative}: direct network dependency {match.group(1)!r} is outside "
-                "the local-open Reader/Viewer boundary"
-            )
+        try:
+            manifest = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise RuntimeError(f"cannot parse runtime manifest {relative}: {error}") from error
+
+        for table_name, dependencies in _production_dependency_tables(manifest):
+            for dependency_name, specification in dependencies.items():
+                package_name = _declared_package_name(dependency_name, specification)
+                if package_name in FORBIDDEN_NETWORK_PACKAGES:
+                    violations.append(
+                        f"{relative} [{table_name}]: direct network dependency "
+                        f"{dependency_name!r} resolves to forbidden package {package_name!r}"
+                    )
     return violations
 
 
@@ -155,6 +189,26 @@ def self_test() -> None:
     assert NETWORK_DEPENDENCY_RE.search('hyper = { version = "1" }')
     assert not NETWORK_DEPENDENCY_RE.search('description = "hyperlink support"')
     assert "hyperlink" not in FORBIDDEN_RUNTIME_TOKENS
+
+    alias_manifest = tomllib.loads(
+        """
+        [dependencies]
+        harmless-name = { package = "reqwest", version = "0.12" }
+
+        [target.'cfg(windows)'.dependencies]
+        inherited-http = { package = "hyper", workspace = true }
+
+        [dev-dependencies]
+        reqwest = "0.12"
+        """
+    )
+    production = _production_dependency_tables(alias_manifest)
+    found = {
+        _declared_package_name(name, spec)
+        for _, table in production
+        for name, spec in table.items()
+    }
+    assert found == {"reqwest", "hyper"}
 
 
 def main() -> int:
