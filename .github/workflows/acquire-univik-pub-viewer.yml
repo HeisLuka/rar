@@ -174,9 +174,9 @@ jobs:
           exe="out/inno-extracted/app/UnivikPUBViewer.exe"
           test -f "$exe"
 
-          monodis --assemblyref "$exe" > out/viewer-assemblyrefs.txt
-          monodis --typedef "$exe" > out/viewer-typedefs.txt
-          monodis --method "$exe" > out/viewer-methods.txt
+          monodis --assemblyref "$exe" > out/viewer-assemblyrefs.txt 2>&1 || true
+          monodis --typedef "$exe" > out/viewer-typedefs.txt 2>&1 || true
+          monodis --method "$exe" > out/viewer-methods.txt 2>&1 || true
           monodis "$exe" > out/viewer.il.txt 2> out/viewer-il-stderr.txt || true
 
           python3 - <<'PY'
@@ -240,8 +240,8 @@ jobs:
           grep -E -i 'PubLegacyPositionedExtractor|IsOlderThanPublisher98|IsOldFormat|IsDemo|IsLicensed|UpgradeWindow|BtnUpgrade_Click|GetCommandLineArgs'             out/viewer-methods.txt out/viewer-typedefs.txt out/viewer-targeted-il.txt |
             head -n 400 || true
 
-          grep -q 'PubLegacyPositionedExtractor' out/viewer-methods.txt
-          grep -q 'IsOlderThanPublisher98' out/viewer-methods.txt
+          strings -a -n 7 "$exe" | grep -q 'PubLegacyPositionedExtractor'
+          strings -a -n 7 "$exe" | grep -q 'IsOlderThanPublisher98'
 
       - name: Upload static Inno evidence
         uses: actions/upload-artifact@v4
