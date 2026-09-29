@@ -122,13 +122,20 @@ jobs:
           $p=Start-Process -FilePath (Resolve-Path out/setup-pub-viewer.exe) -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru -Wait
           "installer_exit_code=$($p.ExitCode)" | Set-Content out/install.txt
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
-          $roots=@($env:ProgramFiles, [Environment]::GetFolderPath('ProgramFilesX86')) | Where-Object { $_ }
-          $exe=$null
-          foreach($root in $roots) {
-            $found=Get-ChildItem $root -Recurse -Filter UnivikPUBViewer.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-            if($found) { $exe=$found; break }
+          $candidatePaths=@(
+            (Join-Path $env:LOCALAPPDATA 'Programs\Univik\Univik PUB Viewer\UnivikPUBViewer.exe'),
+            (Join-Path $env:ProgramFiles 'Univik\Univik PUB Viewer\UnivikPUBViewer.exe'),
+            $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Univik\Univik PUB Viewer\UnivikPUBViewer.exe' })
+          ) | Where-Object { $_ }
+          $exe=$candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) {
+            $installLocation=(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Univik PUB Viewer_is1' -ErrorAction SilentlyContinue).InstallLocation
+            if ($installLocation) {
+              $registryCandidate=Join-Path $installLocation 'UnivikPUBViewer.exe'
+              if (Test-Path $registryCandidate) { $exe=$registryCandidate }
+            }
           }
-          if (-not $exe) { throw "installed UnivikPUBViewer.exe not found" }
+          if (-not $exe) { throw "installed UnivikPUBViewer.exe not found in LocalAppData, Program Files, or uninstall registry location" }
           $exe | Set-Content out/viewer-exe-path.txt
           Get-FileHash $exe -Algorithm SHA256 | Format-List | Out-String | Set-Content out/viewer-exe-hash.txt
 
