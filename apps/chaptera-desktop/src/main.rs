@@ -645,6 +645,38 @@ fn main() -> eframe::Result<()> {
         }
     }
 
+    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--reader-activation-probe-v1")) {
+        if !reader_only_mode() {
+            eprintln!("Reader activation probe is reserved for the Reader build");
+            std::process::exit(2);
+        }
+        let Some(path) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --reader-activation-probe-v1 SOURCE.pub RECEIPT.json HOLD_MS");
+            std::process::exit(2);
+        };
+        let Some(receipt) = args.next().map(PathBuf::from) else {
+            eprintln!("usage: chaptera-reader --reader-activation-probe-v1 SOURCE.pub RECEIPT.json HOLD_MS");
+            std::process::exit(2);
+        };
+        let Some(hold_ms) = args
+            .next()
+            .and_then(|value| value.into_string().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            eprintln!("Reader activation probe HOLD_MS must be an integer");
+            std::process::exit(2);
+        };
+        if args.next().is_some() {
+            eprintln!("Reader activation probe accepts exactly source, receipt, and hold_ms");
+            std::process::exit(2);
+        }
+        if let Err(error) = reader_activation_probe(&path, &receipt, hold_ms) {
+            eprintln!("Reader activation probe failed: {error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         let Some(path) = args.next().map(PathBuf::from) else {
             std::process::exit(2);
@@ -835,6 +867,69 @@ fn run_reader_update_control(request_path: &Path) -> Result<(), String> {
 #[cfg(not(feature = "reader-only"))]
 fn run_reader_update_control(_request_path: &Path) -> Result<(), String> {
     Err("update control mode is unavailable outside the Reader build".to_owned())
+}
+
+fn reader_activation_probe(path: &Path, receipt: &Path, hold_ms: u64) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::thread;
+
+    const MAX_HOLD_MS: u64 = 60_000;
+    if hold_ms == 0 || hold_ms > MAX_HOLD_MS {
+        return Err(format!(
+            "hold_ms must be within 1..={MAX_HOLD_MS}, got {hold_ms}"
+        ));
+    }
+
+    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let source_sha256 = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let visual = diagnostic_sweep::open_for_product(&bytes)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    let page_count = visual.document.pages.len();
+
+    let write_receipt = |completed: bool, source_unchanged: bool| -> Result<(), String> {
+        if let Some(parent) = receipt.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("create activation receipt parent: {error}"))?;
+        }
+        let value = serde_json::json!({
+            "schema_version": "chaptera.reader-activation-session.v1",
+            "pid": std::process::id(),
+            "source_sha256": source_sha256,
+            "source_byte_len": bytes.len(),
+            "page_count": page_count,
+            "read_only": true,
+            "process_model": "independent_process_per_activation",
+            "completed": completed,
+            "source_unchanged": source_unchanged,
+        });
+        fs::write(
+            receipt,
+            format!(
+                "{}\n",
+                serde_json::to_string(&value)
+                    .map_err(|error| format!("serialize activation receipt: {error}"))?
+            ),
+        )
+        .map_err(|error| format!("write activation receipt {}: {error}", receipt.display()))
+    };
+
+    write_receipt(false, false)?;
+    thread::sleep(Duration::from_millis(hold_ms));
+    std::hint::black_box(&visual);
+
+    let after = fs::read(path)
+        .map_err(|error| format!("re-read {} after activation hold: {error}", path.display()))?;
+    let after_sha256 = Sha256::digest(&after)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if after_sha256 != source_sha256 || after.len() != bytes.len() {
+        return Err("Reader activation probe observed source mutation".to_owned());
+    }
+    write_receipt(true, true)
 }
 
 fn smoke_check(path: &Path) -> Result<(), String> {
