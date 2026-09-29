@@ -38,6 +38,7 @@ sha2.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 image = { version = "=0.25.8", default-features = false, features = ["jpeg", "png"] }

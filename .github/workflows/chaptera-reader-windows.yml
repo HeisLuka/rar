@@ -47,6 +47,9 @@ jobs:
       - name: Check compile-time Reader surface
         run: cargo check -p chaptera-desktop --features reader-only --all-targets
 
+      - name: Test bounded Restart Manager wrapper
+        run: cargo test -p chaptera-update-orchestrator --lib windows_restart_manager::tests -- --nocapture
+
       - name: Test bounded desktop image decode adapter
         run: cargo test -p chaptera-desktop --features reader-only image_decode_adapter::tests -- --nocapture
 
@@ -111,21 +114,31 @@ jobs:
             throw "Reader candidate health smoke failed with exit code $($process.ExitCode)"
           }
 
-      - name: Acquire pinned Apache POI SampleNewsletter
+      - name: Acquire pinned Apache POI Reader activation fixtures
         shell: pwsh
         run: |
-          $fixture = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
-          $url = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
-          Invoke-WebRequest -Uri $url -OutFile $fixture
-          $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
-          $bytes = (Get-Item $fixture).Length
-          if ($hash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
-            throw "SampleNewsletter SHA-256 mismatch: $hash"
+          $newsletter = Join-Path $env:RUNNER_TEMP "SampleNewsletter.pub"
+          $newsletterUrl = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"
+          Invoke-WebRequest -Uri $newsletterUrl -OutFile $newsletter
+          $newsletterHash = (Get-FileHash $newsletter -Algorithm SHA256).Hash.ToLowerInvariant()
+          $newsletterBytes = (Get-Item $newsletter).Length
+          if ($newsletterHash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "SampleNewsletter SHA-256 mismatch: $newsletterHash"
           }
-          if ($bytes -ne 291840) {
-            throw "SampleNewsletter byte length mismatch: $bytes"
+          if ($newsletterBytes -ne 291840) {
+            throw "SampleNewsletter byte length mismatch: $newsletterBytes"
           }
-          "CHAPTERA_SAMPLE_NEWSLETTER=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $brochure = Join-Path $env:RUNNER_TEMP "SampleBrochure.pub"
+          $brochureUrl = "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub"
+          Invoke-WebRequest -Uri $brochureUrl -OutFile $brochure
+          $brochureHash = (Get-FileHash $brochure -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($brochureHash -ne "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87") {
+            throw "SampleBrochure SHA-256 mismatch: $brochureHash"
+          }
+
+          "CHAPTERA_SAMPLE_NEWSLETTER=$newsletter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_SAMPLE_BROCHURE=$brochure" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run real Viewer smoke through Reader executable
         shell: pwsh
@@ -147,6 +160,100 @@ jobs:
             source_unchanged = $true
             viewer_opened = $true
           } | ConvertTo-Json | Set-Content -Encoding utf8 target/release/chaptera-reader.real-pub-smoke.json
+
+      - name: Prove independent Reader activation sessions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Resolve-Path "target/release/chaptera-reader.exe").Path
+          $out = Join-Path $env:RUNNER_TEMP "chaptera-reader-activation"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          function Wait-Receipt([string]$path, [System.Diagnostics.Process]$process) {
+            for ($i = 0; $i -lt 100; $i++) {
+              if (Test-Path $path) { return }
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "activation probe exited before receipt: $path code=$($process.ExitCode)"
+              }
+              Start-Sleep -Milliseconds 100
+            }
+            throw "activation probe receipt timeout: $path"
+          }
+
+          $aReceipt = Join-Path $out "a.json"
+          $bReceipt = Join-Path $out "b.json"
+          $a = Start-Process -FilePath $exe -ArgumentList @("--reader-activation-probe-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $aReceipt, "8000") -PassThru
+          $b = Start-Process -FilePath $exe -ArgumentList @("--reader-activation-probe-v1", $env:CHAPTERA_SAMPLE_BROCHURE, $bReceipt, "8000") -PassThru
+          Wait-Receipt $aReceipt $a
+          Wait-Receipt $bReceipt $b
+
+          $ar = Get-Content -Raw $aReceipt | ConvertFrom-Json
+          $br = Get-Content -Raw $bReceipt | ConvertFrom-Json
+          if ($ar.pid -ne $a.Id -or $br.pid -ne $b.Id -or $a.Id -eq $b.Id) {
+            throw "Reader activation sessions do not have independent PIDs"
+          }
+          if ($ar.source_sha256 -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf") {
+            throw "activation A source identity mismatch"
+          }
+          if ($br.source_sha256 -ne "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87") {
+            throw "activation B source identity mismatch"
+          }
+          if ([int]$ar.page_count -ne 4 -or [int]$br.page_count -ne 2) {
+            throw "activation probes did not consume exact product page profiles"
+          }
+
+          Stop-Process -Id $a.Id -Force
+          if (-not $a.WaitForExit(10000)) {
+            throw "activation A did not terminate after Stop-Process"
+          }
+          Start-Sleep -Milliseconds 250
+          $b.Refresh()
+          if ($b.HasExited) {
+            throw "closing activation A affected independent activation B"
+          }
+          if (-not $b.WaitForExit(15000)) {
+            Stop-Process -Id $b.Id -Force
+            throw "activation B did not complete its bounded hold"
+          }
+          if ($b.ExitCode -ne 0) { throw "activation B failed: $($b.ExitCode)" }
+          $br = Get-Content -Raw $bReceipt | ConvertFrom-Json
+          if ($br.completed -ne $true -or $br.source_unchanged -ne $true) {
+            throw "activation B did not complete immutable-source proof"
+          }
+
+          $same1Receipt = Join-Path $out "same-1.json"
+          $same2Receipt = Join-Path $out "same-2.json"
+          $same1 = Start-Process -FilePath $exe -ArgumentList @("--reader-activation-probe-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $same1Receipt, "2500") -PassThru
+          $same2 = Start-Process -FilePath $exe -ArgumentList @("--reader-activation-probe-v1", $env:CHAPTERA_SAMPLE_NEWSLETTER, $same2Receipt, "2500") -PassThru
+          Wait-Receipt $same1Receipt $same1
+          Wait-Receipt $same2Receipt $same2
+          if ($same1.Id -eq $same2.Id) { throw "same-source activations reused a PID" }
+          if (-not $same1.WaitForExit(10000) -or -not $same2.WaitForExit(10000)) {
+            Stop-Process -Id @($same1.Id, $same2.Id) -Force -ErrorAction SilentlyContinue
+            throw "same-source activation probes did not complete"
+          }
+          if ($same1.ExitCode -ne 0 -or $same2.ExitCode -ne 0) {
+            throw "same-source activation probe failed"
+          }
+
+          $newsletterHash = (Get-FileHash $env:CHAPTERA_SAMPLE_NEWSLETTER -Algorithm SHA256).Hash.ToLowerInvariant()
+          $brochureHash = (Get-FileHash $env:CHAPTERA_SAMPLE_BROCHURE -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($newsletterHash -ne "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf" -or
+              $brochureHash -ne "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87") {
+            throw "activation matrix mutated a source PUB"
+          }
+
+          [ordered]@{
+            schema_version = "chaptera.reader-shell-activation.v1"
+            process_model = "independent_process_per_activation"
+            distinct_source_distinct_pid = $true
+            closing_one_preserves_other = $true
+            same_source_parallel_allowed = $true
+            source_immutable = $true
+            newsletter_pages = 4
+            brochure_pages = 2
+          } | ConvertTo-Json | Set-Content -Encoding utf8 "target/release/chaptera-reader.shell-activation.json"
 
       - name: Run product identity smoke
         shell: pwsh
@@ -188,6 +295,7 @@ jobs:
             target/release/chaptera-reader.exe
             target/release/chaptera-reader.desktop-build.json
             target/release/chaptera-reader.real-pub-smoke.json
+            target/release/chaptera-reader.shell-activation.json
             target/release/chaptera-reader.product-smoke.json
             target/release/Chaptera-Reader-Windows-x86_64.zip
             target/release/Chaptera-Reader.package.json

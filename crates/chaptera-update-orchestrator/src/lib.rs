@@ -1,3 +1,6 @@
+#[cfg(windows)]
+pub mod windows_restart_manager;
+
 use chaptera_update_engine::{RecoveryOutcome, UpdateEngine, UpdateError};
 use chaptera_update_trust::{ChapteraReleaseSemantics, InstalledUpdateContext, ReleaseDecision};
 use std::fmt;
