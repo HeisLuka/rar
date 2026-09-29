@@ -37,7 +37,7 @@ jobs:
           out="${RUNNER_TEMP}/chaptera-embedded-font-probe-input"
           mkdir -p "$out"
           curl --fail --location --silent --show-error \
-            "https://raw.githubusercontent.com/fosnola/libmspub-test/6b620123fcaebac0c06cfee37f42e8f541dc8503/testset/12.0/fonts.pub" \
+            "https://raw.githubusercontent.com/fosnola/libmspub-test/master/testset/12.0/fonts.pub" \
             --output "$out/fonts.pub"
           echo "PROBE_INPUT=$out" >> "$GITHUB_ENV"
 
