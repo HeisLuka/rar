@@ -1,0 +1,8 @@
+# Residual safe branch GC wave 7 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 4
+
+ops/residual-gc-wave6-20260929 937e15b1c238b3e3caed6a6c80e0c0f83902d736  # PR #1283 cleanup head; GC completed and PR closed unmerged
+reader-cmo-slot-materialize-01-v1 91eb238bdcd1e10a395ba7b7c1f9a843456e017d  # PR #1115 is explicitly superseded/provenance; canonical Cmo compose landed via #1221
+viewer-scene-instance-plan-01-v1 843c8aff29d434c4494204d0399538930a003066  # obsolete prototype transport; canonical SceneInstance authority + feature-gated render-plan seam landed
+reader-desktop-open-state-01b-v1 b728d642813238c7692c975ed9447bb654f9c732  # historical source-freshness replay; task DONE and fresh-main owner #1254 merged
