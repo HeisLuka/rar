@@ -47,8 +47,9 @@ use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubResolvedGraph, PubResolvedGraphBuild, PubResolvedNodePayload, PubSourceGraphBuild,
-    analyze_mature_0x2c_page_roles, build_failure_envelope, build_legacy_0x22_quill_source_graph,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
+    analyze_mature_0x2c_page_roles, build_failure_envelope, build_legacy_0x22_noquill_source_graph,
+    build_legacy_0x22_quill_source_graph, build_mature_0x2c_asset_export_bundle_from_bytes,
+    build_mature_0x2c_source_graph,
     derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
@@ -627,12 +628,7 @@ pub fn open_pub_geometry(
     match classification.route {
         PubReaderRoute::Mature2c => open_mature_0x2c_geometry(bytes, environment),
         PubReaderRoute::Legacy22Quill => open_legacy_0x22_quill_geometry(bytes, environment),
-        PubReaderRoute::Legacy22LowText => Err(anyhow!(
-            "unsupported PUB family/profile: family={:?}, profile={}, route={}",
-            classification.family,
-            classification.profile.as_str(),
-            classification.route.as_str()
-        )),
+        PubReaderRoute::Legacy22LowText => open_legacy_0x22_noquill_geometry(bytes, environment),
         PubReaderRoute::Unsupported => Err(anyhow!(
             "unsupported PUB family/profile: family={:?}, profile={}, route={}",
             classification.family,
@@ -640,6 +636,115 @@ pub fn open_pub_geometry(
             classification.route.as_str()
         )),
     }
+}
+
+/// Opens the bounded Publisher2/95/97 old-0x22 no-Quill profile.
+///
+/// V1 uses the grounded low-family Contents text range and owner-boundary map,
+/// authoritative DOCUMENT/PAGE lists, and admitted text-box geometry. It does
+/// not invent Quill, Escher, codepage semantics, or unsupported legacy objects.
+pub fn open_legacy_0x22_noquill_geometry(
+    bytes: &[u8],
+    environment: BoundedLayoutEnvironment,
+) -> Result<ViewerGeometryDocument> {
+    let source_hash = sha256_digest(bytes)?;
+    let source = build_legacy_0x22_noquill_source_graph(Cursor::new(bytes), source_hash)
+        .context("build legacy-0x22 no-Quill PUB source graph for Viewer")?;
+    let resolved = resolve_pub_source_graph(&source.graph)
+        .context("resolve legacy no-Quill PUB source graph for Viewer")?;
+    let page_selection = ViewerPageSelection {
+        page_ids: source.effective_pages.page_ids.clone(),
+        disposition: ViewerPageSelectionDisposition::GenericNoLoss,
+    };
+    let mut document = viewer_document_from_graph(
+        bytes.len(),
+        source_hash,
+        &source,
+        &resolved,
+        &page_selection,
+    )?;
+    let effective_page_ids = document
+        .pages
+        .iter()
+        .map(|page| page.id)
+        .collect::<Vec<_>>();
+    let authoring =
+        bounded_authoring_slice_from_resolved_pages(&resolved.graph, &effective_page_ids)?;
+    let projection = project_bounded(authoring);
+
+    document
+        .diagnostics
+        .extend(projection.diagnostics.iter().map(map_projection_diagnostic));
+
+    let paints = resolved
+        .graph
+        .nodes
+        .values()
+        .map(viewer_node_paint_from_canonical_bridge)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    let story_frames = projection
+        .story_frames
+        .iter()
+        .map(|frame| ViewerStoryFrame {
+            story_id: frame.story_origin,
+            frame_id: frame.frame_origin,
+            ordinal: frame.ordinal,
+        })
+        .collect::<Vec<_>>();
+
+    let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
+    document
+        .diagnostics
+        .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+    if !text_fragments.is_empty() {
+        document
+            .diagnostics
+            .push(viewer_fallback_flow_metrics_diagnostic());
+    }
+
+    let scene = resolve_bounded_geometry(&projection, environment).map_err(|blocked| {
+        let codes = blocked
+            .projection_errors
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow!("legacy no-Quill Viewer geometry resolution blocked by layout projection errors: {codes}")
+    })?;
+    document.diagnostics.extend(
+        scene
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != "story_text_layout_not_implemented")
+            .map(map_scene_diagnostic),
+    );
+
+    if !scene.nodes.is_empty() {
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.visual.geometry_only".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: "Legacy no-Quill text and text-box geometry are recovered only where grounded. Exact source typography, non-ASCII codepages, images, effects, groups and unsupported legacy object kinds remain explicit fidelity gaps."
+                .to_owned(),
+        });
+    }
+    normalize_diagnostics(&mut document.diagnostics);
+
+    Ok(ViewerGeometryDocument {
+        schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+        document,
+        scene,
+        paints,
+        story_frames,
+        text_fragments,
+        typography_runs: Vec::new(),
+        #[cfg(feature = "cmo-slot-compose")]
+        projected_instances: Vec::new(),
+        images: Vec::new(),
+    })
 }
 
 /// Opens the bounded Publisher98/2000 old-0x22 + Quill profile.
