@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   source-binding:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,11 @@ jobs:
           curl --fail --location --silent --show-error \
             "https://raw.githubusercontent.com/fosnola/libmspub-test/master/testset/12.0/fonts.pub" \
             --output "$root/fonts.pub"
-          echo "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048  $root/fonts.pub" | sha256sum --check
+          actual="$(shasum -a 256 "$root/fonts.pub" | awk '{print $1}')"
+          if [[ "$actual" != "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048" ]]; then
+            echo "fonts.pub SHA-256 mismatch: $actual" >&2
+            exit 1
+          fi
           echo "CHAPTERA_EMBEDDED_FONT_PUB=$root/fonts.pub" >> "$GITHUB_ENV"
           echo "CHAPTERA_EMBEDDED_FONT_OUT=$out" >> "$GITHUB_ENV"
 
