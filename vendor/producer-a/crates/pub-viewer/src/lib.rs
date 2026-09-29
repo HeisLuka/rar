@@ -48,8 +48,8 @@ use pub_reader::{
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubResolvedGraph, PubResolvedGraphBuild, PubResolvedNodePayload, PubSourceGraphBuild,
     analyze_mature_0x2c_page_roles, build_failure_envelope,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
-    derive_pub_page_id, resolve_pub_source_graph,
+    build_legacy_0x22_quill_source_graph, build_mature_0x2c_asset_export_bundle_from_bytes,
+    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -626,7 +626,8 @@ pub fn open_pub_geometry(
     let classification = classify_pub_family(bytes);
     match classification.route {
         PubReaderRoute::Mature2c => open_mature_0x2c_geometry(bytes, environment),
-        PubReaderRoute::Legacy22LowText | PubReaderRoute::Legacy22Quill => Err(anyhow!(
+        PubReaderRoute::Legacy22Quill => open_legacy_0x22_quill_geometry(bytes, environment),
+        PubReaderRoute::Legacy22LowText => Err(anyhow!(
             "unsupported PUB family/profile: family={:?}, profile={}, route={}",
             classification.family,
             classification.profile.as_str(),
@@ -1107,9 +1108,25 @@ fn viewer_document_from_pipeline(
     byte_len: usize,
     pipeline: &Mature0x2cPipeline,
 ) -> Result<ViewerDocument> {
-    let graph = &pipeline.resolved.graph;
+    viewer_document_from_graph(
+        byte_len,
+        pipeline.source_hash,
+        &pipeline.source,
+        &pipeline.resolved,
+        &pipeline.page_selection,
+    )
+}
 
-    let effective_page_ids = &pipeline.page_selection.page_ids;
+fn viewer_document_from_graph(
+    byte_len: usize,
+    source_hash: Sha256Digest,
+    source: &PubSourceGraphBuild,
+    resolved: &PubResolvedGraphBuild,
+    page_selection: &ViewerPageSelection,
+) -> Result<ViewerDocument> {
+    let graph = &resolved.graph;
+
+    let effective_page_ids = &page_selection.page_ids;
     let mut pages = Vec::with_capacity(effective_page_ids.len());
     for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
@@ -1134,21 +1151,14 @@ fn viewer_document_from_pipeline(
         })
         .collect::<Vec<_>>();
 
-    let mut diagnostics = pipeline
-        .source
+    let mut diagnostics = source
         .diagnostics
         .iter()
         .map(map_bridge_diagnostic)
-        .chain(
-            pipeline
-                .resolved
-                .diagnostics
-                .iter()
-                .map(map_resolve_diagnostic),
-        )
+        .chain(resolved.diagnostics.iter().map(map_resolve_diagnostic))
         .collect::<Vec<_>>();
 
-    match &pipeline.page_selection.disposition {
+    match &page_selection.disposition {
         ViewerPageSelectionDisposition::GenericNoLoss => {}
         ViewerPageSelectionDisposition::FamilyProfileApplied {
             profile_id,
@@ -1182,7 +1192,7 @@ fn viewer_document_from_pipeline(
         source: ViewerSource {
             format: graph.source.format.clone(),
             format_version: graph.source.format_version.clone(),
-            source_hash: pipeline.source_hash,
+            source_hash,
             byte_len: u64::try_from(byte_len).context("PUB byte length exceeds u64")?,
         },
         pages,
