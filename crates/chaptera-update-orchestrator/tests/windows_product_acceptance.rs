@@ -343,16 +343,40 @@ fn real_installed_reader_restart_manager_quiesces_two_live_processes() {
 
     let original_pub = fs::read(&fixture).expect("read source PUB before live Reader launch");
 
-    let mut first = Command::new(&reader)
-        .arg(&fixture)
-        .spawn()
-        .expect("launch first installed Reader");
-    let mut second = Command::new(&reader)
-        .arg(&fixture)
-        .spawn()
-        .expect("launch second installed Reader");
+    let probe_dir = root.join("acceptance-rm-probes");
+    fs::create_dir_all(&probe_dir).expect("create Restart Manager probe directory");
+    let first_receipt = probe_dir.join("first.json");
+    let second_receipt = probe_dir.join("second.json");
 
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let mut first = Command::new(&reader)
+        .arg("--reader-activation-probe-v1")
+        .arg(&fixture)
+        .arg(&first_receipt)
+        .arg("60000")
+        .spawn()
+        .expect("launch first installed Reader activation probe");
+    let mut second = Command::new(&reader)
+        .arg("--reader-activation-probe-v1")
+        .arg(&fixture)
+        .arg(&second_receipt)
+        .arg("60000")
+        .spawn()
+        .expect("launch second installed Reader activation probe");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while (!first_receipt.is_file() || !second_receipt.is_file())
+        && std::time::Instant::now() < deadline
+    {
+        if first.try_wait().expect("poll first Reader").is_some() {
+            panic!("first Reader activation probe exited before receipt");
+        }
+        if second.try_wait().expect("poll second Reader").is_some() {
+            panic!("second Reader activation probe exited before receipt");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(first_receipt.is_file(), "first Reader activation receipt missing");
+    assert!(second_receipt.is_file(), "second Reader activation receipt missing");
     assert!(
         first.try_wait().expect("poll first Reader").is_none(),
         "first Reader exited before quiesce"
