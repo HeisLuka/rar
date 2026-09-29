@@ -7,8 +7,14 @@ on:
       - "crates/pub-model/src/shape_paint.rs"
       - "crates/pub-model/src/shape_paint_op.rs"
       - "crates/pub-paint-bridge/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
       - ".github/workflows/cdm-shape-paint-v1.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -29,3 +35,19 @@ jobs:
         run: cargo clippy -p pub-model -p pub-paint-bridge --all-targets -- -D warnings
       - name: Test workspace
         run: cargo test -p pub-model -p pub-paint-bridge
+
+      - name: Check donor Viewer paint consumer
+        run: cargo check --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer --all-targets
+
+      - name: Test donor Viewer paint consumer
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer
+
+      - name: Gate SampleNewsletter canonical paint parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/paint-bridge-assets"
+          mkdir -p "$ASSETS"
+          curl --fail --location https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub --output "$ASSETS/SampleNewsletter.pub"
+          echo "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf  $ASSETS/SampleNewsletter.pub" | sha256sum --check
+          cargo run --quiet --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer --bin paint_bridge_parity -- "$ASSETS/SampleNewsletter.pub"
