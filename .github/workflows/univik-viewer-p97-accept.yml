@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - '.github/workflows/univik-viewer-p97-accept.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/univik-viewer-p97-accept.yml'
 
 permissions:
   contents: read
