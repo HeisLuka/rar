@@ -1,0 +1,192 @@
+name: Univik Viewer P97 acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/univik-viewer-p97-accept.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  p97:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Prepare evidence directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path out | Out-Null
+
+      - name: Acquire exact Univik Viewer 6.9.0 installer
+        shell: pwsh
+        run: |
+          curl.exe -L --fail --retry 3 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o out/setup-pub-viewer.exe https://univik.com/dl/setup-pub-viewer.exe
+          $hash=(Get-FileHash out/setup-pub-viewer.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size=(Get-Item out/setup-pub-viewer.exe).Length
+          if ($hash -ne "85e7f3de571ad19457ab4d222799892e9b957fe3a8fa3a39d8edffa1db3e16a9") { throw "Univik installer SHA drift: $hash" }
+          if ($size -ne 41434792) { throw "Univik installer size drift: $size" }
+          "installer_sha256=$hash" | Set-Content out/package.txt
+          "installer_size=$size" | Add-Content out/package.txt
+
+      - name: Reacquire exact Publisher97 OPNHOUS fixture
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, json, time, urllib.parse, urllib.request
+          from pathlib import Path
+          UA="chaptera-univik-p97-accept/1.0"; SECTOR=2048
+          URL="https://archive.org/download/PUB40CD/PUB_40_CD.ISO"
+          MEMBER="PAGEWIZ/OPNHOUS.PUB"
+          EXPECTED_SHA="0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c"
+          EXPECTED_SIZE=11264
+          def candidates(url):
+              p=urllib.parse.urlparse(url); parts=p.path.split("/")
+              ident=parts[2]; filename="/".join(parts[3:])
+              req=urllib.request.Request(f"https://archive.org/metadata/{ident}",headers={"User-Agent":UA})
+              with urllib.request.urlopen(req,timeout=30) as r: meta=json.load(r)
+              out=[]; directory=str(meta.get("dir") or "")
+              for key in ("d1","d2"):
+                  host=str(meta.get(key) or "")
+                  if host and directory: out.append("https://"+host+directory.rstrip("/")+"/"+urllib.parse.quote(filename,safe="/"))
+              out += [url,url+"?download=1"]; return list(dict.fromkeys(out))
+          def read_range(url,start,size):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Range":f"bytes={start}-{start+size-1}","Accept-Encoding":"identity"})
+              with urllib.request.urlopen(req,timeout=45) as r:
+                  if getattr(r,"status",None)!=206 and not r.headers.get("Content-Range"): raise RuntimeError("range unsupported")
+                  data=r.read(size+1)
+              if len(data)!=size: raise RuntimeError(f"range length drift: {len(data)} != {size}")
+              return data
+          delivery=None; last=None
+          for url in candidates(URL):
+              for attempt in range(3):
+                  try:
+                      pvd=read_range(url,16*SECTOR,SECTOR)
+                      if pvd[:6]!=b"\x01CD001": raise RuntimeError("bad ISO9660 PVD")
+                      delivery=url; break
+                  except Exception as e:
+                      last=e
+                      if attempt<2: time.sleep(2**attempt)
+              if delivery: break
+          if not delivery: raise last
+          cache={}
+          def rr(start,size):
+              last=None
+              for attempt in range(3):
+                  try: return read_range(delivery,start,size)
+                  except Exception as e:
+                      last=e
+                      if attempt<2: time.sleep(2**attempt)
+              raise last
+          def record(raw):
+              name=raw[33:33+raw[32]].decode("ascii","strict")
+              return name,int.from_bytes(raw[2:6],"little"),int.from_bytes(raw[10:14],"little"),raw[25]
+          def directory(extent,size):
+              key=(extent,size)
+              if key in cache: return cache[key]
+              data=rr(extent*SECTOR,size); out={}; pos=0
+              while pos<len(data):
+                  n=data[pos]
+                  if not n: pos=((pos//SECTOR)+1)*SECTOR; continue
+                  name,e,s,f=record(data[pos:pos+n])
+                  if name not in ("\x00","\x01"): out[name.split(";")[0].upper()]=(e,s,f)
+                  pos+=n
+              cache[key]=out; return out
+          pvd=rr(16*SECTOR,SECTOR); root_len=pvd[156]
+          _,extent,size,flags=record(pvd[156:156+root_len]); parts=MEMBER.split("/")
+          for index,part in enumerate(x.upper() for x in parts):
+              extent,size,flags=directory(extent,size)[part]
+              if index+1<len(parts) and not flags&2: raise RuntimeError("intermediate path is not directory")
+          if flags&2: raise RuntimeError("target is directory")
+          data=rr(extent*SECTOR,size)
+          if len(data)!=EXPECTED_SIZE: raise RuntimeError("size drift")
+          if hashlib.sha256(data).hexdigest()!=EXPECTED_SHA: raise RuntimeError("sha drift")
+          Path("out/OPNHOUS.PUB").write_bytes(data)
+          print(f"exact OPNHOUS acquired via {delivery}")
+          '@ | Set-Content -Encoding UTF8 out/acquire_opnhous.py
+          python out/acquire_opnhous.py
+
+      - name: Record clean-profile Univik registry baseline
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          reg query HKCU\Software /f Univik /s > out/registry-before.txt 2>&1
+          reg query HKCU\Software /f "4n6" /s >> out/registry-before.txt 2>&1
+
+      - name: Install exact Viewer normally but unattended
+        shell: pwsh
+        run: |
+          $p=Start-Process -FilePath (Resolve-Path out/setup-pub-viewer.exe) -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru -Wait
+          "installer_exit_code=$($p.ExitCode)" | Set-Content out/install.txt
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          $roots=@($env:ProgramFiles, [Environment]::GetFolderPath('ProgramFilesX86')) | Where-Object { $_ }
+          $exe=$null
+          foreach($root in $roots) {
+            $found=Get-ChildItem $root -Recurse -Filter UnivikPUBViewer.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+            if($found) { $exe=$found; break }
+          }
+          if (-not $exe) { throw "installed UnivikPUBViewer.exe not found" }
+          $exe | Set-Content out/viewer-exe-path.txt
+          Get-FileHash $exe -Algorithm SHA256 | Format-List | Out-String | Set-Content out/viewer-exe-hash.txt
+
+      - name: Launch exact P97 fixture and capture bounded UI evidence
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe=Get-Content out/viewer-exe-path.txt
+          $pub=(Resolve-Path out/OPNHOUS.PUB).Path
+          $proc=Start-Process -FilePath $exe -ArgumentList ('"' + $pub + '"') -PassThru
+          "pid=$($proc.Id)" | Set-Content out/runtime.txt
+          "launch_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content out/runtime.txt
+          Start-Sleep -Seconds 12
+          $proc.Refresh()
+          "has_exited=$($proc.HasExited)" | Add-Content out/runtime.txt
+          if (-not $proc.HasExited) {
+            "main_window_handle=$($proc.MainWindowHandle)" | Add-Content out/runtime.txt
+            "main_window_title=$($proc.MainWindowTitle)" | Add-Content out/runtime.txt
+          }
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+          $rows=New-Object System.Collections.Generic.List[object]
+          if (-not $proc.HasExited -and $proc.MainWindowHandle -ne 0) {
+            $root=[System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+            $all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+            for($i=0;$i -lt $all.Count;$i++) {
+              $e=$all.Item($i)
+              try { $rows.Add([pscustomobject]@{Name=$e.Current.Name;AutomationId=$e.Current.AutomationId;ControlType=$e.Current.ControlType.ProgrammaticName;IsEnabled=$e.Current.IsEnabled;IsOffscreen=$e.Current.IsOffscreen}) } catch {}
+            }
+          }
+          $rows | ConvertTo-Json -Depth 3 | Set-Content -Encoding UTF8 out/uia-tree.json
+          $rows | Format-Table -AutoSize | Out-String -Width 4096 | Set-Content out/uia-tree.txt
+          try {
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            $bounds=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
+            $g=[System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
+            $bmp.Save((Join-Path (Resolve-Path out).Path 'screen.png'),[System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+          } catch { $_ | Out-String | Set-Content out/screenshot-error.txt }
+          $names=($rows | ForEach-Object { $_.Name }) -join "\n"
+          $verdict='not_comparable'
+          if ($names -match '(?i)unsupported|cannot open|failed|error') { $verdict='rejection_observed' }
+          elseif ($names -match '(?i)OPNHOUS|page\s*1|1\s*/\s*4|page\s*of') { $verdict='open_ui_observed' }
+          [ordered]@{verdict=$verdict;exact_fixture_sha256='0c74bed1b862f4603a77567f817ad22bf1f7c42eb5afbee0c907732953534b5c';expected_authoritative_pages=4;process_exited=$proc.HasExited;main_window_title=if(-not $proc.HasExited){$proc.MainWindowTitle}else{$null};note='Process/window evidence alone does not prove visual fidelity.'} | ConvertTo-Json | Set-Content -Encoding UTF8 out/verdict.json
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+
+      - name: Record post-run registry state
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          reg query HKCU\Software /f Univik /s > out/registry-after.txt 2>&1
+          reg query HKCU\Software /f "4n6" /s >> out/registry-after.txt 2>&1
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: univik-viewer-p97-acceptance
+          path: out/
+          retention-days: 14
