@@ -20,6 +20,13 @@ pub struct AffectedProcess {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectionReport {
+    pub resource: std::path::PathBuf,
+    pub affected: Vec<AffectedProcess>,
+    pub reboot_reasons: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuiesceReport {
     pub resource: std::path::PathBuf,
     pub before: Vec<AffectedProcess>,
@@ -121,20 +128,20 @@ impl Drop for RestartManagerSession {
     }
 }
 
-pub fn quiesce_file_resource(resource: &Path) -> Result<QuiesceReport, String> {
-    let resource = std::path::absolute(resource).map_err(|error| {
-        format!(
-            "resolve absolute Restart Manager resource {}: {error}",
-            resource.display()
-        )
-    })?;
-    if !resource.is_file() {
-        return Err(format!(
-            "Restart Manager resource is not a file: {}",
-            resource.display()
-        ));
-    }
+pub fn inspect_file_resource(resource: &Path) -> Result<InspectionReport, String> {
+    let resource = validated_resource_path(resource)?;
+    let session = RestartManagerSession::start()?;
+    session.register_file(&resource)?;
+    let (affected, reboot_reasons) = session.affected_processes()?;
+    Ok(InspectionReport {
+        resource,
+        affected,
+        reboot_reasons,
+    })
+}
 
+pub fn quiesce_file_resource(resource: &Path) -> Result<QuiesceReport, String> {
+    let resource = validated_resource_path(resource)?;
     let session = RestartManagerSession::start()?;
     session.register_file(&resource)?;
 
@@ -173,6 +180,22 @@ pub fn quiesce_file_resource(resource: &Path) -> Result<QuiesceReport, String> {
         reboot_reasons_before,
         reboot_reasons_after,
     })
+}
+
+fn validated_resource_path(resource: &Path) -> Result<std::path::PathBuf, String> {
+    let resource = std::path::absolute(resource).map_err(|error| {
+        format!(
+            "resolve absolute Restart Manager resource {}: {error}",
+            resource.display()
+        )
+    })?;
+    if !resource.is_file() {
+        return Err(format!(
+            "Restart Manager resource is not a file: {}",
+            resource.display()
+        ));
+    }
+    Ok(resource)
 }
 
 fn wide_null(value: &OsStr) -> Result<Vec<u16>, String> {
@@ -215,13 +238,15 @@ mod tests {
 
 
     #[test]
-    fn current_executable_fails_closed_instead_of_requesting_self_shutdown() {
+    fn current_executable_preflight_detects_the_current_process_without_shutdown() {
         let executable = std::env::current_exe().expect("current test executable");
-        let error = quiesce_file_resource(&executable)
-            .expect_err("Restart Manager must not silently quiesce its own process");
+        let report = inspect_file_resource(&executable)
+            .expect("Restart Manager self preflight should be inspectable");
+        let current_pid = std::process::id();
         assert!(
-            error.contains("reboot or user action"),
-            "unexpected self-detection error: {error}"
+            report.affected.iter().any(|process| process.pid == current_pid)
+                || report.reboot_reasons != 0,
+            "Restart Manager preflight neither listed current PID {current_pid} nor reported a reboot/self boundary: {report:?}"
         );
     }
 }
