@@ -1,0 +1,152 @@
+name: Reader embedded font exact-byte probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/extract_embedded_eot.py"
+      - "apps/chaptera-desktop/src/main.rs"
+      - "crates/chaptera-viewer-render-plan/**"
+      - "crates/chaptera-desktop-fallback-font-resource/**"
+      - ".github/workflows/reader-embedded-font-probe.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bounded EOT tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y eot2ttf fontconfig
+          python -m pip install --disable-pip-version-check olefile==0.47
+
+      - name: Acquire exact embedded-font PUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/chaptera-embedded-font-probe-input"
+          mkdir -p "$out"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/fosnola/libmspub-test/master/testset/12.0/fonts.pub" \
+            --output "$out/fonts.pub"
+          echo "PROBE_INPUT=$out" >> "$GITHUB_ENV"
+
+      - name: Extract exact EOT carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/extract_embedded_eot.py \
+            --pub "$PROBE_INPUT/fonts.pub" \
+            --out-eot "$PROBE_INPUT/TimesNewRoman.eot" \
+            --receipt "$PROBE_INPUT/eot-extraction.json" \
+            --expected-pub-sha256 "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048" \
+            --expected-eot-sha256 "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f" \
+            --expected-font-name "Times New Roman"
+
+      - name: Decode EOT to shaping-ready TTF
+        shell: bash
+        run: |
+          set -euo pipefail
+          eot2ttf "$PROBE_INPUT/TimesNewRoman.eot" "$PROBE_INPUT/TimesNewRoman.ttf"
+          test -s "$PROBE_INPUT/TimesNewRoman.ttf"
+
+          family="$(fc-scan --format='%{family}\n' "$PROBE_INPUT/TimesNewRoman.ttf" | head -n 1)"
+          if [[ "$family" != *"Times New Roman"* ]]; then
+            echo "decoded font family mismatch: $family" >&2
+            exit 1
+          fi
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["PROBE_INPUT"])
+          ttf = (root / "TimesNewRoman.ttf").read_bytes()
+          if ttf[:4] not in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf"):
+              raise SystemExit(f"decoded font has unexpected SFNT signature: {ttf[:4]!r}")
+          sha = hashlib.sha256(ttf).hexdigest()
+          receipt = {
+              "schema": "chaptera.embedded-font-decoded-program.v1",
+              "source_eot_sha256": "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f",
+              "decoded_program_sha256": sha,
+              "decoded_program_byte_len": len(ttf),
+              "sfnt_signature_hex": ttf[:4].hex(),
+              "font_family": "Times New Roman",
+              "decoder": "Ubuntu eot2ttf/libeot",
+              "disposition": "exact_embedded_program_for_document",
+              "original_full_font_file_claimed": False,
+          }
+          (root / "decoded-font.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-embedded-font-probe-input
+          path: ${{ env.PROBE_INPUT }}
+          if-no-files-found: error
+
+  reader-probe:
+    needs: decode
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chaptera-embedded-font-probe-input
+          path: ${{ runner.temp }}\chaptera-embedded-font-probe-input
+
+      - name: Bind exact font-program inputs
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "chaptera-embedded-font-probe-input"
+          $fixture = Join-Path $root "fonts.pub"
+          $ttf = Join-Path $root "TimesNewRoman.ttf"
+          $out = Join-Path $env:RUNNER_TEMP "chaptera-embedded-font-probe-output"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $pubHash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($pubHash -ne "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048") {
+            throw "fonts.pub SHA-256 mismatch: $pubHash"
+          }
+          $ttfHash = (Get-FileHash $ttf -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          "CHAPTERA_EMBEDDED_FONT_PUB=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_EMBEDDED_FONT_TTF=$ttf" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_EMBEDDED_FONT_TTF_SHA256=$ttfHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_EMBEDDED_FONT_EOT_SHA256=9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHAPTERA_EMBEDDED_FONT_OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Copy-Item (Join-Path $root "eot-extraction.json") $out
+          Copy-Item (Join-Path $root "decoded-font.json") $out
+
+      - name: Compare embedded exact bytes against pinned fallback
+        run: cargo test -p chaptera-desktop --features reader-only embedded_font_exact_bytes_change_shared_reader_layout_against_fallback -- --ignored --nocapture
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-reader-embedded-font-probe
+          path: ${{ env.CHAPTERA_EMBEDDED_FONT_OUT }}
+          if-no-files-found: warn
