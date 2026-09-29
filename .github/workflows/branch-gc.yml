@@ -28,9 +28,9 @@ jobs:
         id: manifests
         shell: bash
         env:
-          EVENT_NAME: \${{ github.event_name }}
-          BASE_SHA: \${{ github.event.pull_request.base.sha }}
-          MANUAL_MANIFEST: \${{ inputs.manifest }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MANUAL_MANIFEST: ${{ inputs.manifest }}
         run: |
           set -euo pipefail
           mkdir -p target/branch-gc
@@ -53,10 +53,10 @@ jobs:
       - name: Delete only literal vetted refs
         shell: bash
         env:
-          GH_TOKEN: \${{ github.token }}
-          GH_REPO: \${{ github.repository }}
-          CURRENT_HEAD: \${{ github.head_ref }}
-          DEFAULT_BRANCH: \${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_HEAD: ${{ github.head_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
