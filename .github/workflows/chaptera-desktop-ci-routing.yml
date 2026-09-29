@@ -1,0 +1,35 @@
+name: Chaptera Desktop CI routing guard
+
+on:
+  pull_request:
+    paths:
+      - "apps/chaptera-desktop/src/main.rs"
+      - "apps/chaptera-desktop/src/diagnostic_sweep.rs"
+      - "apps/chaptera-desktop/src/suite_handoff_cli.rs"
+      - ".github/workflows/chaptera-reader-windows.yml"
+      - ".github/workflows/chaptera-desktop-windows.yml"
+      - ".github/workflows/chaptera-reader-installer.yml"
+      - ".github/workflows/chaptera-suite-handoff-v1.yml"
+      - ".github/workflows/chaptera-desktop-ci-routing.yml"
+      - "tools/ci/chaptera_desktop_ci_routing.py"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove Desktop CI admission topology
+        run: python3 tools/ci/chaptera_desktop_ci_routing.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaptera-desktop-ci-routing
+          path: target/ci/chaptera-desktop-ci-routing-receipt.json
+          if-no-files-found: error
