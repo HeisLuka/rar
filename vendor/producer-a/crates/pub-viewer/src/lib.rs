@@ -40,7 +40,8 @@ use pub_reader::build_mature_0x2c_cmo_projection_bridge_v1;
 pub use pub_reader::{
     CHAPTERA_EXACT_FILE_CONSENT_V1, CHAPTERA_INTAKE_RETENTION_POLICY_V1, FailureIntakeClass,
     FailureIntakeClassification, FailureIntakeConfidence, FailureIntakeReason,
-    classify_failure_candidate, exact_file_intake_eligible,
+    PubFamilyClassification, PubFamilyConfidence, PubFamilyProfile, PubFamilyReason,
+    PubReaderRoute, classify_failure_candidate, classify_pub_family, exact_file_intake_eligible,
 };
 use pub_reader::{
     FailureCode, FailureEnvelope, FailureEnvelopeContext, FailureParserStage,
@@ -616,6 +617,28 @@ enum ViewerPageSelectionDisposition {
 pub fn open_mature_0x2c(bytes: &[u8]) -> Result<ViewerDocument> {
     let pipeline = build_mature_0x2c_pipeline(bytes)?;
     viewer_document_from_pipeline(bytes.len(), &pipeline)
+}
+
+pub fn open_pub_geometry(
+    bytes: &[u8],
+    environment: BoundedLayoutEnvironment,
+) -> Result<ViewerGeometryDocument> {
+    let classification = classify_pub_family(bytes);
+    match classification.route {
+        PubReaderRoute::Mature2c => open_mature_0x2c_geometry(bytes, environment),
+        PubReaderRoute::Legacy22LowText | PubReaderRoute::Legacy22Quill => Err(anyhow!(
+            "unsupported PUB family/profile: family={:?}, profile={}, route={}",
+            classification.family,
+            classification.profile.as_str(),
+            classification.route.as_str()
+        )),
+        PubReaderRoute::Unsupported => Err(anyhow!(
+            "unsupported PUB family/profile: family={:?}, profile={}, route={}",
+            classification.family,
+            classification.profile.as_str(),
+            classification.route.as_str()
+        )),
+    }
 }
 
 /// Opens one mature 0x2C Publisher file through the real layout/scene boundary.
