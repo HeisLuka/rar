@@ -26,9 +26,15 @@ jobs:
 
       - name: Format bounded legacy Reader slice
         run: |
-          cargo fmt --manifest-path vendor/producer-a/crates/pub-contents/Cargo.toml -- --check
-          cargo fmt --manifest-path vendor/producer-a/crates/pub-reader/Cargo.toml -- --check
-          cargo fmt --manifest-path vendor/producer-a/crates/pub-viewer/Cargo.toml -- --check
+          rustfmt --check --edition 2024 \
+            vendor/producer-a/crates/pub-contents/src/legacy22_directory.rs \
+            vendor/producer-a/crates/pub-contents/src/lib.rs \
+            vendor/producer-a/crates/pub-reader/src/family_classifier.rs \
+            vendor/producer-a/crates/pub-reader/src/legacy22_graph.rs \
+            vendor/producer-a/crates/pub-reader/src/lib.rs \
+            vendor/producer-a/crates/pub-viewer/src/lib.rs \
+            apps/chaptera-desktop/src/diagnostic_sweep.rs \
+            apps/chaptera-desktop/src/main.rs
 
       - name: Test lossless legacy directory + SourceGraph units
         run: |
