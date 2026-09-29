@@ -193,7 +193,8 @@ pub fn admit_restore(
     if entry.source.source_reference != observed.source_reference {
         return Ok(ResumeRestoreDispositionV1::SourceReferenceChanged);
     }
-    if entry.source.sha256_hex != observed.sha256_hex || entry.source.byte_len != observed.byte_len {
+    if entry.source.sha256_hex != observed.sha256_hex || entry.source.byte_len != observed.byte_len
+    {
         return Ok(ResumeRestoreDispositionV1::SourceContentChanged);
     }
     if entry.reading.page_index >= observed.page_count {
@@ -613,8 +614,7 @@ mod tests {
         let mut changed = opened.entry.as_ref().expect("entry").clone();
         changed.reading.page_index = 2;
         assert_eq!(
-            reading_checkpoint_if_changed(&opened, changed.clone())
-                .expect("changed checkpoint"),
+            reading_checkpoint_if_changed(&opened, changed.clone()).expect("changed checkpoint"),
             Some(ResumeMutationV1::ReadingCheckpoint(changed))
         );
 
@@ -640,7 +640,10 @@ mod tests {
         opened.entry.as_mut().expect("entry").reading.zoom_mode = ResumeZoomModeV1::FitPage;
 
         let encoded = encode_store(&opened).expect("encode fit-page state");
-        assert_eq!(decode_store(&encoded).expect("decode fit-page state"), opened);
+        assert_eq!(
+            decode_store(&encoded).expect("decode fit-page state"),
+            opened
+        );
 
         let legacy = br#"{
           "schema_version":"chaptera.reader-resume.v1",
