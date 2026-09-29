@@ -21,6 +21,19 @@
                 <data android:mimeType="application/vnd.ms-publisher" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
+            <!--
+              Many Android document providers do not know the Microsoft Publisher MIME type
+              and surface .pub files as a generic/unknown document. Accept generic VIEW
+              intents here and let the Rust admission layer decide whether the supplied bytes
+              are actually a supported PUB. This intentionally favors reliable "Open with"
+              discovery over MIME-only filtering.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

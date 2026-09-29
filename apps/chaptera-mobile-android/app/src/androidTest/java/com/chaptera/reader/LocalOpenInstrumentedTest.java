@@ -171,6 +171,32 @@ public final class LocalOpenInstrumentedTest {
     }
 
     @Test
+    public void resolverOffersChapteraWhenProviderUsesUnknownMimeForPubUri() {
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Uri uri = Uri.parse(
+            "content://com.android.providers.downloads.documents/document/primary%3ADownload%2FSample.pub"
+        );
+        Intent intent = new Intent(Intent.ACTION_VIEW)
+            .addCategory(Intent.CATEGORY_DEFAULT)
+            .setDataAndType(uri, "application/x-unknown");
+
+        boolean offered = false;
+        for (android.content.pm.ResolveInfo info : context.getPackageManager().queryIntentActivities(
+            intent,
+            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+        )) {
+            if (info.activityInfo != null && context.getPackageName().equals(info.activityInfo.packageName)) {
+                offered = true;
+                break;
+            }
+        }
+        assertTrue(
+            "Chaptera must remain discoverable when an Android provider assigns an unknown MIME to a .pub",
+            offered
+        );
+    }
+
+    @Test
     public void applicationDoesNotRequestInternetPermission() throws Exception {
         android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         PackageInfo info = context.getPackageManager().getPackageInfo(
