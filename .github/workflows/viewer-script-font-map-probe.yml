@@ -1,0 +1,33 @@
+name: Viewer script font map bounded probe
+
+on:
+  push:
+    branches:
+      - "feature/viewer-script-font-map-01"
+    paths:
+      - "vendor/producer-a/crates/pub-quill/**"
+      - ".github/workflows/viewer-script-font-map-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Rustfmt pub-quill
+        run: cargo fmt --manifest-path vendor/producer-a/crates/pub-quill/Cargo.toml -- --check
+
+      - name: Clippy pub-quill
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-quill --all-targets -- -D warnings
+
+      - name: Test bounded Quill typography
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill typography -- --nocapture
