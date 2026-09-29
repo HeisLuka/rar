@@ -3,7 +3,7 @@ name: Chaptera Reader Windows installer V1
 on:
   pull_request:
     paths:
-      - "apps/chaptera-desktop/**"
+      - "apps/chaptera-desktop/Cargo.toml"
       - "packages/product/reader-portable/**"
       - "installer/windows/chaptera-reader.iss"
       - ".github/workflows/chaptera-reader-installer.yml"
