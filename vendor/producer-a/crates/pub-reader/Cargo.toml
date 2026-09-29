@@ -11,6 +11,7 @@ cmo-authority-bridge=["dep:pub-plccmob-projection"]
 
 [dependencies]
 anyhow.workspace=true
+cfb.workspace=true
 pub-core={path="../pub-core"}
 pub-cfb={path="../pub-cfb"}
 pub-contents={path="../pub-contents"}
