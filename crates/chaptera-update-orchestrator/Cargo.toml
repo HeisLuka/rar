@@ -6,8 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+sha2 = "0.10"
 chaptera-update-engine = { path = "../chaptera-update-engine" }
 chaptera-update-trust = { path = "../chaptera-update-trust" }
 
 [dev-dependencies]
 tempfile = "3"
+
+
+[[bin]]
+name = "chaptera-update-recovery-probe"
+path = "src/bin/chaptera-update-recovery-probe.rs"
