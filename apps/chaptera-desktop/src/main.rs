@@ -8346,6 +8346,277 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires CHAPTERA_EMBEDDED_FONT_PUB, CHAPTERA_EMBEDDED_FONT_TTF and CHAPTERA_EMBEDDED_FONT_OUT"]
+    fn embedded_font_exact_bytes_change_shared_reader_layout_against_fallback() {
+        use chaptera_viewer_render_plan::RenderTextLayoutDispositionV1;
+        use sha2::{Digest, Sha256};
+
+        const SOURCE_SHA256: &str =
+            "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048";
+        const EOT_SHA256: &str =
+            "9581bade789c578a9f5e89356a6c05fc0b890cb1533a9d7169c0a7188323104f";
+        const SOURCE_FONT_NAME: &str = "Times New Roman";
+
+        let fixture = std::env::var_os("CHAPTERA_EMBEDDED_FONT_PUB")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_EMBEDDED_FONT_PUB");
+        let decoded_font = std::env::var_os("CHAPTERA_EMBEDDED_FONT_TTF")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_EMBEDDED_FONT_TTF");
+        let output_dir = std::env::var_os("CHAPTERA_EMBEDDED_FONT_OUT")
+            .map(PathBuf::from)
+            .expect("CHAPTERA_EMBEDDED_FONT_OUT");
+        fs::create_dir_all(&output_dir).expect("create embedded-font probe output directory");
+
+        let source_bytes = fs::read(&fixture).expect("read exact fonts.pub fixture");
+        let source_sha256 = format!("{:x}", Sha256::digest(&source_bytes));
+        assert_eq!(
+            source_sha256, SOURCE_SHA256,
+            "embedded-font PUB source identity drifted"
+        );
+
+        let eot_sha256 = std::env::var("CHAPTERA_EMBEDDED_FONT_EOT_SHA256")
+            .expect("CHAPTERA_EMBEDDED_FONT_EOT_SHA256");
+        assert_eq!(eot_sha256, EOT_SHA256, "embedded EOT identity drifted");
+
+        let exact_font_bytes = fs::read(&decoded_font).expect("read decoded embedded font program");
+        assert!(
+            !exact_font_bytes.is_empty(),
+            "decoded embedded font program must be non-empty"
+        );
+        let exact_font_sha256 = format!("{:x}", Sha256::digest(&exact_font_bytes));
+        let expected_ttf_sha256 = std::env::var("CHAPTERA_EMBEDDED_FONT_TTF_SHA256")
+            .expect("CHAPTERA_EMBEDDED_FONT_TTF_SHA256");
+        assert_eq!(
+            exact_font_sha256, expected_ttf_sha256,
+            "decoded embedded font fingerprint changed between decode and Reader probe"
+        );
+        assert_ne!(
+            exact_font_sha256,
+            chaptera_desktop_fallback_font_resource::EXPECTED_SHA256,
+            "embedded and fallback font programs must not collapse to the same bytes"
+        );
+
+        let visual = diagnostic_sweep::open_for_product(&source_bytes)
+            .expect("exact fonts.pub must open through current product Reader");
+        assert!(
+            !visual.document.pages.is_empty(),
+            "embedded-font fixture must expose at least one Reader page"
+        );
+
+        let embedded_font = ExplicitRenderTextFontResourceV1 {
+            resource_id: "pub-embedded:times-new-roman:eot:v1",
+            expected_sha256: &exact_font_sha256,
+            face_index: 0,
+            default_font_size_emu: chaptera_desktop_fallback_font_resource::FONT_SIZE_EMU,
+            default_line_height_emu: chaptera_desktop_fallback_font_resource::LINE_HEIGHT_EMU,
+            bytes: &exact_font_bytes,
+        };
+        let fallback_font = desktop_text_font_resource();
+
+        let mut source_family_candidate_frames = 0_usize;
+        let mut comparable_shared_frames = 0_usize;
+        let mut metric_changed_frames = 0_usize;
+        let mut line_break_changed_frames = 0_usize;
+        let mut clipping_changed_frames = 0_usize;
+        let mut frame_receipts = Vec::new();
+
+        for page_index in 0..visual.document.pages.len() {
+            let fallback_plan =
+                build_page_render_plan_with_text_layout_v1(&visual, page_index, &fallback_font)
+                    .expect("fallback render plan");
+            let embedded_plan =
+                build_page_render_plan_with_text_layout_v1(&visual, page_index, &embedded_font)
+                    .expect("embedded-font render plan");
+            assert_eq!(
+                fallback_plan.nodes.len(),
+                embedded_plan.nodes.len(),
+                "font resource must not change render-plan node cardinality"
+            );
+
+            for (fallback_node, embedded_node) in
+                fallback_plan.nodes.iter().zip(&embedded_plan.nodes)
+            {
+                assert_eq!(
+                    fallback_node.node_id, embedded_node.node_id,
+                    "font resource must not change render-plan node identity/order"
+                );
+                let (Some(fallback_text), Some(embedded_text)) =
+                    (fallback_node.text.as_ref(), embedded_node.text.as_ref())
+                else {
+                    continue;
+                };
+                assert_eq!(
+                    fallback_text.story_id, embedded_text.story_id,
+                    "font resource must not change Story authority"
+                );
+                assert_eq!(
+                    fallback_text.text, embedded_text.text,
+                    "font resource must not mutate Story text"
+                );
+
+                if fallback_text.typography.is_empty()
+                    || !fallback_text
+                        .typography
+                        .iter()
+                        .all(|run| run.source_font_name.eq_ignore_ascii_case(SOURCE_FONT_NAME))
+                {
+                    continue;
+                }
+                source_family_candidate_frames += 1;
+
+                let (Some(fallback_layout), Some(embedded_layout)) =
+                    (fallback_text.layout.as_ref(), embedded_text.layout.as_ref())
+                else {
+                    continue;
+                };
+                let (fallback_line_height_emu, fallback_fingerprint) =
+                    match &fallback_layout.disposition {
+                        RenderTextLayoutDispositionV1::SharedResolved {
+                            font_fingerprint_sha256,
+                            line_height_emu,
+                            ..
+                        } => (*line_height_emu, font_fingerprint_sha256.as_str()),
+                        RenderTextLayoutDispositionV1::BackendFallback { .. } => continue,
+                    };
+                let (embedded_line_height_emu, embedded_fingerprint) =
+                    match &embedded_layout.disposition {
+                        RenderTextLayoutDispositionV1::SharedResolved {
+                            font_fingerprint_sha256,
+                            line_height_emu,
+                            ..
+                        } => (*line_height_emu, font_fingerprint_sha256.as_str()),
+                        RenderTextLayoutDispositionV1::BackendFallback { .. } => continue,
+                    };
+
+                assert_eq!(
+                    fallback_fingerprint,
+                    chaptera_desktop_fallback_font_resource::EXPECTED_SHA256
+                );
+                assert_eq!(embedded_fingerprint, exact_font_sha256);
+                comparable_shared_frames += 1;
+
+                let fallback_breaks = fallback_layout
+                    .lines
+                    .iter()
+                    .map(|line| {
+                        [
+                            line.scalar_start,
+                            line.scalar_end,
+                            line.consumed_scalar_end,
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                let embedded_breaks = embedded_layout
+                    .lines
+                    .iter()
+                    .map(|line| {
+                        [
+                            line.scalar_start,
+                            line.scalar_end,
+                            line.consumed_scalar_end,
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                let line_break_changed = fallback_breaks != embedded_breaks;
+                let measured_width_changed = fallback_layout.lines.len()
+                    != embedded_layout.lines.len()
+                    || fallback_layout.lines.iter().zip(&embedded_layout.lines).any(
+                        |(fallback, embedded)| {
+                            fallback.measured_width_emu != embedded.measured_width_emu
+                        },
+                    );
+
+                let fallback_height_emu = i128::from(fallback_line_height_emu)
+                    * i128::try_from(fallback_layout.lines.len())
+                        .expect("line count fits i128");
+                let embedded_height_emu = i128::from(embedded_line_height_emu)
+                    * i128::try_from(embedded_layout.lines.len())
+                        .expect("line count fits i128");
+                let frame_height_emu = i128::from(fallback_node.bounds.height.get());
+                let fallback_clipped = fallback_height_emu > frame_height_emu;
+                let embedded_clipped = embedded_height_emu > frame_height_emu;
+                let clipping_changed = fallback_clipped != embedded_clipped;
+                let metric_changed =
+                    line_break_changed || measured_width_changed || clipping_changed;
+
+                metric_changed_frames += usize::from(metric_changed);
+                line_break_changed_frames += usize::from(line_break_changed);
+                clipping_changed_frames += usize::from(clipping_changed);
+
+                let text_sha256 = format!("{:x}", Sha256::digest(fallback_text.text.as_bytes()));
+                frame_receipts.push(serde_json::json!({
+                    "page_number": page_index + 1,
+                    "node_id": fallback_node.node_id,
+                    "story_id": fallback_text.story_id,
+                    "story_text_sha256": text_sha256,
+                    "source_font_name": SOURCE_FONT_NAME,
+                    "scalar_count": fallback_text.text.chars().count(),
+                    "frame_height_emu": fallback_node.bounds.height.get(),
+                    "fallback_line_count": fallback_layout.lines.len(),
+                    "embedded_line_count": embedded_layout.lines.len(),
+                    "fallback_breaks": fallback_breaks,
+                    "embedded_breaks": embedded_breaks,
+                    "fallback_clipped": fallback_clipped,
+                    "embedded_clipped": embedded_clipped,
+                    "line_break_changed": line_break_changed,
+                    "measured_width_changed": measured_width_changed,
+                    "clipping_changed": clipping_changed,
+                    "metric_changed": metric_changed,
+                }));
+            }
+        }
+
+        assert!(
+            source_family_candidate_frames > 0,
+            "current Reader must expose at least one exact Times New Roman source-owned frame"
+        );
+        assert!(
+            comparable_shared_frames > 0,
+            "at least one Times New Roman frame must be comparable through shared layout"
+        );
+        assert!(
+            metric_changed_frames > 0,
+            "exact embedded font bytes must produce a measurable layout difference from Ubuntu Light"
+        );
+
+        let receipt = serde_json::json!({
+            "schema": "chaptera.reader-embedded-font-probe.v1",
+            "source_pub_sha256": source_sha256,
+            "embedded_eot_sha256": eot_sha256,
+            "source_font_name": SOURCE_FONT_NAME,
+            "embedded_program_sha256": exact_font_sha256,
+            "embedded_program_disposition": "exact_embedded_program_for_document",
+            "original_full_font_file_claimed": false,
+            "fallback_resource_id": chaptera_desktop_fallback_font_resource::RESOURCE_ID,
+            "fallback_program_sha256": chaptera_desktop_fallback_font_resource::EXPECTED_SHA256,
+            "source_family_candidate_frames": source_family_candidate_frames,
+            "comparable_shared_frames": comparable_shared_frames,
+            "metric_changed_frames": metric_changed_frames,
+            "line_break_changed_frames": line_break_changed_frames,
+            "clipping_changed_frames": clipping_changed_frames,
+            "publisher_raster_oracle_present": false,
+            "publisher_exact_reflow_claimed": false,
+            "discriminator": "same Reader source/geometry/text, font bytes only",
+            "frames": frame_receipts,
+        });
+        fs::write(
+            output_dir.join("reader-embedded-font-probe-receipt.json"),
+            serde_json::to_vec_pretty(&receipt).expect("serialize embedded-font probe receipt"),
+        )
+        .expect("write embedded-font probe receipt");
+
+        println!(
+            "embedded-font probe: candidates={} comparable={} metric_changed={} line_break_changed={} clipping_changed={}",
+            source_family_candidate_frames,
+            comparable_shared_frames,
+            metric_changed_frames,
+            line_break_changed_frames,
+            clipping_changed_frames
+        );
+    }
+
+    #[test]
     #[ignore = "requires CHAPTERA_GOLDEN_CARLTON_MARCH and CHAPTERA_GOLDEN_CARLTON_OUT"]
     fn golden_carlton_march_clean_pages_use_current_reader_render_backend() {
         use egui_kittest::Harness;
