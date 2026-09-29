@@ -114,6 +114,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p out
           sudo apt-get update
           sudo apt-get install -y             build-essential             cmake             git             libboost-date-time-dev             libboost-filesystem-dev             libboost-iostreams-dev             libboost-program-options-dev             libboost-system-dev             libbz2-dev             liblzma-dev             zlib1g-dev
 
