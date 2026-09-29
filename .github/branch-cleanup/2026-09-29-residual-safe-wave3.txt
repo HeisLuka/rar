@@ -1,0 +1,9 @@
+# Residual safe branch GC wave 3 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 5
+
+ops/residual-gc-wave2-20260929 cb68541bbf8a12abf16951c087db431835f76a26  # PR #1263 manifest-only cleanup head; merged
+reader-typography-render-plan-01-v1 a5734f2f4f65bee4e53e5d9b4da565cf47290739  # PR #995 superseded by merged #1021; post-close delta is workflow-only
+viewer-projection-instance-plan-01-v2 85eddab5c405116c260870b52c24e1153d13c1a2  # PR #1123 duplicate authority; post-close delta is workflow-only
+viewer-typography-brochure-block02-01 a554ff8214a563f64b60acfd644ea0793b43650d  # PR #877 execution-only discriminator; post-close delta is workflow-only
+diag-787-full-suite-hang 25faf8f83e3907b2f42b0ff28f3b54d676a8f0e0  # PR #793 temporary diagnostic; post-close delta is workflow-only
