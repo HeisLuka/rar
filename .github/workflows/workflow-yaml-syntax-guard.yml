@@ -1,0 +1,23 @@
+name: Workflow YAML syntax guard
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tools/ci/check_workflow_yaml_syntax.rb"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse every workflow YAML
+        run: ruby tools/ci/check_workflow_yaml_syntax.rb
