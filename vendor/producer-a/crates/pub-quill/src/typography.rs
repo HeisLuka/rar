@@ -1237,14 +1237,16 @@ fn parse_fdpc_styles(
                     if let Some(index) =
                         extract_primary_font_index(bytes, block, unknown_block_types)?
                     {
-                        let index_usize = to_usize(index, "FDPC font index")?;
-                        if index_usize >= font_names.len() {
-                            return Err(QuillTypographyReadError::new(format!(
-                                "FDPC font index {index} is outside FONT catalog of {} records",
-                                font_names.len()
-                            )));
+                        if index != 0xFFFF {
+                            let index_usize = to_usize(index, "FDPC font index")?;
+                            if index_usize >= font_names.len() {
+                                return Err(QuillTypographyReadError::new(format!(
+                                    "FDPC font index {index} is outside FONT catalog of {} records",
+                                    font_names.len()
+                                )));
+                            }
+                            font_indices.push(index);
                         }
-                        font_indices.push(index);
                     }
                 }
                 if block.id == TEXT_SIZE_ID {
