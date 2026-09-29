@@ -6,6 +6,7 @@ on:
       - 'vendor/producer-a/crates/pub-reader/**'
       - 'vendor/producer-a/crates/pub-viewer/**'
       - 'apps/chaptera-desktop/src/diagnostic_sweep.rs'
+      - 'apps/chaptera-desktop/src/main.rs'
       - '.github/workflows/pub-family-classifier.yml'
 
 concurrency:
