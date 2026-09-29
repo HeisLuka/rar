@@ -3313,7 +3313,10 @@ mod tests {
         fs::create_dir_all(&output_dir).expect("create embedded-font probe output directory");
 
         let bytes = fs::read(&fixture).expect("read exact fonts.pub");
-        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let source_sha256 = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         assert_eq!(source_sha256, SOURCE_SHA256, "fonts.pub source identity drifted");
 
         let quill =
