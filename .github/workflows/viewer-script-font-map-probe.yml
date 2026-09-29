@@ -27,7 +27,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rustfmt donor typography path
-        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -- --check
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml --all -- --check
 
       - name: Clippy bounded typography path
         run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-quill -p pub-reader -p pub-viewer --all-targets -- -D warnings
