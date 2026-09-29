@@ -17,6 +17,7 @@ mod family_classifier;
 mod guide_bridge;
 mod intake_protocol;
 mod legacy22_graph;
+mod legacy22_noquill_graph;
 mod resolve;
 mod structural_base;
 mod table_bridge;
@@ -63,6 +64,9 @@ pub use intake_protocol::{
 pub use legacy22_graph::{
     build_legacy_0x22_quill_from_streams, build_legacy_0x22_quill_source_graph,
     legacy22_object_key,
+};
+pub use legacy22_noquill_graph::{
+    build_legacy_0x22_noquill_from_contents, build_legacy_0x22_noquill_source_graph,
 };
 use pub_contents::{
     BLOCK_TYPE_FIXED_8, BLOCK_TYPE_REFERENCE_U32, BLOCK_TYPE_U32,
