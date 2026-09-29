@@ -1568,8 +1568,95 @@ mod tests {
             },
             font_indices: Vec::new(),
             font_names: Vec::new(),
+            script_fonts: Vec::new(),
             text_sizes_emu: Vec::new(),
         }
+    }
+
+    fn script_font_map_bytes(entries: &[(u8, u32)]) -> Vec<u8> {
+        let mut children = Vec::new();
+        for (slot, font_index) in entries {
+            let mut child_payload = Vec::new();
+            child_payload.extend_from_slice(&[0x00, 0x20]);
+            child_payload.extend_from_slice(&font_index.to_le_bytes());
+
+            children.extend_from_slice(&[*slot, GENERAL_CONTAINER]);
+            children.extend_from_slice(&(4_u32 + child_payload.len() as u32).to_le_bytes());
+            children.extend_from_slice(&child_payload);
+        }
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0x24, 0x8A]);
+        bytes.extend_from_slice(&(4_u32 + children.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&children);
+        bytes
+    }
+
+    #[test]
+    fn script_font_map_preserves_every_raw_slot_and_resolution_state() {
+        let bytes = script_font_map_bytes(&[(1, 0), (7, 1), (44, 0xFFFF), (31, 9)]);
+        let mut unknown = BTreeSet::new();
+        let (block, next) =
+            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("ScriptFonts block");
+        assert_eq!(next, bytes.len());
+        assert_eq!(block.id, FONT_INDEX_CONTAINER_ID);
+        assert_eq!(block.block_type, GENERAL_CONTAINER);
+
+        let stream = StreamPath("/Quill/QuillSub/CONTENTS".into());
+        let entries = extract_script_font_map(
+            &bytes,
+            block,
+            &stream,
+            &["Arial".to_owned(), "Times New Roman".to_owned()],
+            &mut unknown,
+        )
+        .expect("bounded script-font map");
+
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].script_slot, 1);
+        assert_eq!(entries[0].font_index, 0);
+        assert_eq!(entries[0].font_name.as_deref(), Some("Arial"));
+        assert_eq!(
+            entries[0].disposition,
+            QuillScriptFontEntryDisposition::Resolved
+        );
+
+        assert_eq!(entries[1].script_slot, 7);
+        assert_eq!(entries[1].font_name.as_deref(), Some("Times New Roman"));
+
+        assert_eq!(entries[2].script_slot, 44);
+        assert_eq!(entries[2].font_index, 0xFFFF);
+        assert_eq!(entries[2].font_name, None);
+        assert_eq!(
+            entries[2].disposition,
+            QuillScriptFontEntryDisposition::UnresolvedSentinel
+        );
+
+        assert_eq!(entries[3].script_slot, 31);
+        assert_eq!(entries[3].font_index, 9);
+        assert_eq!(entries[3].font_name, None);
+        assert_eq!(
+            entries[3].disposition,
+            QuillScriptFontEntryDisposition::InvalidFontOrdinal
+        );
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn script_font_map_rejects_duplicate_raw_slot_without_guessing() {
+        let bytes = script_font_map_bytes(&[(7, 1), (7, 0)]);
+        let mut unknown = BTreeSet::new();
+        let (block, _) =
+            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("ScriptFonts block");
+        let error = extract_script_font_map(
+            &bytes,
+            block,
+            &StreamPath("/Quill/QuillSub/CONTENTS".into()),
+            &["Arial".to_owned(), "Times New Roman".to_owned()],
+            &mut unknown,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("repeats raw script slot 7"));
     }
 
     #[test]
@@ -1625,6 +1712,7 @@ mod tests {
             },
             font_indices: vec![3],
             font_names: vec!["Explicit Face".to_owned()],
+            script_fonts: Vec::new(),
             text_sizes_emu: Vec::new(),
             story_intersections: Vec::new(),
         };
@@ -1698,6 +1786,7 @@ mod tests {
             },
             font_indices: vec![1, 2],
             font_names: vec!["A".to_owned(), "B".to_owned()],
+            script_fonts: Vec::new(),
             text_sizes_emu: vec![14 * QUILL_TEXT_SIZE_EMU_PER_POINT],
             story_intersections: Vec::new(),
         };
