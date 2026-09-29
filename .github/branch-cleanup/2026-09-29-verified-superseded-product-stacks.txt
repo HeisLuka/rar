@@ -1,7 +1,7 @@
 # Verified superseded product-stack branch GC — 2026-09-29
 # Evidence: current exact closed PR head + Notion task authority confirms canonical successor/main integration.
 # Excludes open PRs, no-PR branches, and refs whose tip changed after PR closure.
-# Candidate count: 48
+# Candidate count: 49
 
 # Viewer typography: canonical authority is on main via #1005/#1021/#1231.
 viewer-typography-paint-01 ed08579eb1de74ac6aa11d00411123a5a63f8f56  # PR #825 superseded stack
@@ -58,3 +58,6 @@ editor-diag-text-metrics-01-v3 3e05ab0b6ec1c5f202dbd958c3521435f37dd00d  # PR #8
 editor-diag-text-metrics-01-v5 8b9eac8b40622800df8d28fd0b53673ee51344dd  # PR #834
 editor-diag-text-metrics-01-v6 b68b8e98f9c6fc4c1d639fd9074171927e75827c  # PR #840
 editor-diag-text-metrics-01-v9 17a07de32bf310cf0cac0023ce531f176cc02e72  # PR #872 provenance
+
+# Reader Cmo: #1208 closed-unmerged donor; canonical fresh-main successor #1221 merged and Notion owner is DONE/Merged.
+reader-cmo-scene-instance-compose-01-v2 a4c5a5b5c9a3668be5b962179af46809ea1b5f95  # PR #1208 donor; successor #1221 merged
