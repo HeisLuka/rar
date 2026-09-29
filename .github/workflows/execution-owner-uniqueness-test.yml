@@ -1,0 +1,28 @@
+name: Execution owner uniqueness tests
+
+on:
+  pull_request:
+    paths:
+      - "tools/execution_owner_uniqueness.py"
+      - "tools/test_execution_owner_uniqueness.py"
+      - ".github/workflows/execution-owner-uniqueness-test.yml"
+      - ".github/workflows/execution-owner-uniqueness-enforce.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run source-free owner-uniqueness tests
+        run: PYTHONPATH=tools python -m unittest tools/test_execution_owner_uniqueness.py -v
