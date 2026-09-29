@@ -1,0 +1,13 @@
+# Post-merge / completed-ops residual branch GC — 2026-09-29
+# Every entry is SHA-pinned. Open/current/default refs are runtime-protected.
+# Format: <branch> <expected_sha>  # evidence
+# Candidate count: 8
+
+chaptera-pub-check-landing-01-v1 ab20a1465e4f0d9ee7550e78eecd3658cb5c74a3  # PR #1235 merged
+ops/branch-gc-pin-sha-20260929 91d773cf293753ee94f59e54eef6abfd03da279f  # PR #1250 merged
+pub-check-regional-i18n-01-v2 e4982f8c14e2b4e58a7e2fb540d59853869181f5  # PR #1244 merged
+pub-check-russian-email-i18n-01 78734129a9289ca105b82a8f4dbbb0ea7ca560c1  # PR #1251 merged
+viewer-typography-render-consume-01-v3 d136ce901a876384f89a3f344a03c1eab37a4808  # PR #1231 merged
+branch-gc-2026-09-29-wave2 bb447639547830e7dfce51c2d6126f83e98cb26e  # PR #1237 execution-only completed
+ops/stale-archive-gc-20260929 0e782bdb7735cf3330fe45adb8e6fbc786b695b2  # PR #1246 completed collectively / closed
+ops/stale-archive-gc-tail-20260929 a6397f384b2d02173739c6303b4947316b35820f  # PR #1249 execution-only completed
