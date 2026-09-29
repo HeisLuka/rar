@@ -18,6 +18,7 @@ mod render_backend;
 mod supporter;
 #[allow(dead_code)]
 mod supporter_attribution;
+mod suite_handoff_cli;
 mod text_session;
 
 use chaptera_scene_instance::{
@@ -494,121 +495,8 @@ fn main() -> eframe::Result<()> {
         }
     }
 
-    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--handoff-create-v1")) {
-        if !reader_only_mode() {
-            eprintln!("only the Chaptera Reader product may create a V1 suite handoff");
-            std::process::exit(2);
-        }
-        let Some(target) = args.next().and_then(|value| value.into_string().ok()) else {
-            eprintln!(
-                "usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json"
-            );
-            std::process::exit(2);
-        };
-        let Some(source) = args.next().map(PathBuf::from) else {
-            eprintln!(
-                "usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json"
-            );
-            std::process::exit(2);
-        };
-        let Some(output) = args.next().map(PathBuf::from) else {
-            eprintln!(
-                "usage: chaptera-reader --handoff-create-v1 TARGET_PRODUCT SOURCE.pub OUTPUT.json"
-            );
-            std::process::exit(2);
-        };
-        if args.next().is_some() {
-            eprintln!("Reader handoff creation accepts exactly target, source, and output");
-            std::process::exit(2);
-        }
-
-        let reader_supported = smoke_check(&source).is_ok();
-        let rescue_eligible = if reader_supported {
-            false
-        } else {
-            fs::read(&source)
-                .ok()
-                .map(|bytes| {
-                    matches!(
-                        classify_failure_candidate(&bytes).class,
-                        FailureIntakeClass::PubDamaged
-                    )
-                })
-                .unwrap_or(false)
-        };
-        match chaptera_suite_handoff::create_reader_handoff(
-            &source,
-            &target,
-            reader_supported,
-            rescue_eligible,
-        )
-        .and_then(|packet| {
-            chaptera_suite_handoff::write_packet(&packet, &output)?;
-            Ok(packet)
-        }) {
-            Ok(packet) => {
-                println!(
-                    "{{\"protocol_version\":\"{}\",\"sender_product_id\":\"{}\",\"target_product_id\":\"{}\",\"requested_job\":\"{}\",\"source_sha256\":\"{}\"}}",
-                    chaptera_suite_handoff::PACKET_VERSION,
-                    chaptera_suite_handoff::READER_PRODUCT_ID,
-                    packet.target_product_id,
-                    packet.requested_job,
-                    packet.source.sha256
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-    }
-
-    if first_arg.as_deref() == Some(std::ffi::OsStr::new("--handoff-accept-v1")) {
-        if reader_only_mode() {
-            eprintln!("Chaptera Reader is a handoff sender, not an Editor receiver");
-            std::process::exit(2);
-        }
-        let Some(packet_path) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera-editor --handoff-accept-v1 PACKET.json ACCEPTANCE.json");
-            std::process::exit(2);
-        };
-        let Some(output) = args.next().map(PathBuf::from) else {
-            eprintln!("usage: chaptera-editor --handoff-accept-v1 PACKET.json ACCEPTANCE.json");
-            std::process::exit(2);
-        };
-        if args.next().is_some() {
-            eprintln!("Editor handoff acceptance accepts exactly packet and output");
-            std::process::exit(2);
-        }
-
-        let result = chaptera_suite_handoff::load_for_receiver(
-            &packet_path,
-            chaptera_suite_handoff::EDITOR_PRODUCT_ID,
-        )
-        .and_then(|validated| {
-            let admitted = smoke_check(validated.source_path()).is_ok();
-            chaptera_suite_handoff::finish_acceptance(validated, admitted)
-        })
-        .and_then(|receipt| {
-            chaptera_suite_handoff::write_acceptance(&receipt, &output)?;
-            Ok(receipt)
-        });
-
-        match result {
-            Ok(receipt) => {
-                println!(
-                    "{}",
-                    serde_json::to_string(&receipt)
-                        .expect("suite handoff acceptance is JSON-serializable")
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
+    if suite_handoff_cli::try_handle(first_arg.as_deref(), &mut args) {
+        return Ok(());
     }
 
     if first_arg.as_deref() == Some(std::ffi::OsStr::new("--desktop-acceptance-v1")) {
@@ -649,7 +537,7 @@ fn main() -> eframe::Result<()> {
         let Some(path) = args.next().map(PathBuf::from) else {
             std::process::exit(2);
         };
-        if smoke_check(&path).is_err() {
+        if diagnostic_sweep::smoke_check(&path).is_err() {
             std::process::exit(1);
         }
         return Ok(());
@@ -795,21 +683,6 @@ fn run_reader_update_control(request_path: &Path) -> Result<(), String> {
 #[cfg(not(feature = "reader-only"))]
 fn run_reader_update_control(_request_path: &Path) -> Result<(), String> {
     Err("update control mode is unavailable outside the Reader build".to_owned())
-}
-
-fn smoke_check(path: &Path) -> Result<(), String> {
-    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    let visual = diagnostic_sweep::open_for_product(&bytes)
-        .map_err(|error| format!("open {}: {error}", path.display()))?;
-
-    if visual.document.pages.is_empty() {
-        return Err("document has no Viewer pages".to_owned());
-    }
-    if visual.scene.nodes.is_empty() {
-        return Err("document has no resolved scene nodes".to_owned());
-    }
-
-    Ok(())
 }
 
 struct CachedImageTexture {
