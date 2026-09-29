@@ -47,6 +47,15 @@ impl ResumeSourceIdentityV1 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeZoomModeV1 {
+    #[default]
+    Percent,
+    FitPage,
+    PageWidth,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadingStateV1 {
@@ -54,6 +63,8 @@ pub struct ReadingStateV1 {
     pub viewport_x_emu: i64,
     pub viewport_y_emu: i64,
     pub zoom_milli: u32,
+    #[serde(default)]
+    pub zoom_mode: ResumeZoomModeV1,
 }
 
 impl ReadingStateV1 {
@@ -123,6 +134,35 @@ pub enum ResumeMutationV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedResumeSourceV1 {
+    pub source_reference: String,
+    pub sha256_hex: String,
+    pub byte_len: u64,
+    pub page_count: u32,
+}
+
+impl ObservedResumeSourceV1 {
+    pub fn validate(&self) -> Result<(), ResumeError> {
+        ResumeSourceIdentityV1 {
+            source_reference: self.source_reference.clone(),
+            sha256_hex: self.sha256_hex.clone(),
+            byte_len: self.byte_len,
+        }
+        .validate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeRestoreDispositionV1 {
+    NoEntry,
+    SourceUnavailable,
+    SourceReferenceChanged,
+    SourceContentChanged,
+    ReadingPositionOutOfRange { page_index: u32, page_count: u32 },
+    Restore(ReadingStateV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeError {
     SchemaMismatch,
     InvalidSourceReference,
@@ -135,6 +175,57 @@ pub enum ResumeError {
     SourceChangedWithoutOpen,
     WriterSessionMismatch,
     InvalidJson,
+}
+
+pub fn admit_restore(
+    store: &ResumeStoreV1,
+    observed: Option<&ObservedResumeSourceV1>,
+) -> Result<ResumeRestoreDispositionV1, ResumeError> {
+    store.validate()?;
+    let Some(entry) = store.entry.as_ref() else {
+        return Ok(ResumeRestoreDispositionV1::NoEntry);
+    };
+    let Some(observed) = observed else {
+        return Ok(ResumeRestoreDispositionV1::SourceUnavailable);
+    };
+    observed.validate()?;
+
+    if entry.source.source_reference != observed.source_reference {
+        return Ok(ResumeRestoreDispositionV1::SourceReferenceChanged);
+    }
+    if entry.source.sha256_hex != observed.sha256_hex || entry.source.byte_len != observed.byte_len {
+        return Ok(ResumeRestoreDispositionV1::SourceContentChanged);
+    }
+    if entry.reading.page_index >= observed.page_count {
+        return Ok(ResumeRestoreDispositionV1::ReadingPositionOutOfRange {
+            page_index: entry.reading.page_index,
+            page_count: observed.page_count,
+        });
+    }
+
+    Ok(ResumeRestoreDispositionV1::Restore(entry.reading.clone()))
+}
+
+pub fn reading_checkpoint_if_changed(
+    current: &ResumeStoreV1,
+    candidate: ResumeCheckpointV1,
+) -> Result<Option<ResumeMutationV1>, ResumeError> {
+    current.validate()?;
+    candidate.validate()?;
+    let committed = current
+        .entry
+        .as_ref()
+        .ok_or(ResumeError::MissingOpenDocument)?;
+    if candidate.source != committed.source {
+        return Err(ResumeError::SourceChangedWithoutOpen);
+    }
+    if candidate.writer_session_id != committed.writer_session_id {
+        return Err(ResumeError::WriterSessionMismatch);
+    }
+    if candidate.reading == committed.reading {
+        return Ok(None);
+    }
+    Ok(Some(ResumeMutationV1::ReadingCheckpoint(candidate)))
 }
 
 pub fn apply_mutation(
@@ -221,6 +312,7 @@ mod tests {
                 viewport_x_emu: 1_000,
                 viewport_y_emu: 2_000,
                 zoom_milli: 1_250,
+                zoom_mode: ResumeZoomModeV1::Percent,
             },
         }
     }
@@ -429,6 +521,150 @@ mod tests {
         assert!(!text.contains("recovered_text"));
         assert!(!text.contains("render_plan"));
         assert_eq!(decode_store(&bytes).expect("decode"), opened);
+    }
+
+    #[test]
+    fn restore_admission_requires_exact_source_identity_and_valid_current_page() {
+        let opened = apply_mutation(
+            &ResumeStoreV1::default(),
+            0,
+            ResumeMutationV1::OpenDocument(checkpoint(
+                "session-a",
+                source("C:\\docs\\a.pub", 'a'),
+                3,
+            )),
+        )
+        .expect("open");
+
+        assert_eq!(
+            admit_restore(&opened, None).expect("missing source disposition"),
+            ResumeRestoreDispositionV1::SourceUnavailable
+        );
+
+        let moved = ObservedResumeSourceV1 {
+            source_reference: "C:\\moved\\a.pub".to_owned(),
+            sha256_hex: "a".repeat(64),
+            byte_len: 123_456,
+            page_count: 8,
+        };
+        assert_eq!(
+            admit_restore(&opened, Some(&moved)).expect("moved source disposition"),
+            ResumeRestoreDispositionV1::SourceReferenceChanged
+        );
+
+        let changed = ObservedResumeSourceV1 {
+            source_reference: "C:\\docs\\a.pub".to_owned(),
+            sha256_hex: "b".repeat(64),
+            byte_len: 123_456,
+            page_count: 8,
+        };
+        assert_eq!(
+            admit_restore(&opened, Some(&changed)).expect("changed source disposition"),
+            ResumeRestoreDispositionV1::SourceContentChanged
+        );
+
+        let fewer_pages = ObservedResumeSourceV1 {
+            source_reference: "C:\\docs\\a.pub".to_owned(),
+            sha256_hex: "a".repeat(64),
+            byte_len: 123_456,
+            page_count: 3,
+        };
+        assert_eq!(
+            admit_restore(&opened, Some(&fewer_pages)).expect("page-range disposition"),
+            ResumeRestoreDispositionV1::ReadingPositionOutOfRange {
+                page_index: 3,
+                page_count: 3,
+            }
+        );
+
+        let exact = ObservedResumeSourceV1 {
+            source_reference: "C:\\docs\\a.pub".to_owned(),
+            sha256_hex: "a".repeat(64),
+            byte_len: 123_456,
+            page_count: 8,
+        };
+        assert_eq!(
+            admit_restore(&opened, Some(&exact)).expect("exact restore"),
+            ResumeRestoreDispositionV1::Restore(
+                opened.entry.as_ref().expect("entry").reading.clone()
+            )
+        );
+    }
+
+    #[test]
+    fn reading_checkpoint_helper_coalesces_unchanged_state_and_fences_authority() {
+        let opened = apply_mutation(
+            &ResumeStoreV1::default(),
+            0,
+            ResumeMutationV1::OpenDocument(checkpoint(
+                "session-a",
+                source("C:\\docs\\a.pub", 'a'),
+                1,
+            )),
+        )
+        .expect("open");
+
+        let unchanged = opened.entry.as_ref().expect("entry").clone();
+        assert_eq!(
+            reading_checkpoint_if_changed(&opened, unchanged).expect("unchanged checkpoint"),
+            None
+        );
+
+        let mut changed = opened.entry.as_ref().expect("entry").clone();
+        changed.reading.page_index = 2;
+        assert_eq!(
+            reading_checkpoint_if_changed(&opened, changed.clone())
+                .expect("changed checkpoint"),
+            Some(ResumeMutationV1::ReadingCheckpoint(changed))
+        );
+
+        let wrong_writer = checkpoint("session-b", source("C:\\docs\\a.pub", 'a'), 2);
+        assert_eq!(
+            reading_checkpoint_if_changed(&opened, wrong_writer),
+            Err(ResumeError::WriterSessionMismatch)
+        );
+    }
+
+    #[test]
+    fn zoom_mode_roundtrips_and_legacy_v1_defaults_to_percent() {
+        let mut opened = apply_mutation(
+            &ResumeStoreV1::default(),
+            0,
+            ResumeMutationV1::OpenDocument(checkpoint(
+                "session-a",
+                source("C:\\docs\\a.pub", 'a'),
+                0,
+            )),
+        )
+        .expect("open");
+        opened.entry.as_mut().expect("entry").reading.zoom_mode = ResumeZoomModeV1::FitPage;
+
+        let encoded = encode_store(&opened).expect("encode fit-page state");
+        assert_eq!(decode_store(&encoded).expect("decode fit-page state"), opened);
+
+        let legacy = br#"{
+          "schema_version":"chaptera.reader-resume.v1",
+          "revision":1,
+          "entry":{
+            "writer_session_id":"session-a",
+            "source":{
+              "source_reference":"C:\\docs\\a.pub",
+              "sha256_hex":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "byte_len":123456
+            },
+            "reading":{
+              "page_index":0,
+              "viewport_x_emu":1000,
+              "viewport_y_emu":2000,
+              "zoom_milli":1250
+            }
+          }
+        }"#;
+        let decoded = decode_store(legacy).expect("decode pre-zoom-mode v1");
+        assert_eq!(
+            decoded.entry.expect("entry").reading.zoom_mode,
+            ResumeZoomModeV1::Percent
+        );
     }
 
     #[test]
