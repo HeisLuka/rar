@@ -19,6 +19,8 @@ const GENERAL_CONTAINER: u8 = 0x88;
 const OPL_CHP_EXTENDED_HIGH_BITS: u8 = 0x02;
 const FBOLD_ID: u16 = 0x0202;
 const FBOLD_CS_ID: u16 = 0x0237;
+const LEGACY_FONT_SELECTOR_BLOCK_TYPE: u8 = 0x18;
+const LEGACY_FONT_SELECTOR_CHILD_IDS: [u16; 3] = [0x0000, 0x0008, 0x0010];
 const FONT_INDEX_CONTAINER_ID: u16 = 0x0224;
 const TEXT_SIZE_ID: u16 = 0x020C;
 const PARAGRAPH_DEFAULT_CHAR_STYLE_ID: u16 = 0x0219;
@@ -1169,19 +1171,17 @@ fn parse_fdpc_styles(
 
             while cursor < style_end {
                 let (block, next) = parse_block(bytes, cursor, style_end, unknown_block_types)?;
-                if block.id == FONT_INDEX_CONTAINER_ID {
-                    if let Some(index) =
-                        extract_primary_font_index(bytes, block, unknown_block_types)?
-                    {
-                        let index_usize = to_usize(index, "FDPC font index")?;
-                        if index_usize >= font_names.len() {
-                            return Err(QuillTypographyReadError::new(format!(
-                                "FDPC font index {index} is outside FONT catalog of {} records",
-                                font_names.len()
-                            )));
-                        }
-                        font_indices.push(index);
+                if let Some(index) =
+                    extract_bounded_font_index(bytes, block, unknown_block_types)?
+                {
+                    let index_usize = to_usize(index, "FDPC font index")?;
+                    if index_usize >= font_names.len() {
+                        return Err(QuillTypographyReadError::new(format!(
+                            "FDPC font index {index} is outside FONT catalog of {} records",
+                            font_names.len()
+                        )));
                     }
+                    font_indices.push(index);
                 }
                 if block.id == TEXT_SIZE_ID {
                     if let Some(value) = block.value {
@@ -1243,6 +1243,7 @@ fn extract_primary_font_index(
         .data_offset
         .checked_add(4)
         .ok_or_else(|| QuillTypographyReadError::new("font container payload offset overflows"))?;
+    let mut legacy_fixed_selectors = Vec::new();
     while cursor < block.end {
         let (child, next) = parse_block(bytes, cursor, block.end, unknown_block_types)?;
         if child.block_type == GENERAL_CONTAINER {
@@ -1255,9 +1256,48 @@ fn extract_primary_font_index(
             let (value_block, _) = parse_block(bytes, inner_start, child.end, unknown_block_types)?;
             return Ok(value_block.value);
         }
+
+        if block.block_type == GENERAL_CONTAINER
+            && child.block_type == LEGACY_FONT_SELECTOR_BLOCK_TYPE
+            && let Some(value) = child.value
+        {
+            legacy_fixed_selectors.push((child.id, value));
+        }
         cursor = next;
     }
+
+    // Publisher 2000 old-0x22 uses raw property tag 24 8A with a 16-byte
+    // payload containing exactly three fixed type-0x18 u16 selectors:
+    // ids 0x00, 0x08 and 0x10. Admit only the exact triplet when all three
+    // agree. Later 2002+ 0x224 script-font containers continue through the
+    // nested GENERAL_CONTAINER path above.
+    if legacy_fixed_selectors.len() == LEGACY_FONT_SELECTOR_CHILD_IDS.len()
+        && legacy_fixed_selectors
+            .iter()
+            .map(|(id, _)| *id)
+            .eq(LEGACY_FONT_SELECTOR_CHILD_IDS)
+    {
+        let selector = legacy_fixed_selectors[0].1;
+        if legacy_fixed_selectors
+            .iter()
+            .all(|(_, value)| *value == selector)
+        {
+            return Ok(Some(selector));
+        }
+    }
+
     Ok(None)
+}
+
+fn extract_bounded_font_index(
+    bytes: &[u8],
+    block: BlockObservation,
+    unknown_block_types: &mut BTreeSet<u8>,
+) -> Result<Option<u32>, QuillTypographyReadError> {
+    (block.id == FONT_INDEX_CONTAINER_ID)
+        .then(|| extract_primary_font_index(bytes, block, unknown_block_types))
+        .transpose()
+        .map(Option::flatten)
 }
 
 fn decode_quill_style_tag(raw_tag: [u8; 2]) -> (u16, u8) {
@@ -1438,6 +1478,48 @@ mod tests {
         ];
         let error = validate_monotone_fdpc_text_offsets(&regressed).unwrap_err();
         assert!(error.to_string().contains("regress in stored order"));
+    }
+
+    #[test]
+    fn legacy_0x24_fixed_font_selector_stays_distinct_from_mature_script_container() {
+        let bytes = [
+            0x24, 0x8a, 0x10, 0x00, 0x00, 0x00, 0x00, 0x18, 0x01, 0x00, 0x08, 0x18, 0x01,
+            0x00, 0x10, 0x18, 0x01, 0x00,
+        ];
+        let mut unknown = BTreeSet::new();
+
+        let (legacy, next) =
+            parse_block(&bytes, 0, bytes.len(), &mut unknown).expect("legacy font selector");
+        assert_eq!(next, bytes.len());
+        assert_eq!(legacy.id, FONT_INDEX_CONTAINER_ID);
+        assert_eq!(legacy.block_type, GENERAL_CONTAINER);
+        assert_eq!(
+            extract_bounded_font_index(&bytes, legacy, &mut unknown)
+                .expect("bounded legacy selector"),
+            Some(1)
+        );
+        assert!(unknown.is_empty());
+
+        let disagreement_bytes = [
+            0x24, 0x8a, 0x10, 0x00, 0x00, 0x00, 0x00, 0x18, 0x01, 0x00, 0x08, 0x18, 0x02,
+            0x00, 0x10, 0x18, 0x01, 0x00,
+        ];
+        let (disagreement, _) = parse_block(
+            &disagreement_bytes,
+            0,
+            disagreement_bytes.len(),
+            &mut unknown,
+        )
+        .expect("legacy disagreement");
+        assert_eq!(
+            extract_bounded_font_index(&disagreement_bytes, disagreement, &mut unknown)
+                .expect("disagreement fails closed"),
+            None
+        );
+
+        let (mature_id, mature_type) = decode_quill_style_tag([0x24, 0x82]);
+        assert_eq!(mature_id, FONT_INDEX_CONTAINER_ID);
+        assert_eq!(mature_type, 0x80);
     }
 
     #[test]
