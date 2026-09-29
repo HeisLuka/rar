@@ -48,8 +48,8 @@ use pub_reader::{
     FailureTelemetryChoice, PubAssetExportDiagnostic, PubBridgeDiagnostic, PubResolveDiagnostic,
     PubResolvedGraph, PubResolvedGraphBuild, PubResolvedNodePayload, PubSourceGraphBuild,
     analyze_mature_0x2c_page_roles, build_failure_envelope,
-    build_mature_0x2c_asset_export_bundle_from_bytes, build_mature_0x2c_source_graph,
-    derive_pub_page_id, resolve_pub_source_graph,
+    build_legacy_0x22_quill_source_graph, build_mature_0x2c_asset_export_bundle_from_bytes,
+    build_mature_0x2c_source_graph, derive_pub_page_id, resolve_pub_source_graph,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -626,7 +626,8 @@ pub fn open_pub_geometry(
     let classification = classify_pub_family(bytes);
     match classification.route {
         PubReaderRoute::Mature2c => open_mature_0x2c_geometry(bytes, environment),
-        PubReaderRoute::Legacy22LowText | PubReaderRoute::Legacy22Quill => Err(anyhow!(
+        PubReaderRoute::Legacy22Quill => open_legacy_0x22_quill_geometry(bytes, environment),
+        PubReaderRoute::Legacy22LowText => Err(anyhow!(
             "unsupported PUB family/profile: family={:?}, profile={}, route={}",
             classification.family,
             classification.profile.as_str(),
@@ -639,6 +640,111 @@ pub fn open_pub_geometry(
             classification.route.as_str()
         )),
     }
+}
+
+/// Opens the bounded Publisher98/2000 old-0x22 + Quill profile.
+///
+/// V1 materializes the authoritative DOCUMENT/PAGE graph, grounded Quill
+/// stories, and ordinary text-box geometry. Unsupported old-family object
+/// markers stay explicit fidelity diagnostics instead of being guessed.
+pub fn open_legacy_0x22_quill_geometry(
+    bytes: &[u8],
+    environment: BoundedLayoutEnvironment,
+) -> Result<ViewerGeometryDocument> {
+    let source_hash = sha256_digest(bytes)?;
+    let source = build_legacy_0x22_quill_source_graph(Cursor::new(bytes), source_hash)
+        .context("build legacy-0x22+Quill PUB source graph for Viewer")?;
+    let resolved =
+        resolve_pub_source_graph(&source.graph).context("resolve legacy PUB source graph for Viewer")?;
+    let page_selection = ViewerPageSelection {
+        page_ids: source.effective_pages.page_ids.clone(),
+        disposition: ViewerPageSelectionDisposition::GenericNoLoss,
+    };
+    let mut document = viewer_document_from_graph(
+        bytes.len(),
+        source_hash,
+        &source,
+        &resolved,
+        &page_selection,
+    )?;
+    let effective_page_ids = document.pages.iter().map(|page| page.id).collect::<Vec<_>>();
+    let authoring =
+        bounded_authoring_slice_from_resolved_pages(&resolved.graph, &effective_page_ids)?;
+    let projection = project_bounded(authoring);
+
+    document
+        .diagnostics
+        .extend(projection.diagnostics.iter().map(map_projection_diagnostic));
+
+    let paints = resolved
+        .graph
+        .nodes
+        .values()
+        .map(viewer_node_paint_from_canonical_bridge)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    let story_frames = projection
+        .story_frames
+        .iter()
+        .map(|frame| ViewerStoryFrame {
+            story_id: frame.story_origin,
+            frame_id: frame.frame_origin,
+            ordinal: frame.ordinal,
+        })
+        .collect::<Vec<_>>();
+
+    let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
+    document
+        .diagnostics
+        .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+    if !text_fragments.is_empty() {
+        document
+            .diagnostics
+            .push(viewer_fallback_flow_metrics_diagnostic());
+    }
+
+    let scene = resolve_bounded_geometry(&projection, environment).map_err(|blocked| {
+        let codes = blocked
+            .projection_errors
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow!("legacy Viewer geometry resolution blocked by layout projection errors: {codes}")
+    })?;
+    document.diagnostics.extend(
+        scene
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != "story_text_layout_not_implemented")
+            .map(map_scene_diagnostic),
+    );
+
+    if !scene.nodes.is_empty() {
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.visual.geometry_only".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: "Legacy object positions and sizes are resolved for the admitted old-0x22 text-box profile. Unsupported legacy object kinds, exact source typography, images, effects, groups and version-sensitive transforms are not claimed by this bounded Reader path."
+                .to_owned(),
+        });
+    }
+    normalize_diagnostics(&mut document.diagnostics);
+
+    Ok(ViewerGeometryDocument {
+        schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+        document,
+        scene,
+        paints,
+        story_frames,
+        text_fragments,
+        typography_runs: Vec::new(),
+        #[cfg(feature = "cmo-slot-compose")]
+        projected_instances: Vec::new(),
+        images: Vec::new(),
+    })
 }
 
 /// Opens one mature 0x2C Publisher file through the real layout/scene boundary.
@@ -1107,9 +1213,25 @@ fn viewer_document_from_pipeline(
     byte_len: usize,
     pipeline: &Mature0x2cPipeline,
 ) -> Result<ViewerDocument> {
-    let graph = &pipeline.resolved.graph;
+    viewer_document_from_graph(
+        byte_len,
+        pipeline.source_hash,
+        &pipeline.source,
+        &pipeline.resolved,
+        &pipeline.page_selection,
+    )
+}
 
-    let effective_page_ids = &pipeline.page_selection.page_ids;
+fn viewer_document_from_graph(
+    byte_len: usize,
+    source_hash: Sha256Digest,
+    source: &PubSourceGraphBuild,
+    resolved: &PubResolvedGraphBuild,
+    page_selection: &ViewerPageSelection,
+) -> Result<ViewerDocument> {
+    let graph = &resolved.graph;
+
+    let effective_page_ids = &page_selection.page_ids;
     let mut pages = Vec::with_capacity(effective_page_ids.len());
     for (zero_based, page_id) in effective_page_ids.iter().enumerate() {
         let page = graph
@@ -1134,21 +1256,14 @@ fn viewer_document_from_pipeline(
         })
         .collect::<Vec<_>>();
 
-    let mut diagnostics = pipeline
-        .source
+    let mut diagnostics = source
         .diagnostics
         .iter()
         .map(map_bridge_diagnostic)
-        .chain(
-            pipeline
-                .resolved
-                .diagnostics
-                .iter()
-                .map(map_resolve_diagnostic),
-        )
+        .chain(resolved.diagnostics.iter().map(map_resolve_diagnostic))
         .collect::<Vec<_>>();
 
-    match &pipeline.page_selection.disposition {
+    match &page_selection.disposition {
         ViewerPageSelectionDisposition::GenericNoLoss => {}
         ViewerPageSelectionDisposition::FamilyProfileApplied {
             profile_id,
@@ -1182,7 +1297,7 @@ fn viewer_document_from_pipeline(
         source: ViewerSource {
             format: graph.source.format.clone(),
             format_version: graph.source.format_version.clone(),
-            source_hash: pipeline.source_hash,
+            source_hash,
             byte_len: u64::try_from(byte_len).context("PUB byte length exceeds u64")?,
         },
         pages,
@@ -1322,6 +1437,11 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             "viewer.text.story_missing",
             ViewerDiagnosticSeverity::FidelityWarning,
             "A text frame refers to text that the Viewer could not recover.",
+        ),
+        LegacyObjectNotMaterialized { .. } => (
+            "viewer.legacy.object_not_materialized",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "A legacy Publisher page contains an object outside the currently admitted old-0x22 Reader profile.",
         ),
         McldRecordCountMismatch { .. } => (
             "viewer.table.mcld_layout_metrics_unavailable",
@@ -2921,6 +3041,59 @@ mod tests {
         assert_eq!(
             viewer_geometry_environment_v0_1(),
             viewer_geometry_environment_v0_1()
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod legacy22_exact_product_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn exact_fixture(env_name: &str, expected_sha256: &str) {
+        let path = std::env::var_os(env_name)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("{env_name} is required"));
+        let before = fs::read(&path).expect("read exact legacy fixture");
+        assert_eq!(sha256_digest(&before).unwrap().to_string(), expected_sha256);
+
+        let visual = open_pub_geometry(&before, viewer_geometry_environment_v0_1())
+            .expect("legacy fixture must open through family-dispatched Viewer product boundary");
+
+        assert_eq!(
+            visual.document.source.format_version.as_deref(),
+            Some("0x22-quill")
+        );
+        assert!(!visual.document.pages.is_empty(), "legacy Viewer pages");
+        assert!(!visual.document.stories.is_empty(), "legacy Quill stories");
+        assert!(!visual.scene.nodes.is_empty(), "legacy grounded scene nodes");
+        assert_eq!(
+            visual.document.fidelity_status(),
+            ViewerFidelityStatus::Partial,
+            "bounded legacy V1 must stay explicit about omitted object classes"
+        );
+
+        let after = fs::read(&path).expect("re-read exact legacy fixture");
+        assert_eq!(after, before, "legacy Reader path mutated source PUB");
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_SAMPLE98_PUB exact public fixture"]
+    fn exact_sample98_legacy_quill_product_open() {
+        exact_fixture(
+            "CHAPTERA_SAMPLE98_PUB",
+            "8912f295ff0cd1f55b873b3b98a182218f33c420877e025d2f0fd795f12dd0c0",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires CHAPTERA_SAMPLE2000_PUB exact public fixture"]
+    fn exact_sample2000_legacy_quill_product_open() {
+        exact_fixture(
+            "CHAPTERA_SAMPLE2000_PUB",
+            "40701ca47b26d04771cdd58467764e9ab39d3da69b59fbc529afd16d263d2f86",
         );
     }
 }
