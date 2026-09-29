@@ -8,6 +8,7 @@ on:
       - ".github/workflows/reader-embedded-font-probe-direct.yml"
       - "tools/extract_embedded_eot.py"
       - "apps/chaptera-desktop/src/main.rs"
+      - "vendor/producer-a/crates/pub-reader/**"
   workflow_dispatch:
 
 permissions:
@@ -97,6 +98,9 @@ jobs:
             "original_full_font_file_claimed": false
           }
           JSON
+
+      - name: Inspect source-layer Quill typography binding
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader embedded_font_fixture_quill_typography_source_receipt -- --ignored --nocapture
 
       - name: Run current Reader shared-layout A-B discriminator
         run: cargo test -p chaptera-desktop --features reader-only embedded_font_exact_bytes_change_shared_reader_layout_against_fallback -- --ignored --nocapture
