@@ -642,6 +642,111 @@ pub fn open_pub_geometry(
     }
 }
 
+/// Opens the bounded Publisher98/2000 old-0x22 + Quill profile.
+///
+/// V1 materializes the authoritative DOCUMENT/PAGE graph, grounded Quill
+/// stories, and ordinary text-box geometry. Unsupported old-family object
+/// markers stay explicit fidelity diagnostics instead of being guessed.
+pub fn open_legacy_0x22_quill_geometry(
+    bytes: &[u8],
+    environment: BoundedLayoutEnvironment,
+) -> Result<ViewerGeometryDocument> {
+    let source_hash = sha256_digest(bytes)?;
+    let source = build_legacy_0x22_quill_source_graph(Cursor::new(bytes), source_hash)
+        .context("build legacy-0x22+Quill PUB source graph for Viewer")?;
+    let resolved =
+        resolve_pub_source_graph(&source.graph).context("resolve legacy PUB source graph for Viewer")?;
+    let page_selection = ViewerPageSelection {
+        page_ids: source.effective_pages.page_ids.clone(),
+        disposition: ViewerPageSelectionDisposition::GenericNoLoss,
+    };
+    let mut document = viewer_document_from_graph(
+        bytes.len(),
+        source_hash,
+        &source,
+        &resolved,
+        &page_selection,
+    )?;
+    let effective_page_ids = document.pages.iter().map(|page| page.id).collect::<Vec<_>>();
+    let authoring =
+        bounded_authoring_slice_from_resolved_pages(&resolved.graph, &effective_page_ids)?;
+    let projection = project_bounded(authoring);
+
+    document
+        .diagnostics
+        .extend(projection.diagnostics.iter().map(map_projection_diagnostic));
+
+    let paints = resolved
+        .graph
+        .nodes
+        .values()
+        .map(viewer_node_paint_from_canonical_bridge)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    let story_frames = projection
+        .story_frames
+        .iter()
+        .map(|frame| ViewerStoryFrame {
+            story_id: frame.story_origin,
+            frame_id: frame.frame_origin,
+            ordinal: frame.ordinal,
+        })
+        .collect::<Vec<_>>();
+
+    let (text_fragments, text_flow_diagnostics) = resolve_viewer_text_fragments(&projection)?;
+    document
+        .diagnostics
+        .extend(text_flow_diagnostics.iter().map(map_scene_diagnostic));
+    if !text_fragments.is_empty() {
+        document
+            .diagnostics
+            .push(viewer_fallback_flow_metrics_diagnostic());
+    }
+
+    let scene = resolve_bounded_geometry(&projection, environment).map_err(|blocked| {
+        let codes = blocked
+            .projection_errors
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow!("legacy Viewer geometry resolution blocked by layout projection errors: {codes}")
+    })?;
+    document.diagnostics.extend(
+        scene
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != "story_text_layout_not_implemented")
+            .map(map_scene_diagnostic),
+    );
+
+    if !scene.nodes.is_empty() {
+        document.diagnostics.push(ViewerDiagnostic {
+            code: "viewer.visual.geometry_only".to_owned(),
+            severity: ViewerDiagnosticSeverity::FidelityWarning,
+            message: "Legacy object positions and sizes are resolved for the admitted old-0x22 text-box profile. Unsupported legacy object kinds, exact source typography, images, effects, groups and version-sensitive transforms are not claimed by this bounded Reader path."
+                .to_owned(),
+        });
+    }
+    normalize_diagnostics(&mut document.diagnostics);
+
+    Ok(ViewerGeometryDocument {
+        schema_version: VIEWER_GEOMETRY_SCHEMA_V0_1.to_owned(),
+        document,
+        scene,
+        paints,
+        story_frames,
+        text_fragments,
+        typography_runs: Vec::new(),
+        #[cfg(feature = "cmo-slot-compose")]
+        projected_instances: Vec::new(),
+        images: Vec::new(),
+    })
+}
+
 /// Opens one mature 0x2C Publisher file through the real layout/scene boundary.
 ///
 /// Current scope is deliberately geometry-only. The scene contains page
@@ -1332,6 +1437,11 @@ fn map_bridge_diagnostic(diagnostic: &PubBridgeDiagnostic) -> ViewerDiagnostic {
             "viewer.text.story_missing",
             ViewerDiagnosticSeverity::FidelityWarning,
             "A text frame refers to text that the Viewer could not recover.",
+        ),
+        LegacyObjectNotMaterialized { .. } => (
+            "viewer.legacy.object_not_materialized",
+            ViewerDiagnosticSeverity::FidelityWarning,
+            "A legacy Publisher page contains an object outside the currently admitted old-0x22 Reader profile.",
         ),
         McldRecordCountMismatch { .. } => (
             "viewer.table.mcld_layout_metrics_unavailable",
