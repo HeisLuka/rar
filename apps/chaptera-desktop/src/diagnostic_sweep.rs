@@ -1,4 +1,6 @@
-use pub_viewer::{FailureIntakeClass, ViewerGeometryDocument, classify_failure_candidate};
+use pub_viewer::{
+    FailureIntakeClass, ViewerGeometryDocument, classify_failure_candidate, classify_pub_family,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -35,6 +37,8 @@ pub struct FolderSweepFileResult {
     pub format: Option<String>,
     pub format_version: Option<String>,
     pub intake_class: Option<String>,
+    pub family_profile: Option<String>,
+    pub reader_route: Option<String>,
     pub failure_group_id: Option<String>,
     pub full_diagnostic: Option<String>,
 }
@@ -147,7 +151,7 @@ impl FailureGroupBuilder {
 }
 
 pub fn open_for_product(bytes: &[u8]) -> Result<ViewerGeometryDocument, String> {
-    pub_viewer::open_mature_0x2c_geometry(bytes, pub_viewer::viewer_geometry_environment_v0_1())
+    pub_viewer::open_pub_geometry(bytes, pub_viewer::viewer_geometry_environment_v0_1())
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -316,6 +320,8 @@ fn scan_pub_candidate(
                 format: None,
                 format_version: None,
                 intake_class: None,
+                family_profile: None,
+                reader_route: None,
                 failure_group_id: Some(group_id),
                 full_diagnostic: Some(diagnostic),
             };
@@ -324,6 +330,9 @@ fn scan_pub_candidate(
 
     let byte_len = bytes.len() as u64;
     let sha256 = sha256_hex(&bytes);
+    let family = classify_pub_family(&bytes);
+    let family_profile = family.profile.as_str().to_owned();
+    let reader_route = family.route.as_str().to_owned();
     match open_for_product(&bytes) {
         Ok(visual) => FolderSweepFileResult {
             relative_path: candidate.relative_path.clone(),
@@ -334,6 +343,8 @@ fn scan_pub_candidate(
             format: Some(visual.document.source.format.to_string()),
             format_version: visual.document.source.format_version.clone(),
             intake_class: None,
+            family_profile: Some(family_profile.clone()),
+            reader_route: Some(reader_route.clone()),
             failure_group_id: None,
             full_diagnostic: None,
         },
@@ -355,6 +366,8 @@ fn scan_pub_candidate(
                 format: None,
                 format_version: None,
                 intake_class: Some(intake),
+                family_profile: Some(family_profile),
+                reader_route: Some(reader_route),
                 failure_group_id: Some(group_id),
                 full_diagnostic: Some(error),
             }
