@@ -6,6 +6,8 @@ on:
       - "feature/viewer-script-font-map-01"
     paths:
       - "vendor/producer-a/crates/pub-quill/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+      - "vendor/producer-a/crates/pub-viewer/**"
       - ".github/workflows/viewer-script-font-map-probe.yml"
   workflow_dispatch:
 
@@ -23,11 +25,17 @@ jobs:
         with:
           toolchain: "1.94.1"
 
-      - name: Rustfmt pub-quill
-        run: cargo fmt --manifest-path vendor/producer-a/crates/pub-quill/Cargo.toml -- --check
+      - name: Rustfmt donor typography path
+        run: cargo fmt --manifest-path vendor/producer-a/Cargo.toml -- --check
 
-      - name: Clippy pub-quill
-        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-quill --all-targets -- -D warnings
+      - name: Clippy bounded typography path
+        run: cargo clippy --manifest-path vendor/producer-a/Cargo.toml -p pub-quill -p pub-reader -p pub-viewer --all-targets -- -D warnings
 
       - name: Test bounded Quill typography
         run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill typography -- --nocapture
+
+      - name: Test pub-reader
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader
+
+      - name: Test pub-viewer
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-viewer
