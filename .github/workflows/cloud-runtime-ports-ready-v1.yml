@@ -11,6 +11,10 @@ on:
       - ".github/workflows/cloud-runtime-ports-ready-v1.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -23,7 +27,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Prove readiness lifecycle composition
-        run: cargo test -p chaptera-server runtime_readiness:: -- --nocapture
+        run: 'cargo test -p chaptera-server runtime_readiness:: -- --nocapture'
       - name: Build Chaptera
         run: cargo build -p chaptera-server
       - name: Prove configured serve reaches ready
