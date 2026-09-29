@@ -342,10 +342,7 @@ pub fn encode_frames(
     Ok(encoded)
 }
 
-pub fn decode_frames(
-    bytes: &[u8],
-    limits: FrameLimitsV1,
-) -> Result<Vec<FrameV1>, ProtocolErrorV1> {
+pub fn decode_frames(bytes: &[u8], limits: FrameLimitsV1) -> Result<Vec<FrameV1>, ProtocolErrorV1> {
     let limits = limits.validate()?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limits.max_total_bytes {
         return Err(ProtocolErrorV1::TotalSizeLimit);
@@ -614,12 +611,8 @@ mod tests {
             image_blobs: vec![PayloadDescriptorV1::from_frame(&image)],
         };
 
-        validate_success_frames(
-            &success,
-            &[viewer.clone(), graph.clone(), image.clone()],
-            8,
-        )
-        .expect("exact success frame set");
+        validate_success_frames(&success, &[viewer.clone(), graph.clone(), image.clone()], 8)
+            .expect("exact success frame set");
 
         let mut changed_image = image;
         changed_image.payload.push(0);
