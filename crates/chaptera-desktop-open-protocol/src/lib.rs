@@ -294,7 +294,7 @@ pub fn encode_frames(
 
     let mut total = 0_u64;
     for frame in frames {
-        let key_len = frame.key.as_bytes().len();
+        let key_len = frame.key.len();
         if key_len == 0 {
             return Err(ProtocolErrorV1::EmptyKey);
         }
