@@ -1,0 +1,8 @@
+# Residual safe branch GC wave 6 — 2026-09-29
+# Exact-SHA only. Runtime guard rechecks default/current/open-PR heads and SHA.
+# Candidate count: 4
+
+ops/residual-gc-wave5-20260929 97b718543759f3f57626dad2989dfaba4407d7c6  # PR #1278 cleanup head; GC completed and PR closed unmerged
+editor-desktop-text-interaction-rust-adapter-01-v2 7c2788dfd6c92e57ccf6ad9c4a9fa9b2dcaad031  # task DONE; canonical interaction adapter merged via #862; post-close delta workflow-only
+editor-desktop-text-interaction-rust-adapter-01-v5 2b048f1f3bec6072523e265edd3da2cee41f07e9  # redundant fresh-main replay after canonical #862 merge; same interaction law
+viewer-editor-text-projection-sync-01 f35336441bbfc11f1227589fc03670459f6de62b  # old #827 seam superseded by fresh-main #851 merged
