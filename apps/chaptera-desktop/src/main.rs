@@ -873,9 +873,131 @@ fn run_reader_update_control(_request_path: &Path) -> Result<(), String> {
     Err("update control mode is unavailable outside the Reader build".to_owned())
 }
 
+#[cfg(target_os = "windows")]
+static READER_RM_PROBE_SHUTDOWN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn reader_rm_probe_window_proc(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows_sys::Win32::Foundation::WPARAM,
+    lparam: windows_sys::Win32::Foundation::LPARAM,
+) -> windows_sys::Win32::Foundation::LRESULT {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DefWindowProcW, WM_CLOSE, WM_ENDSESSION, WM_QUERYENDSESSION,
+    };
+
+    match message {
+        WM_QUERYENDSESSION => 1,
+        WM_ENDSESSION if wparam != 0 => {
+            READER_RM_PROBE_SHUTDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+            0
+        }
+        WM_CLOSE => {
+            READER_RM_PROBE_SHUTDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+            0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn hold_reader_activation_for_restart_manager<F>(hold_ms: u64, ready: F) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW,
+        RegisterClassW, TranslateMessage, UnregisterClassW, WNDCLASSW,
+    };
+
+    READER_RM_PROBE_SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+    let class_name = "ChapteraReaderRmProbeWindowV1\0"
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let window_title = "Chaptera Reader Restart Manager probe\0"
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let instance = unsafe { GetModuleHandleW(null()) };
+    if instance.is_null() {
+        return Err("GetModuleHandleW failed for Reader RM probe".to_owned());
+    }
+
+    let mut window_class: WNDCLASSW = unsafe { std::mem::zeroed() };
+    window_class.lpfnWndProc = Some(reader_rm_probe_window_proc);
+    window_class.hInstance = instance;
+    window_class.lpszClassName = class_name.as_ptr();
+    if unsafe { RegisterClassW(&window_class) } == 0 {
+        return Err("RegisterClassW failed for Reader RM probe".to_owned());
+    }
+
+    let hwnd = unsafe {
+        CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            window_title.as_ptr(),
+            0,
+            0,
+            0,
+            1,
+            1,
+            null_mut(),
+            null_mut(),
+            instance,
+            null(),
+        )
+    };
+    if hwnd.is_null() {
+        unsafe {
+            UnregisterClassW(class_name.as_ptr(), instance);
+        }
+        return Err("CreateWindowExW failed for Reader RM probe".to_owned());
+    }
+
+    if let Err(error) = ready() {
+        unsafe {
+            DestroyWindow(hwnd);
+            UnregisterClassW(class_name.as_ptr(), instance);
+        }
+        return Err(error);
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(hold_ms);
+    while !READER_RM_PROBE_SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst)
+        && Instant::now() < deadline
+    {
+        let mut message: MSG = unsafe { std::mem::zeroed() };
+        while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    unsafe {
+        DestroyWindow(hwnd);
+        UnregisterClassW(class_name.as_ptr(), instance);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hold_reader_activation_for_restart_manager<F>(hold_ms: u64, ready: F) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    ready()?;
+    std::thread::sleep(Duration::from_millis(hold_ms));
+    Ok(())
+}
+
 fn reader_activation_probe(path: &Path, receipt: &Path, hold_ms: u64) -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    use std::thread;
 
     const MAX_HOLD_MS: u64 = 60_000;
     if hold_ms == 0 || hold_ms > MAX_HOLD_MS {
@@ -920,8 +1042,7 @@ fn reader_activation_probe(path: &Path, receipt: &Path, hold_ms: u64) -> Result<
         .map_err(|error| format!("write activation receipt {}: {error}", receipt.display()))
     };
 
-    write_receipt(false, false)?;
-    thread::sleep(Duration::from_millis(hold_ms));
+    hold_reader_activation_for_restart_manager(hold_ms, || write_receipt(false, false))?;
     std::hint::black_box(&visual);
 
     let after = fs::read(path)
