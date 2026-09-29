@@ -1,0 +1,49 @@
+name: Reader embedded font source binding probe
+
+on:
+  push:
+    branches:
+      - "research/reader-embedded-font-source-bind-01"
+    paths:
+      - ".github/workflows/reader-embedded-font-source-probe.yml"
+      - "vendor/producer-a/crates/pub-quill/**"
+      - "vendor/producer-a/crates/pub-reader/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-binding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire exact embedded-font PUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/chaptera-embedded-font-source-bind"
+          out="${RUNNER_TEMP}/chaptera-embedded-font-source-bind-out"
+          mkdir -p "$root" "$out"
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/fosnola/libmspub-test/master/testset/12.0/fonts.pub" \
+            --output "$root/fonts.pub"
+          echo "8d50872a7d8ee6130b889efbe99275ee333747bc7777f3c5256a05f2c6d32048  $root/fonts.pub" | sha256sum --check
+          echo "CHAPTERA_EMBEDDED_FONT_PUB=$root/fonts.pub" >> "$GITHUB_ENV"
+          echo "CHAPTERA_EMBEDDED_FONT_OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Emit current Quill to pub-reader typography binding receipt
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-reader embedded_font_fixture_quill_typography_source_receipt -- --ignored --nocapture
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaptera-embedded-font-source-binding
+          path: ${{ env.CHAPTERA_EMBEDDED_FONT_OUT }}
+          if-no-files-found: warn
