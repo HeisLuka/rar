@@ -2170,6 +2170,7 @@ pub fn build_mature_0x2c_from_streams(
 
         let node_id = derive_pub_node_id(&source_hash, seq_num)?;
         let image_slot = exact_image_slot(shape, seq_num, &mut diagnostics);
+        let explicit_paint = explicit_officeart_paint(shape);
         let explicit_image_crop = image_slot
             .is_some()
             .then(|| bounded_officeart_image_crop(shape))
@@ -2227,6 +2228,17 @@ pub fn build_mature_0x2c_from_streams(
             AuthorityClass::Authoritative,
             ReadConfidence::Exact,
         ));
+        if has_explicit_officeart_paint_observation(shape) {
+            source_refs.push(source_ref(
+                &graph.source,
+                &shape.source,
+                Some(format!("escher/client-data-shape-id/{seq_num}")),
+                Some("SpContainer/FOPT".into()),
+                SourceRole::Projection,
+                AuthorityClass::Authoritative,
+                ReadConfidence::Exact,
+            ));
+        }
         for (depth, span) in grouped_sources.iter().enumerate() {
             source_refs.push(source_ref(
                 &graph.source,
@@ -2269,7 +2281,7 @@ pub fn build_mature_0x2c_from_streams(
                     officeart_spid: shape.fsp.as_ref().map(|fsp| fsp.spid),
                     image_slot,
                     explicit_image_crop,
-                    explicit_paint: explicit_officeart_paint(shape),
+                    explicit_paint,
                     story_frame,
                     table_story,
                     table,
@@ -2741,6 +2753,26 @@ const FILL_USE_FILLED_BIT: u32 = 1 << 11;
 const FILL_FILLED_BIT: u32 = 1 << 27;
 const LINE_USE_LINE_BIT: u32 = 1 << 12;
 const LINE_LINE_BIT: u32 = 1 << 28;
+
+fn has_explicit_officeart_paint_observation(
+    shape: &pub_escher::SpContainerObservation,
+) -> bool {
+    shape
+        .fopts
+        .iter()
+        .flat_map(|record| record.properties.iter())
+        .any(|property| {
+            matches!(
+                property.property_id(),
+                OFFICE_ART_FILL_TYPE
+                    | OFFICE_ART_FILL_COLOR
+                    | OFFICE_ART_FILL_BOOLEANS
+                    | OFFICE_ART_LINE_COLOR
+                    | OFFICE_ART_LINE_WIDTH
+                    | OFFICE_ART_LINE_BOOLEANS
+            )
+        })
+}
 
 fn explicit_officeart_paint(
     shape: &pub_escher::SpContainerObservation,
