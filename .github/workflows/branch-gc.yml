@@ -74,9 +74,9 @@ jobs:
           mapfile -t manifests < target/branch-gc/manifests.txt
           declare -A seen=()
 
-          for manifest in "\${manifests[@]}"; do
+          for manifest in "${manifests[@]}"; do
             while IFS= read -r raw || [[ -n "$raw" ]]; do
-              entry="\${raw%%#*}"
+              entry="${raw%%#*}"
               entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
               [[ -z "$entry" ]] && continue
 
@@ -85,19 +85,19 @@ jobs:
               extra=""
               read -r branch expected_sha extra <<< "$entry"
 
-              if [[ -n "\${extra:-}" ]]; then
+              if [[ -n "${extra:-}" ]]; then
                 echo "invalid manifest entry (expected: <branch> [sha]): $entry" >&2
                 printf '%s\n' "$entry" >> target/branch-gc/failed.txt
                 continue
               fi
 
-              if [[ -n "\${expected_sha:-}" ]] && [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              if [[ -n "${expected_sha:-}" ]] && [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
                 echo "invalid expected SHA for $branch: $expected_sha" >&2
                 printf '%s\n' "$entry" >> target/branch-gc/failed.txt
                 continue
               fi
 
-              if [[ -n "\${seen[$branch]+x}" ]]; then
+              if [[ -n "${seen[$branch]+x}" ]]; then
                 continue
               fi
               seen["$branch"]=1
@@ -121,7 +121,7 @@ jobs:
                 continue
               fi
 
-              if [[ -n "\${expected_sha:-}" && "$remote_sha" != "$expected_sha" ]]; then
+              if [[ -n "${expected_sha:-}" && "$remote_sha" != "$expected_sha" ]]; then
                 echo "SKIP sha mismatch: $branch expected=$expected_sha actual=$remote_sha"
                 printf '%s\t%s\t%s\n' "$branch" "$expected_sha" "$remote_sha" >> target/branch-gc/skipped-sha-mismatch.txt
                 continue
