@@ -1,0 +1,109 @@
+name: FONTSEL-022-01
+
+on:
+  pull_request:
+    paths:
+      - "vendor/producer-a/crates/pub-quill/**"
+      - ".github/workflows/fontsel-022-01.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-publisher2000-font-selector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94.1"
+
+      - name: Acquire exact Publisher2000 font-selector fixture
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import urllib.request
+
+          url = (
+              "https://raw.githubusercontent.com/fosnola/libmspub-test/"
+              "33d8f78db8b8b319098c3d5ba3ad3e952369b323/"
+              "testset/9.0/text-format.pub"
+          )
+          request = urllib.request.Request(
+              url,
+              headers={"User-Agent": "chaptera-fontsel-022-01/1.0"},
+          )
+          with urllib.request.urlopen(request, timeout=60) as response:
+              raw = response.read()
+
+          expected_size = 21_504
+          expected_sha256 = "d7783f606b5c0afaf8b04a738ea2aa37a99a2e07a709f008ad4b8cbff1fa202f"
+          expected_git_blob = "ad9095b53fa6bcc9db262679abecd71f09ebced1"
+
+          if len(raw) != expected_size:
+              raise SystemExit(f"size drift: {len(raw)} != {expected_size}")
+          actual_sha256 = hashlib.sha256(raw).hexdigest()
+          if actual_sha256 != expected_sha256:
+              raise SystemExit(f"sha256 drift: {actual_sha256}")
+          git_blob = hashlib.sha1(
+              f"blob {len(raw)}\0".encode("ascii") + raw
+          ).hexdigest()
+          if git_blob != expected_git_blob:
+              raise SystemExit(f"Git blob identity drift: {git_blob}")
+          if raw[:8] != bytes.fromhex("d0cf11e0a1b11ae1"):
+              raise SystemExit("fixture is not OLE/CFB")
+
+          target = pathlib.Path("/tmp/chaptera-fontsel-022-text-format.pub")
+          target.write_bytes(raw)
+          with pathlib.Path("/tmp/chaptera-fontsel-022.sha256").open("w") as handle:
+              handle.write(expected_sha256 + "\n")
+          print(
+              f"pinned fixture ok: size={len(raw)} "
+              f"sha256={actual_sha256} git_blob_sha1={git_blob}"
+          )
+
+      - name: Bind exact old-0x22 fixture
+        shell: bash
+        run: |
+          echo "CHAPTERA_FONTSEL_022=/tmp/chaptera-fontsel-022-text-format.pub" >> "$GITHUB_ENV"
+
+      - name: Acquire later-format negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/chaptera-fontsel-controls
+          curl --fail --location --silent --show-error             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleNewsletter.pub"             --output /tmp/chaptera-fontsel-controls/SampleNewsletter.pub
+          curl --fail --location --silent --show-error             "https://raw.githubusercontent.com/apache/poi/942d95d85b15d0dfdb3bc9ba1b4f273f277757c8/test-data/publisher/SampleBrochure.pub"             --output /tmp/chaptera-fontsel-controls/SampleBrochure.pub
+          test "$(sha256sum /tmp/chaptera-fontsel-controls/SampleNewsletter.pub | awk '{print $1}')" =             "6a825ba26ba35d6e885acdc62e859591ed37cb0ff7480b554b9cb362b644dfcf"
+          test "$(sha256sum /tmp/chaptera-fontsel-controls/SampleBrochure.pub | awk '{print $1}')" =             "ffed034ac87e679f0bd08ff9cf74ad11c0e0e510a42b1bc1a7502415f6c29c87"
+          echo "CHAPTERA_SAMPLE_NEWSLETTER=/tmp/chaptera-fontsel-controls/SampleNewsletter.pub" >> "$GITHUB_ENV"
+          echo "CHAPTERA_SAMPLE_BROCHURE=/tmp/chaptera-fontsel-controls/SampleBrochure.pub" >> "$GITHUB_ENV"
+
+      - name: Test source-free Quill selector laws
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill typography::tests -- --nocapture
+
+      - name: Prove exact Publisher2000 Caladea selector
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill publisher2000_fixed_0x24_selector_resolves_caladea -- --ignored --nocapture
+
+      - name: Prove later 2002+ typography path is unchanged
+        run: cargo test --manifest-path vendor/producer-a/Cargo.toml -p pub-quill real_pub_effective_typography_matches_product_authority_and_brochure_fence -- --ignored --nocapture
+
+      - name: Prove source fixture remained immutable
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(cat /tmp/chaptera-fontsel-022.sha256)"
+          actual="$(sha256sum "$CHAPTERA_FONTSEL_022" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          if find vendor/producer-a/crates/pub-quill -type f \( -iname '*.pub' -o -iname '*.ole' \) | grep -q .; then
+            echo "raw PUB/CFB leaked into repository tree" >&2
+            exit 1
+          fi
