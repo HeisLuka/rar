@@ -1,0 +1,22 @@
+[package]
+name = "chaptera-entitlement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ciborium = "0.2.2"
+coset = "0.4.2"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+serde.workspace = true
+sha2.workspace = true
+thiserror = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
+] }
